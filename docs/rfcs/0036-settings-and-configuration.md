@@ -1,4 +1,4 @@
-# RFC-0108: Settings and Configuration
+# RFC-0036: Settings and Configuration
 
 Status: Draft
 

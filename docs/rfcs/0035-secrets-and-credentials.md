@@ -1,4 +1,4 @@
-# RFC-0107: Secrets and Credentials
+# RFC-0035: Secrets and Credentials
 
 Status: Draft
 

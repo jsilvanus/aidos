@@ -1,4 +1,4 @@
-# RFC-0110: Testing Strategy
+# RFC-0038: Testing Strategy
 
 Status: Draft
 

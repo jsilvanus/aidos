@@ -1,4 +1,4 @@
-# RFC-0113: Plugin Packaging and Sandbox
+# RFC-0043: Plugin Packaging and Sandbox
 
 Status: Draft
 

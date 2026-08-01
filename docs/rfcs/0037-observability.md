@@ -1,4 +1,4 @@
-# RFC-0109: Observability
+# RFC-0037: Observability
 
 Status: Draft
 

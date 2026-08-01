@@ -1,4 +1,4 @@
-# RFC-0118: Project Templates and Project Types
+# RFC-0047: Project Templates and Project Types
 
 Status: Draft
 

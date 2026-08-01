@@ -1,4 +1,4 @@
-# RFC-0119: Dependency Injection and Runtime Composition
+# RFC-0048: Dependency Injection and Runtime Composition
 
 Status: Draft
 

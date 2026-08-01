@@ -1,4 +1,4 @@
-# RFC-0102: State Model
+# RFC-0017: State Model
 
 Status: Draft
 

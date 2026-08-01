@@ -1,4 +1,4 @@
-# RFC-0116: Performance and Resource Budgets
+# RFC-0045: Performance and Resource Budgets
 
 Status: Draft
 

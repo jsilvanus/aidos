@@ -1,4 +1,4 @@
-# RFC-0111: Serialization and Versioning
+# RFC-0039: Serialization and Versioning
 
 Status: Draft
 

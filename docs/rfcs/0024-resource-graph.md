@@ -1,4 +1,4 @@
-# RFC-0105: Resource Graph
+# RFC-0024: Resource Graph
 
 Status: Draft
 

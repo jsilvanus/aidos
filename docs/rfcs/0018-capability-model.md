@@ -1,4 +1,4 @@
-# RFC-0103: Capability Model
+# RFC-0018: Capability Model
 
 Status: Draft
 

@@ -1,4 +1,4 @@
-# RFC-0117: Identity, Actors, and Future Collaboration
+# RFC-0046: Identity, Actors, and Future Collaboration
 
 Status: Draft
 

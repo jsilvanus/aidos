@@ -1,4 +1,4 @@
-# RFC-0114: Model Memory
+# RFC-0026: Model Memory
 
 Status: Draft
 

@@ -1,4 +1,4 @@
-# RFC-0106: Prompt Construction and Context Assembly
+# RFC-0025: Prompt Construction and Context Assembly
 
 Status: Draft
 
