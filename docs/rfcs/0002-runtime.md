@@ -18,6 +18,20 @@ Before defining how to build specific subsystems, we must establish the overall 
 
 This RFC establishes that architecture at a high level, leaving implementation details to subordinate RFCs.
 
+## Technology
+
+The Aidos runtime is implemented in **Kotlin Multiplatform (KMP)**. This is a locked decision established in RFC-0000.
+
+KMP provides:
+- A single codebase that targets Android (JVM) and Desktop (JVM via Compose Multiplatform).
+- Kotlin Coroutines for the async concurrency model (RFC-0007).
+- SQLite via a KMP-compatible SQLite driver.
+- Cross-platform filesystem and network abstractions.
+
+Where native performance or OS-specific sandboxing is required (local model inference via llama.cpp, Whisper transcription, process sandboxing on Linux/macOS), the runtime uses native libraries accessed via JNI bindings. The boundary between KMP code and native libraries is kept narrow and explicit — native code is wrapped in thin Kotlin interfaces.
+
+The frontend layer (Android UI, Desktop UI) is built on Jetpack Compose and Compose Multiplatform respectively. Frontends communicate with the runtime via the Runtime API (RFC-0052).
+
 ## Goals
 
 1. **Define the major subsystems** within the runtime and their responsibilities.
@@ -36,7 +50,7 @@ This RFC establishes that architecture at a high level, leaving implementation d
 
 This RFC does not specify:
 - The format of events (that is RFC-0004).
-- The exact API between runtime and frontends (that is a separate design).
+- The exact API between runtime and frontends (that is RFC-0052).
 - Implementation details of storage (RFC-0040 covers storage).
 - How to train or select models (RFC-0020 covers the AI Engine).
 - How to integrate specific tools (RFC-0030 covers the Tool Broker).

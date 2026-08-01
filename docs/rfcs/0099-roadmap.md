@@ -49,7 +49,7 @@ This RFC does not address pricing or business model (separate document).
    - Published as constitutional documents
    - Community review and feedback
 
-2. Headless runtime (Rust)
+2. Headless runtime (Kotlin Multiplatform)
    - Event-driven architecture
    - Tool Broker framework
    - Basic session management
@@ -83,7 +83,7 @@ This RFC does not address pricing or business model (separate document).
 - Offline-first proven
 - Community responds with early interest
 
-**Dependencies**: Core Rust knowledge, clear architectural vision
+**Dependencies**: Core Kotlin Multiplatform knowledge, clear architectural vision
 
 ### Phase 2: Android MVP (3-6 months)
 
@@ -139,7 +139,7 @@ This RFC does not address pricing or business model (separate document).
 
 **Dependencies:**
 - Phase 1 complete
-- Rust FFI/mobile bindings stable
+- KMP runtime stable and tested
 - Jetpack Compose patterns established
 
 ### Phase 3: Desktop & Extensions (6-12 months)
