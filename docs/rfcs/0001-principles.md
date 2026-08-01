@@ -1,6 +1,6 @@
 # RFC-0001: Principles
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

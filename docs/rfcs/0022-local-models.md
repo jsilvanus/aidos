@@ -1,6 +1,6 @@
 # RFC-0022: Local Models
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

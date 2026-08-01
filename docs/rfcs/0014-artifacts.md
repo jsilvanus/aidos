@@ -1,6 +1,6 @@
 # RFC-0014: Artifacts
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

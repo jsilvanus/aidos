@@ -1,6 +1,6 @@
 # RFC-0099: Roadmap
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

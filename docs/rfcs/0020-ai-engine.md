@@ -1,6 +1,6 @@
 # RFC-0020: AI Engine
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

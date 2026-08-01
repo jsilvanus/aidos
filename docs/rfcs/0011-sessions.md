@@ -1,6 +1,6 @@
 # RFC-0011: Sessions
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

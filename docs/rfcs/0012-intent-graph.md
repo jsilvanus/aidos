@@ -1,6 +1,6 @@
 # RFC-0012: Intent Graph
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

@@ -1,6 +1,6 @@
 # RFC-0034: Filesystem
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

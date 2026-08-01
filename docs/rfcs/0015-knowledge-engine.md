@@ -1,6 +1,6 @@
 # RFC-0015: Knowledge Engine
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

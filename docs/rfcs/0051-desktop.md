@@ -1,6 +1,6 @@
 # RFC-0051: Desktop
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

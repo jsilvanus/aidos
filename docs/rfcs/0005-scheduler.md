@@ -1,6 +1,6 @@
 # RFC-0005: Scheduler
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 
