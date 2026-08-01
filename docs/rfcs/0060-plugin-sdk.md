@@ -1,6 +1,6 @@
 # RFC-0060: Plugin SDK
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

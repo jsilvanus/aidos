@@ -1,6 +1,6 @@
 # RFC-0003: Security
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

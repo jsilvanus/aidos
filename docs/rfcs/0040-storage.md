@@ -1,6 +1,6 @@
 # RFC-0040: Storage
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

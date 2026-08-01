@@ -1,6 +1,6 @@
 # RFC-0004: Event Bus
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

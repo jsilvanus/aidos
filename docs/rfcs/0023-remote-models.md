@@ -1,6 +1,6 @@
 # RFC-0023: Remote Models
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

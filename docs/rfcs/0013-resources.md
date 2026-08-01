@@ -1,6 +1,6 @@
 # RFC-0013: Resources
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

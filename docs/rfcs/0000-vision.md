@@ -1,6 +1,6 @@
 # RFC-0000: Vision
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

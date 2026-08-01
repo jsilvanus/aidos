@@ -1,6 +1,6 @@
 # RFC-0033: Shell
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

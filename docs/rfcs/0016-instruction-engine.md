@@ -1,6 +1,6 @@
 # RFC-0016: Instruction Engine
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

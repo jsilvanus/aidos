@@ -1,6 +1,6 @@
 # RFC-0050: Android
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

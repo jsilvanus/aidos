@@ -1,6 +1,6 @@
 # RFC-0041: Export & Import
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 

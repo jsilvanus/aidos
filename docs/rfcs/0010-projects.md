@@ -1,6 +1,6 @@
 # RFC-0010: Projects
 
-Status: Accepted
+Status: Draft
 
 ## Abstract
 
