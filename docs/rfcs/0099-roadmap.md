@@ -516,5 +516,6 @@ This roadmap references the Phase 1 architecture RFCs:
 - RFC-0051: Desktop
 - RFC-0060: Plugin SDK
 
-**Roadmap**
+**Roadmap and Reviews**
 - RFC-0099: Roadmap (this document)
+- RFC-0100: Comprehensive Architecture Review

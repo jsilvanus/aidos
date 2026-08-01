@@ -64,6 +64,7 @@ RFCs are numbered in ranges by topic area:
 - **0050–0059**: Platform frontends
 - **0060–0069**: SDK and extensibility
 - **0099**: Roadmap
+- **0100–0199**: Reviews and meta-architecture
 
 ## Creating an RFC
 
