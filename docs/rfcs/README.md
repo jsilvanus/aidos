@@ -56,12 +56,12 @@ Enhancements or extensions possible after MVP.
 
 RFCs are numbered in ranges by topic area:
 
-- **0000–0009**: Vision and principles
+- **0000–0009**: Vision, principles, and runtime contracts
 - **0010–0019**: Core concepts (projects, sessions, graphs, resources)
 - **0020–0029**: AI engine and model providers
 - **0030–0039**: Tool broker and integrations
 - **0040–0049**: Storage and export
-- **0050–0059**: Platform frontends
+- **0050–0059**: Platform frontends and Runtime API
 - **0060–0069**: SDK and extensibility
 - **0099**: Roadmap
 - **0100–0199**: Reviews and meta-architecture

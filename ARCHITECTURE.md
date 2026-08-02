@@ -30,9 +30,9 @@ Aidos consists of several integrated engines:
 │                  Frontend (Android, Desktop, Web)   │
 │              (RFC-0050, RFC-0051)                   │
 └────────────────────┬────────────────────────────────┘
-                     │ (local IPC or network)
+                     │ Runtime API (RFC-0052)
 ┌────────────────────▼────────────────────────────────┐
-│            Headless Runtime (Rust)                  │
+│            Headless Runtime (KMP)                   │
 │                                                     │
 │  ┌─────────────────────────────────────────────┐   │
 │  │  Session Manager (RFC-0011)                 │   │
