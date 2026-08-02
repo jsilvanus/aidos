@@ -60,30 +60,55 @@ RuntimeDispatchers
 
 **`main` dispatcher**: Single-threaded. All inbound frontend commands are received here. All outbound events are published here. State machines (project lifecycle, session wakeup/sleep) advance here. No blocking operations are permitted on this dispatcher.
 
-**`session` dispatcher**: A bounded thread pool (default: min(4, CPU cores)). Session Runs execute here as coroutines. Each Run is a coroutine launched on this dispatcher. Multiple projects' sessions can execute in parallel. Within a single project, only one session Run executes at a time (enforced by the per-project session lock — see below).
+**`session` dispatcher**: A bounded thread pool (default: min(4, CPU cores) on DESKTOP, single-threaded on MOBILE). Each Run is a coroutine launched here. Runs in different projects execute in parallel, and Runs within a project execute in parallel unless they contend on the working tree or the device-global model runtime (see Working-Tree Lock below).
 
 **`io` dispatcher**: An unbounded thread pool for I/O operations. SQLite reads, SQLite writes, filesystem reads and writes, and network calls execute here. The io dispatcher is never used for business logic — only for I/O adapters.
 
 **`background` dispatcher**: A low-priority bounded pool for work that must not impact session responsiveness: Knowledge Engine indexing, background Git status, telemetry flushing, export operations.
 
-### Per-Project Session Lock
+### Working-Tree Lock, not Project Lock
 
-Within a project, session Runs execute serially. This is enforced by a `Mutex` held per project.
+The contended resource is the **working tree and Git index**, not the project. Two Runs that
+never touch the working tree do not conflict and must not be serialized against each other.
 
 ```kotlin
 class ProjectExecutionContext(val projectId: UUID) {
-    val sessionMutex = Mutex()
-    // ... other per-project state
+    val worktreeMutex = Mutex()      // guards working tree + .git/index
+    val writeContext: ProjectWriteContext
 }
 ```
 
-When a session Run begins, it acquires `sessionMutex`. It releases the mutex only when:
-- The Run completes (COMPLETED, FAILED, CANCELLED)
-- The Run yields at a safe serialization point (awaiting an async operation)
+A Run acquires `worktreeMutex` only for the duration of an effect that touches the working tree
+or the Git index — not for the whole Run. It is released at the next checkpoint.
 
-While a Run holds the mutex, no other session Run in the same project can start. When the Run yields, the mutex is released, allowing another Run to proceed. When the yielded Run is resumed, it re-acquires the mutex before continuing.
+**Treeless workers do not acquire it at all.** A worker that builds a commit directly against
+the object database with an in-memory index (RFC-0049) contends on nothing: blob, tree, and
+commit objects are content-addressed and immutable, and each worker writes its result to its own
+`refs/aidos/workers/<id>` ref. Several such workers run genuinely in parallel, each with its own
+Run, transcript, Execution Graph subtree, and audit attribution.
 
-This gives the semantics of a "mostly single-threaded" project with cooperative multitasking — the design intent of the original Scheduler RFC — while not blocking the thread.
+This replaces an earlier per-project session mutex under which *all* Runs in a project
+serialized. That was over-broad: it was written to protect the working tree, but it also blocked
+the parallel worker model that RFC-0011 depends on, and it would have made a driver session
+waiting on three workers strictly slower than doing the work itself.
+
+What still serializes, and why:
+
+| Resource | Scope of serialization | Reason |
+|---|---|---|
+| Working tree + Git index | per project | a single shared checkout; JGit index locking |
+| SQLite writes | per project | single-writer discipline (below) |
+| Model inference | **per device** | weights are user scope; RAM admits one large model (RFC-0020) |
+| Object-database writes | none | content-addressed and immutable |
+| Ref updates | per ref | JGit performs a compare-and-swap on the ref |
+
+Model inference being device-global is usually the real limit on a phone, not the working tree.
+Four workers can plan in parallel; their model calls queue. On desktop with a remote provider,
+they proceed concurrently.
+
+Because parallel workers are now possible on every profile, the invariant that **at most one
+Task per Run is `RUNNING`** (RFC-0006) becomes load-bearing: parallelism is across Runs, never
+inside one. That keeps each Run's audit trail a single ordered sequence.
 
 ### SQLite Single-Writer Discipline
 
@@ -156,7 +181,7 @@ Git operations vary in duration from milliseconds (status, diff) to minutes (clo
 
 Long-running Git operations (fetch, push, large clone) should be launched as background coroutines. The session requesting the operation yields and subscribes to a completion event. The Git operation publishes a completion event when done.
 
-Git operations that modify project-tracked files should acquire the per-project session lock before writing, to prevent races between Git-managed files and session file writes.
+Git operations that modify the working tree or the index acquire `worktreeMutex` for the duration of the operation only. Object-database writes (blob, tree, and commit creation) acquire nothing; ref updates are compare-and-swap. This is what allows treeless workers to commit in parallel.
 
 ### Cancellation Propagation
 
@@ -179,7 +204,7 @@ This means the cancellation semantics from RFC-0006 are implemented naturally: w
 
 Kotlin coroutines on JVM (and KMP targets with native memory model) do not guarantee memory visibility across coroutine dispatchers without explicit synchronization. The following rules apply:
 
-1. Session state accessed from multiple coroutines must be read and written inside the per-project session mutex.
+1. Session state accessed from multiple coroutines is read and written through `ProjectWriteContext`, not held in shared mutable objects. With parallel Runs there is no single lock that makes ad hoc shared state safe.
 2. Event Bus state (subscriber registry, event queue) is owned by the `main` dispatcher and accessed only there.
 3. SQLite state is owned by the `ProjectWriteContext` mutex and accessed through it.
 4. Immutable-once-loaded data — project metadata, tool descriptors, model descriptors — is safe
@@ -253,7 +278,7 @@ class RuntimeDispatchers(
 // Per-project execution context
 class ProjectExecutionContext(
     val projectId: UUID,
-    val sessionMutex: Mutex,
+    val worktreeMutex: Mutex,
     val writeContext: ProjectWriteContext,
     val scope: CoroutineScope
 )

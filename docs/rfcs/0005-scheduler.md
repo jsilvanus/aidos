@@ -58,9 +58,10 @@ This RFC does not specify distributed scheduling.
 
 It does not define the concurrency model (RFC-0007) or the execution mechanism (RFC-0009). An
 earlier version stated "Aidos is single-threaded within a project" and included a blocking main
-loop; both are superseded. Runs within a project are *serialized*, which is a different and
-weaker claim than single-threaded: the executor is a coroutine holding a per-project mutex that
-it releases at checkpoints, so a parked Run does not block the project.
+loop; both are superseded. Runs execute concurrently, including within a project. What
+serializes is the *contended resource*, not the project: the working tree and Git index, SQLite
+writes, and — usually the real limit on a phone — device-global model inference. Treeless
+workers (RFC-0049) contend on none of these and run genuinely in parallel.
 
 This RFC does not address real-time scheduling guarantees. Aidos is not a real-time system; best-effort wake-up is acceptable.
 
@@ -247,7 +248,7 @@ suspend fun schedulerLoop(project: ProjectExecutionContext) {
         for (session in sessions) {
             val run = runStore.createOrQueue(session, event)
             project.scope.launch(dispatchers.session) {
-                project.sessionMutex.withLock { executor.drive(run.id) }   // RFC-0009
+                executor.drive(run.id)      // RFC-0009; locks are taken per effect, not per Run
             }
         }
     }

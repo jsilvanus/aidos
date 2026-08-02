@@ -93,17 +93,26 @@ interface ProjectCommands {
     suspend fun list(): List<ProjectSummary>
     suspend fun get(projectId: UUID): ProjectDetail
     suspend fun delete(projectId: UUID, confirm: Boolean)
-    suspend fun importArchive(archivePath: Path): ProjectResult
-    suspend fun exportArchive(projectId: UUID, destinationPath: Path)
+
+    // Byte streams, not filesystem paths — see "No local paths on the wire".
+    suspend fun importArchive(source: ByteReadChannel): ProjectResult
+    suspend fun exportArchive(projectId: UUID, sink: ByteWriteChannel)
 }
 
 data class CreateProjectRequest(
     val name: String,
     val description: String,
-    val rootDirectory: Path,
+    val location: ProjectLocation,
     val initGit: Boolean = true,
     val templateId: UUID? = null
 )
+
+// Where a project lives is resolved by the runtime, not dictated by the client.
+sealed class ProjectLocation {
+    data class RuntimeManaged(val slug: String) : ProjectLocation()   // runtime picks the path
+    data class LocalPath(val path: String) : ProjectLocation()        // in-process transport only
+    data class CloneOf(val remoteUrl: String, val slug: String) : ProjectLocation()
+}
 
 data class ProjectSummary(
     val id: UUID,
@@ -253,13 +262,36 @@ interface EventSubscriptions {
 }
 
 data class EventFilter(
-    val projectIds: List<UUID> = emptyList(),   // empty means all projects
-    val sessionIds: List<UUID> = emptyList(),    // empty means all sessions
-    val types: List<RuntimeEventType> = emptyList()  // empty means all types
+    val projectIds: List<UUID> = emptyList(),        // empty means all projects
+    val sessionIds: List<UUID> = emptyList(),        // empty means all sessions
+    val types: List<RuntimeEventType> = emptyList(), // empty means all types
+    val sinceSequence: Long? = null                  // resume point; null means from now
 )
 ```
 
-The event stream is a Kotlin `Flow<RuntimeEvent>`. On platforms where the runtime is in-process, this is a direct coroutine flow. On platforms using a socket connection (CLI), the flow is backed by a stream reader.
+The event stream is a Kotlin `Flow<RuntimeEvent>`. In-process it is a direct coroutine flow; over
+a socket it is backed by a stream reader.
+
+**`sinceSequence` makes the stream resumable.** Every `RuntimeEvent` carries the per-project
+`sequence` assigned at publication (RFC-0004). A client that disconnects — a phone whose screen
+locked, a laptop that slept, and later a mobile client on a flaky network — reconnects with the
+last sequence it observed and receives the gap rather than a fresh stream with a hole in it.
+Without it, every disconnect silently loses events, and the frontend cannot tell.
+
+### No local paths on the wire
+
+No method on the Runtime API takes or returns a **client-side filesystem path**. Paths in the
+API mean paths on the *runtime's* filesystem, and the two are only the same when the runtime is
+in-process.
+
+This is a reservation, not a present need: today every transport is local. But a mobile client
+connecting to a runtime on another machine (RFC-0055 Future Work) is a stated direction, and
+`rootDirectory: Path` or `exportArchive(destinationPath: Path)` would each be a breaking change
+the day that lands. The costs of reserving now are a `ProjectLocation` sum type and streaming
+import/export; the cost of not reserving is an API version bump and every frontend rewritten.
+
+The same rule covers attachments: `AttachmentRef` is a content reference resolved by the
+runtime, never a path the client happens to be able to read.
 
 ### Runtime Events
 
@@ -421,6 +453,32 @@ command set is expressible and auditable rather than all-or-nothing.
 
 Future work: remote frontend access — a phone driving a desktop runtime — adds device pairing
 and transport encryption. The token model above is the local case of the same mechanism.
+
+### Reserved for remote clients (not v1)
+
+A future Android build may act as a **client of a remote runtime** in addition to hosting its
+own. This is not built, and it is explicitly not v1. Four things are reserved now so that it is
+additive rather than breaking:
+
+1. **No client-side paths in the API** (above).
+2. **Resumable event streams** via `sinceSequence` (above).
+3. **`FRONTEND` capability subjects** (RFC-0018), so a connection's permitted command set is
+   expressible — a remote client may reasonably be allowed to read and approve but not to grant.
+4. **Transport-agnostic `RuntimeClient`**, already true: in-process, socket, and a future TLS
+   transport are implementations of one interface.
+
+Two design points worth recording before anyone builds it:
+
+**A phone is both.** The interesting configuration is not "thin client instead of local
+runtime" — it is a phone that hosts a local runtime for offline work *and* connects to the
+user's desktop runtime for work it cannot do locally, such as running tests (RFC-0049
+`PLATFORM` tier). A frontend therefore addresses **multiple runtime instances**, and project
+identity must be stable across them — which UUIDv7 project IDs (RFC-0054) already provide.
+
+**Remote does not weaken offline-first.** A remote connection is an *additional* capability, and
+losing it degrades to local operation rather than to failure. Any design in which the phone
+stops working when the desktop is asleep contradicts the product's first principle and should be
+rejected on that basis alone.
 
 ### Error Handling
 
