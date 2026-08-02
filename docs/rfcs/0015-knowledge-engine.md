@@ -277,34 +277,109 @@ Example queries:
 }
 ```
 
-### Caching and Updates
+### Index identity: address by content hash, not by path
 
-The Knowledge Engine maintains caches to avoid redundant computation:
+**The unit of index identity is the Git object hash, not the file path.**
 
+A path is a *name* that points to different content at different times, and to different content
+on different branches. Indexing by path therefore requires invalidation on every change and
+every checkout, re-embeds identical content once per commit that touches it, and cannot answer
+questions about history without a second index.
+
+A blob hash is immutable and content-addressed. Index it once, and the entry is correct
+permanently, on every branch, in every commit that has ever referenced it.
+
+This is the model proven by GitSema (`jsilvanus/gitsema`): *"treats blob hashes as the unit of
+identity, so identical content is only embedded once regardless of how many commits reference
+it."* It is also the model the rest of the architecture already converged on — content-addressed
+blobs with reference counting (RFC-0056), object-database-first reads (RFC-0053), and an indexed
+`content_hash` on every ContentNode (RFC-0024).
+
+Four consequences, in rising order of importance:
+
+1. **Deduplication is automatic.** A file unchanged across 500 commits is embedded once. A file
+   copied between directories is embedded once. Vendored dependencies shared between branches
+   are embedded once.
+
+2. **History is nearly free.** Searching across time is not a separate feature. Every blob ever
+   committed is already in the index, and "what did this look like before the refactor?" is a
+   lookup rather than a re-index.
+
+3. **Incremental indexing is a set difference.** Indexing a new commit means: list the blobs in
+   its tree, subtract the blobs already indexed, embed the remainder. Usually a handful of files.
+
+4. **Branch switching costs nothing.** This is the one that matters most, and it removes a
+   problem RFC-0053 otherwise has to solve. `git checkout` changes which blobs are *visible*; it
+   changes no blob. So there is nothing to invalidate. The reconciliation protocol updates the
+   path→blob mapping — a cheap tree read — and every derived fact remains valid.
+
+On a phone, where re-indexing is expensive in both battery and time, that last point is the
+difference between semantic search being usable and being something the user turns off.
+
+### Addressing classes
+
+Not all knowledge is blob-addressable, and pretending otherwise is how caches go stale silently.
+Every provider declares which class each fact belongs to.
+
+| Class | Key | Cacheable | Examples |
+|---|---|---|---|
+| **Blob-addressed** | blob SHA | **forever** | embeddings, tree-sitter symbols, text extraction, per-file summaries, OCR output |
+| **Tree-addressed** | tree SHA | **forever** | import graph, call graph, project structure at a snapshot |
+| **Commit-addressed** | commit SHA | **forever** | diffs, commit messages, blame, authorship |
+| **State-addressed** | working-tree fingerprint | **no — invalidate** | uncommitted edits, LSP cross-file types, build metadata, test results, dependency resolution |
+
+The first three are immutable by construction and never require invalidation. Only the
+state-addressed class does, and it is the smallest and cheapest to recompute.
+
+Tree-addressed facts are worth noting: a call graph is a function of an entire snapshot, but
+tree hashes are immutable too, so it is cacheable — and computable *incrementally* from the
+blobs that changed between two trees rather than from scratch.
+
+### Caching and updates
+
+```kotlin
+data class IndexEntry(
+    val addressKey: String,        // blob, tree, or commit SHA; or a state fingerprint
+    val addressClass: AddressClass,
+    val providerId: String,
+    val providerVersion: Int,      // bump to invalidate this provider's entries
+    val facts: ByteArray,
+    val computedAt: Instant
+)
 ```
-IndexCache {
-  source: KnowledgeProvider
-  data: Index
-  last_updated: Timestamp
-  is_stale: Boolean
-}
-```
+
+`providerVersion` is the only invalidation mechanism needed for immutable classes. When a
+provider's extraction logic changes, bump the version; old entries become unreachable and are
+reclaimed (RFC-0056). No timestamps, no staleness flags, no cache-coherence protocol.
 
 Updates happen:
 
-1. **On demand**: When a query is issued and the cache is stale, re-index.
-2. **Event-driven**: When Git detects new commits or filesystem detects changes, re-index relevant providers.
-3. **Scheduled**: Periodic re-indexing (e.g., hourly) for sources that don't generate events.
+1. **On commit or checkout**: read the new tree, diff the blob set against the index, enqueue
+   the difference. Usually a handful of blobs.
+2. **On working-tree change**: only state-addressed facts are affected. Uncommitted file content
+   is indexed under a content hash computed on the fly, so an edited-but-uncommitted file is
+   still blob-addressed — it simply has a hash Git has not seen yet.
+3. **On provider upgrade**: bump `providerVersion`; re-index lazily on query rather than eagerly.
 
-Staleness detection:
+Indexing runs on the `background` dispatcher in cancellable batches (RFC-0007), and on MOBILE it
+is deferred work with no latency guarantee (RFC-0049). Queries never block on indexing: they run
+against whatever is indexed and mark results from unindexed content as such.
 
-```
-GitSema: Stale if filesystem has changed since last index
-GitHistory: Stale if new commits exist
-Tests: Stale if test files or test results are new
-Resources: Stale if resources were modified
-Embeddings: Stale if any indexed content changed
-```
+### GitSema
+
+GitSema is the reference implementation of this model and the first knowledge provider.
+
+**On DESKTOP and HEADLESS_SERVER**, it integrates today with no new work: it already exposes an
+MCP server, so it is registered at user scope and enabled per project (RFC-0031, RFC-0054).
+
+**On MOBILE it cannot run.** It requires a Node.js runtime, `git` on `PATH`, and a native SQLite
+binding — three independent blockers under the mobile profile (RFC-0049). Semantic search on a
+phone therefore needs a native KMP provider implementing the same blob-addressed model against
+JGit's object database and the local embedding model.
+
+That port is real work, but it is the correct work: the mobile use case is *understanding a
+codebase offline*, and understanding without semantic retrieval is grep. The addressing model
+above is what makes it feasible on a phone at all.
 
 ### Ranking and Relevance
 
@@ -475,18 +550,23 @@ On resource modification:
 
 ### Invalidation
 
-Some changes invalidate caches:
+Invalidation applies to **state-addressed facts only**. Blob-, tree-, and commit-addressed
+entries are immutable and are never invalidated — see "Index identity" above.
 
-```
-Test coverage changes:
-  → Invalidate usage_index (popular = well-tested)
-  
-Git history changes:
-  → Invalidate call_graph (might have refactored)
-  
-Resource updates:
-  → Invalidate resource_index
-```
+| Change | Invalidates | Does **not** invalidate |
+|---|---|---|
+| `git checkout`, branch switch | nothing | embeddings, symbols, call graph, blame |
+| New commit | nothing | everything already indexed; new blobs are *added* |
+| History rewrite (rebase, amend) | nothing | entries stay valid; some become unreachable and are reclaimed |
+| Working-tree edit | that file's state-addressed facts | its blob-addressed entry, once the new content is hashed |
+| Build or dependency change | build metadata, dependency graph | code embeddings and symbols |
+| Test run | test results, coverage | everything else |
+| Provider logic change | that provider's entries, via `providerVersion` | other providers |
+
+The row that matters: **branch switching invalidates nothing.** An earlier version of this RFC
+treated a filesystem change as making the index stale, which on a repository with active
+branches meant near-continuous re-indexing — and on a phone, that is the difference between a
+feature and a battery complaint.
 
 ## Examples
 
@@ -569,23 +649,32 @@ Future work might restrict what knowledge certain sessions can access (e.g., a w
 
 ## MVP Scope
 
-The MVP Knowledge Engine includes:
+The Knowledge Engine is a **query broker** over pluggable providers, not a monolithic knowledge
+base. Its own API surface is narrow and stable (`KnowledgeContextProvider`, RFC-0025); providers
+evolve behind it.
 
-1. **Codebase indexing**: Extract symbols, structure, comments from code.
-2. **Git history indexing**: Index commits, authors, messages, timelines.
-3. **Test indexing**: Find tests, extract coverage information.
-4. **Resource indexing**: Index resources (architecture, standards, etc.).
-5. **Basic search**: Keyword-based search across indices.
-6. **Ranking**: Simple heuristics (keyword match, recency, coverage).
-7. **Caching**: Cache indices, re-index on file changes.
+The MVP includes:
+
+1. **Content-addressed index storage** with the four addressing classes and `providerVersion`
+   invalidation. This is the foundation and must be right before any provider is written —
+   retrofitting content addressing onto a path-keyed index is a rebuild.
+2. **Blob-addressed providers**: file text extraction, tree-sitter symbols.
+3. **Commit-addressed provider**: Git history, messages, blame.
+4. **Keyword search** across indexed content, with simple heuristic ranking.
+5. **Incremental indexing** as a blob set difference on commit and checkout.
+6. **`KnowledgeContextProvider`** returning ranked, token-budgeted `ContextItem`s to prompt
+   construction (RFC-0025), each carrying its source node's trust level (RFC-0027).
 
 The MVP does not include:
 
-- Semantic embeddings (future).
-- Sophisticated ranking algorithms (future).
-- Distributed indices (future).
-- Custom knowledge providers / plugins (future).
-- Advanced query types (graph traversal, pattern matching) (future).
+- **Semantic embeddings.** Deferred to Phase 3, where they are the substance of the offline
+  proof (RFC-0099 G3) rather than an enhancement.
+- LSP integration (state-addressed, desktop-first, and the most expensive provider to maintain).
+- Build metadata and test-result providers.
+- Sophisticated ranking, graph traversal queries, cross-project knowledge.
+
+Deliberate sequencing note: content addressing comes first even though embeddings come later,
+because the addressing model determines whether embeddings are affordable on a phone at all.
 
 ## Future Work
 
