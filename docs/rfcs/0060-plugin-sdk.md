@@ -1,6 +1,26 @@
 # RFC-0060: Plugin SDK
 
-Status: Draft
+Status: Draft — **not scheduled for v1**
+
+> **Read RFC-0043 first; it constrains this document.** Where the two disagree, RFC-0043 wins.
+>
+> Three constraints from RFC-0043 apply to everything below:
+>
+> 1. **WASM/WASI is the only isolation target.** Native libraries, arbitrary subprocesses, and
+>    embedded interpreters are not supported on any profile. A menu of isolation mechanisms
+>    means the weakest one defines the system's security.
+> 2. **Plugins are installed at user scope and requested by name from a project** (RFC-0054).
+>    Project-local plugins are never supported: a project that can carry executable code makes
+>    cloning a repository equivalent to running it.
+> 3. **Plugins are capability subjects** (RFC-0018) with handle-based, narrow host access.
+>    They never borrow the calling session's authority, and their output is `UNTRUSTED`
+>    (RFC-0027).
+>
+> **No plugin host ships in v1.** MCP (RFC-0031) is the v1 extension mechanism: out-of-process
+> by construction, already standardized, and sufficient for the integrations plugins would
+> serve. The plugin host is built after MCP has proven the extension boundary against real
+> third-party code. Plugin authors should not build against this document until it and RFC-0043
+> are marked Accepted.
 
 ## Abstract
 

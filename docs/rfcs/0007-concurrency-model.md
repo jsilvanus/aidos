@@ -182,15 +182,54 @@ Kotlin coroutines on JVM (and KMP targets with native memory model) do not guara
 1. Session state accessed from multiple coroutines must be read and written inside the per-project session mutex.
 2. Event Bus state (subscriber registry, event queue) is owned by the `main` dispatcher and accessed only there.
 3. SQLite state is owned by the `ProjectWriteContext` mutex and accessed through it.
-4. Read-only configuration (project metadata, capability definitions) is safe to read from any dispatcher after it has been loaded, because it is treated as immutable once loaded.
+4. Immutable-once-loaded data — project metadata, tool descriptors, model descriptors — is safe
+   to read from any dispatcher.
+5. **Capabilities are not in category 4.** They are revocable, and a cached capability is valid
+   only while its `revocation_epoch` matches the project's current epoch (RFC-0018). Every
+   validation compares epochs; a mismatch forces a re-read from SQLite.
+
+Rule 5 corrects an earlier version of this RFC, which listed "capability definitions" as
+immutable-once-loaded and safe to read without synchronization. That directly contradicted
+RFC-0018's guarantee that revocation takes effect immediately, and the contradiction resolved
+in favour of the cache — meaning a revoked capability could continue to authorize work. Epoch
+comparison makes staleness detectable rather than depending on an invalidation message being
+delivered.
 
 ### Android Specifics
 
-On Android, the `main` dispatcher corresponds to the Android main thread (Looper). The runtime must not perform blocking operations on the main thread.
+Android is the first target, so its constraints shape the model rather than being handled as
+exceptions. See RFC-0049 for the full platform profile and RFC-0009 for the execution model
+that makes these constraints survivable.
 
-Android imposes background execution limits on apps not in the foreground. The runtime should use a foreground service for long-running session work. Session state is always persisted to SQLite, so if the foreground service is killed, recovery proceeds as per RFC-0006.
+**Dispatchers.** The runtime's `main` dispatcher is a dedicated single thread, *not* the Android
+main (UI) thread. Binding runtime state machines to the UI looper would couple runtime progress
+to UI lifecycle and make every runtime operation a jank risk. The UI thread is a client of the
+Runtime API like any other.
 
-The `background` dispatcher on Android should use a WorkManager coroutine adapter for operations that can be deferred (Knowledge Engine indexing, cleanup) and a foreground service for interactive session work.
+**Execution windows.** Android does not grant long uninterrupted execution:
+
+- Interactive Runs execute in a **foreground service** with a user-visible ongoing notification
+  and a declared FGS type. This is a user-consented, visible mode of operation, not a
+  background trick.
+- The executor carries a **deadline budget** and stops cleanly at a checkpoint when the
+  remaining window cannot cover the next step (RFC-0009). It never starts work it cannot
+  finish.
+- Eviction is routine, not exceptional. A killed service is indistinguishable from a pause:
+  recovery resumes from the last committed checkpoint.
+
+**Deferred work.** The `background` dispatcher uses `WorkManager` for indexing, compaction, and
+cleanup. `WorkManager` periodic work has a 15-minute floor and no timing guarantee, and exact
+alarms require special-access permission. Therefore **no session semantics may depend on a
+timer firing at a precise moment** (RFC-0044). Timers on MOBILE are best-effort hints.
+
+**Boot behaviour.** The runtime does not replay a backlog of stale events on start. Pending
+events are coalesced per session and topic, and events older than the staleness window are
+recorded and discarded (RFC-0028). A phone that was off overnight must not wake and spend
+tokens catching up on file-change notifications.
+
+**Concurrency, honestly.** On MOBILE the `session` dispatcher is bounded to a single thread. A
+phone has neither the memory headroom to run several model-bearing Runs concurrently nor a
+reason to: the user is watching one thing.
 
 ### Desktop Specifics
 

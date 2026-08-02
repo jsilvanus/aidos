@@ -169,21 +169,27 @@ The Intent Graph is a persistent data structure that represents what the system 
 
 The Intent Graph is the "what"; execution (how to achieve the intent) is the responsibility of sessions.
 
-#### Artifact Manager (RFC-0014)
+#### Content Graph (RFC-0024)
 
-The Artifact Manager stores immutable outputs:
-- Patches, plans, screenshots, transcripts, reports.
-- Each artifact is immutable once created.
-- Artifacts carry metadata: creator, creation time, provenance, content hash.
-- Artifacts can reference each other, forming a directed graph of lineage.
+A single service manages all project content. Resources and artifacts are not separate
+subsystems: both are `ContentNode`s distinguished by a mutability policy, with provenance edges
+recording derivation. RFC-0013 and RFC-0014 are superseded.
 
-#### Resource Manager (RFC-0013)
+- Mutable knowledge (architecture documents, standards, notes) is `VERSIONED` or
+  `MUTABLE_LATEST` and versioned through Git.
+- Outputs (patches, plans, transcripts, reports) are `IMMUTABLE` or `APPEND_ONLY`.
+- Every node carries outbound labels (sensitivity, egress eligibility) and an inbound trust
+  level (RFC-0027), assigned automatically by origin.
+- Node records and provenance are permanent; payloads are reclaimable (RFC-0056).
 
-Resources are mutable project knowledge:
-- Architecture documents, coding standards, roadmaps, notes, decision logs.
-- They form the persistent context that informs work.
-- They are versioned through Git.
-- They can be edited by users or updated by sessions (with permission).
+Maintaining two parallel content models produced conflicting storage rules and two places to
+enforce egress policy.
+
+#### Agent Loop and Executor (RFC-0008, RFC-0009)
+
+The component that turns model output into authorized effects, and the checkpointed executor
+that drives Runs across process death. These are the centre of the runtime; every other
+subsystem exists to serve or constrain them.
 
 #### Knowledge Engine (RFC-0015)
 
@@ -378,25 +384,35 @@ RFC-0003 elaborates on the security model.
 
 ## MVP
 
-The MVP runtime includes:
+The MVP is ordered so that the execution kernel is proven **before** any AI is involved
+(RFC-0099). If a Run cannot survive `kill -9` deterministically, no amount of model quality
+matters, and every later bug is misattributed to the model.
 
-1. **Project Manager**: Create and manage projects backed by Git.
-2. **Session Manager**: Create long-lived sessions within projects.
-3. **Event Bus**: Basic event system for session coordination.
-4. **Intent Graph**: Persistent storage of goals and plans.
-5. **Artifact Manager**: Store and retrieve artifacts.
-6. **AI Engine**: Integration with a single model provider (Claude API).
-7. **Tool Broker**: Git, filesystem, and shell access (with permission checks).
-8. **Storage Engine**: SQLite for structured data, filesystem for files.
-9. **Permission System**: Basic capability-based access control.
-10. **Scheduler**: Wake sessions on timer and user-input events.
+Kernel first, with no AI and no tools:
+
+1. **Scopes and identity** (RFC-0054): user and project scope; UUIDv7.
+2. **State store**: the schema, executed in CI, with migrations.
+3. **Capability manager** (RFC-0018): handles, named exercise, attenuation, revocation epochs.
+4. **Execution graph and checkpointed executor** (RFC-0019, RFC-0009).
+5. **Audit log** and **budget ledger** (RFC-0028).
+6. **Project lock** (RFC-0055) and crash recovery.
+
+Then the first vertical slice:
+
+7. **Agent loop** (RFC-0008) with one remote provider adapter.
+8. **Prompt construction** (RFC-0025) with escaping and redaction.
+9. **Trust and taint** (RFC-0027).
+10. **Filesystem and Git tools** (JGit, RFC-0053) with typed effects and preview.
+11. **CLI frontend** over the Runtime API (RFC-0052).
+
+Then the offline proof: local model, local embeddings, basic knowledge index, routing policy —
+validated on a mid-range phone in airplane mode before any UI work begins.
 
 The MVP does not include:
-- Multiple AI providers.
-- Advanced Knowledge Engine features.
-- Plugin system.
-- Distributed compute.
-- Encrypted secrets storage (can be added later).
+- Plugin host (MCP is the v1 extension mechanism; RFC-0043).
+- Shell on MOBILE (it does not exist there; RFC-0049).
+- Full Intent Graph DAG (a task description suffices).
+- Multi-device sync or collaboration.
 
 ## Future Work
 

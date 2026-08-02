@@ -41,13 +41,26 @@ It does not define remote runtime access (all connections are local-to-device).
 All runtime-frontend communication is local to the device. There is no network transport between the runtime and its own frontends.
 
 **Desktop (JVM)**:
-The runtime is loaded as a library in the same JVM process as the Compose Multiplatform frontend. Communication uses in-process function calls wrapped behind the `RuntimeClient` interface. No IPC overhead.
+The runtime is a **separate daemon process**. Frontends — the Compose GUI, the CLI, and any
+editor integration — connect over a Unix domain socket (macOS/Linux) or named pipe (Windows),
+exchanging newline-delimited JSON.
+
+An earlier version loaded the runtime as a library inside the GUI process. That could not
+deliver RFC-0002's "multiple frontends may interact with the same runtime", made a GUI crash
+kill a running Run, and left the API seam free to erode into shared mutable state because
+nothing enforced it. It also created the possibility of two runtimes on one project (RFC-0055).
 
 **Android**:
-The runtime runs in a foreground service within the same application process. Communication uses in-process calls through a bound service interface.
+The runtime runs in-process inside a foreground service, behind the same `RuntimeClient`
+interface. MOBILE has exactly one frontend by construction, so the boundary is a discipline
+rather than a process — acceptable, and the interface is identical either way.
 
 **CLI**:
-The CLI is a thin process that connects to a running runtime daemon via a Unix domain socket (macOS/Linux) or named pipe (Windows). The CLI serializes commands as newline-delimited JSON.
+A thin client of the desktop daemon, using the same socket and protocol as the GUI. It is not a
+special case.
+
+**Test/mock**:
+An in-memory `MockRuntimeClient` implements the same interface.
 
 **Test/mock**:
 An in-memory `MockRuntimeClient` implements the same `RuntimeClient` interface, enabling frontends to be tested without a real runtime.
@@ -168,12 +181,17 @@ data class SessionDetail(
 
 ```kotlin
 interface CapabilityCommands {
+    // All of these require a `user_interactive` connection (see Authentication).
     suspend fun grant(request: GrantCapabilityRequest): CapabilityResult
     suspend fun revoke(capabilityId: UUID)
     suspend fun list(sessionId: UUID): List<CapabilitySummary>
     suspend fun listPending(): List<PendingCapabilityRequest>
     suspend fun approve(requestId: UUID): CapabilityResult
     suspend fun deny(requestId: UUID, reason: String)
+
+    // Per-call approval for a previewed effect (RFC-0030) or a tainted escalation (RFC-0027).
+    suspend fun approveEffect(runId: UUID, taskId: UUID): CapabilityResult
+    suspend fun denyEffect(runId: UUID, taskId: UUID, reason: String)
 }
 
 data class GrantCapabilityRequest(
@@ -331,7 +349,19 @@ interface RuntimeInfo {
     suspend fun getVersion(): RuntimeVersion
     suspend fun getStatus(): RuntimeStatus
     suspend fun listOpenProjects(): List<ProjectSummary>
+
+    // RFC-0049: frontends render tool availability rather than discovering it by failure.
+    suspend fun getProfile(): PlatformProfile
+    suspend fun getAvailability(projectId: UUID): AvailabilityReport
 }
+
+data class AvailabilityReport(
+    val profile: PlatformProfile,
+    val networkAvailable: Boolean,
+    val satisfied: List<String>,      // tool families available
+    val degraded: List<String>,       // declared optional, unavailable here
+    val unsatisfied: List<String>     // declared required, unavailable here
+)
 
 data class RuntimeVersion(
     val apiVersion: Int,         // increments on breaking changes
@@ -368,35 +398,52 @@ When a frontend connects, it declares the minimum API version it requires. The r
 
 ### Authentication
 
-In the MVP, all connections from the same device are trusted. Authentication is not required for local-only frontends.
+**Local connections are authenticated. "Same device implies trusted" is not the model.**
 
-Future work: When remote frontend access is added (accessing a home server runtime from a mobile device), the runtime requires a shared secret (device pairing token). This is not part of the MVP.
+The runtime spawns child processes it does not trust — stdio MCP servers, shell commands, and
+later plugin hosts. If any local process could connect, a spawned MCP server could call
+`capabilities.approve()` on its own pending request and defeat the human-in-the-loop that the
+entire security model rests on.
+
+The mechanism (RFC-0055):
+
+1. The socket is created with owner-only permissions (`0600`) in the user's runtime directory.
+2. At startup the runtime mints a **connection token**, written to a file readable only by the
+   user. Every client presents it on connect.
+3. **Child processes spawned by the Tool Broker receive a scrubbed environment** with no token
+   and no socket path.
+4. A connection declares whether it is `user_interactive` — able to present UI to a human.
+   Commands that grant or approve authority (`capabilities.grant`, `approve`, `deny`) require
+   it. A CLI in a pipeline cannot silently approve on the user's behalf.
+
+Each connection is a `FRONTEND` capability subject (RFC-0018), so a connection's permitted
+command set is expressible and auditable rather than all-or-nothing.
+
+Future work: remote frontend access — a phone driving a desktop runtime — adds device pairing
+and transport encryption. The token model above is the local case of the same mechanism.
 
 ### Error Handling
 
 All commands return either a success result or an error result. Errors are structured:
 
-```kotlin
-data class RuntimeError(
-    val code: ErrorCode,
-    val message: String,
-    val details: Map<String, String> = emptyMap()
-)
+Errors use `AidosError` from RFC-0029, which is the single taxonomy shared by the Runtime API,
+the Tool Broker, and the Execution Graph. The enum previously defined here duplicated
+RFC-0019's `ErrorCategory` over the same domain with different members and said nothing about
+what to do with an error.
 
-enum class ErrorCode {
-    PROJECT_NOT_FOUND,
-    SESSION_NOT_FOUND,
-    RUN_NOT_FOUND,
-    CAPABILITY_DENIED,
-    CAPABILITY_NOT_FOUND,
-    INVALID_REQUEST,
-    RUNTIME_BUSY,
-    RUNTIME_ERROR,
-    NOT_SUPPORTED
-}
+```kotlin
+data class AidosError(
+    val code: String,                 // stable, namespaced: "capability.denied"
+    val errorClass: ErrorClass,       // TRANSIENT | DENIED | EXHAUSTED | CONFLICT | ...
+    val message: String,
+    val detail: Map<String, String> = emptyMap()
+)
 ```
 
-Frontends should handle all error codes. Unknown error codes (from newer runtime versions) should be treated as `RUNTIME_ERROR`.
+Codes are strings, not an enum, because plugins and MCP adapters introduce codes the core does
+not know and an enum would flatten them all to `UNKNOWN`. Frontends switch on `errorClass`,
+which is closed and small, and use `code` for specific messaging where they have it. A code may
+be added at any time; removing one or changing its class requires an `apiVersion` increment.
 
 ### Mock Runtime for Testing
 

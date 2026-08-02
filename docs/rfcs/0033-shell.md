@@ -4,11 +4,38 @@ Status: Draft
 
 ## Abstract
 
-The Shell tool allows sessions to execute shell commands. Shell access is gated by explicit permission (RFC-0003). Commands run in sandboxed environments with timeouts, working directory restrictions, and captured output. Shell execution is logged and auditable. The shell tool is powerful but dangerous, so strict controls are necessary.
+The Shell tool allows sessions to execute shell commands on platform profiles that support it.
+Shell access is gated by explicit capability (RFC-0018), runs with a working directory fixed by
+the capability scope, and is logged and auditable. **Shell is a `PLATFORM`-tier tool: it exists
+on DESKTOP and HEADLESS_SERVER, and does not exist on MOBILE** (RFC-0049).
 
 ## Motivation
 
-Some tasks require direct command execution: running tests, building projects, invoking scripts. The Shell tool enables this while maintaining security through permissions and sandboxing.
+Some tasks require direct command execution: running tests, building projects, invoking
+scripts. The Shell tool enables this where the platform allows it.
+
+### Shell is not available on the first platform, and that is by design
+
+Android provides no general shell and forbids executing arbitrary binaries. Rather than
+pretending otherwise or treating this as a defect, the architecture treats shell as a declared,
+tiered capability:
+
+- The primary Aidos use case — making progress on Git projects offline from a phone — is
+  reading, understanding, planning, editing, reviewing, and committing. None of it requires a
+  shell.
+- On MOBILE, the model is never *told* the shell tool exists (RFC-0008 filters descriptors by
+  availability), so it never proposes it, and the user never sees a denial for something that
+  could not have worked.
+- A project that declares `tools = ["shell"]` reports shell as degraded or unsatisfied when
+  opened on a phone, **before** any session spends tokens (RFC-0049).
+- Work started on a phone remains completable: a Run that could not run tests still produces a
+  commit, and the Execution Graph records what was skipped so a later Run on a capable device
+  can pick it up.
+
+Where a narrow native capability is genuinely valuable on mobile — fast content search, for
+example — it ships as a `BUNDLED` tool with a typed effect and its own capability, fixed at
+build time. `BUNDLED` is deliberately not a shell with extra steps: no interpreter is ever
+bundled, and nothing executable arrives from a project.
 
 ## Goals
 

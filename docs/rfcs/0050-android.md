@@ -4,19 +4,51 @@ Status: Draft
 
 ## Abstract
 
-Android is the first Aidos UI, built with Jetpack Compose. It provides an offline-first mobile experience with full runtime support, background scheduling, push notifications, and voice input. The Android app is independent of the runtime (RFC-0002); it communicates via local IPC. Users can manage projects, interact with sessions, view artifacts, and run AI capabilities on their device.
+Android is the first Aidos UI, built with Jetpack Compose. It provides an offline-first mobile
+experience for making progress on Git projects without a network. The app hosts the runtime
+**in-process inside a foreground service**, behind the same `RuntimeClient` interface every
+frontend uses (RFC-0052, RFC-0055). Users manage projects, interact with sessions, review
+diffs, commit work, and run local models on the device.
 
 ## Motivation
 
-Mobile-first is strategic for Aidos:
+The primary Aidos use case is **making progress on Git projects, offline, from a phone**:
+reading and understanding code, planning, editing, reviewing, and committing. Not running CI on
+a handset.
 
-1. **Ubiquity**: Users have phones everywhere; laptops are less portable.
-2. **Offline capability**: Phones work offline better than laptops (focus mode, no notifications).
-3. **Native integrations**: Android provides camera, microphone, sensors, notifications.
-4. **Background work**: Android scheduler enables long-running tasks.
-5. **Instant access**: Always-on assistant in pocket.
+1. **The phone is where the spare time is.** Commutes, queues, and waiting rooms are when a
+   project gets thought about. Today that time is unusable for real work.
+2. **Offline is the normal state**, not a degraded one — on transport, abroad, or with no
+   signal.
+3. **Native input surfaces**: microphone for voice capture, camera for documents.
+4. **Instant access** without opening a laptop.
 
-The first Aidos UI is Android, not web or desktop. This demonstrates offline-first and headless runtime (RFC-0002) principles early.
+### What Android can and cannot do, stated up front
+
+Android is the most constrained profile, and the architecture treats that explicitly rather
+than discovering it during implementation (RFC-0049):
+
+| | |
+|---|---|
+| Available | filesystem, Git via JGit (object DB and working tree), local models, bundled native tools, HTTP MCP when online |
+| **Not available** | general shell, arbitrary subprocesses, stdio MCP, `git worktree`, exact timers, unbounded execution windows |
+
+None of these block the core use case. Reading, planning, editing, reviewing, and committing
+require none of them. What they do require is that the app never pretends otherwise:
+
+- Unavailable tools are **never offered to the model** (RFC-0008), so it cannot propose them.
+- A project declaring `tools = ["shell"]` reports shell as degraded **when the project opens**,
+  not when a Run fails halfway through.
+- Worker isolation uses **treeless workers** — commits built directly against the object
+  database with no second checkout (RFC-0049). Cheaper than a worktree and available here.
+- Runs execute in interruptible, checkpointed steps, so eviction resumes rather than restarts
+  (RFC-0009).
+
+An earlier version of this RFC claimed "Android scheduler enables long-running tasks" and that
+phones "work offline better than laptops." Both were motivated reasoning: Android background
+execution is *harder*, not easier, and offline capability comes from local models and local
+Git, not from the platform. The case for Android first rests on where the user is, not on the
+platform being permissive.
 
 ## Goals
 

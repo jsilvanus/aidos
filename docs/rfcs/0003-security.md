@@ -55,13 +55,76 @@ This RFC does not address collaboration security (how to share capabilities acro
 
 ### Threat Model
 
-**Threat 1: Rogue AI Agent**
+The adversary Aidos is designed against is **not** someone who has already compromised the
+device. It is content and code that the user's agent will read or run in the course of ordinary
+work, and which the user has no reason to have inspected.
 
-An AI session is tricked into performing malicious actions (e.g., deleting files, exfiltrating data, running malware). Mitigation: Capabilities restrict what a session can do. A session without filesystem write permission cannot delete files.
+**Threat 1 (primary): Indirect prompt injection**
 
-**Threat 2: Malicious Tool Integration**
+An attacker writes content the agent will read — a README in a vendored dependency, an issue
+body, a fetched web page, an MCP server's response — containing instructions aimed at the
+model. This is the highest-likelihood threat, because reading untrusted text is what a coding
+agent does all day.
 
-An external tool (MCP server, shell script) is compromised and attempts to escalate privileges or access protected resources. Mitigation: Tools are invoked through the Tool Broker, which checks permissions. A tool cannot access resources the session does not have capability for.
+*What does not work:* asking the model to ignore instructions inside delimiters. That makes the
+model the enforcement point, and models are not reliable enforcement points.
+
+*Mitigation:* the danger is not that the model read the text, it is that its next tool call
+carries the session's full authority. **A Run whose context has admitted untrusted content
+operates under an attenuated capability set for the remainder of the Run** (RFC-0027):
+in-project reversible work continues frictionlessly, while egress, secrets, out-of-project
+mutation, and `UNSAFE` effects require per-call approval naming the specific tainting content.
+Structural sandboxing with mandatory delimiter escaping (RFC-0025) is defence in depth.
+
+*Residual risk:* an injected instruction can still cause in-project damage — writing nonsense
+into the user's source. Git makes that reviewable and revertible. This is accepted.
+
+**Threat 2: Hostile project content — "clone equals execution"**
+
+The user clones or imports a project from someone else. If any project-supplied file can cause
+code to run or authority to be granted, opening a repository is equivalent to running it.
+
+*Mitigation, structural:* project configuration expresses **preferences and requests only**
+(RFC-0010). It cannot contain secrets, capability grants, or executable commands. MCP servers
+and plugins are registered at **user scope** and merely *requested* by name from a project
+(RFC-0031, RFC-0054). Git hooks are never executed (RFC-0053). Nothing executable is fixed at
+anything but build time on MOBILE (RFC-0049).
+
+*Why this matters more than it appears:* the earlier design allowed a Git-tracked
+`mcp_servers` block containing a `command` string, which made `git pull` a code-execution
+primitive.
+
+**Threat 3: Malicious or compromised tool provider**
+
+An MCP server or plugin attempts to escalate, exfiltrate, or steer the agent.
+
+*Mitigation:* tool providers are **capability subjects in their own right** (RFC-0018) holding
+attenuated grants, rather than borrowing the calling session's authority — otherwise a hostile
+provider inherits whatever the session holds. Their output is `UNTRUSTED` and taints the Run.
+Spawned processes receive a **scrubbed environment** with no runtime connection token
+(RFC-0055), which prevents the specific attack of a spawned MCP server connecting back to the
+runtime and approving its own capability request.
+
+*Honest limitation:* a subprocess with the same user ID is not sandboxed by virtue of being a
+subprocess. On DESKTOP, platform sandboxing is applied where available; the load-bearing
+controls are the attenuated grant, the scrubbed environment, and audit.
+
+**Threat 4: Local process on the user's machine**
+
+Another program running as the same user attempts to drive the runtime through its API.
+
+*Mitigation:* owner-only socket permissions plus a connection token; authority-granting
+commands additionally require a `user_interactive` connection (RFC-0052, RFC-0055). "Same
+device implies trusted" was not a defensible model once the runtime began spawning processes it
+does not trust.
+
+**Threat 5: Runaway cost and self-amplification**
+
+Not an attacker at all, and more likely than any of the above: an event loop between two
+sessions, or an agent loop that never terminates, spending money and battery.
+
+*Mitigation:* hard step ceilings, budgets enforced as capability constraints, causal-depth
+limits, wake-rate circuit breakers, and no event replay on boot (RFC-0008, RFC-0028).
 
 **Threat 3: Secret Leakage**
 
@@ -77,10 +140,28 @@ A low-privilege session attempts to acquire high-privilege capabilities. Mitigat
 
 **What We Do Not Protect Against:**
 
-- **Compromised OS**: If the operating system is compromised, Aidos cannot guarantee safety. We assume the OS is trustworthy.
-- **Untrusted Hardware**: We assume the hardware is not malicious.
-- **Side-channel Attacks**: We do not protect against timing attacks, cache attacks, or other side-channel exploits.
-- **Coerced User**: If the user is coerced to grant dangerous permissions, Aidos cannot stop them.
+- **Compromised OS or hardware**: assumed trustworthy.
+- **Side-channel attacks**: out of scope.
+- **A coerced or careless user**: if the user approves everything, no control helps. This is why
+  escalation prompts must be *rare and specific* — a design constraint, not a disclaimer. In
+  particular, in-project reversible work is deliberately frictionless so that the prompts which
+  do appear carry signal.
+- **A malicious runtime build**: users are expected to obtain Aidos from a trusted source.
+- **The model being wrong**: correctness of model output is not a security property. Git
+  history and preview-before-mutate are the mitigations for bad output, not the capability
+  model.
+
+### Capability model: what the term means here
+
+RFC-0018 defines the mechanism. Two properties are worth stating at this level, because they
+determine whether the rest of this threat model holds:
+
+- **Designation travels with authority.** A subject exercises a *named* capability, and
+  hierarchical resources are reached through handles that resolve paths against their own root.
+  The runtime never searches for an authority that would permit a requested operation. Without
+  this, the model is an ACL keyed by session identity and Threat 1 is unmitigated.
+- **Authority is contextual, not static.** The effective grant is a function of the held
+  capability *and* the Run's taint (RFC-0027).
 
 ### Capability-Based Access Control
 

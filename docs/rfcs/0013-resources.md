@@ -1,6 +1,16 @@
 # RFC-0013: Resources
 
-Status: Draft
+Status: **Superseded by RFC-0024**
+
+> **This RFC is retained for its motivation and vocabulary, not as an implementation target.**
+>
+> RFC-0024 (Resource Graph) unifies resources and artifacts into a single `ContentNode`
+> abstraction in which mutability is a *policy field* rather than a type distinction. A
+> "resource" is a `ContentNode` with `MutabilityPolicy.VERSIONED` or `MUTABLE_LATEST`.
+>
+> The distinction this RFC draws is real and worth understanding — outputs become inputs, and
+> the promotion path matters — but maintaining two parallel content models produced conflicting
+> storage rules and two places to enforce egress policy. Implement RFC-0024.
 
 ## Abstract
 

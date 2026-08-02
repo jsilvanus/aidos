@@ -24,6 +24,16 @@ It does not define user authentication systems.
 
 ## Design
 
+> **Scope resolution.** The vault is **user scope** (RFC-0054) — one per installation, never
+> per project. Secrets must never appear in `aidos.toml`, which is Git-tracked and travels to
+> other machines (RFC-0010). Consumers reference secrets by ID (`secret_ref`); values are
+> injected at the point of use and never written to configuration, events, audit records, or
+> prompt packages.
+>
+> A secret-pattern detector runs over tool output and file content; matches are labelled
+> `SECRET` (RFC-0024), excluded from all prompts and exports, and the detection is audited
+> without recording the value (RFC-0056).
+
 Secrets are stored in a vault scoped to the user, workspace, or project. Each secret has metadata about expiration, sensitivity, and allowed consumers. Secrets are decrypted only at the point of use and are cleared from memory when no longer needed.
 
 ## Data Model

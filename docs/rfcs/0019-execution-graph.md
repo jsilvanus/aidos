@@ -66,6 +66,9 @@ Run (top-level execution for a user request)
 
 A Run is the top-level unit of execution, created by the Session Execution Contract when a session wakes in response to an event. A Run contains one or more Tasks.
 
+This is the **only** definition of `Run`. RFC-0006 previously carried a second, incompatible
+one; it now references this.
+
 ```kotlin
 data class Run(
     val id: UUID,
@@ -76,23 +79,32 @@ data class Run(
     val startedAt: Instant,
     val endedAt: Instant?,
     val state: RunState,
-    val error: String?,                // if FAILED, why
-    val artifactIds: List<UUID>,       // artifacts produced during this run
-    val taskIds: List<UUID>,           // tasks in execution order
+    val error: AidosError?,            // RFC-0029
     val userMessageSummary: String?,   // short summary of what the user asked
-    val retryPolicy: RetryPolicy
+    val retryPolicy: RetryPolicy,
+    val stepIndex: Int,                // RFC-0009 executor position
+    val maxSteps: Int,                 // RFC-0008 termination ceiling
+    val taintLevel: TrustLevel,        // RFC-0027, monotonic within the Run
+    val platformProfile: PlatformProfile  // RFC-0049, recorded for provenance
 )
 
 enum class RunState {
     PENDING,      // Created, not yet dispatched
     RUNNING,      // Session is actively processing
-    YIELDED,      // Waiting for async operation (AI call, tool call, approval)
+    YIELDED,      // Waiting for something that may outlive the process (RFC-0006)
     COMPLETED,    // All tasks completed successfully
     FAILED,       // One or more tasks failed unrecoverably
     CANCELLED,    // User cancelled the run
     INTERRUPTED   // Process terminated unexpectedly during this run
 }
 ```
+
+**`Run` no longer carries `artifactIds` or `taskIds`.** Both were denormalized JSON arrays
+duplicating relationships that foreign keys already express, and they created the possibility
+of disagreement with the authoritative rows. Tasks are found by `tasks.run_id ORDER BY ordinal`;
+produced artifacts are found through `PRODUCED` edges. See "One fact, one place" below.
+
+The composition rules between `RunState` and `TaskState` are defined in RFC-0006.
 
 ### Task
 
@@ -104,17 +116,15 @@ data class Task(
     val runId: UUID,
     val sessionId: UUID,
     val projectId: UUID,
+    val ordinal: Int,                  // execution order within the Run
     val kind: TaskKind,
-    val description: String,           // human-readable, e.g. "Read /project/src/auth.kt"
+    val description: String,           // human-readable, e.g. "Read src/auth.kt"
     val toolName: String?,             // if kind == TOOL_CALL
-    val modelCapability: String?,      // if kind == MODEL_CALL, e.g. "claude-opus/chat"
-    val inputRef: UUID?,               // artifact or resource used as input
-    val outputRef: UUID?,              // artifact produced as output
+    val modelCapability: String?,      // if kind == MODEL_CALL
     val state: TaskState,
-    val startedAt: Instant,
+    val startedAt: Instant?,           // null while PENDING
     val endedAt: Instant?,
-    val attemptIds: List<UUID>,
-    val currentAttemptId: UUID?,
+    val awaitingRunId: UUID?,          // if parked on a child session's Run (RFC-0006)
     val retryPolicy: RetryPolicy
 )
 
@@ -169,22 +179,18 @@ enum class AttemptState {
     CANCELLED
 }
 
-data class AttemptError(
-    val code: ErrorCode,
-    val message: String,
-    val isRetryable: Boolean,
-    val category: ErrorCategory
-)
-
-enum class ErrorCategory {
-    CAPABILITY_DENIED,
-    TOOL_ERROR,
-    MODEL_ERROR,
-    TIMEOUT,
-    CANCELLED,
-    UNKNOWN
-}
+// Errors are AidosError (RFC-0029). `AttemptError` and the local ErrorCategory enum are
+// removed: they duplicated RFC-0052's ErrorCode over the same domain with different members,
+// and retryability is a property of the error class, not a per-site boolean.
 ```
+
+Retry decisions read the error's **class** (RFC-0029): `TRANSIENT` and `RATE_LIMITED` retry,
+everything else does not. `retryOnCategories` in `RetryPolicy` below is therefore a set of
+error *classes*.
+
+**Retry safety.** A Task may only be retried if its effect's `recovery_class` (RFC-0009) is
+`PURE`, `IDEMPOTENT`, or `CHECKABLE`. Retrying an `UNSAFE` effect is forbidden regardless of
+policy — an interrupted `git push` or outbound notification must never be silently repeated.
 
 ### Retry Policy
 
@@ -219,16 +225,35 @@ data class ExecutionEdge(
 enum class NodeKind { RUN, TASK, ATTEMPT, ARTIFACT, INTENT_NODE }
 
 enum class EdgeKind {
-    CONTAINS,          // Run CONTAINS Task; Task CONTAINS Attempt
-    PRODUCED,          // Attempt PRODUCED Artifact
-    CONSUMED,          // Task CONSUMED Artifact (used as input)
-    TRIGGERED_BY,      // Run TRIGGERED_BY Event
+    PRODUCED,          // Attempt PRODUCED ContentNode
+    CONSUMED,          // Task CONSUMED ContentNode (used as input)
     IMPLEMENTS,        // Run IMPLEMENTS IntentNode (links execution to intent)
     RETRY_OF,          // Attempt RETRY_OF prior Attempt
-    CANCELLED_BY,      // Attempt CANCELLED_BY event or user action
-    DEPENDS_ON         // Task DEPENDS_ON Task (ordering within a run)
+    PRODUCED_CALL,     // MODEL_CALL Task PRODUCED_CALL the TOOL_CALL Tasks it emitted (RFC-0008)
+    DEPENDS_ON         // Task DEPENDS_ON Task (explicit ordering beyond `ordinal`)
 }
 ```
+
+### One fact, one place
+
+`CONTAINS`, `TRIGGERED_BY`, and `CANCELLED_BY` are removed. Each duplicated something a column
+already stated: containment is `tasks.run_id` and `attempts.task_id`, triggering is
+`runs.trigger_event_id`, and cancellation is the Attempt's state plus its audit record.
+
+Provenance was previously representable in four places at once — `runs.artifact_ids`,
+`tasks.output_ref`, `PRODUCED` edges here, and `provenance_edges` in RFC-0024 — with nothing
+reconciling them. The rule now:
+
+| Fact | Single source |
+|---|---|
+| Which Tasks a Run contains | `tasks.run_id`, ordered by `tasks.ordinal` |
+| Which Attempts a Task contains | `attempts.task_id`, ordered by `attempt_number` |
+| Which content an Attempt produced | `execution_edges` with `PRODUCED` |
+| How content derives from other content | `provenance_edges` (RFC-0024) |
+| Which event triggered a Run | `runs.trigger_event_id` |
+
+`execution_edges` records execution→content facts; `provenance_edges` records content→content
+facts. They answer different questions and neither is derivable from the other.
 
 ### Query Model
 
@@ -236,12 +261,17 @@ The Execution Graph supports the following key queries:
 
 **"What happened during this Run?"**
 ```sql
-SELECT t.id, t.kind, t.description, t.state, a.attempt_number, a.state, a.error_json
+SELECT t.id, t.kind, t.description, t.state,
+       a.attempt_number, a.state, a.error_code, a.error_class
 FROM tasks t
-JOIN attempts a ON a.task_id = t.id
+LEFT JOIN attempts a ON a.task_id = t.id
 WHERE t.run_id = ?
-ORDER BY t.started_at, a.attempt_number;
+ORDER BY t.ordinal, a.attempt_number;
 ```
+
+`LEFT JOIN` and `ORDER BY ordinal`: an inner join hides `PENDING` and `SKIPPED` Tasks, which
+have no Attempts and are exactly what the user needs to see when a Run failed partway.
+Ordering by `started_at` would drop unstarted Tasks out of position.
 
 **"What produced this Artifact?"**
 ```sql
@@ -282,11 +312,21 @@ CREATE TABLE runs (
     started_at TEXT NOT NULL,
     ended_at TEXT,
     state TEXT NOT NULL,
-    error TEXT,
-    artifact_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    error_code TEXT,                                  -- RFC-0029
+    error_class TEXT,
+    error_detail_json TEXT,
     user_message_summary TEXT,
     retry_policy_json TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id)
+    step_index INTEGER NOT NULL DEFAULT 0,            -- RFC-0009
+    max_steps INTEGER NOT NULL DEFAULT 24,            -- RFC-0008
+    taint_level TEXT NOT NULL DEFAULT 'TRUSTED',      -- RFC-0027
+    taint_source_node_id TEXT,
+    platform_profile TEXT NOT NULL,                   -- RFC-0049
+    network_available INTEGER NOT NULL DEFAULT 0,
+    degraded_tools TEXT NOT NULL DEFAULT '[]',
+    row_version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (session_id) REFERENCES sessions(id),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
 CREATE TABLE tasks (
@@ -294,17 +334,19 @@ CREATE TABLE tasks (
     run_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,                         -- execution order within the Run
     kind TEXT NOT NULL,
     description TEXT NOT NULL,
     tool_name TEXT,
     model_capability TEXT,
-    input_ref TEXT,
-    output_ref TEXT,
     state TEXT NOT NULL,
-    started_at TEXT NOT NULL,
+    started_at TEXT,
     ended_at TEXT,
+    awaiting_run_id TEXT,                             -- if parked on a child Run (RFC-0006)
     retry_policy_json TEXT NOT NULL,
-    FOREIGN KEY (run_id) REFERENCES runs(id)
+    row_version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (run_id) REFERENCES runs(id),
+    UNIQUE (run_id, ordinal)
 );
 
 CREATE TABLE attempts (
@@ -314,34 +356,54 @@ CREATE TABLE attempts (
     started_at TEXT NOT NULL,
     ended_at TEXT,
     state TEXT NOT NULL,
-    error_json TEXT,
-    input_snapshot TEXT,
-    output_snapshot TEXT,
+    error_code TEXT,                                  -- RFC-0029
+    error_class TEXT,
+    error_detail_json TEXT,
+    input_snapshot TEXT,                              -- AGED, compactable (RFC-0056)
+    output_snapshot TEXT,                             -- AGED, compactable
+    prompt_package_json TEXT,                         -- RFC-0025, AGED
     model_provider TEXT,
     model_version TEXT,
     tokens_input INTEGER,
     tokens_output INTEGER,
-    tool_result TEXT,
-    capability_id TEXT,
+    cost_units INTEGER,                               -- RFC-0028
+    capability_id TEXT,                               -- the authority actually exercised
+    idempotency_key TEXT,                             -- RFC-0009
+    recovery_class TEXT NOT NULL DEFAULT 'PURE',      -- RFC-0009
     audit_ref TEXT NOT NULL,
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
+    FOREIGN KEY (task_id) REFERENCES tasks(id),
+    FOREIGN KEY (capability_id) REFERENCES capabilities(id),
+    UNIQUE (task_id, attempt_number)
 );
 
+-- Execution → content facts only. Content → content lineage is provenance_edges (RFC-0024).
 CREATE TABLE execution_edges (
     id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
     from_node_id TEXT NOT NULL,
     from_node_kind TEXT NOT NULL,
     to_node_id TEXT NOT NULL,
     to_node_kind TEXT NOT NULL,
-    edge_kind TEXT NOT NULL
+    edge_kind TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    UNIQUE (from_node_id, to_node_id, edge_kind)
 );
 
-CREATE INDEX idx_runs_session ON runs(session_id);
-CREATE INDEX idx_tasks_run ON tasks(run_id);
-CREATE INDEX idx_attempts_task ON attempts(task_id);
+CREATE INDEX idx_runs_session ON runs(session_id, started_at DESC);
+CREATE INDEX idx_runs_state ON runs(project_id, state);
+CREATE INDEX idx_tasks_run ON tasks(run_id, ordinal);
+CREATE INDEX idx_tasks_runnable ON tasks(run_id, state, ordinal);
+CREATE INDEX idx_attempts_task ON attempts(task_id, attempt_number);
+CREATE INDEX idx_attempts_running ON attempts(state) WHERE state = 'RUNNING';
 CREATE INDEX idx_edges_from ON execution_edges(from_node_id, edge_kind);
 CREATE INDEX idx_edges_to ON execution_edges(to_node_id, edge_kind);
 ```
+
+`execution_edges` spans heterogeneous node kinds, so SQLite cannot enforce referential
+integrity on it. `project_id` and the uniqueness constraint bound the damage; a consistency
+check (RFC-0038) verifies that every edge endpoint resolves. This is a known and accepted
+limitation of a generic edge table, which is why containment was moved to real foreign keys
+rather than being expressed here.
 
 ## Security
 
@@ -355,16 +417,18 @@ Attempt records are append-only: they may have their state updated but their con
 
 The MVP implements:
 
-1. Run, Task, and Attempt tables with state machines as defined.
-2. `CONTAINS`, `PRODUCED`, `TRIGGERED_BY`, and `RETRY_OF` edge types.
-3. Basic retry logic for tool calls (max 3 attempts, no backoff).
-4. Query: "what happened during this Run?" (for the CLI audit display).
-5. Query: "what produced this Artifact?" (for artifact provenance).
-6. `tokens_input` and `tokens_output` tracking per Attempt.
+1. Run, Task, and Attempt tables with the state machines and composition rules (RFC-0006).
+2. `PRODUCED`, `PRODUCED_CALL`, and `RETRY_OF` edge types.
+3. Retry driven by error class (RFC-0029) and gated by recovery class (RFC-0009); max 3
+   attempts, no backoff.
+4. Query: "what happened during this Run?" (CLI audit display).
+5. Query: "what produced this content?" (provenance).
+6. Per-Attempt `tokens_input`, `tokens_output`, `cost_units`, and `capability_id`.
+7. Per-Run `taint_level` and `platform_profile` recording.
 
 The MVP does not implement:
 - `IMPLEMENTS` edges (requires Intent Graph integration).
-- `DEPENDS_ON` edges (requires multi-task planning within a session).
+- `DEPENDS_ON` edges and parallel task execution.
 - Configurable retry policies (fixed retry count only).
 - Compensation graphs.
 

@@ -57,14 +57,44 @@ Enhancements or extensions possible after MVP.
 RFCs are numbered in ranges by topic area:
 
 - **0000–0009**: Vision, principles, and runtime contracts
-- **0010–0019**: Core concepts (projects, sessions, graphs, resources)
-- **0020–0029**: AI engine and model providers
+- **0010–0019**: Core concepts (projects, sessions, graphs, state, capabilities)
+- **0020–0029**: AI engine, context, and execution policy
 - **0030–0039**: Tool broker and integrations
-- **0040–0049**: Storage and export
-- **0050–0059**: Platform frontends and Runtime API
+- **0040–0049**: Storage, operations, and platform profiles
+- **0050–0059**: Platform frontends, Runtime API, and runtime infrastructure
 - **0060–0069**: SDK and extensibility
 - **0099**: Roadmap
 - **0100–0199**: Reviews and meta-architecture
+
+## Where to start
+
+Reading fifty documents at equal authority is not a good introduction. This is the gradient:
+
+**The five that define the system.** If you read nothing else, read these:
+
+| RFC | Why it is load-bearing |
+|---|---|
+| [0008 Agent Loop](0008-agent-loop.md) | the core cycle: model output becoming an authorized effect |
+| [0009 Durable Execution](0009-durable-execution.md) | how a Run survives eviction; determines how all session logic is written |
+| [0018 Capability Model](0018-capability-model.md) | authority; handles, attenuation, revocation |
+| [0019 Execution Graph](0019-execution-graph.md) | Run/Task/Attempt — not a log, the program itself |
+| [0049 Platform Profiles](0049-platform-capability-profiles.md) | what Android-first actually means |
+
+**Then, by interest:** concepts (0010, 0011, 0024, 0012), context and AI (0025, 0027, 0020),
+tools (0030, 0032, 0053), operations (0017, 0054, 0055, 0056, 0028).
+
+**Superseded — do not implement:** RFC-0013 (Resources) and RFC-0014 (Artifacts) are replaced
+by RFC-0024 (Resource Graph). They are retained for their motivation.
+
+**Reviews** live in `docs/reviews/` and in RFC-0100–0102. They are *input*, not architecture.
+
+## How review findings are closed
+
+A review finding is closed by **a diff to the RFC it concerns**, referenced by commit — not by
+filing another document that records agreement with it. Reviews that produce new RFCs instead
+of edits leave the original defects in place while creating the impression they were resolved.
+When a review is acted on, edit the affected RFC and note the change; when it is rejected,
+record why in the RFC itself.
 
 ## Creating an RFC
 

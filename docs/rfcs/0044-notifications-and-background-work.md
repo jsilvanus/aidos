@@ -24,6 +24,17 @@ It does not define a user-facing notification system.
 
 ## Design
 
+> **Superseding detail.** The mechanisms this RFC gestures at are now specified elsewhere:
+> execution windows and checkpointed resumption in RFC-0009, platform constraints in RFC-0049,
+> boot coalescing and wake-rate limits in RFC-0028.
+>
+> One consequence must be stated plainly here, because it constrains every feature built on
+> timers: **on MOBILE, timers carry no latency guarantee.** `WorkManager` periodic work has a
+> 15-minute floor, exact alarms require special-access permission, and Doze can defer anything.
+> No session semantics may assume a wake occurred at a precise moment. Recurring sessions and
+> life-management features must be designed as "eventually, and tell me when" rather than
+> "at 09:00 exactly."
+
 Background work is modeled as a scheduled trigger that creates a run or task. The scheduler handles wakeups and dispatches work, while the runtime tracks state and cancellations. Notification delivery is treated as an external side effect that requires approval and a defined transport.
 
 ## Data Model

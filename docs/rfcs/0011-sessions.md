@@ -215,28 +215,55 @@ Session Persistent State {
   name: String
   role: SessionRole (driver | worker)
   description: String?
-  
+
   created_at: Timestamp
   last_active: Timestamp
   archived_at: Timestamp?
-  
-  capabilities: CapabilitySet      # Permissions (RFC-0003)
-  
-  memory: SessionMemory {
-    conversation_history: List<Message>
-    learned_facts: Map<String, Any>
-    task_state: Map<String, Any>
-    variables: Map<String, Any>
-  }
-  
-  artifacts: List<ArtifactId>      # All artifacts created
-  
-  intent_references: List<IntentNodeId>
-  
+  state: SessionState              # CREATED | SLEEPING | RUNNING | ARCHIVED (RFC-0017)
+
   parent_session: SessionId?       # If worker, who created it
-  subscriptions: List<SubscriptionId>
 }
 ```
+
+Three things are deliberately **not** fields on the session record:
+
+**Capabilities.** Authority lives in the `capabilities` table keyed by `subject_id`
+(RFC-0018). An embedded `CapabilitySet` would be a second source of truth for security state,
+and the two could disagree after a revocation.
+
+**Artifacts.** Found by querying content nodes and `PRODUCED` edges. A growing list column would
+be rewritten on every artifact creation.
+
+**Memory as one blob.** See below.
+
+### Session memory
+
+Memory is bounded and queryable, not an ever-growing list rewritten on each wake.
+
+```
+session_memory_entries
+  id, session_id, kind, content, tokens, created_at, superseded_by, taint_level
+```
+
+| Kind | Meaning | Bound |
+|---|---|---|
+| `SUMMARY` | rolled-up summary of prior Runs | one active per session |
+| `FACT` | a durable learned fact | soft cap, LRU eviction |
+| `DECISION` | a choice made and its reason | uncapped; these are small and valuable |
+| `TASK_STATE` | current work state | one active per session |
+
+**Raw conversation turns are not session memory.** They belong to a Run's transcript
+(RFC-0008), which is `AGED` and compacted (RFC-0056). When a Run completes, its transcript is
+summarized into a `SUMMARY` entry and the raw turns age out.
+
+This closes the highest-probability debt identified in review: an unbounded
+`conversation_history: List<Message>` inside the session row would grow without limit, be
+rewritten wholesale on every wake, degrade AI quality as it filled the context window, and be
+unqueryable. The rolling summary keeps context useful and cost bounded, and it is enforced by
+the schema rather than by a note recommending periodic cleanup.
+
+Memory entries carry `taint_level` (RFC-0027): a summary of a tainted Run taints the Run that
+includes it.
 
 #### Ephemeral State
 
@@ -569,12 +596,42 @@ Template: "Testing Session"
 New worker sessions inherit template defaults
 ```
 
+## Resolved questions
+
+These were open questions. Each is load-bearing semantics rather than a refinement, so each is
+now decided.
+
+**How is session memory summarized as it grows?** Rolling `SUMMARY` entries; raw turns live in
+Run transcripts and are compacted on a retention schedule (see Session memory above,
+RFC-0056).
+
+**How do workers inherit capabilities?** By explicit attenuated delegation only, never by
+inheritance (RFC-0018). A worker receives a strict subset of its driver's authority, narrower
+in scope, constraints, and expiry, and may re-delegate only if `allowsDelegation` was set. A
+worker never holds ambient project permissions.
+
+**What happens to pending workers if the driver terminates?** Orphaned workers are cancelled.
+When a driver reaches a terminal state, every worker whose `parent_session` is that driver and
+whose Run is non-terminal is cancelled with `run.parent_terminated`, and the delegated
+capabilities are revoked recursively — which happens automatically, since delegated
+capabilities are children of the driver's (RFC-0018). Work already committed by the worker
+survives as artifacts; only the authority and the pending Run end.
+
+**Do sessions have failure budgets?** Yes. A session with three consecutive `FAILED` Runs and
+no intervening success is parked in SLEEPING and stops responding to non-user events until the
+user intervenes. This prevents an event-driven session from failing in a loop against a
+persistent condition.
+
+**Is there loop detection?** Yes, at three levels: `max_steps` per Run (RFC-0008), no-progress
+detection on repeated identical tool calls (RFC-0008), and causal-depth plus wake-rate limits
+across sessions (RFC-0028). The last is the one that catches driver/worker ping-pong.
+
+**Contradictory instructions?** Resolved by the precedence hierarchy in RFC-0025; conflicts
+between instruction sources are surfaced to the user rather than silently ordered.
+
 ## Open Questions
 
-- How should session memory be summarized as it grows? Should old conversation be compressed?
-- Should a user be able to "fork" a session and explore an alternative path?
-- How should worker sessions inherit capabilities from drivers? All, subset, explicit delegation?
-- What should happen to pending workers if the driver session terminates unexpectedly?
-- Should sessions have "failure budgets" (e.g., allowed to fail N times before being paused)?
-- How should sessions handle contradictory instructions or conflicting permissions?
-- Should there be a built-in mechanism to detect and break infinite loops in sessions?
+- Should a user be able to fork a session and explore an alternative path? (Attractive, but it
+  interacts with worker refs and provenance in ways not yet worked through.)
+- Should sessions be able to message each other directly, or is coordination through artifacts,
+  events, and child Runs sufficient?

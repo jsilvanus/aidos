@@ -24,6 +24,16 @@ It does not define low-level scheduler tuning.
 
 ## Design
 
+> **Scope note.** Token, cost, and model-call budgets are **not** in this RFC — they are
+> capability constraints enforced transactionally in RFC-0028, because runaway spend is a
+> security and safety concern rather than a performance one. Storage budgets and reclamation
+> are RFC-0056. This RFC covers CPU, memory, battery, and latency.
+>
+> Note also that **per-session memory limits are not enforceable** on the JVM or Android and
+> have been removed from RFC-0005: there is no supported way to bound the heap consumed by one
+> coroutine, and Android's OOM killer terminates the process rather than a worker. Device-level
+> footprint budgets are the honest control.
+
 Each runtime action declares a resource profile describing CPU, memory, I/O, and cost expectations. The runtime uses budgets to throttle work or degrade functionality when limits are exceeded. The system also records actual resource usage for future tuning.
 
 ## Data Model

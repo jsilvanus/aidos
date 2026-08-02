@@ -54,7 +54,13 @@ The Scheduler is the component that implements this model. It:
 
 ## Non-goals
 
-This RFC does not specify multi-threaded or distributed scheduling. Aidos is single-threaded within a project.
+This RFC does not specify distributed scheduling.
+
+It does not define the concurrency model (RFC-0007) or the execution mechanism (RFC-0009). An
+earlier version stated "Aidos is single-threaded within a project" and included a blocking main
+loop; both are superseded. Runs within a project are *serialized*, which is a different and
+weaker claim than single-threaded: the executor is a coroutine holding a per-project mutex that
+it releases at checkpoints, so a parked Run does not block the project.
 
 This RFC does not address real-time scheduling guarantees. Aidos is not a real-time system; best-effort wake-up is acceptable.
 
@@ -89,23 +95,17 @@ This model is efficient because:
 
 ### Session Lifecycle
 
-A session progresses through the following states:
+The canonical session state machine is defined in RFC-0017: `CREATED → SLEEPING ⇄ RUNNING →
+ARCHIVED`. This RFC previously defined a variant adding `Ready` and `Yielding`, and RFC-0011
+defined a third; three definitions of a state exposed on the public Runtime API is three
+contracts.
 
-```
-Created → Ready → Running → Yielding → Sleeping
-                                ↓
-                              [Work done]
-                                ↓
-                             Archived
-```
+`Ready` and `Yielding` were properties of a *Run*, not of a session:
 
-- **Created**: A new session is created (via user request or system action). It is in "sleeping" state by default.
-- **Sleeping**: The session is dormant. It has subscriptions, but has no active work.
-- **Ready**: An event matching the session's subscriptions has arrived. The session is queued to run.
-- **Running**: The Scheduler is executing the session's code.
-- **Yielding**: The session is waiting for something external (AI response, tool completion). It remains in memory but does not consume CPU.
-- **Completion**: The session completes its work. It updates subscriptions and returns to sleep.
-- **Archived**: The session is archived (user deletes it or it completes permanently). It is moved to cold storage and is no longer woken.
+- "Ready" is a queued wake — it is a work-queue entry, not a session state. A session with a
+  queued event remains SLEEPING until the executor drives it.
+- "Yielding" is `Run.state = YIELDED` (RFC-0006). Its session stays RUNNING while it holds a
+  parked Run.
 
 ### Subscriptions and Filtering
 
@@ -180,12 +180,28 @@ When the Scheduler runs a session:
 
 To prevent runaway sessions:
 
-- **Execution Timeout**: A session has a maximum execution time (e.g., 5 minutes per run). If exceeded, the session is interrupted.
-- **Memory Limit**: A session has a maximum memory usage. If exceeded, it is killed and archived.
-- **Event Limit**: A session can generate at most N new events per run. Prevents infinite event loops.
-- **Subscription Limit**: A session can have at most K subscriptions.
+- **Step ceiling**: a Run terminates after `max_steps` agent-loop iterations (default 24,
+  RFC-0008). This is the primary control, because it bounds work in the unit that actually
+  costs money.
+- **Budget**: tokens, cost, and model calls are reserved before spend and settled after, at
+  Run, session, and project scope (RFC-0028).
+- **Execution timeout**: wall-clock limit per Run; on expiry the Run stops at the next
+  checkpoint and is parked as resumable rather than destroyed.
+- **Causal depth and wake rate**: events carry a depth; sessions that wake each other beyond
+  `maxCausalDepth`, or that exceed the per-project wake rate, trip a circuit breaker
+  (RFC-0028). This is what stops cross-session cycles — the old per-run event cap did not,
+  because a cycle spanning two sessions never exceeds any single run's budget.
+- **Subscription limit**: at most K subscriptions per session.
 
-These limits are per-project configuration. Default values are reasonable but can be tuned.
+**Memory limits are not enforced per session.** An earlier version specified a per-session
+`memory_limit: Bytes` with "if exceeded, it is killed." On the JVM and on Android there is no
+supported way to measure or bound the heap consumed by one coroutine, and on Android the OOM
+killer terminates the whole process rather than one worker. The honest controls are the
+device-level footprint budgets in RFC-0045 and the storage pressure stages in RFC-0056; a knob
+that cannot be enforced is worse than no knob, because it implies a protection that does not
+exist.
+
+These limits are per-project configuration with conservative defaults.
 
 If a limit is exceeded, the Scheduler:
 1. Logs the violation.
@@ -218,49 +234,37 @@ Waking is instant (from the user's perspective). The session is added to the wor
 
 ### Session Scheduling Logic
 
-Pseudocode for the Scheduler's main loop:
+The scheduler consumes events and dispatches Runs. It does not execute session logic itself —
+that is the executor (RFC-0009).
 
+```kotlin
+// Per project. Runs on the `main` dispatcher; never blocks (RFC-0007).
+suspend fun schedulerLoop(project: ProjectExecutionContext) {
+    for (event in project.eventChannel) {                 // FIFO by sequence
+        if (!admissionControl.accept(event)) continue     // depth / rate limits (RFC-0028)
+
+        val sessions = subscriptionIndex.authorizedMatches(event)   // RFC-0004 visibility
+        for (session in sessions) {
+            val run = runStore.createOrQueue(session, event)
+            project.scope.launch(dispatchers.session) {
+                project.sessionMutex.withLock { executor.drive(run.id) }   // RFC-0009
+            }
+        }
+    }
+}
 ```
-while True:
-  event = event_bus.wait_for_event()
-  
-  # Find all sessions interested in this event
-  matching_sessions = subscription_index.find_matching(event)
-  
-  # Add to work queue
-  for session in matching_sessions:
-    work_queue.add(session, priority=session.priority, event=event)
-  
-  # Execute work queue
-  while not work_queue.empty():
-    session, event = work_queue.dequeue()
-    
-    # Check resource limits
-    if session.exceeded_memory_limit():
-      session.kill()
-      event_bus.publish(SessionError(session, "memory limit"))
-      continue
-    
-    # Run the session
-    try:
-      session.load_state()
-      timeout = session.execution_timeout
-      session.run(event, timeout)
-      session.persist_state()
-    except TimeoutError:
-      event_bus.publish(SessionError(session, "timeout"))
-      session.persist_state()
-    except Exception as e:
-      event_bus.publish(SessionError(session, str(e)))
-      session.persist_state()
-    
-    # If session yielded (waiting for external work),
-    # keep it in memory. Otherwise, it sleeps.
-    if session.is_yielding():
-      session.wait()
-    else:
-      session.sleep()
-```
+
+Three properties this shape has and the previous blocking loop did not:
+
+- **New events are observed while work is in progress.** The old loop drained its work queue
+  inside the event loop, so a user command arriving mid-drain was not seen until the queue
+  emptied.
+- **A parked Run does not hold the project.** `drive()` returns at a checkpoint when a Run
+  yields, releasing the mutex.
+- **Nothing is lost on process death.** Queued work is rows, not in-memory queue entries.
+
+Priority is expressed by ordering within `createOrQueue`: user-initiated Runs preempt queued
+background Runs at the next checkpoint boundary.
 
 ### User Commands
 
@@ -287,14 +291,19 @@ The Scheduler does not provide explicit synchronization primitives (locks, mutex
 
 When the runtime starts:
 
-1. All sessions in the project are loaded (except archived ones).
-2. Each session's subscriptions are loaded from storage.
-3. Subscriptions are registered in the subscription index.
-4. The Event Bus is connected and begins monitoring events.
-5. Pending events (from before shutdown) are replayed, waking relevant sessions.
-6. The Scheduler main loop begins.
+1. The project lock is acquired (RFC-0055).
+2. Git reconciliation runs if the repository fingerprint moved (RFC-0053).
+3. Crash recovery runs for in-flight Runs (RFC-0009).
+4. Sessions and subscriptions are loaded and indexed.
+5. Pending events are **coalesced, not replayed**: at most one wake per session per topic, and
+   events older than the staleness window (default 1 hour) are recorded and discarded.
+6. The scheduler loop begins.
 
-This ensures that no events are lost, even if the runtime crashes.
+Step 5 replaces "pending events are replayed, waking relevant sessions." Replaying a backlog
+would produce a wake storm and a burst of model calls on every start — unacceptable on a device
+that is off far more than it is on, which is the normal state for the primary mobile use case.
+Nothing is lost that matters: the events remain in the log, and the coalesced wake tells the
+session that its topic changed, which is what it needed to know.
 
 ### Graceful Shutdown
 
@@ -331,12 +340,12 @@ Subscription {
 SessionState {
   id: UUID
   project_id: UUID
-  state: Enum                       # created, sleeping, ready, running, yielding, archived
+  state: Enum                       # CREATED | SLEEPING | RUNNING | ARCHIVED (RFC-0017)
   priority: Int                     # For fair queuing (higher = sooner)
   created_at: Timestamp
   last_active: Timestamp
-  execution_timeout: Duration       # eg. 5 minutes
-  memory_limit: Bytes               # eg. 512 MB
+  execution_timeout: Duration       # wall-clock per Run; stops at a checkpoint
+  consecutive_failures: Int         # failure budget (RFC-0011); 3 parks the session
   subscriptions: List<UUID>         # IDs of subscriptions
 }
 ```

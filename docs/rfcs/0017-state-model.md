@@ -51,25 +51,55 @@ The filesystem holds the working copy of files. It is always consistent with the
 | Capability records | SQLite | — |
 | Audit log entries | SQLite | — |
 | Artifact metadata | SQLite | — |
-| Artifact content (small, < 1MB) | SQLite BLOB | — |
-| Artifact content (large, ≥ 1MB) | Filesystem | SQLite holds path + hash |
-| Resource metadata | SQLite | — |
+| Content node metadata (all kinds) | SQLite | — |
+| Content < 512KB | SQLite BLOB | — |
+| Content ≥ 512KB | Content-addressed blob store | SQLite holds hash + size |
 | Resource content (versioned) | Git | SQLite holds current hash |
-| Intent graph metadata | SQLite | Git (periodic snapshots) |
-| Intent graph structure (nodes/edges) | SQLite | — |
+| Intent graph structure (nodes/edges) | SQLite | Git (periodic snapshots — see below) |
 | Project configuration (aidos.toml) | Git | SQLite cache |
 | Instruction files (AGENTS.md, etc.) | Git | — |
-| Knowledge Engine index | Filesystem | (rebuild-able from sources) |
+| Knowledge Engine index | `.aidos/index/` | derived; rebuildable |
+| Secrets | User-scope vault (RFC-0035) | never in project storage |
+
+The 512KB threshold is shared with RFC-0024 and stated once. An earlier version of this table
+used 1MB for artifacts while RFC-0024 used 512KB for the same objects.
+
+Storage locations follow RFC-0054: project runtime state lives in `.aidos/` inside the project
+directory and is Git-ignored.
 
 ### Conflict Resolution Rule
 
-**The authoritative store wins. Always.**
+**The authoritative store wins for the fields it owns, and there is exactly one genuine
+conflict case, named below.**
 
-If SQLite says a session is in SLEEPING state but the process crashed while the session was running, SQLite wins: the session is SLEEPING. The recovery procedure resets it correctly (RFC-0006).
+If SQLite says a session is SLEEPING but the process died while it was running, SQLite wins.
+Recovery reconciles in-flight Runs (RFC-0009), and the session state follows from the Run
+state rather than being repaired independently.
 
-If Git has a resource at version V2 but SQLite's resource table says version V1, Git wins for content; SQLite is updated to reflect the latest Git content hash on next open.
+If Git has a resource at a newer version than SQLite's recorded hash, Git wins for content;
+SQLite is updated on reconciliation (RFC-0053).
 
-There are no cases where two stores have conflicting authority over the same field. The table above assigns each field to exactly one authoritative store.
+**The one genuine conflict: the Intent Graph.** SQLite holds the live graph; Git holds periodic
+snapshots so intent is diffable and travels with the repository. A user who reverts a snapshot
+commit, or pulls a branch with a different snapshot, creates a real disagreement that "the
+authoritative store wins" does not resolve — following that rule would silently discard what
+the user just asked for.
+
+An earlier version of this RFC asserted that no two stores hold conflicting authority over the
+same field. That was false, and asserting it suppressed the design work. RFC-0053 defines the
+resolution: the conflict is detected by comparing the snapshot's recorded `intent_version`
+against the live version's ancestry, the graph is marked `CONFLICTED`, AI-proposed edits are
+blocked, and **the user chooses**. Intent is never merged automatically.
+
+### External mutation
+
+Git is a shared mutable store with other writers: the user, their editor, and their terminal.
+`git checkout`, `git pull`, `git rebase`, and `git stash` all change the working tree and
+history while the runtime holds derived state about it.
+
+Detection and reconciliation are specified in RFC-0053 and run before any Run may start on a
+repository whose fingerprint has changed. This RFC's ownership table describes steady state;
+RFC-0053 describes how steady state is re-established.
 
 ### Object Lifecycle
 
@@ -89,42 +119,53 @@ CREATING → OPEN → CLOSING → CLOSED → (DELETED)
 
 #### Session Lifecycle
 
+This is the **single canonical session state machine**. RFC-0005 and RFC-0011 previously
+defined two further variants (adding `READY`, `YIELDING`, and `WOKEN`); those are removed.
+`SessionState` is exposed on the public Runtime API (RFC-0052), so three definitions meant
+three contracts.
+
 ```
-CREATED → SLEEPING → RUNNING → SLEEPING
-                ↓           ↓
-             ARCHIVED    ARCHIVED
+CREATED → SLEEPING ⇄ RUNNING → ARCHIVED
+              ↓                    ↑
+              └────────────────────┘
 ```
 
 - CREATED: session record exists, no Runs yet.
-- SLEEPING: session is dormant, waiting for events.
-- RUNNING: session is processing a Run.
-- ARCHIVED: session is no longer active but history is preserved.
+- SLEEPING: dormant, waiting for events. The normal resting state.
+- RUNNING: a Run belonging to this session is being driven (RFC-0009).
+- ARCHIVED: no longer woken by events; history preserved.
 
-Sessions never enter a final "DELETED" state — they become ARCHIVED. Historical session data is valuable for audit and replay.
+There is deliberately **no session-level `YIELDING` or `READY` state.** Both were properties of
+a Run, not of a session: a Run parked awaiting a model response or an approval is
+`Run.state = YIELDED` while its session remains RUNNING, and a session with queued events is
+SLEEPING until the scheduler drives it. Promoting Run states to the session created three
+overlapping machines that had to be kept in sync by hand.
 
-#### Artifact Lifecycle
+Sessions are never DELETED, only ARCHIVED. Historical session data is the audit trail.
 
-```
-CREATING → COMMITTED → (EXPORTED)
-```
+#### Content Node Lifecycle
 
-- CREATING: artifact content is being written (filesystem or SQLite). Not yet visible.
-- COMMITTED: artifact is fully written and its SQLite record is finalized. Immutable.
-- EXPORTED: artifact has been included in a project export.
-
-Artifacts are never mutated after COMMITTED. A new artifact is created instead.
-
-#### Resource Lifecycle
+Resources and artifacts are both `ContentNode`s (RFC-0024), distinguished by mutability policy
+rather than by type. There is one lifecycle, defined in RFC-0024 and reproduced here for the
+recovery procedure:
 
 ```
-CREATED → CURRENT → SUPERSEDED
+CREATING → ACTIVE → SUPERSEDED → ARCHIVED
+              ↓  ↘
+          DELETED  DANGLING
 ```
 
-- CREATED: resource exists in Git with an initial commit.
-- CURRENT: the resource is the active version in Git HEAD.
-- SUPERSEDED: a newer version exists in Git HEAD; older versions remain in history.
+- CREATING: content is being written. Not yet queryable.
+- PENDING_GIT_COMMIT: content is written and a Git commit is outstanding. This is a substate of
+  CREATING and is tracked in `pending_operations`; it was previously referenced by the
+  transaction rules without appearing in any lifecycle.
+- ACTIVE: current and queryable.
+- SUPERSEDED: a newer version exists (VERSIONED nodes only).
+- ARCHIVED / DELETED: retained for provenance; content may be reclaimed per RFC-0056.
+- DANGLING: the referenced content is no longer reachable, typically after an external Git
+  history rewrite or branch switch (RFC-0053). Not an error state — an honest one.
 
-Resources are never deleted from Git history. They may be deleted from the working tree (which creates a deletion commit).
+IMMUTABLE nodes never leave ACTIVE except to ARCHIVED or DANGLING.
 
 ### Transaction Boundaries
 
@@ -205,14 +246,26 @@ Every table that participates in the state model includes:
 
 ```sql
 -- Standard object fields
-id TEXT PRIMARY KEY,           -- UUID
+id TEXT PRIMARY KEY,           -- UUIDv7 (RFC-0054): globally unique, time-ordered
 created_at TEXT NOT NULL,      -- ISO 8601 timestamp
 updated_at TEXT NOT NULL,      -- ISO 8601 timestamp
 state TEXT NOT NULL,           -- lifecycle state enum
 state_updated_at TEXT NOT NULL,
 audit_ref TEXT,                -- UUID of the audit log entry that caused the last state change
-version INTEGER NOT NULL DEFAULT 1  -- monotonic version counter
+row_version INTEGER NOT NULL DEFAULT 1  -- optimistic concurrency; see below
 ```
+
+`row_version` is the optimistic-concurrency token, and it has a defined protocol rather than
+being a counter nobody uses. Every update is `UPDATE ... SET row_version = row_version + 1
+WHERE id = ? AND row_version = ?`; zero affected rows means another writer won, and the caller
+re-reads and retries. It was previously named `version`, which collided with
+`ContentNode.version` (the user-visible content revision) — two different concepts sharing a
+column name in adjacent tables.
+
+Migrations are forward-only. A project written by a newer runtime opens **read-only** with
+`storage.migration_required` (RFC-0029) rather than refusing to open, because version skew
+between a phone and a desktop is the normal state in a mobile-first, multi-device product
+(RFC-0055).
 
 ### Pending Operation Tracking
 

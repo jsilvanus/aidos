@@ -4,7 +4,7 @@ Status: Draft
 
 ## Abstract
 
-The Event Bus is the central coordination mechanism for the Aidos runtime. It is an in-process, persistent event stream that connects all subsystems. Events flow through the bus in response to user actions, timers, external notifications, and tool completions. Subscribers (primarily sessions) react to events, perform work, and publish new events. The Event Bus enables reactive, event-driven behavior while maintaining a complete audit trail for replay and debugging.
+The Event Bus is the central coordination mechanism for the Aidos runtime. It is an in-process, persistent event stream that connects all subsystems. Events flow through the bus in response to user actions, timers, external notifications, and tool completions. Subscribers (primarily sessions) react to events, perform work, and publish new events. The Event Bus enables reactive, event-driven behaviour while maintaining an audit trail sufficient to reconstruct what happened. Event payloads carry references, not bulk content, and subscriptions are capability-checked.
 
 ## Motivation
 
@@ -15,7 +15,7 @@ Events are the natural model. When something significant happens—the user issu
 An event system also provides other benefits:
 
 - **Observability**: Every significant action is a discrete event with a timestamp. The event log is a complete record of system behavior.
-- **Replay**: Because events are ordered and persisted, sessions can be replayed. Given the event log, we can reconstruct exactly what happened.
+- **Audit reconstruction**: Because events are ordered and persisted, what happened can be reconstructed after the fact. This is not deterministic replay — see "Audit reconstruction, not deterministic replay" below.
 - **Loose Coupling**: Subsystems do not need to know about each other. They publish events and subscribe to events. The Event Bus mediates.
 - **Testability**: Tests can inject events and observe reactions, without needing to mock complex system interactions.
 - **Extensibility**: New event sources (webhooks, custom tools, notifications) can be added without modifying existing code.
@@ -63,7 +63,7 @@ Event {
 }
 ```
 
-Every event has a unique ID, a timestamp, and a type. The timestamp reflects when the event occurred in the real world, not when it was processed. This is important for replay: if we replay events in chronological order, we recreate the exact sequence of real-world events.
+Every event has a unique ID, a timestamp, and a type. The timestamp reflects when the event occurred in the real world, not when it was processed — and it is **not** the ordering key. Ordering is by the per-project `sequence` assigned at publication (see Event Ordering below); timestamps come from sources the runtime does not control, including filesystem mtimes and remote servers.
 
 The `causality` field links related events. If event A causes event B to be generated, B's causality field points to A. This creates a causal graph that helps with debugging.
 
@@ -165,10 +165,11 @@ Example:
   "source": "tool:shell",
   "payload": {
     "tool_id": "shell-111",
-    "command": "cargo test",
+    "task_id": "task-...",
+    "operation": "shell.exec",
     "exit_code": 0,
-    "stdout": "test result: ok. 5 passed; 0 failed",
-    "stderr": ""
+    "result_ref": "content-node-uuid",
+    "result_bytes": 1284
   }
 }
 ```
@@ -260,6 +261,51 @@ Session S1 subscribes to:
 
 The scheduler maintains a mapping of events to interested subscribers and wakes them when events of interest occur.
 
+### Event Categories
+
+Events are one of three categories. Mixing them is how an event bus accumulates policy and
+becomes impossible to secure, so the distinction is structural rather than conventional.
+
+| Category | Meaning | May be published by | Delivery |
+|---|---|---|---|
+| `FACT` | Something happened. Immutable, past tense. | any subsystem | broadcast to authorized subscribers |
+| `COMMAND` | Something is requested. | frontends and the runtime only | routed to exactly one handler |
+| `SIGNAL` | Lossy progress or wakeup hint. | any subsystem | best-effort, coalescible, not persisted |
+
+Sessions may publish `FACT` and `SIGNAL`. **Sessions may not publish `COMMAND`.** A session that
+could publish commands could instruct the runtime to grant capabilities or cancel other
+sessions; routing that through the same channel as observations would make the security model
+depend on topic-string hygiene.
+
+`SIGNAL` events are not persisted. Streaming token deltas, indexing progress, and similar
+high-frequency updates would otherwise dominate the event table.
+
+### Subscription Authorization
+
+Subscriptions are capability-checked. A subscription is a read of other components' activity,
+and before this rule the bus was a side channel around the entire capability model: any session
+could subscribe to `**` and observe every tool result, model response, and file operation in
+the project, including from sessions with wider authority than its own.
+
+Every event carries a `visibility`:
+
+| Visibility | Who may receive it |
+|---|---|
+| `PUBLIC` | any subscriber in the project |
+| `SESSION` | the originating session, its parent session, and the user |
+| `PRIVILEGED` | the user and runtime components only (capability grants, secrets access) |
+
+Rules:
+
+1. A session subscribing to topics beyond its own requires the `event:subscribe` permission
+   (RFC-0018), scoped to topic patterns.
+2. Wildcard subscriptions matching `PRIVILEGED` events are never granted to sessions.
+3. Frontends acting for the user receive everything, subject to the redaction rules below.
+4. `ToolCompleted` payloads carry a result *reference*, not the full output. Large tool output
+   lives in the Execution Graph and content store, where it is capability-checked on read.
+   Earlier examples embedded full command `stdout` in the event payload, which made the bus a
+   bulk exfiltration path.
+
 ### Event Persistence
 
 Events are persisted in the order they occur. This creates a complete audit trail and enables replay.
@@ -270,20 +316,33 @@ Events are persisted in the order they occur. This creates a complete audit trai
 CREATE TABLE events (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,               -- monotonic per project; the ordering key
   type TEXT NOT NULL,
-  timestamp TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,         -- payload schema version for this type
+  category TEXT NOT NULL,                  -- FACT | COMMAND | SIGNAL
+  timestamp TEXT NOT NULL,                 -- when it occurred; NOT an ordering key
   source TEXT NOT NULL,
   topic TEXT,
+  visibility TEXT NOT NULL,                -- see Subscription Authorization
   payload TEXT NOT NULL,                   -- JSON-encoded
   causality TEXT,
-  metadata TEXT,                           -- JSON-encoded
-  index(project_id, timestamp),
-  index(topic),
-  index(type)
+  causal_depth INTEGER NOT NULL DEFAULT 0,
+  metadata TEXT                            -- JSON-encoded
 );
+
+CREATE UNIQUE INDEX idx_events_sequence ON events(project_id, sequence);
+CREATE INDEX idx_events_topic ON events(project_id, topic);
+CREATE INDEX idx_events_type ON events(project_id, type, sequence);
 ```
 
-**Retention**: Events are retained for the lifetime of the project (unless explicitly pruned). For very long-running projects, events older than N years can be archived to cold storage.
+`schema_version` is present from day one. Events are the longest-lived records in the system
+and their payloads will change; treating payload versioning as future work guarantees an
+unreadable history. Readers must tolerate unknown versions of a known type by falling back to
+the event header.
+
+**Retention**: Event headers are `PERMANENT`; payloads are `AGED` and are compacted after the
+policy window (RFC-0056). "Retained for the lifetime of the project" was not survivable on
+mobile devices.
 
 **Querying**: Subscribers can query past events:
 
@@ -296,11 +355,23 @@ This enables catching up after a session resumes.
 
 ### Event Ordering and Causality
 
-Events are processed in timestamp order, not arrival order. If event A has timestamp T1 and event B has timestamp T2, and T1 < T2, then A is processed before B, regardless of which arrived at the Event Bus first.
+Events are processed **in publication order within a project**, not in wall-clock timestamp
+order. Each project has a single FIFO channel; a monotonic `sequence` is assigned at
+publication and is the authoritative order (RFC-0007).
 
-This ensures deterministic replay. Given the same set of events in the same order, the system should reach the same state.
+An earlier design mandated processing in wall-clock timestamp order. That is not
+implementable: it would require knowing that no earlier-timestamped event will arrive later,
+which requires unbounded buffering. It also made ordering depend on inputs the runtime does not
+control — filesystem mtimes, MCP server clocks, and NTP steps. The `timestamp` field remains,
+as a record of when the event occurred in the world; it is not an ordering key.
+
+Across projects there is no ordering guarantee. Projects are independent.
 
 **Causality tracking**: The `causality` field links events that are related. If event A causes the system to generate event B, then B.causality = A.id. This creates a directed acyclic graph (DAG) of causality.
+
+Each event also carries `causal_depth` (RFC-0028): zero for externally originated events, and
+one greater than its cause otherwise. Depth bounds wake amplification and is what stops two
+sessions from waking each other indefinitely.
 
 Example:
 ```
@@ -328,37 +399,43 @@ The causality chain A → B → C → D traces the lineage of work.
 
 7. **Expiration**: Old events can be pruned (but this is destructive for replay, so it is not the default).
 
-### Event Bus as a Time Machine
+### Audit reconstruction, not deterministic replay
 
-Because events are ordered and persistent, the Event Bus enables replay:
+The event log supports **audit reconstruction**: answering what happened, in what order, caused
+by what. It does **not** support deterministic replay, and the architecture does not claim it.
 
-```
-Given events [E1, E2, E3, ..., En],
-Replay = Process E1, then E2, then E3, etc.
-Result = Reconstruct system state at any point in time
-```
+Deterministic replay would require re-executing the system and arriving at the same state. That
+is unachievable here, because the inputs are not deterministic: model outputs (including
+sampling), remote model versions, wall-clock time, filesystem races, Git state mutated by the
+user, shell output, MCP server behaviour, network responses, and generated IDs. Capturing
+enough to make re-execution identical means capturing every output — at which point what exists
+is a recording, not a replay.
 
-This is valuable for:
-- **Debugging**: "What was the system state at 3:15 PM?"
-- **Auditing**: "Did the AI really try to delete that file?"
-- **Testing**: "Replay this scenario and verify the behavior."
-- **Recovery**: "Restore to the state as of yesterday."
+What the log therefore provides:
+
+- **Debugging**: "what did the system do, and in what order?"
+- **Auditing**: "did the AI try to delete that file, and under what authority?"
+- **Provenance**: "which run, prompt, and model produced this artifact?" (RFC-0019, RFC-0025)
+- **Timeline UI**: a step-through view of a completed Run.
+
+What it does not provide: re-execution to an identical state, or restoring the project to
+yesterday. Restoration is Git's job for content (RFC-0053) and export/import's job for
+project state (RFC-0041).
+
+This distinction is load-bearing. Promising deterministic replay and delivering approximate
+reconstruction would undermine exactly the trust the audit trail exists to build.
 
 ### Event Ordering Under Concurrency
 
-Aidos is primarily single-threaded within a project (the Event Bus is single-threaded). This eliminates many concurrency issues. Sessions run sequentially, woken one at a time by the scheduler.
+Event sources are genuinely concurrent: OS filesystem events, MCP notifications, timers, and
+multiple frontends all publish independently. Ordering is established at publication, not at
+occurrence:
 
-However, some operations may be concurrent:
-- Filesystem events from the OS can arrive concurrently.
-- MCP server notifications can arrive concurrently.
-- Multiple frontends can generate events concurrently.
-
-To maintain order:
-- All events are assigned a monotonically increasing logical timestamp (in addition to wall-clock time).
-- Events are processed in logical timestamp order.
-- If two events have the same logical timestamp, a deterministic tiebreaker (e.g., event ID) is used.
-
-This ensures that replay is deterministic.
+- Each project's bus assigns a monotonically increasing `sequence` on publication.
+- Delivery to subscribers within a project is FIFO by `sequence`.
+- Subscribers may lag, but never observe events out of `sequence` order.
+- Effects are not ordered by delivery. A subscriber that writes to SQLite hops to the `io`
+  dispatcher; ordering guarantees cover delivery, not completion (RFC-0007).
 
 ## Data Model
 
@@ -395,9 +472,17 @@ Subscription {
 
 Events can contain sensitive information (file paths, command outputs, API responses). Security considerations:
 
-- **Access Control**: Only the user (or authorized subsystems) can read events. A session cannot read another session's events.
-- **Logging of Secrets**: Events must not contain unencrypted secrets (API keys, passwords). Sensitive data is redacted in event payloads.
-- **Audit Trail**: The event log is immutable. It cannot be modified or deleted (except by the user with explicit action).
+- **Access Control**: Enforced by the `visibility` field and the `event:subscribe` capability
+  described above, not by convention. The claim "a session cannot read another session's
+  events" is only true because subscriptions are authorized; without that mechanism it was
+  false, since topic patterns admit `*`.
+- **Payloads carry references, not bulk content.** Tool output, model responses, and file
+  contents are referenced by ID and fetched through capability-checked reads.
+- **Logging of Secrets**: Events must not contain unencrypted secrets. Payloads pass through
+  the redactor (RFC-0035) before persistence, and `SECRET`-labelled content (RFC-0024) is never
+  admitted to a payload.
+- **Audit Trail**: Event headers are append-only and permanent. Payloads may be compacted per
+  RFC-0056; a compaction never removes the record that the event occurred.
 
 Permission events (PermissionRequested, PermissionGranted, PermissionDenied) are especially sensitive and auditable.
 
@@ -436,7 +521,8 @@ For long-running projects with millions of events, compression could reduce stor
 When Aidos spans multiple machines:
 - Events originate from different machines but are unified in a single logical order.
 - Use logical clocks or vector clocks to order events across machines.
-- Implement consensus for deterministic replay.
+- Preserve causal ordering across machines; audit reconstruction remains the goal, not
+  deterministic replay.
 
 ### Event Semantics Versioning
 

@@ -158,15 +158,64 @@ The architecture should support:
 
 ### Provider Abstraction
 
-Sessions do not request specific models; they request **capabilities**. The AI Engine maps capabilities to models. This abstraction is managed through **Model Providers** (RFC-0021):
+Sessions request a **model kind** and let the router select. (The word "capability" is reserved
+for security grants — RFC-0018. Model classes are `ModelKind`.)
 
 ```
-Session requests: "Embed this text"
-AI Engine queries providers: "Who can embed text?"
-Available models: [OpenAI embeddings, local sentence-transformers, Ollama]
-Selection logic: (prefer local, if unavailable fall back to remote)
-Route to: Local sentence-transformers
+Session requests: ModelKind.EMBEDDING
+Router evaluates candidates against the routing policy
+Routes to: local sentence-transformers
 ```
+
+### Routing is user-owned policy, not an engine heuristic
+
+Model selection decides whether the user's code leaves the device. That is a privacy decision
+and it belongs to the user, expressed as declared policy:
+
+```toml
+[routing.llm]
+order          = ["local", "remote"]
+remote_egress  = "ask"        # "never" | "ask" | "always"
+max_cost_units = 5000
+```
+
+`remote_egress = "ask"` is the default. An earlier design had the engine "prefer local, fall
+back to remote if unavailable" as built-in behaviour — silent egress by fallback, in a product
+whose first principle is offline-first. Falling back across the network boundary is never
+automatic unless the user has said `always`.
+
+### Degradation states
+
+Every request resolves to one of five outcomes, and the state is surfaced rather than hidden:
+
+| State | Meaning |
+|---|---|
+| `LOCAL` | satisfied by a local model |
+| `REMOTE_APPROVED` | satisfied remotely, egress permitted by policy or approval |
+| `REMOTE_PENDING_APPROVAL` | Run parked awaiting user approval to send |
+| `UNAVAILABLE_OFFLINE` | no local model satisfies it, and there is no network |
+| `DISABLED_BY_POLICY` | routing policy or taint (RFC-0027) forbids the only viable route |
+
+`UNAVAILABLE_OFFLINE` is a first-class, expected state on MOBILE, not an error. The user is
+told which model kind is missing and offered the download.
+
+### Selection inputs
+
+Routing considers: model kind; platform profile and available memory (RFC-0049); network
+availability; the routing policy; remaining budget (RFC-0028); Run taint (RFC-0027); and
+**context length** — a candidate that cannot fit the assembled prompt is not a candidate.
+
+Model selection therefore happens **before** prompt assembly, because the token budget derives
+from the selected model's context window (RFC-0025). Assembly may report that the prompt cannot
+fit, which returns to the router for a larger-context candidate; this is a bounded two-phase
+negotiation, not a loop.
+
+### Pinning and reproducibility
+
+Provider and model version are recorded on every Attempt (RFC-0019). Dynamic routing and
+auditability coexist because the audit records what was actually used, not what policy would
+select today. A session may pin a specific model when reproducibility matters more than
+availability.
 
 Providers abstract:
 
@@ -376,26 +425,42 @@ Multimodal support requires:
 
 ## Data Model (Conceptual)
 
+The AI runtime splits into two components at different scopes. Modelling it as one per-project
+object was wrong on both axes: weights are device resources, and routing is a per-request
+decision.
+
 ```
-AIEngine {
-  project_id: UUID
-  
-  discovered_models: Map<ModelId, ModelDescriptor>
-  loaded_models: Map<ModelId, LoadedModel>
-  
-  model_cache: DirectoryRef              # Where models are stored
-  resource_monitor: ResourceMonitor      # Track usage
-  
-  configuration: AIEngineConfig {
-    preferred_providers: List<ProviderId>
-    offline_mode: Boolean
-    max_concurrent_models: Int
-    memory_budget: Bytes
-    model_update_policy: UpdatePolicy
-  }
-  
-  session_usage: Map<SessionId, UsageMetrics>
+ModelRuntime {                           # USER SCOPE — one per device (RFC-0054)
+  catalog: Map<ModelId, ModelDescriptor>       # what exists and could be obtained
+  installed: Map<ModelId, InstalledModel>      # what is on disk, content-addressed by digest
+  loaded: Map<ModelId, LoadedModel>            # what is in memory right now
+
+  weights_dir: DirectoryRef              # ~/.aidos/models — shared by every project
+  memory_budget: Bytes                   # device-wide, not per project
+  admission_queue: Queue<LoadRequest>    # loading is globally serialized
 }
+
+InferenceRouter {                        # PER REQUEST
+  select(request: ModelCapabilityRequest, context: RoutingContext): RoutingDecision
+}
+
+RoutingContext {
+  profile: PlatformProfile               # RFC-0049
+  networkAvailable: Boolean
+  policy: RoutingPolicy                  # user-owned, see below
+  budgetRemaining: Budget                # RFC-0028
+  runTaint: TrustLevel                   # RFC-0027
+}
+```
+
+Model weights are multi-gigabyte and one loaded instance can saturate a phone's memory.
+Loading is therefore a **globally serialized, device-wide** operation with an admission queue,
+and two projects using the same model share one download and one loaded instance. A per-project
+`model_cache` and `memory_budget` would have downloaded the same weights once per project and
+attempted concurrent loads against a single pool of RAM.
+
+Usage accounting is persisted in the budget ledger (RFC-0028), not held in an in-memory
+`Map<SessionId, UsageMetrics>` that vanishes on eviction — which, on Android, is constantly.
 
 ModelDescriptor {
   id: UUID

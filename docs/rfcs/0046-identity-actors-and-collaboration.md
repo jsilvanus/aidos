@@ -24,6 +24,15 @@ It does not define authentication protocols.
 
 ## Design
 
+> **What is reserved now, and what is not built.** Single-user local-first is a design
+> assumption, not a temporary limitation. What this RFC commits to today is *reserving the
+> fields* so that later collaboration does not require rewriting the audit trail: actor ID,
+> device ID, and a signature column on audit records. Identity lives at user scope (RFC-0054).
+>
+> Nothing else is built. In particular, the blocker for teams is not permissions — it is that
+> operational state lives in SQLite outside Git and therefore has nothing to merge (RFC-0017).
+> Solving that is a prerequisite for collaboration and is deliberately out of scope.
+
 Each actor has a stable identity and a set of permissions. Identity is distinct from the local runtime process and can be attached to devices, sessions, workers, or users. Ownership exchanges are explicit and auditable.
 
 ## Data Model

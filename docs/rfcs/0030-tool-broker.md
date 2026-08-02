@@ -51,67 +51,91 @@ This RFC does not address distributed tool execution (tools on remote machines).
 
 ## Design
 
+### Terminology: Operation, not Capability
+
+A tool provides **Operations**. `Capability` means one thing only in Aidos: a security grant
+(RFC-0018). The word previously named three different concepts — a security grant, a tool
+operation descriptor, and a model class — and they collided in the same modules and in the same
+security reasoning. Model classes are `ModelKind` (RFC-0020); tool operations are `Operation`.
+
 ### Tool Interface
 
-All tools implement a standard interface:
+```kotlin
+interface Tool {
+    val id: String                       // "git", "fs", "shell"
+    val version: String
+    fun operations(): List<ToolDescriptor>              // RFC-0008; JSON Schema per operation
 
-```
-Tool {
-  id: String                        # "git", "filesystem", "shell"
-  name: String                      # Human-readable name
-  version: String                   # Tool version
-  
-  /// List capabilities this tool provides
-  list_capabilities() -> List<Capability>
-  
-  /// Check if a capability exists
-  has_capability(capability_id: String) -> Boolean
-  
-  /// Invoke a tool operation
-  invoke(
-    capability_id: String,
-    request: ToolRequest,
-    session_id: UUID
-  ) -> ToolResult
-  
-  /// Stream results for long-running operations
-  invoke_streaming(
-    capability_id: String,
-    request: ToolRequest,
-    session_id: UUID,
-    callback: StreamCallback
-  ) -> void
-  
-  /// Subscribe to events from this tool
-  subscribe(topic: String) -> Subscription
-}
+    suspend fun execute(
+        handle: ResourceHandle,          // carries the capability's scope (RFC-0018)
+        operation: String,
+        arguments: JsonObject            // already schema-validated by the loop
+    ): ToolCallResult                    // RFC-0008
 
-ToolRequest {
-  capability_id: String             # What capability is being used
-  parameters: Map<String, Any>      # Request parameters
-  context: Map<String, Any>?        # Optional context
-}
+    suspend fun preview(
+        handle: ResourceHandle,
+        operation: String,
+        arguments: JsonObject
+    ): Preview                           // required for Mutate effects; see below
 
-ToolResult {
-  success: Boolean
-  output: Any                       # Result of operation
-  error_message: String?
-  metadata: Map<String, Any> {
-    execution_time_ms: Int
-    resource_used: String?
-  }
-}
-
-Capability {
-  id: String                        # "git:write", "filesystem:delete"
-  name: String
-  description: String?
-  
-  requires_permission: String?      # Capability name from RFC-0003
-  
-  parameters: List<Parameter>
+    suspend fun cancel(operationId: UUID)
 }
 ```
+
+Three changes from the earlier interface, each fixing a concrete gap:
+
+- **No `session_id` parameter.** A tool does not need to know which session called it, and
+  passing it invited tools to make their own authority decisions. Scope arrives in the handle.
+- **`cancel` exists.** RFC-0006 specifies that "the Tool Broker is instructed to cancel the
+  operation"; there was no such method.
+- **`arguments` are validated before arrival**, against the operation's JSON Schema (RFC-0008),
+  so tools do not each re-implement parameter validation and disagree about it.
+
+### Typed effects
+
+Every operation declares an effect. Untyped tools made preview, undo, retry, approval, and
+audit impossible to implement generically, because the broker had no idea what an operation
+would do.
+
+```kotlin
+sealed interface EffectKind {
+    // Observes state. Cacheable, retryable, no approval.
+    object Read : EffectKind
+
+    // Changes state inside the project. Previewable, retryable if idempotent.
+    data class Mutate(val scope: MutationScope) : EffectKind
+
+    // Sends data outside the device. Subject to egress policy and taint attenuation.
+    data class Egress(val destination: EgressTarget) : EffectKind
+
+    // Reaches the user. Rate-limited, never silently repeated.
+    object Notify : EffectKind
+}
+```
+
+Behaviour is derived from the effect, uniformly:
+
+| Effect | Approval | Preview | Retry | Taint attenuation (RFC-0027) |
+|---|---|---|---|---|
+| `Read` | no | n/a | yes | none |
+| `Mutate` in project | no | **required** | if idempotent | preview recorded |
+| `Mutate` outside project | yes | required | if idempotent | **denied** |
+| `Egress` | per capability | request shown | if idempotent | **per-call approval** |
+| `Notify` | no | n/a | **never** | none |
+
+**Preview** returns the effect a mutation *would* have — a diff for file writes, a patch for Git
+operations, a description otherwise — without performing it. It powers dry-run mode, the
+approval dialog, and the audit record. Requiring it for `Mutate` is what makes "show me what
+the agent is about to do" a runtime feature rather than a per-tool courtesy.
+
+### Idempotency and recovery
+
+Every operation additionally declares a `recovery_class` (RFC-0009): `PURE`, `IDEMPOTENT`,
+`CHECKABLE`, or `UNSAFE`. This is the contract that lets the executor decide, after a crash,
+whether an effect may be re-run. `UNSAFE` operations — `git push`, notifications, outbound HTTP
+— are never retried automatically.
+
+Retryable operations carry an `idempotency_key` supplied by the executor.
 
 ### Permission Enforcement
 
@@ -279,19 +303,21 @@ The Tool Broker enforces security via:
 
 MVP includes:
 
-1. **Git tool**: Version control operations.
-2. **Filesystem tool**: File I/O operations.
-3. **Shell tool**: Command execution (sandboxed).
-4. **Basic permission checks**: Enforce capabilities.
-5. **Logging**: Log all tool invocations.
-6. **Event publishing**: Generate completion events.
+1. **Filesystem tool**: read, write, list, via `DirHandle` (RFC-0018).
+2. **Git tool**: status, diff, log, read-at-ref, stage, commit, branch (RFC-0032, RFC-0053).
+3. **Shell tool**: DESKTOP profile only (RFC-0049); absent on MOBILE.
+4. Typed effects with `preview()` for every `Mutate`.
+5. JSON Schema per operation; validation before capability resolution.
+6. `recovery_class` per operation; `cancel()`.
+7. Capability validation by named capability ID; handles for hierarchical scopes.
+8. Audit record per invocation; `SIGNAL` progress events.
 
 Not included:
 
-- HTTP tool (future).
-- Notification tool (future).
-- MCP tool adapter (future, RFC-0031 covers MCP).
-- Advanced sandboxing (future).
+- HTTP tool, notification tool.
+- MCP adapter (RFC-0031 — desktop only when it lands).
+- `CHECKABLE` recovery probes.
+- Read caching across steps.
 
 ## Future Work
 
@@ -356,11 +382,26 @@ Git tool: Max 10 commits/minute
 HTTP tool: Max 50 requests/minute
 ```
 
+## Resolved questions
+
+Several of these were open questions; they are now decided, because each affects the tool
+interface and could not be deferred past the first tool.
+
+- **Dry-run for destructive tools** — yes, and mandatory: `preview()` is required for every
+  `Mutate` effect. This was previously listed as an open question while being the mechanism the
+  approval UI depends on.
+- **Tool timeouts** — per request, bounded by the capability's `maxDurationSeconds`. Per-tool
+  defaults are a configuration detail.
+- **Batching** — no. The agent loop executes tool calls sequentially (RFC-0008) so that the
+  audit order is the execution order.
+- **Partial results while executing** — as `SIGNAL` events (RFC-0004), which are not persisted.
+  The Task result is always the complete result.
+- **Transactions and rollback** — no general mechanism. Compensation is modelled in the
+  Execution Graph (RFC-0019) where it is meaningful, and `preview()` plus Git history covers
+  the practical need for the common case.
+
 ## Open Questions
 
-- Should tools support transactions (rollback if something fails)?
-- Should there be tool versioning (different versions of Git tool)?
-- Should tool timeouts be configurable per tool or per request?
-- Should tools support batching (multiple operations in one call)?
-- Should there be a "dry-run" mode for destructive tools?
-- Should tools publish partial results while still executing?
+- Should tool versioning be exposed to the model (different `ToolDescriptor` per tool version),
+  or resolved silently by the broker?
+- Should `Read` operations be cached across steps within a Run, and if so keyed on what?
