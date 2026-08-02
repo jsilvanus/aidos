@@ -168,11 +168,31 @@ AcceptanceCriterion {
   id: NodeId
   description: String
   applies_to: NodeId
-  is_met: Boolean
-  verified_by: SessionId? | UserId?
-  verified_at: Timestamp?
+  check: CriterionCheck?            # mechanical check, if one exists
+  verification: Verification?       # how it came to be considered met
+}
+
+CriterionCheck {                    # e.g. "tests pass", "file exists", "command exits 0"
+  kind: CheckKind
+  spec: String
+}
+
+Verification {
+  met: Boolean
+  verified_by_kind: 'USER' | 'CHECK'   # never 'SESSION'
+  verified_by_id: UUID?                # the user, or the Run whose check evaluated it
+  verified_at: Timestamp
 }
 ```
+
+`verified_by_kind` has no `SESSION` variant, for the same reason `IMPLEMENTS` edges require
+confirmation (RFC-0019): a model that can mark its own acceptance criteria met can declare its
+own work complete, and derived status would then be derived from the model's opinion of itself.
+
+A criterion is met when a **mechanical check** passes, or when the **user** says so. A session
+can run the check — that is ordinary work — but the check's result is the verification, not the
+session's report of it. Criteria with no mechanical check are user-verified, which is honest:
+"the API spec is in OpenAPI format" is checkable, "the design is good" is not.
 
 Example: "API spec in OpenAPI format" is an acceptance criterion for the "Design API" goal.
 
@@ -313,24 +333,101 @@ Users can:
 
 User edits are changes to the Intent Graph and should be tracked (ideally through Git commits with commit messages).
 
-#### AI Systems (Proposed Edits)
+#### AI Systems (Proposals Only)
 
-AI sessions can propose modifications to the Intent Graph:
+**A session can never write to the Intent Graph. It can only create a proposal, which only the
+user resolves.**
 
+This is the load-bearing rule of this RFC, and the reason is a closed loop. The model *reads*
+intent — task instructions come from the current intent node (RFC-0025, precedence 5) — and the
+model *proposes* intent. If it could also approve, it would invent goals, read its own invented
+goals back as instructions, and drift arbitrarily from what the user wanted, each step locally
+plausible and none of them checked. The approval gate is what breaks the loop.
+
+An earlier version of this RFC contained exactly that defect in its own example: *"AI proposes
+sub-goals → **Driver approves** → AI creates worker sessions."* A driver session is a model, not
+a user. That sequence is the loop with no human in it.
+
+### Proposals
+
+A proposal is a **separate object, not a node in a "proposed" state.**
+
+That distinction matters. A proposed node placed in the graph is already in the graph: it
+appears in queries, it feeds prompt construction, and if the user never answers it lingers
+indefinitely as pseudo-intent that everything downstream treats as real.
+
+```kotlin
+data class IntentProposal(
+    val id: UUID,
+    val projectId: UUID,
+    val operations: List<IntentOperation>,   // atomic: all applied or none
+    val rationale: String,                   // why, in the model's words
+    val proposedByRunId: UUID,
+    val proposedAt: Instant,
+    val runTaint: TrustLevel,                // RFC-0027
+    val state: ProposalState,
+    val resolvedBy: UserId?,                 // ONLY a user. never a session.
+    val resolvedAt: Instant?
+)
+
+sealed class IntentOperation {
+    data class AddNode(val parent: NodeId?, val node: IntentNodeDraft) : IntentOperation()
+    data class ModifyNode(val id: NodeId, val changes: NodeChanges) : IntentOperation()
+    data class AddDependency(val from: NodeId, val to: NodeId) : IntentOperation()
+    data class ArchiveNode(val id: NodeId) : IntentOperation()
+}
+
+enum class ProposalState { PENDING, ACCEPTED, ACCEPTED_WITH_EDITS, REJECTED, SUPERSEDED, EXPIRED }
 ```
-AI: "I notice you want an API that works offline. This is challenging because
-     REST APIs typically require network. I recommend using a local database
-     with sync-on-connect. Should I add this as a sub-goal under 'Design API'?"
 
-User: "Yes, add it"
-→ New sub-goal added to graph, marked as "proposed" until user confirms
-```
+**Operations are batched and atomic.** Decomposing a goal into five sub-goals is *one* proposal
+with five operations, accepted or rejected as a unit. Five separate prompts would train the user
+to click through them, which defeats the gate.
 
-AI proposals should:
-- Be clearly marked as "proposed" or "suggested".
-- Include reasoning and tradeoffs.
-- Require user confirmation before being incorporated.
-- Be logged as part of the audit trail.
+**Proposals expire** (default 30 days) rather than accumulating. A stale proposal describing a
+plan for code that has since changed is noise, and a pile of them makes the pending list
+something the user stops reading.
+
+**Proposals carry the taint of the Run that made them** (RFC-0027). A proposal from a Run that
+read untrusted content is shown as such:
+
+> Proposed by *refactor-auth*, which read untrusted content from
+> `node_modules/left-pad/README.md`. Review carefully.
+
+Untrusted content cannot cause an intent change on its own — the user still approves — but the
+user deserves to know that the suggestion may originate from a document rather than from
+analysis.
+
+### Proposals in context
+
+A pending proposal is included in prompt construction **as a pending proposal, clearly labelled,
+never as intent**. The model needs to know one exists so it does not re-propose the same thing;
+it must not read it as an accepted goal.
+
+This is the same distinction the derived-status design makes between what the system observed
+and what someone asserted, applied to the proposal stage.
+
+### What a session may and may not do
+
+| | |
+|---|---|
+| **May** | read the graph; create proposals; propose `IMPLEMENTS` edges (RFC-0019) |
+| **May not** | create, modify, or archive nodes directly |
+| **May not** | resolve any proposal, including its own or another session's |
+| **May not** | set status — status is derived (see below) |
+| **May not** | confirm an `IMPLEMENTS` edge — confirmation is the user's or acceptance criteria's |
+
+The row that most often gets violated in implementations is the last two. "Mark goals as done
+when acceptance criteria are met" was previously listed as something an AI session does; it is
+not. Acceptance criteria are *evaluated*, and the evaluation is what marks the goal — the model
+does not get to assert the outcome of its own work.
+
+### Audit
+
+Every proposal and every resolution is audited with the actor (RFC-0046): which Run proposed,
+which user resolved, what changed, and the rationale. The Intent Graph's Git snapshot commit
+message references the proposal ID, so `git log` on the intent snapshot reads as a decision
+history rather than a series of unexplained state changes.
 
 ### Versioning and Storage
 
@@ -404,26 +501,64 @@ Session queries:
 
 An AI session can:
 
-1. **Understand intent**: Read the Intent Graph, understand what the project is trying to achieve.
+1. **Understand intent**: read the graph and the pending proposals.
+2. **Propose refinements**: decomposition, constraints, priorities — as proposals (above).
+3. **Propose `IMPLEMENTS` edges**: assert that a Run served a goal, subject to confirmation
+   (RFC-0019).
+4. **Flag conflicts**: detect contradictory goals or unsatisfiable dependencies, as a proposal
+   or a note.
 
-2. **Propose refinements**: Suggest breaking down a goal, adding constraints, reordering priorities.
+It cannot update status, resolve proposals, or confirm its own `IMPLEMENTS` assertions.
 
-3. **Update status**: Mark goals as done when acceptance criteria are met.
-
-4. **Relate artifacts**: Connect created artifacts to the intent nodes they address.
-
-5. **Flag conflicts**: Detect when two goals conflict or dependencies are unsatisfiable.
-
-Example workflow:
+Corrected example workflow — note who approves:
 
 ```
 Driver session reads Intent Graph
-→ Sees goal: "Implement payment system"
-→ Queries AI: "Break this down into concrete tasks"
-→ AI proposes sub-goals: "Design payment schema", "Implement Stripe integration", etc.
-→ Driver approves
-→ AI creates worker sessions for each sub-goal
+→ sees goal: "Implement payment system"
+→ asks the model to decompose it
+→ creates ONE proposal with four AddNode operations, plus rationale
+→ Run parks: Task(kind = USER_PROMPT), Run state YIELDED     ← RFC-0006
+        ⋮                    (may be hours or days)
+→ USER reviews and accepts, with edits to two of the four
+→ proposal ACCEPTED_WITH_EDITS; nodes created; audited
+→ completion event resumes the Run                            ← RFC-0009
+→ driver creates worker sessions for the accepted sub-goals
 ```
+
+The pause is real and may be long: a proposal on a phone at 23:00 is answered the next morning.
+That is exactly what the durable execution model exists to survive (RFC-0009) — the Run is a row,
+not a suspended coroutine, so the process can die and restart in between.
+
+**Unattended Runs do not propose-and-wait.** A scheduled Run (RFC-0044) that would park on a
+proposal instead records the proposal as pending, completes, and notifies. Blocking a background
+Run on a human who is asleep holds resources for nothing.
+
+## Data Model
+
+```sql
+CREATE TABLE intent_proposals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    operations_json TEXT NOT NULL,        -- atomic batch
+    rationale TEXT NOT NULL,
+    proposed_by_run_id TEXT NOT NULL,
+    proposed_at TEXT NOT NULL,
+    run_taint TEXT NOT NULL,              -- RFC-0027
+    state TEXT NOT NULL,                  -- PENDING | ACCEPTED | ... | EXPIRED
+    resolved_by_user_id TEXT,             -- ONLY a user (RFC-0046)
+    resolved_at TEXT,
+    expires_at TEXT NOT NULL,
+    audit_ref TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (proposed_by_run_id) REFERENCES runs(id)
+);
+
+CREATE INDEX idx_proposals_pending ON intent_proposals(project_id, expires_at)
+    WHERE state = 'PENDING';
+```
+
+`resolved_by_user_id` has no session variant by construction. A schema that cannot express
+"a session approved this" is a stronger guarantee than a rule saying it must not.
 
 ## Data Model (Conceptual)
 
@@ -601,14 +736,19 @@ project spends a year on planning machinery before proving the execution loop.
 3. **Derived status** — this is not deferrable, because retrofitting derivation after a stored
    `status` field exists means migrating data that was never trustworthy.
 4. User assertions with provenance.
-5. Git snapshot of the graph, with conflict detection (RFC-0053).
+5. **The proposal gate** — sessions propose, only users resolve. Also not deferrable: a system
+   that ships with sessions writing intent directly cannot later be told to stop, because by
+   then the graph is full of unreviewed model output and nobody can tell which parts the user
+   actually wanted.
+6. Git snapshot of the graph, with conflict detection (RFC-0053).
 
 The MVP does not include:
 
 - Sub-goal hierarchies, dependencies, and the acyclicity checker — a task list has no cycles.
 - Constraints and acceptance criteria as node types.
 - Confirmed `IMPLEMENTS` edges (MVP shows `NEEDS_REVIEW` and stops there).
-- AI-proposed graph restructuring.
+- Proposal expiry sweeps, `SUPERSEDED` detection, and accept-with-edits (MVP is accept or
+  reject whole).
 - Visual editing, templates, diff/merge UI.
 
 ### A note on presentation

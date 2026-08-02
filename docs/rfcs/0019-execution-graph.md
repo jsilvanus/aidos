@@ -293,6 +293,50 @@ reconciling them. The rule now:
 `execution_edges` records execution→content facts; `provenance_edges` records content→content
 facts. They answer different questions and neither is derivable from the other.
 
+### Cross-graph edge direction
+
+> **The Execution Graph is the only graph with outbound cross-graph edges. The Intent Graph and
+> the Resource Graph never reference each other, and never reference execution.**
+
+```
+IntentNode ◀──TARGETED───── Run
+IntentNode ◀──IMPLEMENTS─── Run
+                             │ FK
+                            Task
+                             │ FK
+                           Attempt ──PRODUCED──▶ ContentNode
+                                                      │ DERIVED_FROM
+                                                      ▼
+                                                 ContentNode
+```
+
+Everything points away from intent and toward content, with execution as the hub. This is what
+"intent is WHAT, execution is HOW" becomes once it is a schema: intent is a pure sink, content is
+a pure product, and the runtime is the only party that knows the two are related.
+
+**The reverse directions are queries, not edges.** "Which Runs served this goal?" is
+`execution_edges WHERE to_node_id = ? AND edge_kind IN ('TARGETED','IMPLEMENTS')`, served by
+`idx_edges_to`. "Which artifacts satisfy this goal?" is a two-hop traversal through execution
+(`ProvenanceService.contributionsTo`, RFC-0024) — slightly more work than a direct link, and
+correct, because the answer is *what Runs produced while serving that goal*, which is a fact
+about execution rather than a property of the goal.
+
+Four reasons the reverse edges do not exist, in descending order of cost:
+
+1. **Write amplification on the wrong structure.** Intent nodes are few, small, user-facing, and
+   snapshotted to Git. Runs are created continuously. A back-pointer would mean every Run
+   creation writes to an intent node — dirtying the structure that gets committed.
+2. **Two sources of truth.** They can disagree, and then a goal's real progress is undefined.
+   The same reason `runs.artifact_ids` was removed.
+3. **Each side must survive without the other.** A goal with no Runs is normal; a Run with no
+   intent target is normal (most ad-hoc requests are). Neither may require the other.
+4. **Direction encodes authorship.** Execution knows what it was serving. Intent derives what is
+   serving it — which is precisely the derived-status rule in RFC-0012.
+
+A convenience back-pointer added later — an `IntentNode.runs` list, a `ContentNode.intentId` —
+violates this invariant even when it looks harmless. If a traversal is awkward, extend
+`ProvenanceService`; do not add an edge.
+
 ### Query Model
 
 The Execution Graph supports the following key queries:
