@@ -122,8 +122,7 @@ Goal {
   title: String
   description: String?
   priority: Int (1=highest)
-  status: GoalStatus (not_started | in_progress | blocked | done | archived)
-  owner: SessionId?
+  # status is derived, not stored — see "Status is derived" below
 }
 ```
 
@@ -138,9 +137,8 @@ SubGoal {
   description: String?
   parent_goal: NodeId
   priority: Int
-  status: GoalStatus
   estimated_effort: String? ("small", "medium", "large")
-  owner: SessionId?
+  # status is derived; ownership is expressed by TARGETED edges (RFC-0019)
 }
 ```
 
@@ -155,7 +153,7 @@ Constraint {
   description: String?
   applies_to: NodeId
   severity: ConstraintSeverity (must_have | should_have | nice_to_have)
-  status: "active" | "relaxed" | "superseded"
+  lifecycle: "active" | "relaxed" | "superseded"   # authorship state, not progress
 }
 ```
 
@@ -196,37 +194,109 @@ Every node in the Intent Graph has:
 
 ```
 IntentNode {
-  id: NodeId                        # Unique within the graph
-  project_id: UUID                  # Backref to project
-  
+  id: NodeId                        # UUIDv7, globally unique (RFC-0054)
+  project_id: UUID
+
   type: NodeType                    # Goal, SubGoal, Constraint, etc.
   title: String
   description: String?
-  
-  status: NodeStatus                # not_started | in_progress | blocked | done | archived
+
   priority: Int                     # 1=highest, determines ordering
-  
-  owner: SessionId?                 # Which session is working on this
-  
+
+  # NOTE: there is no authored `status` field. See "Status is derived" below.
+  user_assertion: StatusAssertion?  # explicit user claim, with provenance
+  lifecycle: NodeLifecycle          # ACTIVE | ARCHIVED — authorship state, not progress
+
   created_at: Timestamp
-  created_by: SessionId | UserId
+  created_by_kind: 'USER' | 'SESSION'
+  created_by_id: UUID
   modified_at: Timestamp
-  modified_by: SessionId | UserId
-  
+  modified_by_kind: 'USER' | 'SESSION'
+  modified_by_id: UUID
+
   constraints: List<NodeId>         # Constraints that apply
   acceptance_criteria: List<NodeId> # Conditions for "done"
-  
+
   dependencies: List<NodeId>        # Other nodes this depends on
-  dependents: List<NodeId>          # Nodes that depend on this
-  
-  related_artifacts: List<ArtifactId>  # Artifacts addressing this intent
-  related_resources: List<ResourceId>  # Resources relevant to this intent
-  
-  tags: List<String>                # For querying ("api", "backend", "ui")
-  
+                                    # (dependents are derived; see Acyclicity)
+
+  tags: List<String>
   metadata: Map<String, Any>?
 }
+
+StatusAssertion {
+  claimed: NodeStatus               # what the user says is true
+  asserted_at: Timestamp
+  asserted_by: UserId
+  note: String?                     # why they overrode the derived value
+}
 ```
+
+Two fields were removed. `owner: SessionId` implied a session holds a node, which does not
+survive parallel workers (RFC-0007) — ownership is expressed by `TARGETED` edges instead.
+`related_artifacts` and `related_resources` duplicated links that already exist through
+`IMPLEMENTS` → Run → `PRODUCED` → ContentNode; a denormalized list here is a fourth place for
+provenance to disagree with itself (RFC-0019, "One fact, one place").
+
+### Status is derived, never authored
+
+**An intent node has no stored `status`.** Progress is computed:
+
+```
+derived_status(node) =
+    from IMPLEMENTS edges (RFC-0019) → the Run outcomes that actually served this node
+    ∧ acceptance criteria evaluation
+    ∧ status of child nodes and dependencies
+```
+
+The reason is a failure mode that would otherwise be certain. A Run implements "add auth" and
+writes `status = done`. Then the user reverts the commit; or the Run partially failed and the
+model reported success; or a later change broke it. **The field still reads `done`.** An intent
+graph that misreports state is worse than none, because the user stops trusting it — and worse,
+because it silently feeds task instructions into prompt construction (RFC-0025), so the model
+inherits the false belief.
+
+Derived status values:
+
+| Value | Derivation |
+|---|---|
+| `NOT_STARTED` | no `TARGETED` or `IMPLEMENTS` edges |
+| `IN_PROGRESS` | a `TARGETED` Run is non-terminal |
+| `NEEDS_REVIEW` | `IMPLEMENTS` edges exist but are unconfirmed (RFC-0019) |
+| `DONE` | confirmed `IMPLEMENTS` edges and all acceptance criteria satisfied |
+| `BLOCKED` | a dependency is not `DONE`, or the last Run failed unrecoverably |
+| `STALE` | was `DONE`, but content it produced is `DANGLING` or was reverted (RFC-0053) |
+
+`STALE` is the state that only exists because status is derived. A stored field cannot represent
+"this was done and then undone by something outside the system," and that is a normal event in a
+Git-first product.
+
+**The user can always override**, and the override is recorded as a claim rather than as truth:
+
+```
+Goal: Add user authentication
+  Derived:   NEEDS_REVIEW  (2 runs, unconfirmed)
+  You said:  DONE          (3 days ago — "shipped manually, runs were exploratory")
+```
+
+Both are shown. The derived value never disappears. A model reading the graph sees both, and the
+distinction between "the system observed this" and "the user asserted this" is preserved through
+to prompt construction.
+
+**Cost:** one join and a small evaluator. **Benefit:** the graph cannot lie.
+
+### Acyclicity
+
+The Intent Graph is a DAG, and this is enforced at write time rather than assumed:
+
+- Adding a dependency edge that would create a cycle is rejected with `intent.cycle_rejected`
+  (RFC-0029). A dependency cycle deadlocks status derivation and any future planner.
+- Parent/child containment is likewise acyclic.
+- `dependents` is **derived** by reverse lookup, not stored. Storing both directions means they
+  can disagree, and reconciling them is work with no upside.
+
+The check is a reachability test on insert — cheap at intent-graph scale (tens to hundreds of
+nodes), and it turns a class of subtle deadlock into an immediate, explainable error.
 
 ### Editability
 
@@ -519,23 +589,40 @@ Constraints are not enforced automatically (the system does not prevent a user f
 
 ## MVP Scope
 
-The MVP Intent Graph includes:
+**The Intent Graph is built last.** It is a leaf in the dependency graph (RFC-0099): the
+execution model, the content graph, and the agent loop all work without it, and nothing depends
+on it. It is also the hardest of the three graphs to get right. Building it early is how a
+project spends a year on planning machinery before proving the execution loop.
 
-1. **Goal hierarchy**: Goals and sub-goals.
-2. **Constraints and criteria**: Add constraints and acceptance criteria to goals.
-3. **Status tracking**: Track progress (not_started, in_progress, done).
-4. **Simple versioning**: Basic Git-based versioning.
-5. **Querying**: Sessions can query the graph (what's the next priority? what goals are blocked?).
-6. **Editing**: Users can directly edit the graph via UI or API.
-7. **AI annotations**: AI sessions can link artifacts to intent nodes.
+**MVP is a task list, not a DAG.** Concretely:
+
+1. Flat or single-level goals with titles, descriptions, and priority.
+2. `TARGETED` edges from Runs, so the list knows what is being worked on.
+3. **Derived status** — this is not deferrable, because retrofitting derivation after a stored
+   `status` field exists means migrating data that was never trustworthy.
+4. User assertions with provenance.
+5. Git snapshot of the graph, with conflict detection (RFC-0053).
 
 The MVP does not include:
 
-- Visual graph editing (future).
-- Graph templates (future).
-- Automatic conflict detection (future).
-- Sophisticated diff/merge (future).
-- Full proposal workflow for AI (future).
+- Sub-goal hierarchies, dependencies, and the acyclicity checker — a task list has no cycles.
+- Constraints and acceptance criteria as node types.
+- Confirmed `IMPLEMENTS` edges (MVP shows `NEEDS_REVIEW` and stops there).
+- AI-proposed graph restructuring.
+- Visual editing, templates, diff/merge UI.
+
+### A note on presentation
+
+The Intent Graph is a graph in the data model. It should **not** be a node-link diagram in the
+UI. A force-directed canvas is unusable on a phone and only marginally useful on a desktop.
+
+The forms that work: an **outline or checklist** with derived status and a visible override
+marker; a **"what's next"** query answering priority and blockers; and a **timeline** of
+status transitions. Reserve any canvas view for a desktop power-user feature, if ever.
+
+The same principle applies to the other two graphs: the Execution Graph presents as a timeline,
+and the Resource Graph as an on-demand provenance trail ("why does this file look like this?").
+Graphs are how the data is modelled, not how it is shown.
 
 ## Future Work
 

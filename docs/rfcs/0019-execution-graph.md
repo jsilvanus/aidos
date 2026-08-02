@@ -75,7 +75,6 @@ data class Run(
     val sessionId: UUID,
     val projectId: UUID,
     val triggerEventId: UUID,          // the event that initiated this run
-    val intentNodeId: UUID?,           // optional link to the Intent Graph
     val startedAt: Instant,
     val endedAt: Instant?,
     val state: RunState,
@@ -99,10 +98,13 @@ enum class RunState {
 }
 ```
 
-**`Run` no longer carries `artifactIds` or `taskIds`.** Both were denormalized JSON arrays
-duplicating relationships that foreign keys already express, and they created the possibility
-of disagreement with the authoritative rows. Tasks are found by `tasks.run_id ORDER BY ordinal`;
-produced artifacts are found through `PRODUCED` edges. See "One fact, one place" below.
+**`Run` no longer carries `artifactIds`, `taskIds`, or `intentNodeId`.** The first two were
+denormalized JSON arrays duplicating relationships that foreign keys already express. The third
+duplicated what `TARGETED` and `IMPLEMENTS` edges express, and could not represent a Run serving
+more than one intent node — or, more importantly, a Run that ended up serving a *different* node
+than the one it started from. Tasks are found by `tasks.run_id ORDER BY ordinal`; produced
+content through `PRODUCED` edges; intent links through `TARGETED` / `IMPLEMENTS`. See "One fact,
+one place" below.
 
 The composition rules between `RunState` and `TaskState` are defined in RFC-0006.
 
@@ -160,16 +162,19 @@ data class Attempt(
     val startedAt: Instant,
     val endedAt: Instant?,
     val state: AttemptState,
-    val error: AttemptError?,
-    val inputSnapshot: String?,        // JSON snapshot of inputs at attempt start
-    val outputSnapshot: String?,       // JSON snapshot of output (for audit)
-    val modelProvider: String?,        // if a model call: which provider was used
-    val modelVersion: String?,         // if a model call: which model version
+    val error: AidosError?,            // RFC-0029; class drives retryability
+    val inputSnapshot: String?,        // AGED, compactable (RFC-0056)
+    val outputSnapshot: String?,       // AGED, compactable
+    val promptPackage: PromptPackage?, // RFC-0025; AGED
+    val modelProvider: String?,
+    val modelVersion: String?,
     val tokensInput: Int?,
     val tokensOutput: Int?,
-    val toolResult: String?,           // if a tool call: structured result summary
-    val capabilityId: UUID?,           // the capability exercised (if any)
-    val auditRef: UUID                 // audit log entry for this attempt
+    val costUnits: Long?,              // RFC-0028
+    val capabilityId: UUID?,           // the authority actually exercised
+    val idempotencyKey: String?,       // RFC-0009
+    val recoveryClass: RecoveryClass,  // RFC-0009; gates retry
+    val auditRef: UUID
 )
 
 enum class AttemptState {
@@ -227,12 +232,45 @@ enum class NodeKind { RUN, TASK, ATTEMPT, ARTIFACT, INTENT_NODE }
 enum class EdgeKind {
     PRODUCED,          // Attempt PRODUCED ContentNode
     CONSUMED,          // Task CONSUMED ContentNode (used as input)
-    IMPLEMENTS,        // Run IMPLEMENTS IntentNode (links execution to intent)
+    TARGETED,          // Run TARGETED IntentNode  — declared at Run creation; a fact
+    IMPLEMENTS,        // Run IMPLEMENTS IntentNode — asserted at completion; needs confirmation
     RETRY_OF,          // Attempt RETRY_OF prior Attempt
     PRODUCED_CALL,     // MODEL_CALL Task PRODUCED_CALL the TOOL_CALL Tasks it emitted (RFC-0008)
     DEPENDS_ON         // Task DEPENDS_ON Task (explicit ordering beyond `ordinal`)
 }
 ```
+
+### `TARGETED` and `IMPLEMENTS` are different claims
+
+A single `IMPLEMENTS` edge conflated two things that are routinely not the same, and left
+unanswered *when* it is written and *who* asserts it.
+
+| | `TARGETED` | `IMPLEMENTS` |
+|---|---|---|
+| Written | at Run creation | at Run completion |
+| By | the runtime, from the trigger | proposed by the model, or by the user |
+| Means | "this Run was started for that goal" | "this Run actually served that goal" |
+| Trust | **fact** — the runtime observed it | **assertion** until confirmed |
+| Drives | `IN_PROGRESS` status (RFC-0012) | `DONE` status, once confirmed |
+
+They diverge constantly. A Run started to "fix the login bug" often ends up refactoring the
+session store; a Run targeting one goal frequently satisfies a different one. Recording only the
+declared target loses what happened; recording only the outcome loses what was intended.
+
+**Confirmation.** An `IMPLEMENTS` edge carries `confirmed: Boolean` and `confirmed_by`. It
+becomes confirmed when acceptance criteria evaluate true, or when the user confirms it. Until
+then the intent node derives `NEEDS_REVIEW` (RFC-0012), not `DONE`.
+
+This matters because the model writes the proposal. Provenance is precisely the thing that must
+not rest on an unverified model assertion — an agent that can mark its own work complete will,
+and the graph then reports success it did not achieve. Distinguishing proposed from confirmed
+costs one boolean and preserves the property that the graph does not lie.
+
+### Acyclicity
+
+`DEPENDS_ON` edges must not form a cycle; insertion performs a reachability check and rejects
+with `execution.cycle_rejected` (RFC-0029). Run → Task → Attempt containment is acyclic by
+construction, since it is expressed with foreign keys rather than edges.
 
 ### One fact, one place
 
@@ -285,12 +323,18 @@ WHERE e.to_node_id = ?;
 
 **"What did the AI do to implement this intent?"**
 ```sql
-SELECT r.id, r.started_at, r.state, r.user_message_summary
+SELECT r.id, r.started_at, r.state, r.user_message_summary,
+       e.edge_kind, e.confirmed
 FROM runs r
-JOIN execution_edges e ON e.from_node_id = r.id AND e.edge_kind = 'IMPLEMENTS'
+JOIN execution_edges e ON e.from_node_id = r.id
+                      AND e.edge_kind IN ('TARGETED', 'IMPLEMENTS')
 WHERE e.to_node_id = ?
 ORDER BY r.started_at;
 ```
+
+Both edge kinds are returned. `TARGETED` answers "what was aimed at this goal", `IMPLEMENTS`
+with `confirmed = 1` answers "what actually delivered it", and the difference between the two
+sets is usually the most informative thing on the screen.
 
 **"Show me all failed runs in this session"**
 ```sql
@@ -308,7 +352,6 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     trigger_event_id TEXT NOT NULL,
-    intent_node_id TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT,
     state TEXT NOT NULL,
@@ -376,7 +419,8 @@ CREATE TABLE attempts (
     UNIQUE (task_id, attempt_number)
 );
 
--- Execution → content facts only. Content → content lineage is provenance_edges (RFC-0024).
+-- Execution → content and execution → intent facts.
+-- Content → content lineage is provenance_edges (RFC-0024).
 CREATE TABLE execution_edges (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -385,6 +429,10 @@ CREATE TABLE execution_edges (
     to_node_id TEXT NOT NULL,
     to_node_kind TEXT NOT NULL,
     edge_kind TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,   -- IMPLEMENTS only; see above
+    confirmed_by_kind TEXT,                 -- 'USER' | 'ACCEPTANCE_CRITERIA'
+    confirmed_by_id TEXT,
+    confirmed_at TEXT,
     FOREIGN KEY (project_id) REFERENCES projects(id),
     UNIQUE (from_node_id, to_node_id, edge_kind)
 );
@@ -426,9 +474,15 @@ The MVP implements:
 6. Per-Attempt `tokens_input`, `tokens_output`, `cost_units`, and `capability_id`.
 7. Per-Run `taint_level` and `platform_profile` recording.
 
+8. `TARGETED` edges — written by the runtime at Run creation whenever a Run has an originating
+   intent node. These are facts and cost nothing, and without them the Intent Graph cannot
+   derive `IN_PROGRESS` (RFC-0012).
+
 The MVP does not implement:
-- `IMPLEMENTS` edges (requires Intent Graph integration).
-- `DEPENDS_ON` edges and parallel task execution.
+- `IMPLEMENTS` edges and their confirmation flow (arrives with the Intent Graph; until then
+  intent nodes derive at most `IN_PROGRESS`).
+- `DEPENDS_ON` edges and parallel task execution *within* a Run. Note that parallelism *across*
+  Runs — worker sessions — is supported from the start (RFC-0007).
 - Configurable retry policies (fixed retry count only).
 - Compensation graphs.
 

@@ -219,7 +219,51 @@ enum class ProvenanceEdgeKind {
 }
 ```
 
-Provenance edges are immutable. Once created, they cannot be deleted. This preserves the complete derivation history even if nodes are archived or deleted.
+Provenance edges are immutable. Once created, they cannot be deleted. This preserves the complete
+derivation history even if nodes are archived or deleted.
+
+### Acyclicity
+
+The provenance graph is a DAG, enforced on insert rather than assumed. Adding an edge whose
+target can already reach its source is rejected with `content.cycle_rejected` (RFC-0029).
+
+This is not theoretical: `VERSION_OF` combined with `DERIVED_FROM` can close a loop — B is
+derived from A, then A is later recorded as a new version of B — and a cycle makes the recursive
+provenance query non-terminating. The query below guards with `depth < 10`, which caps runaway
+traversal but silently truncates legitimate deep chains and does not prevent the cycle from
+existing. The write-time check does.
+
+Because edges are immutable, the check runs once, at insert, and the invariant then holds
+permanently.
+
+### Unified provenance traversal
+
+Answering *"why does this file look like this?"* crosses all three graphs:
+
+```
+ContentNode ◀─PRODUCED─ Attempt ◀── Task ◀── Run ─IMPLEMENTS─▶ IntentNode
+     │
+     └─DERIVED_FROM─▶ ContentNode ─DERIVED_FROM─▶ …
+```
+
+Three tables, two edge representations (`execution_edges`, `provenance_edges`), and foreign-key
+containment. Every frontend and every audit view needs this same walk, so it is written **once**,
+as a service over the existing schema:
+
+```kotlin
+interface ProvenanceService {
+    suspend fun explain(nodeId: UUID, depth: Int = 5): ProvenanceTrail
+    suspend fun contributionsTo(intentNodeId: UUID): List<ContentNode>
+    suspend fun consumersOf(nodeId: UUID): List<Run>
+}
+```
+
+This is a service, not a schema change — no fourth edge table, no denormalized lineage column.
+The temptation to add one should be resisted: it would become a fifth source of truth for
+provenance, and RFC-0019's "One fact, one place" exists because four was already too many.
+
+`ProvenanceTrail` is what the UI renders as an on-demand trail, not as a graph canvas — see
+RFC-0012 for why none of the three graphs should be drawn as node-link diagrams.
 
 ### Promotion and Demotion
 
