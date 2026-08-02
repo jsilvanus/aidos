@@ -306,6 +306,89 @@ Permissions can be:
 - **Delegated**: A session delegates a capability to a worker it creates.
 - **Requested**: A session requests permission for an operation (user is prompted).
 
+### Driver Orchestration
+
+The driver/worker model is what distinguishes Aidos from a chat loop, so its mechanics are
+specified here rather than left to convention.
+
+#### The cycle
+
+```
+Driver Run
+  Task 1  MODEL_CALL   decompose the goal        → proposes a plan (RFC-0019)
+  Task 2  USER_PROMPT  approve the plan          ← YIELDED; may be hours
+  Task 3  COMPOSITE    worker: schema            → spawns child Run, parks
+  Task 4  COMPOSITE    worker: endpoints         DEPENDS_ON 3
+  Task 5  COMPOSITE    worker: tests             DEPENDS_ON 3
+  Task 6  MODEL_CALL   review and integrate      DEPENDS_ON 4, 5
+```
+
+Tasks 4 and 5 park simultaneously; their child Runs execute in parallel. The driver's Run has no
+`RUNNING` Task while they work, so the one-running-Task invariant holds (RFC-0006) and the
+driver's own audit trail stays a single ordered sequence.
+
+A worker's completion event resumes the driver's `drive()` (RFC-0009). The driver may be resumed
+on a different process, days later, on a different device.
+
+#### Spawning a worker
+
+Creating a worker is a capability (`worker:create`) and involves four things:
+
+1. **A scoped brief** — what the worker is to accomplish, as its initial user message. Not the
+   driver's whole context: a worker that inherits the driver's transcript inherits its taint and
+   its token cost.
+2. **Attenuated capabilities** (RFC-0018) — a strict subset of the driver's, narrowed to what the
+   brief requires. A worker writing tests gets `fs:write` scoped to the test directory, not the
+   whole project.
+3. **A split budget** — this is the one most easily got wrong. Budget attenuates like any other
+   constraint (RFC-0028): a driver holding 10,000 cost units delegating to three workers
+   **divides** that allowance. It does not multiply it. Without this rule, fan-out is an
+   unbounded spend multiplier, and orchestration becomes the most expensive way to use the
+   product.
+4. **An isolation mechanism** — treeless on MOBILE, optionally a worktree on DESKTOP
+   (RFC-0049). Either way the worker's output is a commit on `refs/aidos/workers/<id>`.
+
+#### What a worker returns
+
+A worker produces a **commit**, not a patch in a message and not a set of edits to the shared
+working tree. The driver reviews a diff, and the user can review the same diff independently.
+
+The driver then merges, cherry-picks, requests changes, or discards. Nothing a worker did
+reaches the user's branch without the driver acting — and, for anything the user configured as
+requiring approval, without the user acting.
+
+#### Failure and partial success
+
+Partial success is the normal case, not the exception. Three workers, two succeed:
+
+- The driver sees per-worker outcomes and decides: integrate what succeeded, retry the failure
+  with a revised brief, reassign, or stop and ask.
+- A `FAILED` dependency marks dependents `SKIPPED` (RFC-0019) rather than running them against
+  missing prerequisites.
+- The driver's own Run does not fail merely because a worker did. Orchestration failure and task
+  failure are different outcomes, and collapsing them loses the successful work.
+
+If the **driver** terminates, its workers are cancelled and their delegated capabilities are
+revoked recursively — which happens automatically, since delegated capabilities are children of
+the driver's (RFC-0018). Work already committed to a worker ref survives as an artifact; only
+the authority and the pending Runs end.
+
+#### When not to orchestrate
+
+The failure mode is over-orchestration: spawning workers for everything, multiplying cost and
+producing coordination overhead larger than the work. Workers are for **isolation**, not speed:
+
+| Use a worker when | Do it inline when |
+|---|---|
+| the work is independently reviewable | it is a few steps |
+| it needs different capabilities | it needs the driver's context anyway |
+| it would flood the driver's context | the result is immediately consumed |
+| it can genuinely proceed in parallel | ordering is inherent |
+
+On MOBILE the parallelism is real in structure but limited in practice: workers plan
+concurrently, but their model calls queue on the device-global inference slot (RFC-0020). Five
+workers on a phone is not five times faster, and the plan-approval step should say so.
+
 ### Session Coordination
 
 Sessions within a project coordinate through:
@@ -509,11 +592,12 @@ The MVP session model includes:
 1. **Driver sessions**: Main worker listening for user events.
 2. **Worker sessions**: Scoped tasks created by drivers.
 3. **Session state**: Persistent memory, credentials, task state.
-4. **Capabilities**: Explicit permissions per session.
-5. **Artifacts**: Workers create and publish artifacts.
-6. **Lifecycle**: Creation, waking, sleeping, archival.
-7. **Coordination**: Through artifacts, events, and Intent Graph.
-8. **Logging**: All session actions are logged for audit.
+4. **Capabilities**: attenuated delegation to workers (RFC-0018), including split budgets.
+5. **Orchestration**: declared plans with user approval; `COMPOSITE` fan-out; parked parents.
+6. **Worker output as commits** on `refs/aidos/workers/<id>`; treeless on MOBILE.
+7. **Lifecycle**: creation, waking, sleeping, archival; orphan cancellation on driver termination.
+8. **Coordination**: through artifacts, events, and the Intent Graph.
+9. **Logging**: all session actions audited with actor attribution (RFC-0046).
 
 The MVP does not include:
 

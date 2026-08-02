@@ -116,6 +116,7 @@ A Task is a discrete unit of work within a Run. Tasks correspond to individual A
 data class Task(
     val id: UUID,
     val runId: UUID,
+    val planId: UUID?,                 // null for emergent tasks; set for declared plans
     val sessionId: UUID,
     val projectId: UUID,
     val ordinal: Int,                  // execution order within the Run
@@ -196,6 +197,60 @@ error *classes*.
 **Retry safety.** A Task may only be retried if its effect's `recovery_class` (RFC-0009) is
 `PURE`, `IDEMPOTENT`, or `CHECKABLE`. Retrying an `UNSAFE` effect is forbidden regardless of
 policy — an interrupted `git push` or outbound notification must never be silently repeated.
+
+### Task creation: emergent and declared
+
+Tasks are created in one of two modes.
+
+**Emergent (default).** The agent loop appends Tasks as the model emits tool calls (RFC-0008).
+Nothing is planned ahead; the Task list is the record of what the model decided to do, one step
+at a time. This is correct for ordinary work — an agent asked to fix a typo should not produce a
+project plan first.
+
+**Declared.** The model proposes a batch of Tasks with `DEPENDS_ON` edges *before* any of them
+executes. The Run parks on a `USER_PROMPT` Task, the user sees the plan, and execution begins
+only on approval.
+
+Declared mode is required when a plan would:
+
+- spawn worker sessions (fan-out multiplies cost and is hard to stop once started),
+- exceed a configured cost or step estimate,
+- or be explicitly requested by the user ("plan this first").
+
+Otherwise emergent is used. The distinction is about *reversibility*: a plan you can watch
+unfold one step at a time needs no approval; a plan that commits five sessions to hours of work
+does.
+
+```
+Run (driver)
+  Task 1  MODEL_CALL   "plan this"           → proposes Tasks 3-6 + dependencies
+  Task 2  USER_PROMPT  approve the plan      ← Run YIELDED here, possibly for hours
+  Task 3  COMPOSITE    worker: schema
+  Task 4  COMPOSITE    worker: endpoints     DEPENDS_ON 3
+  Task 5  COMPOSITE    worker: tests         DEPENDS_ON 3
+  Task 6  MODEL_CALL   review and integrate  DEPENDS_ON 4, 5
+```
+
+A plan is a proposal, and — as with intent proposals (RFC-0012) — **the model proposes and the
+user approves.** A driver approving its own plan is the same closed loop one level up.
+
+Re-planning after a failure creates a **new** plan; the failed one is retained with its outcome.
+The history of what was planned is as informative as the history of what ran.
+
+### Scheduling with dependencies
+
+The executor's `nextRunnableTask` (RFC-0009) selects the lowest-ordinal `PENDING` Task whose
+`DEPENDS_ON` predecessors are all `COMPLETED`. A Task whose dependency `FAILED` transitions to
+`SKIPPED` rather than running.
+
+**Fan-out does not violate the one-running-Task invariant.** RFC-0006 requires at most one Task
+per Run in `RUNNING`. A `COMPOSITE` Task that spawns a worker does no work itself: it creates a
+child Run and immediately parks in `AWAITING_INPUT` with `awaiting_run_id` set. So Tasks 4 and 5
+above are both parked simultaneously while their child Runs execute in parallel.
+
+The parallelism lives in the child Runs, not in the parent's Task list. The parent Run's audit
+trail stays a single ordered sequence, and each worker gets its own Run, transcript, Execution
+Graph subtree, and audit attribution.
 
 ### Retry Policy
 
@@ -416,9 +471,25 @@ CREATE TABLE runs (
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
+CREATE TABLE execution_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    proposed_by_task_id TEXT NOT NULL,       -- the MODEL_CALL that produced it
+    proposed_at TEXT NOT NULL,
+    state TEXT NOT NULL,                     -- PROPOSED | APPROVED | REJECTED | SUPERSEDED
+    resolved_by_user_id TEXT,                -- ONLY a user (RFC-0046)
+    resolved_at TEXT,
+    task_count INTEGER NOT NULL,
+    estimated_steps INTEGER,
+    estimated_cost_units INTEGER,            -- RFC-0028
+    spawns_workers INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (run_id) REFERENCES runs(id)
+);
+
 CREATE TABLE tasks (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
+    plan_id TEXT,                            -- NULL for emergent tasks
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL,                         -- execution order within the Run
@@ -433,8 +504,11 @@ CREATE TABLE tasks (
     retry_policy_json TEXT NOT NULL,
     row_version INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (run_id) REFERENCES runs(id),
+    FOREIGN KEY (plan_id) REFERENCES execution_plans(id),
     UNIQUE (run_id, ordinal)
 );
+
+CREATE INDEX idx_plans_run ON execution_plans(run_id, proposed_at);
 
 CREATE TABLE attempts (
     id TEXT PRIMARY KEY,
@@ -522,11 +596,20 @@ The MVP implements:
    intent node. These are facts and cost nothing, and without them the Intent Graph cannot
    derive `IN_PROGRESS` (RFC-0012).
 
+9. `DEPENDS_ON` edges and dependency-aware scheduling; `SKIPPED` on failed dependencies.
+10. `COMPOSITE` tasks parking on child Runs, enabling worker fan-out (RFC-0011).
+11. Declared plans with the approval step, for any plan that spawns workers.
+
+`DEPENDS_ON` and `COMPOSITE` were previously deferred. They are in MVP because the driver/worker
+model depends on both, and that model is the thing that distinguishes Aidos from a chat loop
+(RFC-0102). Deferring them means shipping a runtime that cannot orchestrate.
+
 The MVP does not implement:
 - `IMPLEMENTS` edges and their confirmation flow (arrives with the Intent Graph; until then
   intent nodes derive at most `IN_PROGRESS`).
-- `DEPENDS_ON` edges and parallel task execution *within* a Run. Note that parallelism *across*
-  Runs — worker sessions — is supported from the start (RFC-0007).
+- Concurrent `RUNNING` Tasks within one Run — fan-out is via parked `COMPOSITE` tasks, and the
+  one-running-Task invariant holds.
+- Cost and step estimation for plans (`estimated_*` recorded when available, not required).
 - Configurable retry policies (fixed retry count only).
 - Compensation graphs.
 

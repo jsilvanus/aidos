@@ -93,7 +93,7 @@ independently, so a Run whose Task was blocked on approval for three days was de
 |---|---|
 | `PENDING` | all `PENDING` |
 | `RUNNING` | exactly one `RUNNING`; others `PENDING`, terminal, or `SKIPPED` |
-| `YIELDED` | exactly one in `AWAITING_APPROVAL` or `AWAITING_INPUT`; no Task `RUNNING` |
+| `YIELDED` | **one or more** in `AWAITING_APPROVAL` or `AWAITING_INPUT`; no Task `RUNNING` |
 | `COMPLETED` | all terminal; none `FAILED` |
 | `FAILED` | at least one `FAILED`; no Task `RUNNING` |
 | `CANCELLED` | no Task `RUNNING`; unstarted Tasks `SKIPPED` |
@@ -101,6 +101,12 @@ independently, so a Run whose Task was blocked on approval for three days was de
 
 The invariant that makes this checkable: **at most one Task per Run is `RUNNING`**, because the
 executor is a single-stepping driver (RFC-0009). It is asserted in tests.
+
+Note that `YIELDED` permits *several* parked Tasks. A driver session that has fanned out to three
+workers holds three `COMPOSITE` Tasks in `AWAITING_INPUT` simultaneously, each with its
+`awaiting_run_id` set (RFC-0019). None of them is `RUNNING` — the work is happening in the child
+Runs — so the one-running-Task invariant holds while genuine parallelism proceeds. An earlier
+version required exactly one parked Task, which would have made worker fan-out unrepresentable.
 
 A Run in YIELDED state is not blocking the scheduler. The session is dormant at a safe serialization point, waiting for an async operation to complete. When the async operation resolves, the run transitions back to RUNNING.
 
