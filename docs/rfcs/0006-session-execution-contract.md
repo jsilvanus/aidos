@@ -157,8 +157,16 @@ sealed class SuspendedOperation {
     data class UserPrompt(val promptId: UUID, val question: String) : SuspendedOperation()
     data class CapabilityApproval(val requestId: UUID, val permission: Permission) : SuspendedOperation()
     data class ChildRun(val childRunId: UUID, val childSessionId: UUID) : SuspendedOperation()
+    data class ForegroundRequired(val reason: ForegroundReason) : SuspendedOperation()
 }
+
+enum class ForegroundReason { LOCAL_INFERENCE }
 ```
+
+`ForegroundRequired` covers a background Run that has reached work the platform will not permit
+outside a foreground service — on MOBILE, a local model call without an FGS (decision D24). The
+Run parks and notifies "ready to continue" rather than failing or silently routing to a remote
+model. It resumes when the user opens the app.
 
 `ChildRun` and `CapabilityApproval` are new. Waiting on a worker session was previously
 unrepresentable — the flagship Driver/Worker workflow in RFC-0011 had the driver "yield while

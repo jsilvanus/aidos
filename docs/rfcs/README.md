@@ -90,7 +90,8 @@ by RFC-0024 (Resource Graph). They are retained for their motivation.
 
 **Decisions** live in `docs/decisions.md` — why the architecture is this and not something else,
 what each choice forecloses, and what it would cost to revisit. Read it before proposing a
-change to a settled question. Open decisions are in `docs/open-questions/`.
+change to a settled question. Long-form analysis behind individual decisions is in
+`docs/decisions/`.
 
 ## How review findings are closed
 

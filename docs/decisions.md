@@ -308,16 +308,48 @@ parameter model.
 
 ---
 
+### D24 — Local inference requires a foreground service; background Runs otherwise prepare only · `SETTLED`
+
+**A Run may make a local model call only in the foreground.** Concretely:
+
+- **Primary path (a).** A Run using a local model runs under a foreground service with a visible
+  ongoing notification. The FGS window is long enough for a full inference step, so no
+  sub-step escape hatch is needed in the deadline budget (RFC-0009).
+- **Fallback (d).** Without an FGS — unavailable, or the user declined it — a background Run does
+  deterministic work only: index, fetch, reconcile Git, assemble context. On reaching a model
+  call it **parks** with suspension reason `ForegroundRequired` (RFC-0006) and notifies *"ready
+  to continue"*. Inference happens when the user opens the app.
+- **(b) is rejected**, not deferred. Mid-generation checkpointing — persisting a KV cache and
+  resuming in the next window — sounds like the sophisticated answer and is probably the worst
+  one: the cache is hundreds of megabytes, and serializing it per window plausibly costs more in
+  I/O and battery than the inference it preserves.
+- **(c) is rejected.** Routing background Runs to remote models contradicts offline-first exactly
+  where it was promised.
+
+**Why.** The naive framing — "a model call exceeds any available window" — is wrong. A foreground
+service holding a wake lock runs for minutes; ~500 tokens from a 3B model is around 50 seconds
+and fits comfortably. It is `WorkManager`'s ceiling and Doze that do not accommodate it. So the
+question was never whether inference fits, but what we are willing to require to make it fit —
+and a visible notification is the *correct* user experience for a phone doing sustained work,
+not a cost to engineer around. An agent consuming your battery should say so.
+
+**Consequence, stated plainly:** RFC-0044's recurring sessions complete autonomously when the
+user has granted a foreground service, and otherwise prepare and wait. Both states are
+explainable in one sentence, which is the test that matters. The fallback also makes the
+subsequent foreground session faster, since context is already assembled.
+
+**Would change the answer:** on-device models getting materially faster (fallback becomes rare);
+Android tightening FGS further (pushes toward (d) as primary); measured battery cost at G3
+proving unacceptable (pushes background toward (c) while keeping local in foreground).
+
+**Long-form analysis:** `docs/decisions/D24-android-inference-windows.md`.
+**RFCs:** 0044, 0049, 0009, 0006.
+
+---
+
 ## Open
 
-### D24 — Local inference under Android execution windows · `OPEN`
-
-**See `docs/open-questions/D24-android-inference-windows.md`.**
-
-Decides whether background autonomy — recurring sessions, scheduled reviews, life-management
-workflows — is real or whether it requires connectivity or foreground attention.
-
-The most likely thing to surprise the project at gate G3.
+None.
 
 ---
 
@@ -326,3 +358,4 @@ The most likely thing to surprise the project at gate G3.
 | Date | Change |
 |---|---|
 | 2026-08-02 | Initial record: D1–D23 settled, D24 open. |
+| 2026-08-02 | D24 settled: (a) foreground service primary, (d) preparation-only fallback, (b) and (c) rejected. |

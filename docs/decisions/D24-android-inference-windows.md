@@ -1,6 +1,14 @@
 # D24 — Local inference under Android execution windows
 
-Status: **OPEN** — needs a decision before Phase 3 (offline proof).
+Status: **RESOLVED** (2026-08-02) — long-form analysis. The decision is recorded in
+`docs/decisions.md` D24.
+
+**Decision: (a) foreground service as the primary path, (d) preparation-only as the fallback
+when an FGS is unavailable or declined. (b) is rejected and should not be revisited without new
+evidence.**
+
+The analysis below is retained because the reasoning matters more than the outcome — anyone
+proposing to reopen this should start by disagreeing with something specific in it.
 
 ## The question
 
@@ -110,5 +118,16 @@ one sentence, which is the test that matters.
 - Measured battery cost of sustained inference proving unacceptable at G3 (pushing toward (c)
   for background, keeping local for foreground).
 
-**Decide before Phase 3.** The offline proof (G3) is where this becomes visible, and choosing
-after building is choosing by accident.
+## Resolution
+
+Adopted as recommended: **(a) primary, (d) fallback, (b) rejected.**
+
+`ForegroundRequired` is added as a suspension reason (RFC-0006), so a background Run that
+reaches a local model call without an FGS parks explicitly rather than failing or silently
+degrading. RFC-0044 softens its recurring-session language accordingly: recurring sessions
+complete autonomously when the user has granted a foreground service, and otherwise prepare and
+wait.
+
+(b) is rejected rather than deferred. Anyone reaching for mid-generation checkpointing later
+should first measure the serialization cost of a KV cache against the inference it would
+preserve; the expectation is that it loses.

@@ -175,6 +175,17 @@ The desktop profile uses the same executor with an effectively unbounded window.
 Android-specific execution code path** — only a different deadline budget. This is what keeps
 Android-first from forking the runtime.
 
+**Steps always fit their window** (decision D24). A foreground service holding a wake lock runs
+long enough for a full local inference step, so the deadline budget never has to interrupt work
+mid-step and no sub-step checkpointing is required. Where an FGS is unavailable, a local model
+call is not attempted at all: the Run parks with `ForegroundRequired` (RFC-0006) and resumes in
+the foreground.
+
+This is why the deadline budget can be a simple "does the next step fit" check rather than a
+preemption mechanism. Mid-generation checkpointing was considered and rejected — a KV cache is
+hundreds of megabytes, and persisting it per window plausibly costs more than the inference it
+would preserve.
+
 ### Relationship to RFC-0006
 
 RFC-0006 remains the contract for yield, cancellation, and interrupt *semantics*. This RFC

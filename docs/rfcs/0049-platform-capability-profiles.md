@@ -66,7 +66,7 @@ enum class PlatformProfile { MOBILE, DESKTOP, HEADLESS_SERVER }
 | Spawn arbitrary subprocess | **no** | yes | yes |
 | MCP stdio transport | **no** | yes | yes |
 | MCP HTTP transport | yes (online only) | yes | yes |
-| Local model inference | yes (small models) | yes | yes |
+| Local model inference | yes (small models, **foreground only**) | yes | yes |
 | Uninterrupted execution window | **~seconds to minutes** | unbounded | unbounded |
 | Exact timers | **no** | yes | yes |
 
@@ -202,6 +202,11 @@ the next step. On MOBILE:
   carry no latency guarantee on MOBILE, and no session semantics may depend on one.
 - Model calls are the longest steps. Local inference on a phone should prefer small models and
   short outputs; the router (RFC-0020) takes profile into account when selecting.
+- **Local inference requires a foreground service** (decision D24). A background Run without one
+  performs deterministic work and parks at the first model call with `ForegroundRequired`
+  (RFC-0006, RFC-0044). This is a platform capability like any other, and it is reported the same
+  way — the user is told what the device can do before a session spends anything on discovering
+  it.
 
 ## Data Model
 

@@ -107,6 +107,38 @@ All classes execute through the same checkpointed executor (RFC-0009). Deferral 
 work runs, never *how* — so a deferred Run evicted mid-flight resumes exactly like an
 interactive one.
 
+### Local inference requires the foreground (decision D24)
+
+**On MOBILE, a Run may make a local model call only under a foreground service.** An FGS holding
+a wake lock runs long enough for a full inference step, so the constraint is not duration — it is
+that the work must be visible.
+
+Where an FGS is unavailable or the user has declined it, a background Run does **deterministic
+work only**: indexing, fetching, Git reconciliation, context assembly. On reaching a model call
+it parks with `ForegroundRequired` (RFC-0006) and notifies *"ready to continue"*. Inference
+happens when the user next opens the app.
+
+So recurring sessions have two honest modes:
+
+| | With a foreground service | Without |
+|---|---|---|
+| Scheduled review | runs to completion, notifies with the result | prepares context, notifies "ready" |
+| Watcher session | reacts fully | records the trigger, defers the reasoning |
+
+Both are explainable in one sentence, which is the test. The fallback also makes the subsequent
+foreground session faster, because the expensive preparation is already done.
+
+Two rejected alternatives, recorded so they are not re-attempted:
+
+- **Mid-generation checkpointing** — persisting a KV cache and resuming next window. The cache is
+  hundreds of megabytes; serializing it per window plausibly costs more in I/O and battery than
+  the inference it preserves.
+- **Routing background Runs to remote models** — contradicts offline-first precisely where it was
+  promised, and does nothing on a train.
+
+Recurring-session language throughout this RFC should be read accordingly: a scheduled job
+**may** complete autonomously, and always completes what it can without a model.
+
 ### Notifications
 
 A notification is an `Egress`-adjacent effect: it reaches the user, and it cannot be un-sent.
@@ -201,6 +233,8 @@ CREATE TABLE notifications (
 
 1. `At`, `Every`, and `OnEvent` triggers with guarantee classes.
 2. Interactive and deferred work classes; foreground service on Android.
+2b. `ForegroundRequired` parking for background Runs reaching a local model call without an FGS,
+    with the "ready to continue" notification.
 3. Coalescing of missed occurrences with `missedOccurrences` exposed.
 4. Notification categories, per-project hourly budget, coalescing, grouping, quiet hours.
 5. `Notify` as `UNSAFE` — never auto-retried.
