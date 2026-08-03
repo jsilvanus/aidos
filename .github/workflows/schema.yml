@@ -2,9 +2,9 @@ name: schema
 
 on:
   push:
-    paths: ['schema/**', '.github/workflows/schema.yml']
+    paths: ['schema/**', 'docs/rfcs/**', '.github/workflows/schema.yml']
   pull_request:
-    paths: ['schema/**', '.github/workflows/schema.yml']
+    paths: ['schema/**', 'docs/rfcs/**', '.github/workflows/schema.yml']
 
 jobs:
   validate:

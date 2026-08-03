@@ -173,14 +173,18 @@ CREATE TABLE project_registry (
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
-CREATE TABLE settings (
-    scope TEXT NOT NULL,          -- 'user' | 'workspace' | 'project' | 'session'
-    scope_id TEXT,                -- NULL for user
-    key TEXT NOT NULL,
-    value_json TEXT NOT NULL,
-    PRIMARY KEY (scope, scope_id, key)
-);
+-- The settings table is defined in RFC-0036, which owns it. It appears in BOTH databases,
+-- split by scope: user and workspace rows in user.db, project and session rows in state.db.
+-- That split is what enforces "SECURITY and SPEND settings are user-scope only" structurally
+-- rather than by validation alone -- a project database has nowhere to put one.
+--
+--   user.db     settings(scope IN ('user','workspace'))
+--   state.db    settings(scope IN ('project','session'))
 ```
+
+> **Schema note.** `schema/user.sql` and `schema/project.sql` are the canonical DDL. An earlier
+> version of this RFC carried a second, thinner `settings` definition than RFC-0036's; RFC-0036
+> governs.
 
 ## Security
 

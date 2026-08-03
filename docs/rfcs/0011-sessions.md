@@ -467,6 +467,69 @@ Sessions are isolated by the Scheduler (RFC-0005):
 
 The Scheduler wakes sessions one at a time, based on events and fairness.
 
+## Data Model
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+```sql
+CREATE TABLE sessions (
+    id                   TEXT PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    name                 TEXT NOT NULL,
+    role                 TEXT NOT NULL,               -- DRIVER | WORKER
+    description          TEXT,
+    state                TEXT NOT NULL,               -- CREATED|SLEEPING|RUNNING|ARCHIVED (RFC-0017)
+    parent_session_id    TEXT,                        -- set for workers
+    worker_ref           TEXT,                        -- refs/aidos/workers/<id> (RFC-0049)
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,  -- failure budget; 3 parks the session
+    created_at           TEXT NOT NULL,
+    last_active_at       TEXT NOT NULL,
+    archived_at          TEXT,
+    state_updated_at     TEXT NOT NULL,
+    row_version          INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (project_id)        REFERENCES projects(id),
+    FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX idx_sessions_project ON sessions(project_id, state);
+CREATE INDEX idx_sessions_parent  ON sessions(parent_session_id);
+
+CREATE TABLE memory_entries (
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    project_id       TEXT NOT NULL,
+    kind             TEXT NOT NULL,                   -- SUMMARY|FACT|DECISION|TASK_STATE
+    content          TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,                   -- never '[]' (RFC-0026)
+    confidence       TEXT NOT NULL,                   -- OBSERVED|INFERRED|USER_STATED
+    trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
+    created_at       TEXT NOT NULL,
+    expires_at       TEXT,
+    superseded_by    TEXT,
+    FOREIGN KEY (session_id)    REFERENCES sessions(id),
+    FOREIGN KEY (project_id)    REFERENCES projects(id),
+    FOREIGN KEY (superseded_by) REFERENCES memory_entries(id)
+);
+
+CREATE INDEX idx_memory_active ON memory_entries(session_id, kind) WHERE superseded_by IS NULL;
+```
+
+Three absences are the design, not omissions:
+
+- **No `capabilities` column.** Authority lives in the `capabilities` table keyed by
+  `subject_id` (RFC-0018). An embedded set would be a second source of truth for security state
+  that could disagree after a revocation.
+- **No `artifacts` list.** Found through `PRODUCED` edges (RFC-0019). A growing column would be
+  rewritten on every artifact creation.
+- **No `conversation_history` blob.** Raw turns belong to a Run's transcript (RFC-0008), which is
+  `AGED` and compacted (RFC-0056). `memory_entries` holds conclusions, bounded and queryable.
+
+`parent_session_id` is what makes orphan cancellation a query: when a driver reaches a terminal
+state, its workers are found by reverse lookup and cancelled, and their delegated capabilities
+are revoked recursively (RFC-0018).
+
 ## Data Model (Conceptual)
 
 ```

@@ -126,17 +126,35 @@ sessions, or an agent loop that never terminates, spending money and battery.
 *Mitigation:* hard step ceilings, budgets enforced as capability constraints, causal-depth
 limits, wake-rate circuit breakers, and no event replay on boot (RFC-0008, RFC-0028).
 
-**Threat 3: Secret Leakage**
+**Threat 6: Secret leakage into recorded state**
 
-A session accidentally includes an API key in an artifact or log. Mitigation: Secrets are stored encrypted at rest. Loggers are configured to redact secrets. Sessions must explicitly request secret access.
+A credential reaches a prompt, an event payload, an artifact, or a diagnostic bundle. This needs
+no attacker — it is the default behaviour of a system that records everything for auditability,
+which this one does deliberately.
 
-**Threat 4: Session-to-Session Interference**
+*Mitigation:* the vault holds values; consumers hold references; the redactor runs unconditionally
+at every persistence and transmission boundary (RFC-0035). **A session cannot read a secret, only
+cause one to be used** — which is what makes exfiltration-by-injection structurally impossible
+rather than merely unlikely.
 
-One session attempts to access another session's data or modify another session's state. Mitigation: Sessions are isolated. They can communicate through artifacts and events, but they cannot directly access each other's memory or storage.
+**Threat 7: Privilege escalation by a session**
 
-**Threat 5: Privilege Escalation**
+A session attempts to widen its own authority, or a worker attempts to exceed its parent's.
 
-A low-privilege session attempts to acquire high-privilege capabilities. Mitigation: Capabilities are granted by the user, not by sessions. A session cannot grant itself additional capabilities.
+*Mitigation:* capabilities are created only by the Capability Manager and granted only by the
+user. Delegation is strictly attenuating in scope, constraints, expiry, and budget (RFC-0018,
+RFC-0028). A session cannot resolve a proposal, confirm its own `IMPLEMENTS` edge, or verify its
+own acceptance criteria (RFC-0012, RFC-0019) — the model may propose, run, and report, but never
+confirm its own success.
+
+**Threat 8: Session-to-session interference**
+
+One session reads or influences another's work.
+
+*Mitigation:* per-subject capabilities; no shared memory; coordination through artifacts and
+events only. Event subscriptions are themselves capability-checked and events carry a visibility
+class (RFC-0004) — without which the bus is a side channel around the entire model, since a
+narrow worker could subscribe to `**` and observe everything.
 
 **What We Do Not Protect Against:**
 
@@ -323,6 +341,56 @@ The entire security model is based on the principle that nothing is implicitly t
 - External tools do not have implicit access to secrets or files.
 - Frontends must authenticate with the runtime.
 - Operations do not proceed without explicit permission checks.
+
+## Data Model
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+### The audit log
+
+The audit log is the security record. It is append-only, `PERMANENT` retention (RFC-0056), and
+**cannot be disabled, sampled, or dropped under pressure** — it is not a log level (RFC-0037).
+
+```sql
+CREATE TABLE audit_log (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    sequence      INTEGER NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    kind          TEXT NOT NULL,           -- CapabilityGranted, ToolInvoked, SecretResolved, ...
+    actor_kind    TEXT NOT NULL,           -- USER|SESSION|WORKER|MCP_SERVER|PLUGIN|RUNTIME
+    actor_id      TEXT NOT NULL,
+    device_id     TEXT NOT NULL,           -- RFC-0046
+    subject_ref   TEXT,                    -- what was acted upon
+    capability_id TEXT,                    -- the authority exercised, where applicable
+    detail_json   TEXT NOT NULL DEFAULT '{}',  -- redacted before write (RFC-0035)
+    signature     TEXT,                    -- reserved; never written in v1 (RFC-0046)
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX idx_audit_sequence ON audit_log(project_id, sequence);
+CREATE INDEX idx_audit_actor ON audit_log(actor_kind, actor_id, occurred_at);
+CREATE INDEX idx_audit_kind  ON audit_log(project_id, kind, occurred_at);
+```
+
+Four properties are structural rather than conventional:
+
+- **Two-column actor attribution** (`actor_kind`, `actor_id`), never one polymorphic identifier
+  (RFC-0046). A single `created_by TEXT` meaning "session or user" cannot be joined, cannot carry
+  a foreign key, and is ambiguous whenever a UUID could be either.
+- **`RUNTIME` is a real actor.** Crash recovery transitions Runs, migrations rewrite rows, and
+  compaction discards payloads. Attributing those to the user would be a lie; attributing them to
+  nothing would leave unexplained changes in the record.
+- **`detail_json` is redacted before it is written** (RFC-0035). Tool errors routinely embed
+  command lines, and command lines routinely embed credentials.
+- **`signature` exists and stays empty in v1.** A signature scheme designed against no threat
+  model and no key management would be worse than none — but the column must exist now, because
+  this is the table that must never be rewritten.
+
+The `sequence` is per project and monotonic, so a gap is detectable. Detection is the point: an
+audit log whose deletions are invisible is not an audit log.
 
 ## Data Model
 

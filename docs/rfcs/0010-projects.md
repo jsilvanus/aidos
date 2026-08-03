@@ -313,6 +313,39 @@ Instructions (from AGENTS.md, CLAUDE.md, etc.) are project-scoped. The Instructi
 
 The Scheduler maintains project-local subscriptions, event logs, and scheduled tasks. Each project has its own scheduler state.
 
+## Data Model
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+```sql
+CREATE TABLE projects (
+    id                TEXT PRIMARY KEY,               -- UUIDv7 (RFC-0054)
+    name              TEXT NOT NULL,
+    description       TEXT,
+    root_path         TEXT NOT NULL,
+    project_type      TEXT NOT NULL DEFAULT 'generic', -- RFC-0047
+    template_id       TEXT,
+    template_version  TEXT,
+    state             TEXT NOT NULL DEFAULT 'OPEN',    -- CREATING|OPEN|CLOSING|CLOSED
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    state_updated_at  TEXT NOT NULL,
+    row_version       INTEGER NOT NULL DEFAULT 1       -- optimistic concurrency (RFC-0017)
+);
+```
+
+This table was referenced by roughly twenty foreign keys across the RFC set and defined nowhere
+until the schema was extracted. Note what it does **not** contain: no capability set, no secrets,
+no session list, no artifact list. Authority lives in `capabilities` (RFC-0018), secrets at user
+scope (RFC-0035), and contents are queried by `project_id` rather than materialized here
+(RFC-0010 "Data Model (Conceptual)" below).
+
+`root_path` is where the project lives on *this* device. It is cached in the user-scope
+`project_registry` (RFC-0054) and re-derived on open if the directory moved — a project directory
+is self-describing, so the path is never authoritative.
+
 ## Data Model (Conceptual)
 
 ```

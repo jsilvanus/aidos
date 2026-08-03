@@ -8,6 +8,7 @@ Checks:
   2. Foreign keys resolve (PRAGMA foreign_key_check).
   3. No table is defined in more than one file.
   4. Every declared index targets a table that exists.
+  5. Every table named in RFC DDL exists in the schema.
 """
 import sqlite3, sys, pathlib, re
 
@@ -51,6 +52,21 @@ for fname, tables in tables_by_file.items():
         if t in seen and t not in ("schema_versions", "settings", "resource_budgets"):
             failures.append(f"table '{t}' defined in both {seen[t]} and {fname}")
         seen[t] = fname
+
+# 5. RFC DDL must not reference a table the schema does not define.
+rfc_dir = HERE.parent / "docs" / "rfcs"
+if rfc_dir.is_dir():
+    all_tables = set().union(*tables_by_file.values()) if tables_by_file else set()
+    rfc_tables = set()
+    for md in sorted(rfc_dir.glob("*.md")):
+        for t in re.findall(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)", md.read_text()):
+            if t.upper() in ("IF",):        # prose mentioning `CREATE TABLE IF NOT EXISTS`
+                continue
+            rfc_tables.add((t, md.name))
+    for t, src in sorted(rfc_tables):
+        if t not in all_tables:
+            failures.append(f"{src}: defines table '{t}' that the schema does not have")
+    print(f"  RFC cross-check: {len({t for t, _ in rfc_tables})} tables referenced, all present")
 
 if failures:
     print("\nFAIL")

@@ -212,6 +212,7 @@ instruction set.
 
 **Repository structure:**
 - `/docs/rfcs/` — All RFCs
+- `/schema/` — Canonical SQL schema, validated in CI
 - `/docs/decisions.md` — Architecture decision record: why it is this and not something else
 - `/docs/decisions/` — Long-form analysis behind individual decisions
 - `/docs/reviews/` — Architecture reviews

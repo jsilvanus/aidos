@@ -93,6 +93,20 @@ what each choice forecloses, and what it would cost to revisit. Read it before p
 change to a settled question. Long-form analysis behind individual decisions is in
 `docs/decisions/`.
 
+## DDL: the schema file governs
+
+RFCs carry DDL so they are readable on their own. **`schema/` is canonical.** Where an RFC and a
+schema file differ, the schema governs and the RFC is the bug — and `schema/check.py` runs in CI,
+so the schema cannot silently rot while the prose looks fine.
+
+Change both in the same commit: the RFC explains *why*, the schema is *what*, and a divergence
+between them is exactly how this corpus drifted before.
+
+Extracting the schema found five tables that roughly twenty foreign keys referenced and no RFC
+defined — `projects`, `sessions`, `audit_log`, `intent_nodes`, `intent_edges`. They are now in
+RFC-0010, RFC-0011, RFC-0003, and RFC-0012 respectively. If you find yourself writing
+`REFERENCES <table>(id)` for a table you cannot point at, that is the same bug.
+
 ## How review findings are closed
 
 A review finding is closed by **a diff to the RFC it concerns**, referenced by commit — not by

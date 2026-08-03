@@ -535,6 +535,77 @@ Run on a human who is asleep holds resources for nothing.
 
 ## Data Model
 
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+```sql
+-- Note the absence of a `status` column. Status is derived (see "Status is derived").
+CREATE TABLE intent_nodes (
+    id                  TEXT PRIMARY KEY,             -- UUIDv7 (RFC-0054)
+    project_id          TEXT NOT NULL,
+    type                TEXT NOT NULL,                -- GOAL|SUB_GOAL|CONSTRAINT|ACCEPTANCE_CRITERION
+    title               TEXT NOT NULL,
+    description         TEXT,
+    priority            INTEGER NOT NULL DEFAULT 100,
+    lifecycle           TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE|ARCHIVED (authorship, not progress)
+    parent_id           TEXT,
+    -- user override of derived status, stored as a timestamped claim
+    asserted_status     TEXT,
+    asserted_at         TEXT,
+    asserted_by_user_id TEXT,
+    assertion_note      TEXT,
+    -- acceptance criteria only
+    check_kind          TEXT,
+    check_spec          TEXT,
+    verification_met    INTEGER,
+    verified_by_kind    TEXT,                         -- USER | CHECK. never SESSION.
+    verified_by_id      TEXT,
+    verified_at         TEXT,
+    created_at          TEXT NOT NULL,
+    created_by_kind     TEXT NOT NULL,
+    created_by_id       TEXT NOT NULL,
+    modified_at         TEXT NOT NULL,
+    modified_by_kind    TEXT NOT NULL,
+    modified_by_id      TEXT NOT NULL,
+    tags                TEXT NOT NULL DEFAULT '[]',
+    row_version         INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (parent_id)  REFERENCES intent_nodes(id),
+    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+);
+
+-- Dependencies only. `dependents` is derived by reverse lookup.
+-- Acyclicity is enforced on insert, not assumed.
+CREATE TABLE intent_edges (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    from_node_id TEXT NOT NULL,
+    to_node_id   TEXT NOT NULL,
+    edge_kind    TEXT NOT NULL,                       -- DEPENDS_ON|CONSTRAINS|ACCEPTS
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (project_id)   REFERENCES projects(id),
+    FOREIGN KEY (from_node_id) REFERENCES intent_nodes(id),
+    FOREIGN KEY (to_node_id)   REFERENCES intent_nodes(id),
+    UNIQUE (from_node_id, to_node_id, edge_kind)
+);
+
+CREATE INDEX idx_intent_project    ON intent_nodes(project_id, lifecycle, priority);
+CREATE INDEX idx_intent_parent     ON intent_nodes(parent_id);
+CREATE INDEX idx_intent_edges_from ON intent_edges(from_node_id, edge_kind);
+CREATE INDEX idx_intent_edges_to   ON intent_edges(to_node_id, edge_kind);
+```
+
+Two things the schema makes enforceable that prose could not:
+
+**There is no `status` column.** Writing the table is what makes the derived-status decision
+concrete — it is considerably harder to accidentally add a status field to a table that visibly
+does not have one than to a design document that says status should be derived.
+
+**`CHECK (verified_by_kind IN ('USER','CHECK'))`.** The rule that a session may not verify its own
+acceptance criteria is enforced by the database, not by a code path that could be forgotten.
+
 ```sql
 CREATE TABLE intent_proposals (
     id TEXT PRIMARY KEY,

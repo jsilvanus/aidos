@@ -525,6 +525,7 @@ CREATE TABLE attempts (
     prompt_package_json TEXT,                         -- RFC-0025, AGED
     model_provider TEXT,
     model_version TEXT,
+    provider_retention_json TEXT,                     -- RFC-0026: stated retention at call time
     tokens_input INTEGER,
     tokens_output INTEGER,
     cost_units INTEGER,                               -- RFC-0028
