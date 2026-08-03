@@ -86,10 +86,16 @@ redundancy. Order is the only precedence mechanism, it is stated, and it is the 
 already understands.
 
 `.cursor/rules`, `.github/copilot-instructions.md`, `GEMINI.md`, and nested per-directory
-instruction files are deliberately excluded from the MVP. Each is easy to add later — a filename
-and a position in the table — and none is needed to make the product work. Nested files in
-particular require knowing which directory the session is working in before the model has read
-anything, which is circular at prompt-assembly time.
+instruction files are excluded **from the MVP specifically** — not permanently. Each extra format
+is a filename and a position in the table. Nested files are the larger gap: they require knowing
+which directory the session is working in before the model has read anything, which is circular
+at prompt-assembly time, and a monorepo is exactly where they matter.
+
+**Root-only discovery must therefore be visible, not silent.** When the runtime finds an
+instruction file in a subdirectory it is not reading, it reports that in the project status line
+alongside tool availability (RFC-0049) — *"3 instruction files below the root are not being
+read"*. A monorepo user whose per-package conventions are being ignored will otherwise conclude
+the feature is broken, and they will be nearly right.
 
 ### Composition
 
@@ -147,9 +153,16 @@ So: an instruction set hash is either adopted or it is not.
 ```
 On project open, or when a hash changes:
     if the set is adopted        → include it
-    else                         → exclude it, and tell the user there is
-                                   an unreviewed instruction file
+    else                         → exclude it, tell the user there is an
+                                   unreviewed instruction file, and tell
+                                   the session that one was excluded
 ```
+
+**The session is told when instructions were excluded** — how many files and their names, never
+their content. Without that, a model operating with no project instructions cannot explain why it
+is ignoring the user's conventions, and the user reads generic behaviour as the model being bad
+rather than as a file awaiting review. The notice is composed by the runtime, so it is `TRUSTED`
+and carries nothing the excluded file wrote.
 
 Adoption is one interaction: the user reads the text and accepts it. For a *changed* file, the
 user is shown a diff against the adopted version rather than the whole file again — the common
@@ -236,6 +249,8 @@ Everything above. Concretely:
 4. Adopt: exclude unseen sets, show the text or the diff, record adoption by hash.
 5. Report dropped files when the budget overflows.
 
+6. Report unread instruction files found below the root.
+
 Not in the MVP: additional formats, nested files, categories, priorities, filtering, conflict
 detection, provider plugins, instruction editing UI, and instruction generation. None of them
 are needed for a session to be usefully steered by a project's instructions, which is the entire
@@ -274,7 +289,3 @@ Deliberately dropped from the previous version's Future Work, with reasons:
 
 - Should adoption be per project or per project-and-remote? Cloning the same upstream twice
   currently requires adopting twice.
-- Should a session be able to see that an instruction file exists but was excluded for
-  non-adoption, so it can tell the user why it is behaving generically?
-- Is root-only discovery sufficient for a monorepo, or does that case need nested files sooner
-  than "future"?

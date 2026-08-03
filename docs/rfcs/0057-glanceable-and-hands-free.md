@@ -136,6 +136,59 @@ aidos · paused · 3 files · needs approval
 The template is deterministic and its slots are structured values. Numbers are spoken as
 quantities, paths as paths. Nothing in the spoken form is free text from a model or from a file.
 
+### The glance shows three
+
+A glance surface shows **at most three items plus a count**; the full list is one gesture away.
+Three is what a person actually takes in without focusing, and a list that runs past the fold
+has already stopped being a glance — it is a screen you read, which is a different mode.
+
+```
+   ● approve   write src/http/Client.kt        2m
+   ● continue  needs foreground                14m
+   ● review    4 changes ready to commit        1h
+   ⋯ 5 more
+```
+
+The same rule applies wherever a glance surface carries a list: the inbox, the changed-file list
+in a Run Summary, the Runs in a session. Overflow is a count and a tap, never a scroll — because
+a scrollable glance is how "two seconds at a crossing" turns into ninety seconds of thumbing.
+
+**Exception, and it is the same exception as everywhere else in this RFC:** the never-collapse
+set below is never truncated to fit three. If four things are pending, four are shown. The rule
+governs how much of the *routine* fits, not whether something that needs the user can be dropped
+for tidiness.
+
+### Session summaries, and the swipe back through time
+
+A Run Summary describes one Run. A session has several, so it gets a **session summary composed
+from theirs** — an aggregation of aggregations, not a second projection and not a model call.
+
+```
+  aidos · fix backoff                          4m ago
+  ─────────────────────────────────────────────────────
+   4 runs · 1 paused · 1 failed · 2 committed
+  ─────────────────────────────────────────────────────
+   7 files                              +212  −64
+   ! 1 approval waiting
+  ─────────────────────────────────────────────────────
+        ‹ swipe for the latest run
+```
+
+Note what it does **not** do: it does not pick a single headline state for the session. Four Runs
+in three states have no one state, and choosing one would be exactly the rounding this RFC
+forbids elsewhere. It reports the counts, which are true.
+
+Navigation is a horizontal stack, newest to oldest:
+
+```
+   session summary  ‹—›  latest run  ‹—›  previous run  ‹—›  …
+```
+
+This settles the app's gesture grammar, which is worth stating once because it then holds
+everywhere: **horizontal moves between peers, vertical continues a list, tap goes deeper.** Home
+swipes between inbox and projects; a session swipes back through its Runs; a Run Summary taps
+into its steps. A user who learns it on the home screen already knows it in the session.
+
 ### What collapses and what never collapses
 
 A Run of forty steps must still fit one page, so the projection groups aggressively — but
@@ -155,8 +208,11 @@ that eventually succeeded, model calls, token and cost totals.
 | Any `INDETERMINATE` outcome | An `UNSAFE` effect whose result is unknown must not render as done |
 | Taint, when not `TRUSTED` | It changes what the Run is allowed to do next |
 
-**The summary states its own incompleteness.** A `RUNNING` Run reads *"so far"*. A `FAILED` Run
-shows what happened plus the error, never a completion claim. This is D6 again at the
+**The summary states its own incompleteness.** A `RUNNING` Run reads *"so far"* — and it still
+shows its change totals. Withholding numbers because a later step might revert them would blank
+the summary during exactly the window someone is glancing at it, and a revert renders as a
+subsequent change anyway. The label carries the caveat; the numbers stay. A `FAILED` Run shows
+what happened plus the error, never a completion claim. This is D6 again at the
 presentation layer: the graph records what was attempted and what was observed, and the summary
 may not round that up.
 
@@ -276,6 +332,13 @@ have produced the specific words.
 `speech.voice_approvals` remains **off by default**, and enabling it is what makes tiers 1 and 2
 available at all.
 
+**Tier 2 is not gated on device motion.** Blocking a readback while the phone reports movement
+was considered and rejected: it needs the activity-recognition permission, the signal is
+unreliable, and it fails wrong on trains and in passenger seats. Tier 2 is already a separate
+opt-in from tier 1, and the genuinely dangerous set is already tier 3. Adding a permission in
+order to enforce a judgement about the user's circumstances is not a trade this project should
+make.
+
 ### Injection through the speaker
 
 A hazard specific to this RFC and worth naming, because it is easy to build wrong.
@@ -304,7 +367,13 @@ working on a train is not one anybody will rely on.
 
 ## Data Model
 
-**No new tables.** The Run Summary is a projection over `runs`, `tasks`, `attempts`,
+**No new tables, two columns.** `tasks.approval_channel` records how an approval was given —
+`tap`, `voice_tier1`, `voice_tier2` — and `tasks.approval_phrase` records the recognised phrase
+for tier 2. The exercise of authority is the same whichever way it arrived; the *assurance* is
+not, and a log that cannot tell them apart cannot answer a question about a disputed approval
+later. Two columns now, impossible retroactively.
+
+The Run Summary itself is a projection over `runs`, `tasks`, `attempts`,
 `tool_calls`, and the recorded previews. It is computed on read and never stored — a stored
 summary is a cache of derived state that goes stale exactly when a Run changes, which is
 constantly.
@@ -337,13 +406,14 @@ each widening of it should be something the user turned on deliberately.
 
 ## MVP
 
-1. The Run Summary projection, with the collapse rules.
-2. Strip and page densities.
-3. The benign-approval classifier, used by both the glance strip and the full card.
-4. Spoken summaries via local TTS, where a TTS model is installed.
-5. The eyes-free loop: headset-button push-to-talk, audio ducking, the fixed question
+1. The Run Summary projection, with the collapse rules and the show-three rule.
+2. Strip and page densities, plus the session summary composed from Run summaries.
+3. The horizontal stack: session summary ‹—› latest Run ‹—› earlier Runs.
+4. The benign-approval classifier, used by both the glance strip and the full card.
+5. Spoken summaries via local TTS, where a TTS model is installed.
+6. The eyes-free loop: headset-button push-to-talk, audio ducking, the fixed question
    vocabulary, and tier 1 and tier 2 voice approvals.
-6. `speech.*` settings, with voice approvals off by default.
+7. `speech.*` settings, with voice approvals off by default.
 
 Spoken summaries ship with Phase 4 alongside voice capture (M33) and are cut with it if the
 phase slips. **The projection and the benign classifier are not cuttable** — the page density is
@@ -369,13 +439,7 @@ approval card needs whether or not anything is ever spoken.
 
 ## Open Questions
 
-- Should the page density be per-Run or per-session? A session with four Runs has no single
-  headline state, and picking one would be the kind of rounding this RFC otherwise forbids.
-- Is "so far" enough for a `RUNNING` Run, or should an in-flight summary refuse to show change
-  totals that a subsequent step may revert?
-- Does an approval given by voice need a different audit marker than one given by tap? Leaning
-  yes — the exercise is the same but the assurance is not, and the audit log is where that
-  difference would matter later. Tier 2 should probably record the recognised phrase.
-- Should tier 2 be available at all while the device reports it is moving? A readback answered at
-  25 km/h is still a decision made while cycling, and the honest answer may be that some
-  approvals should simply wait until the user stops.
+None. The four this RFC opened on 2026-08-03 — per-Run or per-session summaries, whether an
+in-flight summary may show change totals, whether voice approvals need their own audit marker,
+and whether tier 2 should be gated on device motion — were all settled the same day and folded
+into the design above.

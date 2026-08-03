@@ -200,6 +200,11 @@ cheaper than a navigation stack for a switch this frequent.
   ● Failed     push rejected, remote moved        aidos · 3h
 ```
 
+**Three items and a count** (RFC-0057). The inbox glance shows the three most recent, then
+*"⋯ 5 more"*, which taps into the full list. A glance that scrolls is not a glance. The one
+exception is that nothing needing the user is dropped to fit three — if four things are pending,
+four are shown.
+
 This is not a new concept — it is `listPending()` plus Tasks in `AWAITING_APPROVAL`,
 `AWAITING_INPUT`, and `ForegroundRequired`, all of which the Execution Graph already tracks.
 
@@ -212,11 +217,16 @@ component in the app and it is **the same component** used for reviewing hunks a
 moments. Building it once halves the work and makes the two flows feel identical, which they
 should, because they are.
 
-**3 · Session.** Opens on the **Run Summary** — one page, no scrolling, computed from the
-Execution Graph (RFC-0057). That is the glance surface: what changed, what is pending, what
-failed, in two seconds at a crossing.
+**3 · Session.** Opens on the **session summary** — Run counts by state, total files and lines,
+and anything pending — composed from its Runs' summaries (RFC-0057). Swiping horizontally walks
+back through the individual Run Summaries, newest first.
 
-Below it, a timeline of steps, **rendered from the same graph**, not a chat transcript. RFC-0019 says the graph is the program rather than a log of it; the UI should show
+That settles the app's gesture grammar, and it holds everywhere once learned: **horizontal moves
+between peers, vertical continues a list, tap goes deeper.** Home swipes between inbox and
+projects; a session swipes back through its Runs; a Run Summary taps into its steps.
+
+Below the summary, a timeline of steps, **rendered from the same graph**, not a chat
+transcript. RFC-0019 says the graph is the program rather than a log of it; the UI should show
 that program. Model prose is collapsed by default — on a phone it is the least valuable use of
 the screen — and a step expands to its detail, its tool call, and its result. This also makes
 resume-after-eviction render for free: the graph shows exactly where execution stopped and what
@@ -246,9 +256,18 @@ the product, filed under "maybe".
 Typing code on a phone is miserable, so most edits should come from the model and be reviewed
 rather than typed. But the thesis sentence contains the word *edit*, and "fix this one line" must
 not require asking a model to do it. The MVP editor is deliberately minimal — open, edit, save;
-no completion, no refactoring, no multi-file operations — and every save is an ordinary `Mutate`
-through the broker, so it is audited and previewable like any other change. The previous version
-of this RFC contained no editor at all.
+no completion, no refactoring, no multi-file operations. The previous version of this RFC
+contained no editor at all.
+
+**Every save is an ordinary `Mutate` through the broker**, so it is audited like any other
+change — but with the **user** as subject, so no approval is asked for. Approval keys on the
+subject: a session's mutation may need one, the user's never does, because the user is the
+authority an approval would be consulting. Reverting a hunk during review takes the same path,
+for the same reason (D25).
+
+**The editor cannot open a file outside the project.** A capability handle is project-scoped, and
+an exception here would be the only path in the app that is not. A scratch note that lives
+outside a repository is a different feature; if you want one, it is a project.
 
 **7 · Voice capture.** Microphone → local STT → **editable transcript** → send. Not voice
 commands: an unstructured intent spoken while walking is the valuable case, and a structured
@@ -351,7 +370,7 @@ card needs whether or not anything is ever spoken.
 
 ## Open Questions
 
-- Should the editor be able to open a file *outside* the project (a scratch note)? Currently no,
-  because a capability handle is project-scoped and the exception would be the only path in the
-  app that is not.
-- How many parked Runs before the inbox needs grouping rather than a flat list?
+None outstanding. Grouping the inbox *by project* — as opposed to truncating it to three, which
+is settled — is deferred to M28, when there is a real device with real projects on it. Any
+threshold chosen now would be a guess; the rule to implement against is flat until it stops
+fitting, then grouped by project.

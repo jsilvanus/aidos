@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 3 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 4 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -31,6 +31,7 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
 - [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
 - [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call
+- [x] **Ten of eleven open questions settled** — hunk revert is a user-subject edit through the broker; reviewed/unreviewed does not survive a rebase; sessions are told when instructions were excluded; root-only discovery reports what it is not reading; the glance shows three; session summaries compose from Run summaries; the gesture grammar is horizontal-peer / vertical-list / tap-deeper; voice approvals are audited by channel; tier 2 is not motion-gated; the editor stays project-scoped
 - [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
 
 ## Next
@@ -46,6 +47,7 @@ against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-acc
 
 Then:
 
+- [ ] **RFC-0016 adoption scope** — the one open question left. Per-project today; moving it to user scope keyed by set hash removes re-adoption on every clone, at the cost of moving the table from `project.sql` to `user.sql` and losing the FK cascade. Awaiting a decision
 - [ ] **RFC-0052** — add the structured-hunk diff shape now that D25 is settled (M9 consumes it)
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
 - [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
@@ -95,6 +97,11 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**Approval keys on the subject, not the act.** A user editing a file and a user reverting a hunk
+both go through the broker as ordinary mutations and both get audit rows — but neither asks for
+approval, because the user is the authority an approval would consult. Only session-subject
+mutations can need one. This came up twice in one day; it is the rule, not a special case.
 
 **Verification, not modality, gates authority.** D26 first said voice could approve only the
 benign class. The eyes-free loop overturned that: a user who asked what, where, why, and what-if-

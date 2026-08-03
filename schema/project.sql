@@ -367,6 +367,8 @@ CREATE TABLE tasks (
     started_at        TEXT,
     ended_at          TEXT,
     awaiting_run_id   TEXT,                               -- parked on a child Run (RFC-0006)
+    approval_channel  TEXT,                               -- tap|voice_tier1|voice_tier2 (RFC-0057, D26)
+    approval_phrase   TEXT,                               -- tier 2 only: the recognised phrase
     retry_policy_json TEXT NOT NULL,
     row_version       INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (run_id)          REFERENCES runs(id),

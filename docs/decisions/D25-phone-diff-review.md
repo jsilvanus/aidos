@@ -1,6 +1,7 @@
 # D25 — Reviewing a diff on a phone
 
-Status: **RECOMMENDED** (2026-08-03) — long-form analysis. Not yet settled.
+Status: **SETTLED** (2026-08-03) — long-form analysis. The decision is recorded in
+`docs/decisions.md` D25.
 
 **Recommendation: review moves earlier (approve each mutation as it happens, which the
 architecture already requires) and what remains is reviewed hunk-by-hunk as a card stack. The
@@ -214,11 +215,17 @@ committing all of it is still far better than a wall of text.
   broadly rather than surgically. Then the problem is the *agent's* granularity, not the review
   UI, and the fix is upstream.
 
-## Open
+## Resolved 2026-08-03
 
-- Should reverting a hunk be an *edit* (a mutation requiring its own approval and audit record)
-  or a UI-level undo of a change never committed? Leaning edit — it changes the working tree, and
-  RFC-0030 does not have a category for changes that do not count.
-- Does the reviewed/unreviewed distinction survive a rebase or an amend? Probably not, and the
-  honest behaviour is to mark everything unreviewed again rather than track it through a history
-  rewrite.
+**Reverting a hunk is an edit.** It changes the working tree, so it goes through the broker as an
+ordinary `Mutate` and gets an audit row — but with the **user** as subject, so no approval is
+required. Approval keys on the subject: a session's mutation may need one, the user's never does,
+because the user is the authority the approval would be consulting. This makes hunk revert
+identical to an editor save (RFC-0050), which is the right outcome — both are the user changing a
+file by hand, and RFC-0030 has no category for changes that do not count.
+
+**Reviewed/unreviewed does not survive a rebase or an amend.** Reviewed-ness is keyed to
+`(path, base blob hash)`; a history rewrite moves the base, the key misses, and the change
+presents as unreviewed. This needs no code — it falls out of the hunk identity above. Writing a
+mapping from old bases to new ones would be a heuristic about whether you have already read
+something, which is exactly the claim that must not be guessed.
