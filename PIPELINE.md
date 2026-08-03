@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 4 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 5 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -31,6 +31,8 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
 - [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
 - [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call
+- [x] **Branch switching specified** (RFC-0053) — enabled; uncommitted changes are discarded after a warning naming what is lost, with "commit first" as the primary action. No per-branch WIP. `EffectKind.Mutate` gains `reversible`, and D26's benign class now requires it
+- [x] **Instruction adoption settled** — per project for the decision, per user for recognition (`known_instruction_sets`). No open questions remain anywhere in the corpus
 - [x] **Ten of eleven open questions settled** — hunk revert is a user-subject edit through the broker; reviewed/unreviewed does not survive a rebase; sessions are told when instructions were excluded; root-only discovery reports what it is not reading; the glance shows three; session summaries compose from Run summaries; the gesture grammar is horizontal-peer / vertical-list / tap-deeper; voice approvals are audited by channel; tier 2 is not motion-gated; the editor stays project-scoped
 - [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
 
@@ -47,7 +49,6 @@ against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-acc
 
 Then:
 
-- [ ] **RFC-0016 adoption scope** — the one open question left. Per-project today; moving it to user scope keyed by set hash removes re-adoption on every clone, at the cost of moving the table from `project.sql` to `user.sql` and losing the FK cascade. Awaiting a decision
 - [ ] **RFC-0052** — add the structured-hunk diff shape now that D25 is settled (M9 consumes it)
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
 - [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
@@ -97,6 +98,14 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**`reversible` is not `RecoveryClass`, and the difference is load-bearing.** `RecoveryClass` asks
+whether an effect can be re-executed after a crash; `reversible` asks whether the user can get
+their work back. Branch switching found the conflation: discarding uncommitted changes is
+in-project, untainted, and perfectly re-runnable, so it satisfied every clause of D26's benign
+class and would have been approvable by one spoken word while cycling. `approvalTier()` in the
+kernel now encodes the corrected rule, with tests. When adding an operation, answer both
+questions separately.
 
 **Approval keys on the subject, not the act.** A user editing a file and a user reverting a hunk
 both go through the broker as ordinary mutations and both get audit rows — but neither asks for

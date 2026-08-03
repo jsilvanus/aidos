@@ -11,8 +11,22 @@ sealed interface EffectKind {
     /** Observes state. Cacheable, retryable, no approval. May run concurrently (RFC-0006). */
     data object Read : EffectKind
 
-    /** Changes state. Previewable; approval depends on scope and Run taint. */
-    data class Mutate(val scope: MutationScope) : EffectKind
+    /**
+     * Changes state. Previewable; approval depends on scope, Run taint, and [reversible].
+     *
+     * `reversible = false` means the operation destroys work that exists nowhere else — a branch
+     * switch discarding uncommitted changes, a hard reset, a file delete outside Git's reach.
+     * It is **not** the same question as [RecoveryClass], which asks whether an effect can be
+     * re-run after a crash. An operation can be perfectly re-runnable and still annihilate an
+     * hour of the user's typing.
+     *
+     * Conflating the two would have let a destructive checkout into D26's benign class — an
+     * in-project, re-runnable mutation, approvable by saying "approve" while cycling.
+     */
+    data class Mutate(
+        val scope: MutationScope,
+        val reversible: Boolean = true,
+    ) : EffectKind
 
     /** Sends data off the device. Subject to egress policy and taint attenuation. */
     data class Egress(val destination: String) : EffectKind
@@ -49,6 +63,50 @@ enum class RecoveryClass {
     ;
 
     val isRetryable: Boolean get() = this != UNSAFE
+}
+
+/**
+ * How much verification an approval needs before it may be given (RFC-0057, D26).
+ *
+ * Attention is the scarce resource on a phone, so the three modes — focused, glance, eyes-free —
+ * are not equally capable of verifying a request. This decides which mode suffices.
+ */
+enum class ApprovalTier {
+    /** In-project, reversible, untrusted-free, already granted. A glance, or one spoken word. */
+    BENIGN,
+
+    /** Out-of-project or irreversible. Structured readback, then a phrase naming the action. */
+    READBACK,
+
+    /** Egress, tainted Run, or a new grant. Needs the user's eyes. Never answerable by voice. */
+    EYES_ONLY,
+}
+
+/**
+ * D26's classifier, executable rather than prose.
+ *
+ * Note that [EffectKind.Mutate.reversible] is consulted separately from [RecoveryClass]. An
+ * earlier form of this rule used `recovery != UNSAFE` as the proxy for "reversible", which let a
+ * branch switch that discards uncommitted work — in-project, untainted, and perfectly
+ * re-runnable — qualify as [ApprovalTier.BENIGN], and therefore be approvable by saying
+ * "approve" while cycling.
+ */
+fun approvalTier(
+    effect: EffectKind,
+    recoveryClass: RecoveryClass,
+    runTaint: TrustLevel,
+    isNewGrant: Boolean,
+): ApprovalTier = when {
+    isNewGrant -> ApprovalTier.EYES_ONLY
+    runTaint != TrustLevel.TRUSTED -> ApprovalTier.EYES_ONLY
+    effect is EffectKind.Egress -> ApprovalTier.EYES_ONLY
+
+    recoveryClass == RecoveryClass.UNSAFE -> ApprovalTier.READBACK
+    effect is EffectKind.Mutate && effect.scope == MutationScope.OUT_OF_PROJECT ->
+        ApprovalTier.READBACK
+    effect is EffectKind.Mutate && !effect.reversible -> ApprovalTier.READBACK
+
+    else -> ApprovalTier.BENIGN
 }
 
 /**

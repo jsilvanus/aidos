@@ -167,8 +167,31 @@ and carries nothing the excluded file wrote.
 Adoption is one interaction: the user reads the text and accepts it. For a *changed* file, the
 user is shown a diff against the adopted version rather than the whole file again — the common
 case is three new lines in a file that was fine, and re-reading the whole thing is friction that
-trains people to tap through. Adoption is recorded at project scope by hash, so it survives
+trains people to tap through. Adoption is recorded **per project**, by hash, so it survives
 branch switches and returns to a previously adopted version without re-prompting.
+
+**Adoption is per project, but recognition is per user.** The decision stays project-scoped
+because context is part of it: *"you may run scripts in `tools/`"* reads differently in your own
+repository than in a stranger's, even when the bytes are identical. But the *reading* need not be
+repeated — if a set hash appears that the user has accepted somewhere before, the adoption view
+says so and the interaction collapses to a confirmation:
+
+```
+   AGENTS.md · 84 lines
+   ✓ You have read and accepted this file before — in `aidos`, 2 Aug.
+
+   [ accept for this project ]        [ read it again ]
+```
+
+The runtime therefore keeps a user-scope list of set hashes it has seen accepted
+(`known_instruction_sets`, RFC-0054 user scope) purely to answer *"have I read this?"*. It grants
+nothing on its own: a hash present in that list still requires an adoption row in this project
+before the text reaches a prompt.
+
+The split is worth stating as a principle, because it recurs: **what the user knows is user
+scope; what the user permitted is project scope.** Conflating them would either force re-reading
+identical text in every clone, or silently carry a decision across a context boundary that
+mattered.
 
 Instruction files the user authors inside Aidos are adopted on write. The user is the author;
 asking them to review their own text is theatre.
@@ -205,7 +228,7 @@ No new tables. Two columns and one small table:
 -- RFC-0019: which instruction set governed this Run.
 ALTER TABLE runs ADD COLUMN instruction_set_hash TEXT;
 
--- Adoption is per project, per composed set.
+-- Project scope: what the user permitted, here.
 CREATE TABLE instruction_adoptions (
     project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     set_hash            TEXT NOT NULL,      -- hash of ordered (filename, blob_hash) pairs
@@ -216,7 +239,24 @@ CREATE TABLE instruction_adoptions (
 ) WITHOUT ROWID;
 ```
 
-`schema/project.sql` is canonical; this DDL is here so the RFC reads on its own.
+```sql
+-- User scope (`user.db`): what the user has read, anywhere. Recognition only.
+CREATE TABLE known_instruction_sets (
+    set_hash            TEXT PRIMARY KEY,
+    first_seen_at       TEXT NOT NULL,
+    last_accepted_at    TEXT NOT NULL,
+    accepted_count      INTEGER NOT NULL DEFAULT 1,
+    first_accepted_in   TEXT                -- project name, for display only
+) WITHOUT ROWID;
+```
+
+`schema/project.sql` and `schema/user.sql` are canonical; this DDL is here so the RFC reads on
+its own.
+
+`known_instruction_sets` carries **no authority**. It answers one question — *has the user read
+this text?* — and its worst-case failure is a missing reassurance, not a granted permission.
+`first_accepted_in` is a display string so the prompt can say *where* you saw it, which is what
+makes the reassurance worth anything.
 
 The composed text itself is not stored. It is a pure function of blob hashes that Git already
 holds, and caching it would create a second copy to keep consistent for no gain.
@@ -246,7 +286,8 @@ Everything above. Concretely:
 1. Discover `AGENTS.md` and `CLAUDE.md` at the project root.
 2. Compose with headers, in precedence order, within RFC-0025's reservation.
 3. Hash the ordered `(filename, blob hash)` pairs; record it on the Run.
-4. Adopt: exclude unseen sets, show the text or the diff, record adoption by hash.
+4. Adopt: exclude unseen sets, show the text or the diff, record adoption by hash — per project,
+   with user-scope recognition so a set read once is never read cold again.
 5. Report dropped files when the budget overflows.
 
 6. Report unread instruction files found below the root.
@@ -287,5 +328,5 @@ Deliberately dropped from the previous version's Future Work, with reasons:
 
 ## Open Questions
 
-- Should adoption be per project or per project-and-remote? Cloning the same upstream twice
-  currently requires adopting twice.
+None. Adoption scope was settled on 2026-08-03: per project for the decision, per user for
+recognition.

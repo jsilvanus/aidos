@@ -150,6 +150,65 @@ Resolution:
 Automatic merge of intent is explicitly rejected. Intent is the one structure whose whole
 purpose is to represent what the human wants; silently merging it defeats it.
 
+### Branch switching
+
+Aidos switches branches. JGit supports it — `CheckoutCommand`, and `stashCreate`/`stashApply`
+since JGit 2.0 — so nothing here is blocked by D4.
+
+**Uncommitted changes are discarded, after an explicit warning.** This is a deliberate departure
+from Git's own behaviour, which carries uncommitted changes across a checkout and only refuses
+when they would be clobbered. Carrying them is worse here: it silently moves edits onto a branch
+they were not written for, and the user finds out later, on a phone, with no easy way to
+untangle it. Aidos would rather say what it is about to destroy.
+
+```
+switch to <branch>:
+    if working tree is clean          → switch
+    else                              → warn, naming the files and line counts,
+                                        and offer to commit first.
+                                        On confirmation: discard, then switch.
+```
+
+The warning is a `Preview` like any other mutation, so it lists exactly what will be lost rather
+than saying "you have uncommitted changes". **Committing first is the primary action** in that
+prompt; discarding is available but is not the default button. That is a UI consequence, not a
+new mechanism.
+
+Per-branch working state — leaving edits behind on the branch they were made on, restoring them
+on return — was considered and is **not** built. It would need a WIP ref per branch under
+`refs/aidos/`, and it trades a rule the user already knows from Git for one only Aidos has.
+
+#### The effect is irreversible, and the type system now says so
+
+A destructive checkout is `Mutate(IN_PROJECT, reversible = false)`.
+
+The `reversible` flag exists because of this operation. It is **not** the same question as
+`RecoveryClass`, which asks whether an effect can be safely re-run after a crash: a checkout is
+perfectly re-runnable and still annihilates an hour of typing. Without the distinction, a
+destructive checkout satisfies D26's benign class — in-project, not `UNSAFE`, untainted — and
+becomes approvable by saying *"approve"* while cycling. **D26's benign class now requires
+`reversible = true`.**
+
+#### What a switch invalidates
+
+| | On branch switch |
+|---|---|
+| Knowledge index | **Nothing.** Index identity is the blob hash (RFC-0015), so entries stay valid across any ref movement |
+| Treeless workers | **Nothing.** Workers build against the object database on `refs/aidos/workers/<id>` and never read the working tree |
+| Reviewed/unreviewed marks | Invalidated — keyed on `(path, base blob hash)`, and the base moved (D25) |
+| Uncommitted working-tree changes | Discarded, after the warning above |
+| A Run parked on a working-tree mutation | **Its approval is invalidated** |
+
+That last row is the sharp one. A Run parked waiting for approval to write `Client.kt` refers to
+a file state that no longer exists after the switch. The pending approval is discarded and the
+Run re-parks against the new state, or fails with a named error (RFC-0029). An approval given for
+one content state is never silently applied to another — the same rule as review marks not
+surviving a rebase, for the same reason.
+
+A branch switch performed by Aidos records a `BRANCH_SWITCHED` reconciliation exactly as an
+external one does. There is no privileged path: the runtime's own checkout is observed by the
+same fingerprint machinery that observes the user's.
+
 ### What Aidos does not do to the user's repository
 
 - Never runs repository-supplied hooks.
@@ -190,8 +249,12 @@ CREATE TABLE reconciliations (
 
 ## Security
 
-Cloning or importing a project must not execute anything (RFC-0057). JGit not running hooks is
+Cloning or importing a project must not execute anything (RFC-0003, RFC-0041). JGit not running hooks is
 load-bearing for this property, not incidental.
+
+A destructive branch switch is `reversible = false`, which excludes it from D26's benign class.
+Discarding a user's uncommitted work is not something to be agreed to by a single spoken word
+while cycling, and the classifier now has the vocabulary to say so.
 
 `HISTORY_REWRITTEN` is a security-relevant event: it can remove the commits an audit trail
 references. The Execution Graph retains its own record independently of Git reachability, so a

@@ -401,11 +401,18 @@ hoping.
 **An approval is *benign*, and therefore glanceable and voice-answerable, when all of:**
 
 ```
-effect      is Read, or Mutate(IN_PROJECT)
+effect      is Read, or Mutate(IN_PROJECT, reversible = true)
 recovery    is not UNSAFE
 run.taint   is TRUSTED
 capability  is already granted — this is an exercise, not a new grant
 ```
+
+**Amended 2026-08-03 — `reversible` is a separate axis from `RecoveryClass`.** The original
+predicate used "not `UNSAFE`" as the proxy for reversible. That is wrong, and branch switching
+found it: discarding uncommitted changes is in-project, untainted, and perfectly re-runnable
+after a crash — so it satisfied every clause and became approvable by saying *"approve"* while
+cycling. `RecoveryClass` asks whether an effect can be *re-executed*; `reversible` asks whether
+the user can get their work back. `EffectKind.Mutate` now carries the flag (RFC-0053).
 
 Everything else — egress, out-of-project mutation, `UNSAFE`, a tainted Run, a new grant —
 requires the full card with its preview, and says so. It does not become approvable by being

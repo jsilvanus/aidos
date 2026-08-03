@@ -56,6 +56,23 @@ CREATE TABLE settings (
 
 -- Model catalogue and installed weights. Device-global: multi-gigabyte, and
 -- one loaded instance can saturate a phone (RFC-0020, RFC-0054).
+-- ---------------------------------------------------------------------------
+-- Instruction recognition (RFC-0016)
+--
+-- "Have I read this text before?" — nothing more. Adoption itself is project
+-- scope (instruction_adoptions in project.sql): what the user *knows* is user
+-- scope, what the user *permitted* is project scope. A hash present here still
+-- requires an adoption row in the project before any text reaches a prompt.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE known_instruction_sets (
+    set_hash          TEXT PRIMARY KEY,
+    first_seen_at     TEXT NOT NULL,
+    last_accepted_at  TEXT NOT NULL,
+    accepted_count    INTEGER NOT NULL DEFAULT 1,
+    first_accepted_in TEXT                                 -- project name, display only
+) WITHOUT ROWID;
+
 CREATE TABLE model_catalog (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,

@@ -135,4 +135,51 @@ class ContractTest {
         assertTrue(TaskState.AWAITING_APPROVAL.isParked)
         assertFalse(TaskState.RUNNING.isParked)
     }
+
+    // --- Approval tiers (RFC-0057, D26) -------------------------------------------------
+
+    private fun tier(
+        effect: EffectKind,
+        recovery: RecoveryClass = RecoveryClass.IDEMPOTENT,
+        taint: TrustLevel = TrustLevel.TRUSTED,
+        newGrant: Boolean = false,
+    ) = approvalTier(effect, recovery, taint, newGrant)
+
+    @Test
+    fun `an ordinary in-project edit is benign`() {
+        assertEquals(ApprovalTier.BENIGN, tier(EffectKind.Mutate(MutationScope.IN_PROJECT)))
+        assertEquals(ApprovalTier.BENIGN, tier(EffectKind.Read))
+    }
+
+    @Test
+    fun `a destructive branch switch is never benign`() {
+        // In-project, untainted, and re-runnable after a crash — it satisfies every clause of
+        // the classifier except the one that matters. Discarding a user's uncommitted work must
+        // not be approvable by saying "approve" while cycling (RFC-0053).
+        assertEquals(
+            ApprovalTier.READBACK,
+            tier(EffectKind.Mutate(MutationScope.IN_PROJECT, reversible = false)),
+        )
+    }
+
+    @Test
+    fun `reversibility is not the same question as recovery class`() {
+        val destructive = EffectKind.Mutate(MutationScope.IN_PROJECT, reversible = false)
+        // Re-runnable, yet still not benign: the two axes are independent.
+        assertTrue(RecoveryClass.IDEMPOTENT.isRetryable)
+        assertEquals(ApprovalTier.READBACK, tier(destructive, recovery = RecoveryClass.IDEMPOTENT))
+    }
+
+    @Test
+    fun `egress, taint, and new grants need the user's eyes`() {
+        assertEquals(ApprovalTier.EYES_ONLY, tier(EffectKind.Egress("api.example.com")))
+        assertEquals(
+            ApprovalTier.EYES_ONLY,
+            tier(EffectKind.Mutate(MutationScope.IN_PROJECT), taint = TrustLevel.UNTRUSTED),
+        )
+        assertEquals(
+            ApprovalTier.EYES_ONLY,
+            tier(EffectKind.Mutate(MutationScope.IN_PROJECT), newGrant = true),
+        )
+    }
 }
