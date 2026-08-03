@@ -183,7 +183,14 @@ skeleton. Two rules generate the rest:
 - **Approval is not an interruption; it is the main loop.** Every `Mutate` requires a `Preview`
   (RFC-0030), so a working session generates a steady stream of small decisions.
 
-**1 · Inbox (home).** Everything waiting on the user, across all projects, newest first:
+**1 · Home — inbox and projects, side by side.** Two panes, swiped between, inbox first.
+
+The inbox answers "what needs me?" — the question a user has when they pick up the phone in a
+queue. The projects pane answers "what am I working on?" — the question they have when they sit
+down with intent. Both are front doors; neither is buried under the other, and a swipe is
+cheaper than a navigation stack for a switch this frequent.
+
+**Inbox** — everything waiting on the user, across all projects, newest first:
 
 ```
   ● Approve    write src/http/Client.kt           aidos · 2m
@@ -194,8 +201,10 @@ skeleton. Two rules generate the rest:
 ```
 
 This is not a new concept — it is `listPending()` plus Tasks in `AWAITING_APPROVAL`,
-`AWAITING_INPUT`, and `ForegroundRequired`, all of which the Execution Graph already tracks. The
-project list is one tap away and is not the front door.
+`AWAITING_INPUT`, and `ForegroundRequired`, all of which the Execution Graph already tracks.
+
+**Projects** — the second pane: name, branch, Git status, last activity, and its own pending
+count so the inbox's contents are attributable at a glance without leaving the pane.
 
 **2 · Approval / review card.** One change, its reason, keep or reject. This is the most used
 component in the app and it is **the same component** used for reviewing hunks at commit time
@@ -213,9 +222,9 @@ the screen — and a step expands to its detail, its tool call, and its result. 
 resume-after-eviction render for free: the graph shows exactly where execution stopped and what
 it is waiting for.
 
-**4 · Project.** Git status, branch, recent Runs, and a one-line availability banner from
-`AvailabilityReport` — *"shell unavailable · 3 tools degraded"* — at open, never mid-Run
-(RFC-0049).
+**4 · Project detail.** Opened from the projects pane. Git status, branch, recent Runs, and a
+one-line availability banner from `AvailabilityReport` — *"shell unavailable · 3 tools
+degraded"* — at open, never mid-Run (RFC-0049).
 
 **5 · Commit.** The residue of what the user has already approved:
 
@@ -310,8 +319,8 @@ state in the frontend is a consistency bug waiting for a reason to appear.
 
 ## MVP
 
-1. Compose UI: inbox, Run Summary, approval/review card, session timeline, project, commit,
-   editor.
+1. Compose UI: home (inbox | projects), Run Summary, approval/review card, session timeline,
+   project detail, commit, editor.
 2. Runtime in-process in a foreground service, with the ongoing notification as a real surface.
 3. `WorkManager` for deterministic preparation only; parking with `ForegroundRequired` otherwise.
 4. Availability reported at project open.
@@ -342,8 +351,6 @@ card needs whether or not anything is ever spoken.
 
 ## Open Questions
 
-- Should the inbox aggregate across projects by default, or scope to the last-opened project?
-  Aggregating is right for the ninety-second case and may be noisy with many projects.
 - Should the editor be able to open a file *outside* the project (a scratch note)? Currently no,
   because a capability handle is project-scoped and the exception would be the only path in the
   app that is not.

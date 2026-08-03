@@ -30,7 +30,8 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **G0 met**
 - [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
 - [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
-- [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call; glance and voice may approve only the benign class
+- [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call
+- [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
 
 ## Next
 
@@ -94,6 +95,13 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**Verification, not modality, gates authority.** D26 first said voice could approve only the
+benign class. The eyes-free loop overturned that: a user who asked what, where, why, and what-if-
+I-refuse and heard structured answers has verified more than someone tapping a card they glanced
+at. What survives as never-by-voice is the set that changes the *authority envelope* rather than
+exercising it — egress, tainted Runs, new grants — because a structured readback cannot verify
+those. Apply the same test to any future approval surface.
 
 **The graph is why the glance surface is cheap.** RFC-0057's Run Summary is a SQL projection
 over `runs`/`tasks`/`attempts` — instant, offline, no inference, checkable against the audit

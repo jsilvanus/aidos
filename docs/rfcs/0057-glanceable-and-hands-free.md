@@ -44,8 +44,9 @@ minutes.
 
 This RFC does not specify visual design or Compose implementation (RFC-0050).
 
-This RFC does not define voice *commands* as a control vocabulary. Dictation is the input model
-(RFC-0050); the only spoken control surface here is answering an approval.
+This RFC does not define voice *commands* as a general control vocabulary — no "create project",
+no "show me the log". Dictation is the input model (RFC-0050). The only spoken control surfaces
+are asking about a pending approval and answering it.
 
 This RFC does not define wake words or always-on listening. Both are privacy-hostile and
 neither is needed.
@@ -191,15 +192,89 @@ intent, which is the case where a phone genuinely beats a laptop.
 (`ModelKind.TTS`). Availability follows RFC-0049 — where no TTS model is installed, the feature
 is absent rather than degraded, and the user is told which model kind is missing.
 
-**Voice may answer a benign approval. Voice may not do anything else.** Not a new capability
-grant, not an egress, not an out-of-project write, not a destructive operation. The reason is
-not that speech recognition is unreliable, though it is: it is that the eyes-free context is
-precisely the one where the user cannot check what they are agreeing to, and an approval given
-without the preview is not an approval.
+### The eyes-free loop
 
-Where a spoken request falls outside the benign class, the response is the same as with no
-foreground service: **park and say so.** *"That one needs your eyes — it writes outside the
-project. It will be waiting."*
+The target interaction, in full, is a conversation — not a notification with two buttons read
+aloud. Cycling, one earbud, music playing:
+
+```
+  user     "look at the retry handling in the http client and fix the backoff"
+             ─ dictated, sent, phone pocketed
+
+  ~ music continues ~ Run executes under the foreground service (D24)
+
+  aidos    ── ducks the music ──
+           "Something needs you on aidos. A write outside the source tree."
+
+  user     ── presses the headset button ──
+           "what does it want"
+  aidos    "To write forty-three lines to build.gradle.kts. That is outside
+            src/, so it is out of project scope."
+  user     "why"
+  aidos    "The retry change needs a dependency. The Run is untainted and
+            this capability is already granted — it is the scope that needs
+            you."
+  user     "what if I say no"
+  aidos    "The Run parks. Nothing so far is lost; the three files it already
+            changed stay changed."
+  user     "approve out of project write"
+  aidos    "Approved. Continuing."
+
+  ~ music resumes ~
+```
+
+Four things make this work, and each is a constraint rather than a feature.
+
+**Audio focus is requested, not seized.** A short spoken notification takes
+`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` — the music dips, it does not stop. Entering the Q&A takes
+`AUDIOFOCUS_GAIN_TRANSIENT`, which pauses it, and focus is abandoned the moment the exchange
+ends. A parked Run **waits**; it does not insist. The spoken offer is made at most once and then
+the Run stays parked in the inbox like any other. Someone on a bicycle is not obliged to answer.
+
+**The headset button is the trigger, not a wake word.** Always-on listening is ruled out
+(Non-goals), and a bike user already has a media button under their thumb. Press to talk,
+release to send. This also means the microphone is open only when the user opened it, which is
+the property a wake word cannot offer.
+
+**Questions are answered from a fixed vocabulary, by template.** *What*, *where*, *why*, *how
+much*, *who asked for it*, *what happens if I refuse*. Every answer is composed from
+runtime-owned structured fields — tool, path, effect kind, mutation scope, taint level, the
+capability being exercised, the Task that requested it. No inference, so the reply is immediate
+and works with no signal; and no attacker-controlled text, for the reason below. A freeform
+question that matches nothing gets *"I can tell you what, where, why, how much, who asked, or
+what happens if you refuse"* rather than a model call.
+
+**"Read it to me" removes the approve affordance.** The user may ask to hear the actual content,
+and it will be read — but that turn ends the approval exchange, and re-approving requires
+starting over. Hearing attacker-controlled text and granting authority must not be possible in a
+single breath, because that is precisely the sequence an injection needs.
+
+### What voice may approve — three tiers (D26)
+
+The original rule was that voice may answer only the *benign* class. The conversational loop
+above changes the argument, and the rule with it: a user who has asked what, where, and why, and
+heard structured answers, has verified the request **more** thoroughly than someone tapping
+approve on a card they glanced at. Verification, not modality, is what should gate authority.
+
+| Tier | What | How it is answered |
+|---|---|---|
+| **1 · Benign** | `Read`, `Mutate(IN_PROJECT)`, not `UNSAFE`, `TRUSTED` Run, capability already granted | a single *"approve"* |
+| **2 · Readback** | out-of-project mutation, `UNSAFE` effects | the runtime states path, scope, and blast radius; the user answers with a **distinct phrase naming the action** — *"approve out of project write"* — never a bare *"yes"* |
+| **3 · Never by voice** | egress of project content, any tainted Run, any **new** capability grant | *"That one needs your eyes."* Parks, and waits |
+
+Tier 3 is not squeamishness about speech recognition. Each of the three changes the *authority
+envelope* rather than exercising it: egress is irreversible and unobservable afterwards, a
+tainted Run already has an adversary inside its context, and a new grant is the thing every other
+check depends on. A structured readback cannot verify any of them, because what needs checking is
+not a fact the runtime owns.
+
+Tier 2's distinct phrase exists because *"yes"* is the single most likely thing to be
+misrecognised out of ambient noise, half-heard music, or a sentence the user was saying to
+somebody else. Requiring the action to be named makes a false positive require the speaker to
+have produced the specific words.
+
+`speech.voice_approvals` remains **off by default**, and enabling it is what makes tiers 1 and 2
+available at all.
 
 ### Injection through the speaker
 
@@ -239,18 +314,22 @@ One setting per user (RFC-0036):
 ```
 speech.tts_model_id      -- which local TTS voice, or null for none
 speech.summary_on_finish -- speak a terminal summary automatically
-speech.voice_approvals   -- allow answering benign approvals by voice (default off)
+speech.voice_approvals   -- off | tier1 | tier2   (default: off)
+speech.duck_other_audio  -- duck for notifications, pause for Q&A (default on)
 ```
 
-`speech.voice_approvals` defaults **off**. A capability answered by voice is a meaningful
-extension of how authority can be exercised, and it should be something the user turned on.
+`speech.voice_approvals` defaults **off**, and `tier2` is a separate opt-in from `tier1`. A
+capability answered by voice is a meaningful extension of how authority can be exercised, and
+each widening of it should be something the user turned on deliberately.
 
 ## Security
 
 | Threat | Mitigation |
 |---|---|
 | User approves without reading, at a glance | Only the benign class is glanceable; everything else requires the full card |
-| User approves by voice what they cannot see | Same classifier, plus `speech.voice_approvals` off by default |
+| User approves by voice what they cannot see | Tiered: benign by a word, out-of-project and `UNSAFE` by a distinct phrase after a structured readback, egress/tainted/new-grant never. `speech.voice_approvals` off by default |
+| A bare "yes" misheard from ambient noise, music, or a conversation | Tier 2 requires a phrase naming the action; a false positive must reproduce specific words |
+| User hears attacker-controlled content, then approves in the same breath | "Read it to me" ends the approval exchange. Re-approving starts over |
 | Hostile repository content read aloud inside an approval prompt | Spoken approvals are composed from runtime-owned structured fields only |
 | Summary overstates what happened | Never-collapse list; `INDETERMINATE` renders as indeterminate; a `RUNNING` Run reads "so far" |
 | Speech recognition mishears "approve" | Benign class only, and a benign approval is by construction in-project, reversible, and untainted |
@@ -262,7 +341,9 @@ extension of how authority can be exercised, and it should be something the user
 2. Strip and page densities.
 3. The benign-approval classifier, used by both the glance strip and the full card.
 4. Spoken summaries via local TTS, where a TTS model is installed.
-5. `speech.*` settings, with voice approvals off by default.
+5. The eyes-free loop: headset-button push-to-talk, audio ducking, the fixed question
+   vocabulary, and tier 1 and tier 2 voice approvals.
+6. `speech.*` settings, with voice approvals off by default.
 
 Spoken summaries ship with Phase 4 alongside voice capture (M33) and are cut with it if the
 phase slips. **The projection and the benign classifier are not cuttable** — the page density is
@@ -277,7 +358,11 @@ approval card needs whether or not anything is ever spoken.
 - **Wearable inbox.** Approve or reject a benign request from the wrist. The classifier is what
   makes this expressible without it being reckless.
 - **Spoken diff review.** Reading a hunk aloud is plausible for small hunks and bad for large
-  ones; needs a size threshold nobody has measured yet.
+  ones; needs a size threshold nobody has measured yet — and it inherits the rule that hearing
+  content and approving cannot happen in one turn.
+- **Freeform questions** beyond the fixed vocabulary, answered by a local model. Useful, and it
+  must not become the basis for an approval: a model-authored answer is model output, which is
+  `UNTRUSTED` by construction (RFC-0027).
 - **Earcons** — distinct short sounds for finished, needs-you, and failed, so the common case
   needs no speech at all.
 - **Summary of a session**, not just a Run: "three Runs since yesterday, two committed."
@@ -288,6 +373,9 @@ approval card needs whether or not anything is ever spoken.
   headline state, and picking one would be the kind of rounding this RFC otherwise forbids.
 - Is "so far" enough for a `RUNNING` Run, or should an in-flight summary refuse to show change
   totals that a subsequent step may revert?
-- Does a benign approval given by voice need a different audit marker than one given by tap?
-  Leaning yes — the exercise is the same but the assurance is not, and the audit log is where
-  that difference would matter later.
+- Does an approval given by voice need a different audit marker than one given by tap? Leaning
+  yes — the exercise is the same but the assurance is not, and the audit log is where that
+  difference would matter later. Tier 2 should probably record the recognised phrase.
+- Should tier 2 be available at all while the device reports it is moving? A readback answered at
+  25 km/h is still a decision made while cycling, and the honest answer may be that some
+  approvals should simply wait until the user stops.

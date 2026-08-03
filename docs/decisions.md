@@ -413,6 +413,34 @@ looked at harder. Voice approvals are additionally **off by default** (`speech.v
 answering a capability request by speech extends how authority can be exercised, and that should
 be something the user turned on.
 
+**Amended 2026-08-03 — voice gets three tiers, not one.** The original rule above gave voice the
+benign class and nothing else. The target interaction is richer than that: a spoken notification
+interrupts, the user asks *what*, *where*, *why*, *what if I refuse*, hears structured answers,
+and then decides — while cycling. That user has verified the request **more** thoroughly than
+someone tapping approve on a card they glanced at, and the rule should follow verification rather
+than modality.
+
+| Tier | What | Answered by |
+|---|---|---|
+| **1 · Benign** | the class above | a single *"approve"* |
+| **2 · Readback** | out-of-project mutation, `UNSAFE` effects | runtime states path, scope, blast radius; user replies with a **distinct phrase naming the action**, never a bare *"yes"* |
+| **3 · Never by voice** | egress of project content, any tainted Run, any **new** capability grant | parks — *"that one needs your eyes"* |
+
+Tier 3 holds because each of those changes the *authority envelope* rather than exercising it:
+egress is irreversible and unobservable afterwards, a tainted Run already has an adversary in its
+context, and a new grant is what every other check depends on. A structured readback cannot
+verify them, because what needs checking is not a fact the runtime owns.
+
+Tier 2 requires a naming phrase because *"yes"* is the single most likely word to be misrecognised
+out of music, ambient noise, or a sentence addressed to someone else. `tier2` is a separate
+opt-in from `tier1`.
+
+**And a structural rule that makes the Q&A safe:** the questions are answered from a **fixed
+vocabulary, by template, from runtime-owned fields** — no inference and no attacker-controlled
+text. A user may ask to hear the actual content, and **that turn ends the approval exchange**;
+re-approving starts over. Hearing attacker-authored text and granting authority must not be
+possible in one breath, because that is exactly the sequence an injection needs.
+
 **Why not simply forbid all glance approvals.** Because then every approval is a full card, and a
 user interrupted twelve times per Run learns to tap through — which is D7's tuning note, and the
 failure mode is worse than the thing it was protecting against.
