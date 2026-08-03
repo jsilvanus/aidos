@@ -373,6 +373,26 @@ pass" while this RFC's own Security section required injection testing before an
 integration. A control that the architecture depends on cannot be scheduled after the thing
 that depends on it.
 
+## Design note: build less here, not more
+
+Most of this RFC's machinery — priority dropping, summarization, budget allocation — exists
+because context is scarce. Context windows are growing quickly, and much of it may matter less
+in two years than it does today.
+
+The deliberate position: **implement precedence, hard reserved sections, and a simple recency
+window. Do not build adaptive compression, semantic chunking, or clever eviction.**
+
+A rolling window over conversation history is in scope and already specified (most recent N
+turns that fit `conversationHistoryMax`, oldest summarized or dropped). That is the simple
+mechanism, and it is likely to be sufficient for a long time. What is out of scope is the layer
+above it: relevance-scored eviction, compression models, adaptive budget reallocation. Those are
+where effort disappears and where a larger context window makes the work retroactively
+pointless.
+
+If measurement later shows the simple window is not enough — a long session degrading in quality
+before it hits the budget — that is the signal to add more, and the precedence hierarchy is the
+extension point. Until then, less.
+
 ## Future Work
 
 Adaptive context compression: compress older context items using local models to preserve more history within budget.

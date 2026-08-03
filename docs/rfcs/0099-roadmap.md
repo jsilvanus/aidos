@@ -106,7 +106,12 @@ misattributed to the model.
 Agent loop (RFC-0008)                One remote provider adapter
 Prompt construction (RFC-0025)       Filesystem tool + Git tool (JGit)
 Trust and taint (RFC-0027)           CLI frontend over the Runtime API
+MCP stdio, desktop only (RFC-0031)
 ```
+
+MCP is here rather than in a later ecosystem phase because it is the first real test of whether
+the tool abstraction can absorb tools the runtime did not write. Finding out now is cheap;
+finding out after every built-in tool has been written against the assumption is not.
 
 **Exit criteria:** create project → task → model → tool → commit → artifact → audit, end to
 end, from the CLI. Injection test suite passes. A tainted Run is denied egress and escalates
@@ -149,7 +154,7 @@ tools are reported at project open, never discovered mid-Run.
 
 ```
 Runtime daemon (RFC-0055)          Compose Multiplatform GUI
-Shell tool (PLATFORM tier)         MCP stdio adapter with trust model (RFC-0031)
+Shell tool (PLATFORM tier)         MCP HTTP transport (RFC-0031)
 Desktop worktree workers           Import/export (RFC-0041)
 ```
 

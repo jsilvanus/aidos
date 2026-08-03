@@ -348,6 +348,23 @@ data class IndexEntry(
 )
 ```
 
+### Index storage
+
+**The index lives outside the operational database**, at `.aidos/index/` (RFC-0054). It is never
+in `state.db`. Two reasons: embedding writes would contend with the single writer (RFC-0007),
+and vectors would inflate the file the user backs up and exports with data that is entirely
+rebuildable.
+
+**Start with brute force and measure before adding a dependency.** For a typical project — a few
+thousand unique blobs — an exhaustive cosine scan over a memory-mapped float array is on the
+order of milliseconds, well inside the 200 ms query target (RFC-0045), and it has no dependency,
+no index build step, and no corruption mode. An approximate-nearest-neighbour index earns its
+place only when measurement shows brute force missing the target on a real repository on a real
+phone.
+
+This is deliberate sequencing, not laziness: a vector index chosen before the workload is known
+is a dependency chosen on a guess, and on mobile the guess costs binary size and a native build.
+
 `providerVersion` is the only invalidation mechanism needed for immutable classes. When a
 provider's extraction logic changes, bump the version; old entries become unreachable and are
 reclaimed (RFC-0056). No timestamps, no staleness flags, no cache-coherence protocol.

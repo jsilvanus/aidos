@@ -88,6 +88,10 @@ by RFC-0024 (Resource Graph). They are retained for their motivation.
 
 **Reviews** live in `docs/reviews/` and in RFC-0100–0102. They are *input*, not architecture.
 
+**Decisions** live in `docs/decisions.md` — why the architecture is this and not something else,
+what each choice forecloses, and what it would cost to revisit. Read it before proposing a
+change to a settled question. Open decisions are in `docs/open-questions/`.
+
 ## How review findings are closed
 
 A review finding is closed by **a diff to the RFC it concerns**, referenced by commit — not by

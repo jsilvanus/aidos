@@ -67,6 +67,20 @@ data class ToolDescriptor(
 `effect` and `requiredPermission` are not sent to the model. They are used by the runtime to
 decide approval, preview, retry, and audit behaviour.
 
+**`ToolDescriptor` stays structurally aligned with MCP's tool shape** (`name`, `description`,
+`inputSchema` as JSON Schema). This is a locked decision, not an accident of convenience.
+
+MCP is becoming the de facto standard for tool description, and Aidos speaks it from the MVP
+(RFC-0031). If it becomes universal, `ToolDescriptor` degrades gracefully into a thin
+translation layer rather than a competing model that must be mapped in both directions. The cost
+of the alignment is that the runtime's own fields — `effect`, `requiredPermission`,
+`availability` — are kept strictly *additive* and runtime-side, never mixed into the part a
+model or an MCP server sees.
+
+Concretely: do not add cleverness to the wire shape. No custom schema dialect, no
+Aidos-specific type system, no restructured parameter model. Anything the runtime needs to know
+and the model does not goes in a sibling field, not inside `inputSchema`.
+
 Tool descriptors consume token budget. The Prompt Constructor (RFC-0025) treats the rendered
 descriptor set as a reserved budget section, because on small local models it is frequently
 the largest fixed cost in the prompt.

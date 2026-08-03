@@ -1,0 +1,328 @@
+# Aidos Architecture Decisions
+
+Decisions that shape the architecture, with what each one forecloses and what it costs to
+revisit. RFCs say *what the system does*; this says *why it is that and not something else*, so
+that settled questions stay settled and open ones stay visible.
+
+**Status values:** `SETTLED` — decided, RFCs reflect it. `RECOMMENDED` — proposed with a
+rationale, not yet signed off. `OPEN` — needs a decision.
+
+Amend by adding a dated entry rather than editing history. A decision that was reversed is more
+useful than one that appears never to have been made.
+
+---
+
+## Foundational
+
+### D1 — Deterministic replay is not a goal · `SETTLED`
+
+The event log supports **audit reconstruction**: what happened, in what order, caused by what,
+with which prompt, model, and capability. It does not support re-execution to an identical
+state.
+
+Model sampling, provider versions, wall-clock, filesystem races, user-driven Git changes, shell
+output, and MCP responses are all non-deterministic. Capturing enough to make re-execution
+identical means capturing every output — at which point what exists is a recording, not a
+replay.
+
+**Forecloses:** "restore my project to Tuesday", "re-run this session and get the same result".
+Restoration is Git's job for content, export/import's for project state.
+**RFCs:** 0004.
+
+### D2 — A clone is not the whole project · `SETTLED`
+
+Runtime state lives in a Git-ignored `.aidos/` inside the project directory. `git clone` gives
+content and none of the sessions, artifacts, or audit trail. Moving a project with its history
+is export/import, which moves the whole directory.
+
+The alternative — committing SQLite to Git — produces unresolvable binary merge conflicts and
+repository bloat on every session write. There is no third option.
+
+**RFCs:** 0010, 0054, 0041.
+
+### D3 — Step-machine execution · `SETTLED`
+
+Session logic is an interpreter over persisted Execution Graph rows, not straight-line code.
+Kotlin continuations are not serializable, so a design that assumes an uninterrupted process
+cannot survive Android eviction — which is routine, not exceptional.
+
+**Cost:** session logic may not hold important state in local variables across a step boundary.
+Anything that must survive is a column. Every new contributor trips on this once.
+**Reversal cost: total.** This shapes every session-facing API.
+**RFCs:** 0009, 0006.
+
+### D4 — JGit on all platform profiles · `SETTLED`
+
+One Git implementation everywhere: no native build matrix, no JNI crash surface in the component
+that writes the user's history, identical semantics on phone and desktop.
+
+**Accepted ceiling:** no `git worktree` (treeless workers instead), slower on very large repos,
+no LFS, no clean/smudge filters. No hooks execution — which is a feature, since hooks on clone
+would be arbitrary code execution.
+**Revisitable only wholesale:** adopting libgit2 later means adopting it on every profile.
+**RFCs:** 0053, 0032, 0049.
+
+### D5 — Daemon on desktop, in-process on Android · `SETTLED`
+
+Desktop runs a separate runtime process; frontends connect over a socket. Android hosts the
+runtime in-process inside a foreground service. Same `RuntimeClient` interface.
+
+Desktop needs multiple frontends and must survive a UI crash; Android has exactly one frontend
+by construction and no meaningful multi-process story.
+**RFCs:** 0052, 0055.
+
+---
+
+## Authority and trust
+
+### D6 — The model may propose, run, and report — never confirm its own success · `SETTLED`
+
+The single rule behind four mechanisms:
+
+| Mechanism | The gate |
+|---|---|
+| `IMPLEMENTS` edges | proposed by the model, `confirmed` by user or acceptance criteria |
+| Intent proposals | sessions propose, only users resolve |
+| Acceptance criteria | verified by a mechanical check or the user, never `SESSION` |
+| Declared plans | model proposes, user approves |
+
+Without it: the model reads intent as instructions and writes intent as proposals, so it invents
+goals, reads its own inventions back, and drifts — each step locally plausible, none checked.
+
+**Use this as the review question for anything new.**
+**RFCs:** 0012, 0019.
+
+### D7 — Taint attenuates authority · `SETTLED`
+
+A Run whose context has admitted untrusted content operates under a reduced capability set for
+its remainder. In-project reversible work stays frictionless; egress, secrets, out-of-project
+mutation, and `UNSAFE` effects require per-call approval naming the tainting source.
+
+Prompt injection is dangerous because the next tool call carries the session's authority, not
+because the model read the text. Delimiters ask the model to enforce a boundary; models are not
+reliable enforcement points.
+
+**Tuning note:** if prompts prove too frequent in practice, loosen the defaults — do not remove
+the mechanism. Frequent prompts train dismissal, which is the failure mode.
+**RFCs:** 0027, 0025, 0018.
+
+### D8 — Budget divides on delegation · `SETTLED`
+
+A driver holding 10,000 cost units delegating to three workers **divides** that allowance. It
+does not multiply it. Without the rule, fan-out is an unbounded spend multiplier and
+orchestration becomes the most expensive way to use the product.
+
+Follows from RFC-0018's equal-or-more-restrictive delegation rule, but is stated because the
+natural implementation gives each worker a fresh budget.
+**RFCs:** 0011, 0028, 0018.
+
+### D9 — Run budget defaults: 24 steps, 8 model calls · `SETTLED`
+
+A product-feel decision, not an engineering one. Conservative at Run scope; absent above it.
+Nagging users about monthly limits they did not ask for is worse than a per-Run ceiling that
+catches runaways.
+**RFCs:** 0028.
+
+---
+
+## Graphs
+
+### D10 — Intent status is derived, never authored · `SETTLED`
+
+Computed from `IMPLEMENTS` edges, acceptance criteria, children, and dependencies. User
+overrides are stored as timestamped claims shown *alongside* the derived value, never replacing
+it.
+
+A stored field becomes a lie the moment a Run is reverted, partially fails, or is later broken —
+and it then feeds prompt construction, so the model inherits the false belief. Adds `STALE`,
+which a stored field cannot represent and which is a normal event in a Git-first product.
+
+**Not deferrable:** retrofitting derivation after a stored field exists means migrating data
+that was never trustworthy.
+**RFCs:** 0012.
+
+### D11 — `TARGETED` (fact) and `IMPLEMENTS` (assertion) are separate edges · `SETTLED`
+
+`TARGETED` is written by the runtime at Run creation. `IMPLEMENTS` is asserted at completion and
+carries `confirmed`. They diverge constantly — a Run started to fix a bug often ends up
+refactoring something else.
+**RFCs:** 0019.
+
+### D12 — Cross-graph edges point one way · `SETTLED`
+
+**The Execution Graph is the only graph with outbound cross-graph edges.** Intent and Resource
+never reference each other or reference execution. Reverse directions are queries.
+
+Rationale in descending cost: write amplification on a Git-snapshotted structure; two sources of
+truth; each side must survive without the other; direction encodes authorship.
+
+**If a traversal is awkward, extend `ProvenanceService` — do not add an edge.**
+**RFCs:** 0019, 0024.
+
+### D13 — Declared plans for anything spawning workers · `SETTLED`
+
+Two Task creation modes: emergent (the loop appends Tasks as the model emits calls) and declared
+(a batch with `DEPENDS_ON` proposed upfront, approved before execution). Declared is required
+when a plan spawns workers, exceeds a cost estimate, or is requested.
+
+The line is reversibility: a plan you watch unfold step by step needs no gate; one that commits
+five sessions to hours of work does.
+**RFCs:** 0019, 0011.
+
+---
+
+## Concurrency
+
+### D14 — At most one *effectful* Task per Run is `RUNNING` · `SETTLED`
+
+Reformulated from "at most one Task". `Read` effects may run concurrently; everything else
+serializes.
+
+The invariant was never about concurrency — it was about the audit trail being able to say what
+happened in what order, and **reads have no order that matters**. They are `PURE`, so recovery
+is re-execution with no idempotency question.
+
+**Sequencing:** write `nextRunnableTask` to return a set and recovery to iterate (near-zero cost
+now); enable concurrent reads at v1; never relax for `Mutate`, which would contend on the
+worktree lock inside a Run and make the audit trail a genuine partial order.
+**RFCs:** 0006, 0009, 0019.
+
+### D15 — Parallelism is across Runs; the worktree is the lock · `SETTLED`
+
+The contended resource is the working tree and Git index, not the project. Treeless workers
+build commits against the object database and contend on nothing, so they run genuinely in
+parallel — each with its own Run, transcript, Execution Graph subtree, and audit attribution.
+
+On mobile the real limit is device-global model inference, not the tree: five workers is not
+five times faster.
+**RFCs:** 0007, 0049.
+
+---
+
+## Scope and extension
+
+### D16 — Sync: none now → Git-backed subset at v1.x → pairing at v2; never full sync · `SETTLED`
+
+"Sync" is not one thing. Once decomposed, the expensive part is the part nobody wants:
+
+| State | Sync? |
+|---|---|
+| Intent graph, session memory | **yes** — small, append-only or structured, mergeable |
+| Content metadata | yes — content-addressed |
+| Execution graph, audit | no — historical, large, and arguably device-local by nature |
+| Capabilities | **must not** — a desktop grant must not authorize a phone |
+| Knowledge index | no — derived; rebuilding is cheaper |
+
+**Rejected:** full CRDT/event-sourced sync. Foundational, and a different product.
+**Complementary, not alternatives:** Git-backed sync gives offline continuity of intent and
+knowledge; pairing gives access to compute.
+
+**Decides now:** intent and memory must stay file-serializable with globally unique IDs — no
+device-local sequence numbers, no autoincrement IDs in those two structures.
+**RFCs:** 0099, 0046, 0053.
+
+### D17 — MCP ships in the MVP, desktop only · `SETTLED`
+
+MCP stdio lands with the first vertical slice (Phase 2), not in a later ecosystem phase.
+
+The MVP is CLI-first and therefore DESKTOP, where stdio MCP works. More importantly, **it
+validates the tool abstraction while that is still cheap to change** — if `ToolDescriptor`, the
+effect taxonomy, and capability subjects cannot absorb tools the runtime did not write, that is a
+finding worth having in month four rather than month fourteen.
+
+**Consequence to accept:** the MVP is no longer purely first-party. The MCP trust model becomes
+MVP-critical rather than future hardening.
+**Does not change D18.**
+**RFCs:** 0031, 0099.
+
+### D18 — No plugin host in v1; WASM-only when it lands · `SETTLED`
+
+MCP is a protocol spoken to a separate process the user installed deliberately. A plugin host
+loads arbitrary code into the runtime. Different trust problems.
+
+When built: WASM/WASI only — one isolation target, because a menu of them means the weakest
+defines the system's security. User-scope installation; project-local plugins never.
+**Decides now:** nothing may require in-process native loading.
+**RFCs:** 0043, 0060.
+
+### D19 — Remote-client Android reserved, not built · `SETTLED`
+
+A future Android build may be a client of a remote runtime *in addition to* hosting its own.
+Reserved: no client paths in the Runtime API, resumable event streams (`sinceSequence`),
+`FRONTEND` capability subjects, transport-agnostic `RuntimeClient`.
+
+**Design constraint for whoever builds it:** a phone should be both, and losing the remote must
+degrade to local operation rather than failure.
+**RFCs:** 0052, 0055, 0049.
+
+### D20 — Three of the original runtime concepts changed status · `SETTLED`
+
+- **Media Engine:** not built. A `ContentNode` kind plus two existing AI capabilities covers
+  every stated need; an "engine" would wrap things that are already engines.
+- **Resources / Artifacts:** collapsed into `ContentNode` with mutability as a policy field.
+  RFC-0013 and RFC-0014 are superseded.
+- **Intent Graph:** demoted to a leaf. Nothing depends on it; build it last and small.
+
+**RFCs:** 0024, 0012, 0013, 0014.
+
+---
+
+## Implementation posture
+
+### D21 — Embeddings live outside the operational database · `SETTLED`
+
+The index is at `.aidos/index/`, never in `state.db` — embedding writes would contend with the
+single writer and inflate the file the user backs up with entirely rebuildable data.
+
+**Start with brute force and measure.** For a few thousand unique blobs, an exhaustive cosine
+scan over a memory-mapped array is milliseconds — inside the query target, with no dependency,
+no build step, and no corruption mode. An ANN index earns its place only when measurement shows
+brute force missing the target on a real repository on a real phone.
+**RFCs:** 0015, 0045.
+
+### D22 — Build less prompt machinery, not more · `SETTLED`
+
+Implement precedence, hard reserved sections, and a simple recency window over conversation
+history. Do **not** build adaptive compression, semantic chunking, or relevance-scored eviction.
+
+Context windows are growing; much of the scarcity this machinery addresses may not exist in two
+years. The rolling window is in scope and already specified. The layer above it — where effort
+disappears and a larger context window makes the work retroactively pointless — is not.
+
+**Revisit when:** measurement shows a long session degrading in quality *before* hitting its
+budget. The precedence hierarchy is the extension point.
+**RFCs:** 0025.
+
+### D23 — `ToolDescriptor` stays structurally MCP-shaped · `SETTLED`
+
+`name`, `description`, `inputSchema` as JSON Schema. Runtime-only fields (`effect`,
+`requiredPermission`, `availability`) stay strictly additive and never mix into what a model or
+an MCP server sees.
+
+If MCP becomes universal, `ToolDescriptor` degrades gracefully into a thin translation layer
+rather than a competing model requiring bidirectional mapping. Doubly load-bearing given D17.
+
+**Concretely:** no custom schema dialect, no Aidos-specific type system, no restructured
+parameter model.
+**RFCs:** 0008, 0031.
+
+---
+
+## Open
+
+### D24 — Local inference under Android execution windows · `OPEN`
+
+**See `docs/open-questions/D24-android-inference-windows.md`.**
+
+Decides whether background autonomy — recurring sessions, scheduled reviews, life-management
+workflows — is real or whether it requires connectivity or foreground attention.
+
+The most likely thing to surprise the project at gate G3.
+
+---
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-08-02 | Initial record: D1–D23 settled, D24 open. |

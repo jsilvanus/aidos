@@ -212,6 +212,8 @@ instruction set.
 
 **Repository structure:**
 - `/docs/rfcs/` — All RFCs
+- `/docs/decisions.md` — Architecture decision record: why it is this and not something else
+- `/docs/open-questions/` — Decisions still needed, with options
 - `/docs/reviews/` — Architecture reviews
 - `/ARCHITECTURE.md` — This file (your map)
 - `/CLAUDE.md` — Development practices and AI assistance
