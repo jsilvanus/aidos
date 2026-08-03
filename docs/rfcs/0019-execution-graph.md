@@ -435,6 +435,33 @@ Both edge kinds are returned. `TARGETED` answers "what was aimed at this goal", 
 with `confirmed = 1` answers "what actually delivered it", and the difference between the two
 sets is usually the most informative thing on the screen.
 
+**"What happened, in two seconds?"**
+
+The glanceable and spoken Run Summary (RFC-0057) is a **projection of these rows**, not a
+generated sentence:
+
+```sql
+SELECT r.state, r.step_index, r.max_steps, r.taint_level, r.error_class,
+       COUNT(DISTINCT t.id)                  AS tasks,
+       SUM(a.tokens_input + a.tokens_output) AS tokens,
+       SUM(a.cost_units)                     AS cost
+FROM runs r
+LEFT JOIN tasks t    ON t.run_id  = r.id
+LEFT JOIN attempts a ON a.task_id = t.id
+WHERE r.id = ?
+GROUP BY r.id;
+```
+
+Per-file change totals come from `tool_calls` joined to each `Mutate`'s recorded preview, and the
+pending set from Tasks in `AWAITING_APPROVAL`, `AWAITING_INPUT`, or parked on
+`ForegroundRequired`.
+
+This is the strongest argument for the graph being the program rather than a log beside it. A
+summary computed from execution rows is instant, works offline, needs no inference, and is
+checkable against the audit trail — where a model asked to summarize its own Run would be none
+of those, and would be D6 besides. **Nothing is stored:** a persisted summary is a cache of
+derived state that goes stale precisely when the Run changes.
+
 **"Show me all failed runs in this session"**
 ```sql
 SELECT r.*, ae.message as error

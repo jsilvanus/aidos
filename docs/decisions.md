@@ -353,7 +353,7 @@ proving unacceptable (pushes background toward (c) while keeping local in foregr
 
 ---
 
-### D25 — Diff review on a phone: earlier, and by hunk · `RECOMMENDED`
+### D25 — Diff review on a phone: earlier, and by hunk · `SETTLED`
 
 **Review moves earlier and gets smaller.** Per-mutation `Preview` — already required for every
 `EffectKind.Mutate` for security reasons — is the primary review surface. The commit screen
@@ -391,10 +391,55 @@ own work at the point where a wrong summary is least likely to be checked.
 
 ---
 
+### D26 — Glance and voice may approve only the benign class · `SETTLED`
+
+Development on the move has three attention modes — focused, glance, eyes-free — and an approval
+must be answerable in the mode the user is actually in. But approving without reading is exactly
+what the capability model exists to prevent, so the two must be separated by rule rather than by
+hoping.
+
+**An approval is *benign*, and therefore glanceable and voice-answerable, when all of:**
+
+```
+effect      is Read, or Mutate(IN_PROJECT)
+recovery    is not UNSAFE
+run.taint   is TRUSTED
+capability  is already granted — this is an exercise, not a new grant
+```
+
+Everything else — egress, out-of-project mutation, `UNSAFE`, a tainted Run, a new grant —
+requires the full card with its preview, and says so. It does not become approvable by being
+looked at harder. Voice approvals are additionally **off by default** (`speech.voice_approvals`):
+answering a capability request by speech extends how authority can be exercised, and that should
+be something the user turned on.
+
+**Why not simply forbid all glance approvals.** Because then every approval is a full card, and a
+user interrupted twelve times per Run learns to tap through — which is D7's tuning note, and the
+failure mode is worse than the thing it was protecting against.
+
+**The classifier is not new policy.** It is the signal set RFC-0027 already uses to decide what
+needs approval, applied one level further to decide what needs *reading*.
+
+**Corollary — no attacker prose in an approval prompt.** Spoken approvals are composed only from
+runtime-owned structured fields: tool name, effect kind, path, scope, taint. Model output and
+file content are never read aloud inside an approval, because a hostile repository could
+otherwise craft text that sounds, to someone who cannot see the screen, like a request they would
+grant. Prompt injection aimed at the human. The boundary is structural for the same reason
+RFC-0025 keeps untrusted content out of the system turn.
+
+**Also settled here:** the Run Summary is a **projection of the Execution Graph, not a model
+call** — D6 applies with extra force, because a glance summary is consumed *instead of* the
+detail rather than alongside it. A generated summary is also uncheckable, costs an inference at
+the worst moment, and parks when there is no foreground service (D24) — which is exactly the
+eyes-free case.
+
+**RFCs:** 0057, 0050, 0027, 0018, 0049.
+
+---
+
 ## Open
 
-**D25** — recommended, not signed off. It commits M13 to hunk-level staging in JGit, which is the
-only non-trivial cost in the recommendation.
+None.
 
 ---
 
@@ -405,3 +450,4 @@ only non-trivial cost in the recommendation.
 | 2026-08-02 | Initial record: D1–D23 settled, D24 open. |
 | 2026-08-02 | D24 settled: (a) foreground service primary, (d) preparation-only fallback, (b) and (c) rejected. |
 | 2026-08-03 | D25 recommended: diff review moves earlier and goes hunk-by-hunk; Runtime API returns structured hunks. |
+| 2026-08-03 | D25 settled as recommended. D26 settled: glance and voice may approve only the benign class. |

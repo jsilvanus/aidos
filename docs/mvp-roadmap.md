@@ -43,7 +43,7 @@ the assumption that the runtime authored it is not.
 
 ## Acceptance state
 
-As of 2026-08-03, 28 RFCs are **Accepted** and 18 more are Draft pending a body audit — see [the status split](rfcs/README.md#status). Accepted means implementation may begin against
+As of 2026-08-03, 29 RFCs are **Accepted** and 18 more are Draft pending a body audit — see [the status split](rfcs/README.md#status). Accepted means implementation may begin against
 them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
 "What Should Stabilise First", and it is unchanged.
@@ -86,8 +86,8 @@ last three architecture reviews found four items marked "addressed" that were no
 |---|---|---|
 | **M0.1** | `schema/` — canonical DDL | ✅ `check.py` green in CI: executes, FKs resolve, no table defined twice, every table named in RFC DDL exists |
 | **M0.2** | `runtime/kernel/` — KMP interfaces, no implementations | ✅ compiles under `allWarningsAsErrors`; contract tests green |
-| **M0.3** | `docs/decisions.md` | ✅ 24 settled decisions; D25 recommended, awaiting sign-off |
-| **M0.4** | Acceptance pass | ✅ 28 RFCs Accepted, 18 awaiting a body audit; remaining Draft set is deliberate and documented above |
+| **M0.3** | `docs/decisions.md` | ✅ 26 settled decisions, none open |
+| **M0.4** | Acceptance pass | ✅ 29 RFCs Accepted, 18 awaiting a body audit; remaining Draft set is deliberate and documented above |
 
 **G0 met.** The parallel workstreams in RFC-0099 may now proceed against frozen contracts.
 
@@ -156,7 +156,8 @@ scheduled here so that answer arrives while it is still cheap to act on.
 | **M30** | Approval and preview flows | 0018, 0027, 0030 | Every mutation shows its `Preview` before it happens. An escalation names the untrusted source that caused it. Approval requires a `user_interactive` connection |
 | **M31** | Diff and commit review | 0032, 0053, D25 | Read a diff, stage, write a message, commit — comfortably, on a phone screen, with one hand, on a bus. This is the actual product |
 | **M32** | Notifications | 0044 | Rate-limited. Never silently repeated. A parked Run that needs the user says so once |
-| **M33** | Voice capture → local STT | 0022, 0050 | *Optional for G4.* Cut first if Phase 4 slips — it is the only item in this phase that is not on the critical path of the thesis sentence |
+| **M32b** | Run Summary and the benign-approval classifier | 0057, 0019, D26 | One page, no scrolling, computed from Execution Graph rows with no model call. Pending approvals, errors, egress, out-of-project mutation, and `INDETERMINATE` outcomes never collapse. A `RUNNING` Run reads "so far". **Not cuttable** — the classifier is a security boundary the approval card needs regardless |
+| **M33** | Voice capture → local STT, spoken summaries → local TTS | 0022, 0050, 0057 | *Optional for G4.* Cut first if Phase 4 slips. Voice answers only benign approvals, off by default; spoken approval prompts contain no file content or model output |
 | **M34** | F-Droid distribution | 0050 | Reproducible build, no proprietary dependencies, published |
 | **M35** | The scenario, by a person | — | **G4.** A person — not the author, not a script — performs the G3 scenario in the app and reports it as comfortable. MVP complete |
 

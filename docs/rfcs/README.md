@@ -28,7 +28,7 @@ amended by an ordinary RFC diff.
 
 As of 2026-08-03 the corpus is split three ways, and the split is the point.
 
-**Accepted (28).** Read end to end and consistent with `docs/decisions.md`, `schema/`, and
+**Accepted (29).** Read end to end and consistent with `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
 **Draft — body not audited (18).** 0000, 0001, 0002, 0004, 0005, 0010, 0011, 0017, 0020, 0021,

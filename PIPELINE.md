@@ -18,18 +18,19 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 2 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 3 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
 
 - [x] **M0.1** `schema/` — 54 tables in three files, `check.py` green in CI
 - [x] **M0.2** `runtime/kernel/` — KMP common interfaces, compiling under `allWarningsAsErrors`, contract tests green
-- [x] **M0.3** `docs/decisions.md` — 24 settled decisions, D25 recommended
-- [x] **M0.4** Acceptance pass — corrected: 28 Accepted, 18 reverted to Draft pending a body audit
+- [x] **M0.3** `docs/decisions.md` — 26 settled decisions, none open
+- [x] **M0.4** Acceptance pass — corrected: 29 Accepted, 18 reverted to Draft pending a body audit
 - [x] **G0 met**
 - [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
-- [x] **D25 written** — diff review on a phone. `RECOMMENDED`, awaiting sign-off
+- [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
+- [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call; glance and voice may approve only the benign class
 
 ## Next
 
@@ -42,11 +43,9 @@ against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-acc
 - [ ] **RFC-0002, 0004, 0005, 0010, 0011, 0017, 0021, 0023, 0024, 0030, 0032, 0034, 0099** — audit
 - [ ] **RFC-0000, 0001** — vision and principles; likely fine, verify and re-accept
 
-**Awaiting a decision on D25** before RFC-0052 gains the structured-hunk diff shape. Not
-blocking: nothing before M9 depends on it.
-
 Then:
 
+- [ ] **RFC-0052** — add the structured-hunk diff shape now that D25 is settled (M9 consumes it)
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
 - [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
 - [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
@@ -95,6 +94,12 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**The graph is why the glance surface is cheap.** RFC-0057's Run Summary is a SQL projection
+over `runs`/`tasks`/`attempts` — instant, offline, no inference, checkable against the audit
+trail. Asking a model to summarize its own Run would be D6, would cost ten seconds at a
+two-second interaction, and would park with no foreground service (D24) in exactly the eyes-free
+case that motivated it. When a new surface needs "what happened", reach for a query first.
 
 **A mapping test is owed.** Once persistence lands at M1, add a test asserting every non-derived
 kernel field has a schema column. It was noted when the kernel was written and not built,

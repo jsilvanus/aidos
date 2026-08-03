@@ -203,8 +203,11 @@ component in the app and it is **the same component** used for reviewing hunks a
 moments. Building it once halves the work and makes the two flows feel identical, which they
 should, because they are.
 
-**3 · Session.** A timeline of steps, **rendered from the Execution Graph**, not a chat
-transcript. RFC-0019 says the graph is the program rather than a log of it; the UI should show
+**3 · Session.** Opens on the **Run Summary** — one page, no scrolling, computed from the
+Execution Graph (RFC-0057). That is the glance surface: what changed, what is pending, what
+failed, in two seconds at a crossing.
+
+Below it, a timeline of steps, **rendered from the same graph**, not a chat transcript. RFC-0019 says the graph is the program rather than a log of it; the UI should show
 that program. Model prose is collapsed by default — on a phone it is the least valuable use of
 the screen — and a step expands to its detail, its tool call, and its result. This also makes
 resume-after-eviction render for free: the graph shows exactly where execution stopped and what
@@ -242,6 +245,15 @@ of this RFC contained no editor at all.
 commands: an unstructured intent spoken while walking is the valuable case, and a structured
 command vocabulary is a worse keyboard.
 
+**8 · Eyes-free.** The Run Summary spoken through a local TTS model, on demand or on a terminal
+event, and benign approvals answerable by voice (RFC-0057, D26). This is the mode the input side
+already assumed: dictating an intent in one second and then reading a transcript for two minutes
+is not a usable exchange. Voice may answer only the *benign* class — in-project, reversible,
+untrusted-free, already-granted — and anything else parks with *"that one needs your eyes"*.
+Spoken approval prompts are composed from runtime-owned fields only, never from file content or
+model output, because a hostile repository could otherwise write a sentence that sounds
+approvable to someone who cannot see the screen.
+
 ### Deliberately absent
 
 | Not built | Why |
@@ -250,7 +262,8 @@ command vocabulary is a worse keyboard.
 | Artifacts browser as a top-level destination | Artifacts are outputs of Runs. Reach them from the Run that produced them |
 | Account, login, logout | There is no account and no server (RFC-0046) |
 | Sync status | There is no sync (D16) |
-| Cloud STT fallback | Contradicts offline-first at the exact point it was promised |
+| Cloud STT or TTS fallback | Contradicts offline-first at the exact point it was promised — and eyes-free is the mode most likely to have no signal |
+| Wake words, always-on listening | Privacy-hostile, and nothing needs them |
 | In-app tutorials, branding, app shortcuts | Not now |
 
 ### Notifications
@@ -297,16 +310,21 @@ state in the frontend is a consistency bug waiting for a reason to appear.
 
 ## MVP
 
-1. Compose UI: inbox, approval/review card, session timeline, project, commit, editor.
+1. Compose UI: inbox, Run Summary, approval/review card, session timeline, project, commit,
+   editor.
 2. Runtime in-process in a foreground service, with the ongoing notification as a real surface.
 3. `WorkManager` for deterministic preparation only; parking with `ForegroundRequired` otherwise.
 4. Availability reported at project open.
 5. Diff and commit review — hunk card stack, pending D25 sign-off.
-6. Notifications: ongoing, needs-you, terminal.
-7. F-Droid build.
+6. Notifications: ongoing, needs-you, terminal — the strip density of the Run Summary.
+7. Spoken summaries and voice approvals where a local TTS model is installed (RFC-0057).
+8. F-Droid build.
 
-Voice capture is in Phase 4 but is the first item to cut if the phase slips (M33): it is the only
-one not on the critical path of the thesis sentence.
+Voice capture and spoken output are in Phase 4 but are the first items to cut if the phase slips
+(M33) — they are the only ones not on the critical path of the thesis sentence. **The Run Summary
+projection and the benign-approval classifier are not cuttable with them:** the summary is the
+primary way a user sees what happened, and the classifier is a security boundary the approval
+card needs whether or not anything is ever spoken.
 
 ## Future Work
 
