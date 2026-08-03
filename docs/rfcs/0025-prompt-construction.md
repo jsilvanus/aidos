@@ -206,7 +206,18 @@ are not reliable enforcement points. Both mechanisms are used; only one of them 
 Every `ContextItem` carries the `trustLevel` of its source node, and the maximum over included
 items sets the Run's taint.
 
-**No direct string injection of user-controlled content into the system prompt**: The system prompt is assembled from trusted sources only (runtime, project configuration, instruction files). User messages and retrieved content are always in the human/user turn, never in the system turn.
+**No direct string injection of user-controlled content into the system prompt**: The system
+prompt is assembled from the runtime's own text, project configuration, and *adopted*
+instruction files. User messages and retrieved content are always in the human/user turn, never
+in the system turn.
+
+"Adopted" is load-bearing and is specified in RFC-0016. Instruction files are `PROJECT` trust,
+not `TRUSTED` — an `AGENTS.md` in a freshly cloned repository is attacker-controlled text
+pointed at the highest-authority position in the context, and the untrusted-content markers
+above exist precisely to stop content from reaching that position. An instruction set enters the
+system turn only once the user has seen it, identified by the hash of its source blobs; a set
+whose hash has changed is excluded until the user has seen the diff. `runs.instruction_set_hash`
+records which set governed each Run.
 
 ### Privacy Filtering
 

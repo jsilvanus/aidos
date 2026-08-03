@@ -29,9 +29,9 @@ amended by an ordinary RFC diff.
 Most of this corpus is Accepted as of 2026-08-03, because the MVP depends on it and because the
 schema (`schema/`) and the kernel interfaces (`runtime/kernel/`) demonstrated that the contracts
 hold together. What is still **Draft** is therefore the signal: 0012 Intent Graph, 0015
-Knowledge Engine, 0016 Instruction Engine, 0026 Model Memory, 0031 MCP, 0033 Shell, 0041
+Knowledge Engine, 0026 Model Memory, 0031 MCP, 0033 Shell, 0041
 Export/Import, 0043 Plugin Packaging, 0046 Identity, 0047 Project Templates, 0051 Desktop, 0060
-Plugin SDK, and the reviews. Three of those — 0015, 0016, 0031 — are on the MVP critical path
+Plugin SDK, and the reviews. Two of those — 0015 and 0031 — are on the MVP critical path
 and must be revised and accepted before the phase that needs them; see
 [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
 

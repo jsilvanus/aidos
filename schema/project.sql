@@ -325,6 +325,7 @@ CREATE TABLE runs (
     platform_profile     TEXT NOT NULL,                   -- RFC-0049
     network_available    INTEGER NOT NULL DEFAULT 0,
     degraded_tools       TEXT NOT NULL DEFAULT '[]',
+    instruction_set_hash TEXT,                            -- RFC-0016; NULL = none adopted
     row_version          INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (session_id) REFERENCES sessions(id),
     FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -484,6 +485,25 @@ CREATE TABLE prompt_provenance (
 );
 
 CREATE INDEX idx_prompt_provenance_attempt ON prompt_provenance(attempt_id);
+
+-- ---------------------------------------------------------------------------
+-- Instruction adoption (RFC-0016)
+--
+-- An instruction set is identified by the hash of its ordered (filename, blob
+-- hash) pairs. Unadopted sets are excluded from the prompt: an AGENTS.md in a
+-- freshly cloned repository is attacker-controlled text aimed at the system
+-- turn, and nobody reads a cloned repo's instruction file.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE instruction_adoptions (
+    project_id      TEXT NOT NULL,
+    set_hash        TEXT NOT NULL,
+    adopted_at      TEXT NOT NULL,
+    adopted_by      TEXT NOT NULL,                        -- user|authored_in_aidos
+    source_manifest TEXT NOT NULL,                        -- JSON: ordered (filename, blob_hash)
+    PRIMARY KEY (project_id, set_hash),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) WITHOUT ROWID;
 
 -- ---------------------------------------------------------------------------
 -- Session memory (RFC-0011, RFC-0026)

@@ -43,7 +43,7 @@ the assumption that the runtime authored it is not.
 
 ## Acceptance state
 
-As of 2026-08-03, 45 RFCs are **Accepted**. Accepted means implementation may begin against
+As of 2026-08-03, 46 RFCs are **Accepted**. Accepted means implementation may begin against
 them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
 "What Should Stabilise First", and it is unchanged.
@@ -58,12 +58,17 @@ to build is how a corpus accumulates authority it has not earned.
 
 ### Still Draft, and **on** the MVP path
 
-These three are needed and are not yet acceptable as written. Each must be revised and accepted
+These two are needed and are not yet acceptable as written. Each must be revised and accepted
 *before* the milestone that consumes it. This is tracked as real work, not as a caveat.
+
+RFC-0016 was the third and was closed on 2026-08-03: cut from 657 lines to ~230 per D22, and the
+revision turned up a security hole rather than just bloat — instruction files were reaching the
+system turn as trusted text, which means a cloned repository's `AGENTS.md` had the highest-
+authority position in the prompt. Worth expecting something similar in the other two: all three
+carry text the user did not author into the model's context.
 
 | RFC | Needed by | What is wrong with it |
 |---|---|---|
-| **0016 Instruction Engine** | M12 (Phase 2) | Written before D22 ("build less prompt machinery"). It proposes format plugins, conflict resolution, and a normalization layer for six instruction dialects. The MVP needs: find `AGENTS.md`/`CLAUDE.md`, concatenate, cap the budget. Cut it down to that and record what was cut as Future Work |
 | **0031 MCP** | M14 (Phase 2) | Specifies stdio *and* streamable HTTP; D17 says stdio only, desktop only, for the MVP. Trust policy for MCP-sourced tools is a sentence where it needs to be a section — an MCP server is an untrusted subject (RFC-0027) that can also be a capability *requester* (RFC-0055 `user_interactive`), and that interaction is unspecified |
 | **0015 Knowledge Engine** | M16 (Phase 3) | The blob-hash-keyed index model is settled and correct. Everything above it — ranking, chunking, the query interface, what happens when the index is stale — is not. This is the largest genuine design risk left in the MVP and it sits on the load-bearing gate |
 
@@ -81,8 +86,8 @@ last three architecture reviews found four items marked "addressed" that were no
 |---|---|---|
 | **M0.1** | `schema/` — canonical DDL | ✅ `check.py` green in CI: executes, FKs resolve, no table defined twice, every table named in RFC DDL exists |
 | **M0.2** | `runtime/kernel/` — KMP interfaces, no implementations | ✅ compiles under `allWarningsAsErrors`; contract tests green |
-| **M0.3** | `docs/decisions.md` | ✅ 24 decisions, none open |
-| **M0.4** | Acceptance pass | ✅ 45 RFCs Accepted; remaining Draft set is deliberate and documented above |
+| **M0.3** | `docs/decisions.md` | ✅ 24 settled decisions; D25 recommended, awaiting sign-off |
+| **M0.4** | Acceptance pass | ✅ 46 RFCs Accepted; remaining Draft set is deliberate and documented above |
 
 **G0 met.** The parallel workstreams in RFC-0099 may now proceed against frozen contracts.
 
@@ -109,13 +114,13 @@ the model.
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
-| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path |
+| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048, D25 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path. **Diffs are returned as structured hunks with stable identity, not as a formatted string** — pending D25 sign-off, and the reason D25 is a Phase 2 decision rather than a Phase 4 one |
 | **M10** | CLI frontend | 0052 | Create a project, list sessions, send a message, watch the event stream, approve a pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream with a hole in it |
 | **M11** | Effect broker | 0030, 0029, 0028 | Every invocation passes through validation → capability resolution → budget reservation → preview → audit → taint, in that order. A tool registered without a `RecoveryClass` is rejected at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed |
 | **M12** | Filesystem tool | 0034 | Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool |
 | **M13** | Git tool on JGit | 0032, 0053, D4 | Status, diff, add, commit, branch, log, and checkout on a real repository. `push` is `UNSAFE` and declares it. Reconciliation handles the user changing the working tree outside Aidos between two Aidos steps |
 | **M14** | Secrets vault and one remote provider | 0035, 0021, 0023, 0042 | An API key round-trips through `vault.db` and never appears in a log, an event, an audit row, or a prompt. One provider adapter implements `ModelAdapter` and normalizes its tool-call format into the neutral envelope |
-| **M15** | Prompt construction | 0025, 0016, D22 | Token budget derives from the selected model's context window. Assembly that cannot fit returns to routing once for a larger candidate — a bounded two-phase negotiation, not a loop. *Requires RFC-0016 revised and accepted first* |
+| **M15** | Prompt construction and instructions | 0025, 0016, D22 | Token budget derives from the selected model's context window. Assembly that cannot fit returns to routing once for a larger candidate — a bounded two-phase negotiation, not a loop. An unadopted instruction file does not reach the system turn; `runs.instruction_set_hash` records which set governed the Run |
 | **M16** | Agent loop with trust and taint | 0008, 0027, D6, D7 | The full cycle runs: resolve model → assemble → checkpoint → invoke → validate schema → resolve capability → apply taint → execute → checkpoint. Taint is monotonic within a Run. A tainted Run is denied egress and escalates naming the specific untrusted content. The model never confirms its own success |
 | **M17** | Injection suite | 0027, 0038 | A corpus of hostile repository content — README, source comments, commit messages, tool output, MCP responses — none of which escalates authority. New attacks are added to the corpus, not fixed in a special case |
 | **M18** | MCP over stdio, desktop only | 0031, D17, D23 | An off-the-shelf MCP server's tools appear in the broker with `EffectKind` and `RecoveryClass` assigned, run under a capability, and taint the Run as `UNTRUSTED`. An MCP server cannot approve its own capability request (RFC-0055 `user_interactive`). *Requires RFC-0031 revised and accepted first* |
@@ -149,7 +154,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 | **M28** | Compose UI over the Runtime API | 0050, 0052 | Projects, sessions, Runs, and the event stream. Built against `MockRuntimeClient` first, so the seam cannot erode into shared mutable state |
 | **M29** | Availability reporting | 0049 | Degraded and unavailable tools are shown at project open. Never discovered mid-Run, never offered and then failed |
 | **M30** | Approval and preview flows | 0018, 0027, 0030 | Every mutation shows its `Preview` before it happens. An escalation names the untrusted source that caused it. Approval requires a `user_interactive` connection |
-| **M31** | Diff and commit review | 0032, 0053 | Read a diff, stage, write a message, commit — comfortably, on a phone screen, with one hand, on a bus. This is the actual product |
+| **M31** | Diff and commit review | 0032, 0053, D25 | Read a diff, stage, write a message, commit — comfortably, on a phone screen, with one hand, on a bus. This is the actual product |
 | **M32** | Notifications | 0044 | Rate-limited. Never silently repeated. A parked Run that needs the user says so once |
 | **M33** | Voice capture → local STT | 0022, 0050 | *Optional for G4.* Cut first if Phase 4 slips — it is the only item in this phase that is not on the critical path of the thesis sentence |
 | **M34** | F-Droid distribution | 0050 | Reproducible build, no proprietary dependencies, published |
@@ -178,8 +183,8 @@ Genuinely parallel once G0 landed, against frozen contracts:
 | Testing | M8, M17 | the thing under test |
 
 **RFC revisions are unblocked work available right now** and each one removes a Phase 2/3
-blocker: RFC-0016 (cut it down), RFC-0031 (narrow it and specify MCP trust), RFC-0015 (the real
-design work).
+blocker: RFC-0031 (narrow it and specify MCP trust) and RFC-0015 (the real design work).
+RFC-0016 was the first of the three and is done.
 
 ## If it slips
 

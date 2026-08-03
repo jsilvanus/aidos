@@ -18,27 +18,25 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 0 · 2026-08-03 · Phase 0 complete, Phase 1 not started.
+Link 1 · 2026-08-03 · Phase 0 complete, Phase 1 not started.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
 
-- [x] **M0.1** `schema/` — 53 tables in three files, `check.py` green in CI
+- [x] **M0.1** `schema/` — 54 tables in three files, `check.py` green in CI
 - [x] **M0.2** `runtime/kernel/` — KMP common interfaces, compiling under `allWarningsAsErrors`, contract tests green
-- [x] **M0.3** `docs/decisions.md` — 24 decisions, none open
-- [x] **M0.4** Acceptance pass — 45 RFCs Accepted; the remaining Draft set is deliberate
+- [x] **M0.3** `docs/decisions.md` — 24 settled decisions, D25 recommended
+- [x] **M0.4** Acceptance pass — 46 RFCs Accepted; the remaining Draft set is deliberate
 - [x] **G0 met**
+- [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
+- [x] **D25 written** — diff review on a phone. `RECOMMENDED`, awaiting sign-off
 
 ## Next
 
-**The single most useful next thing: RFC-0016 revision.**
+**Awaiting a decision on D25** before RFC-0050/0052 can be updated. It is not blocking: nothing
+before M9 depends on it. See `docs/decisions/D25-phone-diff-review.md`.
 
-It is unblocked, it is small, it removes an M15 blocker, and it is the kind of work that gets
-skipped until it is urgent. Cut the Instruction Engine down to what D22 says the MVP needs —
-find `AGENTS.md`/`CLAUDE.md`, concatenate, cap the budget — move format plugins, conflict
-resolution, and dialect normalization to Future Work, and mark it Accepted.
-
-Then, in order:
+Unblocked work, in order:
 
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
 - [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
@@ -73,6 +71,20 @@ written — 0016 in particular describes a system D22 explicitly decided not to 
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**Blob-hash identity keeps paying.** It was introduced in RFC-0015 for the knowledge index (so
+branch switching invalidates nothing) and turned out to solve two more problems for free: an
+instruction set's identity is the hash of its `(filename, blob hash)` pairs, which makes change
+detection exact with no watcher and gives a Run a precise answer to "what steered you" — and it
+is the same identity a diff hunk needs (D25). If a subsystem needs to know whether project
+content changed, reach for the blob hash before writing a cache invalidation scheme.
+
+**RFC-0016's revision found a security hole, not just bloat.** Instruction files were going into
+the system turn as trusted text. A cloned repository's `AGENTS.md` is attacker-controlled prose
+aimed at the highest-authority position in the prompt, and the injection defences in RFC-0025
+were guarding a different door. The fix is *adoption* — a set does not steer a model until a
+human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
+carry content from outside the user's authorship into the model's context.
 
 **A mapping test is owed.** Once persistence lands at M1, add a test asserting every non-derived
 kernel field has a schema column. It was noted when the kernel was written and not built,

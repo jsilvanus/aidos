@@ -347,9 +347,48 @@ proving unacceptable (pushes background toward (c) while keeping local in foregr
 
 ---
 
+### D25 — Diff review on a phone: earlier, and by hunk · `RECOMMENDED`
+
+**Review moves earlier and gets smaller.** Per-mutation `Preview` — already required for every
+`EffectKind.Mutate` for security reasons — is the primary review surface. The commit screen
+separates changes the user already approved from those they did not, and directs attention at
+the second set. Line-level review of that residue is a **hunk card stack**: one hunk per screen,
+keep/skip/revert, visible progress. Raw unified diff stays one tap away. Model-generated diff
+summaries are deferred past G4.
+
+**Why it is a Phase 2 decision, not a Phase 4 one.** It determines what the Runtime API and the
+Git tool must return. `diff(): String` in Phase 2 means the Android app inherits a diff parser
+it should never contain — on the device with the least CPU, furthest from JGit, reimplemented by
+every frontend. **The API returns structured hunks with stable identity**, decided at M9,
+implemented at M13, consumed at M31.
+
+**Hunk identity** is `(path, base blob hash, hunk index)`. If the base moves mid-review, the
+review restarts visibly. Silent renumbering during partial staging is how a user stages the
+wrong lines.
+
+**Cost, stated plainly:** applying a *subset* of hunks to the index is real work. JGit gives an
+`EditList` but no hunk-level staging, so the resulting blob is constructed by hand, with tests
+for overlapping edits, CRLF, missing trailing newline, binary, renames, and mode changes. It is
+the only expensive item here. If it must be cut, cut staging and keep the card stack for
+reading.
+
+**Rejected:** scrollable unified diff as the *primary* surface — a diff line is ~120 columns and
+a phone shows ~40 at a readable size; it fails every clause of "comfortably, one-handed, on a
+bus". **Deferred:** model-summarized diffs — a model call at the moment the user is waiting to
+commit, and a D6 hazard, since a model summarizing the diff it just produced is reporting on its
+own work at the point where a wrong summary is least likely to be checked.
+
+**Consequence:** RFC-0050's "Git Browser (Optional)" stops being optional. It is the product.
+
+**Long-form analysis:** `docs/decisions/D25-phone-diff-review.md`.
+**RFCs:** 0050, 0052, 0032, 0053, 0030.
+
+---
+
 ## Open
 
-None.
+**D25** — recommended, not signed off. It commits M13 to hunk-level staging in JGit, which is the
+only non-trivial cost in the recommendation.
 
 ---
 
@@ -359,3 +398,4 @@ None.
 |---|---|
 | 2026-08-02 | Initial record: D1–D23 settled, D24 open. |
 | 2026-08-02 | D24 settled: (a) foreground service primary, (d) preparation-only fallback, (b) and (c) rejected. |
+| 2026-08-03 | D25 recommended: diff review moves earlier and goes hunk-by-hunk; Runtime API returns structured hunks. |
