@@ -1,6 +1,6 @@
 # RFC-0099: Roadmap
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -8,6 +8,10 @@ The Aidos roadmap is ordered around proving the product thesis — offline Git w
 before building anything on top of it. It runs: contracts, execution kernel, first vertical
 slice, offline proof, Android application, desktop, paired execution. Milestones are gated on
 demonstrable behaviour rather than dates.
+
+**The MVP is Phases 0 through 4, ending at gate G4.** This RFC states the phases and their
+rationale; [`docs/mvp-roadmap.md`](../mvp-roadmap.md) is the ordered work breakdown that
+implements them, and `PIPELINE.md` is the tracking document an agent works from.
 
 ## Motivation
 
@@ -80,8 +84,15 @@ No feature work. Three artifacts, each executable or checkable rather than prose
    scope model (RFC-0054), platform profiles (RFC-0049)
 ```
 
-**Exit criteria:** schema green in CI; interfaces published; RFC-0008, 0009, 0018, 0019, 0049,
-0052, 0053, 0054 marked Accepted. Nothing else is Accepted.
+**Exit criteria:** schema green in CI; interfaces published; the MVP RFC set marked Accepted.
+
+Phase 0 closed on 2026-08-03. `schema/` executes in CI as 53 tables across three files;
+`runtime/kernel/` compiles in KMP common with contract tests; 24 decisions are recorded in
+`docs/decisions.md` with none open. Forty-five RFCs moved to Accepted — not the eight originally
+named here, because building the schema and the kernel validated far more of the corpus than
+expected, and the remaining Draft set is now a more useful signal than the Accepted set. See
+[Accepted is not frozen](README.md#accepted-is-not-frozen): the freeze list below is unchanged
+and is the stronger commitment.
 
 ### Phase 1: Execution kernel (2 months) — no AI, no tools
 

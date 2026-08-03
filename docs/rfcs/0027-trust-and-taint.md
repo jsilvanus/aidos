@@ -1,6 +1,6 @@
 # RFC-0027: Trust, Taint, and Untrusted Content
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

@@ -1,6 +1,6 @@
 # RFC-0000: Vision
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

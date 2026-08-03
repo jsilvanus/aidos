@@ -1,6 +1,6 @@
 # RFC-0024: Resource Graph
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

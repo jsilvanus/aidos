@@ -1,6 +1,6 @@
 # RFC-0011: Sessions
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

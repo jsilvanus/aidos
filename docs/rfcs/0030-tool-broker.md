@@ -1,6 +1,6 @@
 # RFC-0030: Tool Broker
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

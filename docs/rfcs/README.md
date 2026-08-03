@@ -12,6 +12,29 @@ Each RFC progresses through the following statuses:
 - **Deprecated**: The system or design approach is no longer used or recommended.
 - **Superseded**: A newer RFC has replaced this one.
 
+### Accepted is not frozen
+
+These are two different claims and conflating them causes real damage.
+
+**Accepted** means: this design has been reviewed, it is consistent with the rest of the corpus,
+and implementation may begin against it. It does not promise the text will not change.
+
+**Frozen** means: the contract may not change without a version bump and a migration, because
+other work is already built on it. RFC-0099 names exactly what freezes at G0 — object IDs and
+scopes, capability grant/validate/revoke, the effect schema, the audit envelope, the
+run/task/attempt schema, the content-node schema, the model and tool-call envelopes,
+`RuntimeClient`, and the migration contract. Everything else that is Accepted may still be
+amended by an ordinary RFC diff.
+
+Most of this corpus is Accepted as of 2026-08-03, because the MVP depends on it and because the
+schema (`schema/`) and the kernel interfaces (`runtime/kernel/`) demonstrated that the contracts
+hold together. What is still **Draft** is therefore the signal: 0012 Intent Graph, 0015
+Knowledge Engine, 0016 Instruction Engine, 0026 Model Memory, 0031 MCP, 0033 Shell, 0041
+Export/Import, 0043 Plugin Packaging, 0046 Identity, 0047 Project Templates, 0051 Desktop, 0060
+Plugin SDK, and the reviews. Three of those — 0015, 0016, 0031 — are on the MVP critical path
+and must be revised and accepted before the phase that needs them; see
+[`docs/mvp-roadmap.md`](../mvp-roadmap.md).
+
 ## RFC Structure
 
 Every RFC must contain the following sections:

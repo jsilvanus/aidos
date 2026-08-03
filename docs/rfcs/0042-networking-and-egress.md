@@ -1,6 +1,6 @@
 # RFC-0042: Networking and Egress
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

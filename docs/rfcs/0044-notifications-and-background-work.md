@@ -1,6 +1,6 @@
 # RFC-0044: Notifications, Timers, and Background Work
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

@@ -1,6 +1,6 @@
 # RFC-0055: Runtime Instances and Process Concurrency
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

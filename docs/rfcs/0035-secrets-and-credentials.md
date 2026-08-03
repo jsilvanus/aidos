@@ -1,6 +1,6 @@
 # RFC-0035: Secrets and Credentials
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

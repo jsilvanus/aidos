@@ -1,6 +1,6 @@
 # RFC-0007: Concurrency Model
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

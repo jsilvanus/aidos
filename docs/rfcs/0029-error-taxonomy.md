@@ -1,6 +1,6 @@
 # RFC-0029: Error Taxonomy and Failure Semantics
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

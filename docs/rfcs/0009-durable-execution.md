@@ -1,6 +1,6 @@
 # RFC-0009: Durable Execution Model
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

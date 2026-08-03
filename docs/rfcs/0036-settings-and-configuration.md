@@ -1,6 +1,6 @@
 # RFC-0036: Settings and Configuration
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

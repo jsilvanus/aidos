@@ -1,6 +1,6 @@
 # RFC-0052: Runtime API
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

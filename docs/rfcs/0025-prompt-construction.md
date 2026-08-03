@@ -1,6 +1,6 @@
 # RFC-0025: Prompt Construction and Context Assembly
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

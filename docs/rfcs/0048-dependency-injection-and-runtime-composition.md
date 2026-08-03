@@ -1,6 +1,6 @@
 # RFC-0048: Dependency Injection and Runtime Composition
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

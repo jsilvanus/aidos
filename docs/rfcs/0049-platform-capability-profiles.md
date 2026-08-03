@@ -1,6 +1,6 @@
 # RFC-0049: Platform Capability Profiles
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

@@ -1,6 +1,6 @@
 # RFC-0054: Scope Model — User, Workspace, Project
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

@@ -1,6 +1,6 @@
 # RFC-0056: Retention, Compaction, and Storage Lifecycle
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

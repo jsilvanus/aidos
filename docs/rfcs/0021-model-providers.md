@@ -1,6 +1,6 @@
 # RFC-0021: Model Providers
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

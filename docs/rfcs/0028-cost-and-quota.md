@@ -1,6 +1,6 @@
 # RFC-0028: Cost, Quota, and Runaway Control
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

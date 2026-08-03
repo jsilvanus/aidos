@@ -1,6 +1,6 @@
 # RFC-0039: Serialization and Versioning
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 

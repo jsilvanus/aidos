@@ -1,6 +1,6 @@
 # RFC-0053: Git Backend and External Mutation Reconciliation
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
