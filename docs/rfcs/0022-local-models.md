@@ -1,6 +1,6 @@
 # RFC-0022: Local Models
 
-Status: Accepted 2026-08-03
+Status: Draft — body not audited against settled decisions (see docs/decisions.md)
 
 ## Abstract
 

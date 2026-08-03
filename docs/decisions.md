@@ -315,6 +315,12 @@ parameter model.
 - **Primary path (a).** A Run using a local model runs under a foreground service with a visible
   ongoing notification. The FGS window is long enough for a full inference step, so no
   sub-step escape hatch is needed in the deadline budget (RFC-0009).
+  **The user may pocket the phone.** A foreground service holding a wake lock keeps running
+  while the app is backgrounded and the screen is locked, across many chained steps — start an
+  analysis, put the phone away, come back to a result. That is the point of (a), not an
+  incidental benefit, and the ongoing notification is what buys it. What does *not* work is
+  `WorkManager`: ~10 minutes, no timing guarantee, deferred by Doze. Deterministic preparation
+  belongs there; anything reaching a model call does not (RFC-0050).
 - **Fallback (d).** Without an FGS — unavailable, or the user declined it — a background Run does
   deterministic work only: index, fetch, reconcile Git, assemble context. On reaching a model
   call it **parks** with suspension reason `ForegroundRequired` (RFC-0006) and notifies *"ready

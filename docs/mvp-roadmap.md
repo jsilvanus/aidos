@@ -43,7 +43,7 @@ the assumption that the runtime authored it is not.
 
 ## Acceptance state
 
-As of 2026-08-03, 46 RFCs are **Accepted**. Accepted means implementation may begin against
+As of 2026-08-03, 28 RFCs are **Accepted** and 18 more are Draft pending a body audit — see [the status split](rfcs/README.md#status). Accepted means implementation may begin against
 them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
 "What Should Stabilise First", and it is unchanged.
@@ -87,7 +87,7 @@ last three architecture reviews found four items marked "addressed" that were no
 | **M0.1** | `schema/` — canonical DDL | ✅ `check.py` green in CI: executes, FKs resolve, no table defined twice, every table named in RFC DDL exists |
 | **M0.2** | `runtime/kernel/` — KMP interfaces, no implementations | ✅ compiles under `allWarningsAsErrors`; contract tests green |
 | **M0.3** | `docs/decisions.md` | ✅ 24 settled decisions; D25 recommended, awaiting sign-off |
-| **M0.4** | Acceptance pass | ✅ 46 RFCs Accepted; remaining Draft set is deliberate and documented above |
+| **M0.4** | Acceptance pass | ✅ 28 RFCs Accepted, 18 awaiting a body audit; remaining Draft set is deliberate and documented above |
 
 **G0 met.** The parallel workstreams in RFC-0099 may now proceed against frozen contracts.
 

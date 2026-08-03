@@ -1,6 +1,6 @@
 # RFC-0023: Remote Models
 
-Status: Accepted 2026-08-03
+Status: Draft — body not audited against settled decisions (see docs/decisions.md)
 
 ## Abstract
 

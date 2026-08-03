@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 1 · 2026-08-03 · Phase 0 complete, Phase 1 not started.
+Link 2 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -26,17 +26,26 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **M0.1** `schema/` — 54 tables in three files, `check.py` green in CI
 - [x] **M0.2** `runtime/kernel/` — KMP common interfaces, compiling under `allWarningsAsErrors`, contract tests green
 - [x] **M0.3** `docs/decisions.md` — 24 settled decisions, D25 recommended
-- [x] **M0.4** Acceptance pass — 46 RFCs Accepted; the remaining Draft set is deliberate
+- [x] **M0.4** Acceptance pass — corrected: 28 Accepted, 18 reverted to Draft pending a body audit
 - [x] **G0 met**
 - [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
 - [x] **D25 written** — diff review on a phone. `RECOMMENDED`, awaiting sign-off
 
 ## Next
 
-**Awaiting a decision on D25** before RFC-0050/0052 can be updated. It is not blocking: nothing
-before M9 depends on it. See `docs/decisions/D25-phone-diff-review.md`.
+**Legacy RFC audit — one document at a time, in this order.** Each is read end to end, checked
+against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-accepted.
 
-Unblocked work, in order:
+- [x] **RFC-0050 Android** — rewritten. Package `fi.italeino.aidos`; in-process runtime (D5); background execution split correctly between FGS and `WorkManager` (D24); app-private storage per D2/RFC-0054; inbox-first UI; commit review no longer optional; an editor, which it previously lacked entirely
+- [ ] **RFC-0040 Storage** — next. Places project state at `~/.aidos/projects/<id>/storage.db`, contradicting D2 and `schema/`. M1 depends on it
+- [ ] **RFC-0020 AI Engine / RFC-0022 Local Models** — neither mentions D24
+- [ ] **RFC-0002, 0004, 0005, 0010, 0011, 0017, 0021, 0023, 0024, 0030, 0032, 0034, 0099** — audit
+- [ ] **RFC-0000, 0001** — vision and principles; likely fine, verify and re-accept
+
+**Awaiting a decision on D25** before RFC-0052 gains the structured-hunk diff shape. Not
+blocking: nothing before M9 depends on it.
+
+Then:
 
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
 - [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
@@ -58,14 +67,15 @@ had already happened once.
 RFC is the bug. Change both in the same commit. `check.py` asserts that every table named in RFC
 DDL exists in the schema, so a new RFC table is a CI failure until it is in `schema/`.
 
-**Accepted is not frozen.** 45 RFCs are Accepted, which means work may begin — not that the text
-cannot change. The freeze list is RFC-0099's "What Should Stabilise First" and it is much
-shorter. Amending an Accepted RFC is an ordinary diff; amending a frozen contract is a version
-bump and a migration.
+**Accepted is not frozen**, and Accepted is a claim someone checked. The first acceptance pass
+marked 45 RFCs Accepted on the strength of their headers; sampling four found body-level
+contradictions in three, so 18 went back to Draft with `— body not audited`. Do not implement
+against those without checking the decision they touch. Re-accept one only after reading it end
+to end. A status line nobody verified is exactly how RFC-0102's "addressed" table came to be
+wrong about four items — the same failure, one level up.
 
-**Three RFCs on the MVP path are still Draft on purpose** (0015, 0016, 0031). Each must be
-revised and Accepted before the milestone that consumes it. Do not implement against them as
-written — 0016 in particular describes a system D22 explicitly decided not to build.
+**Two RFCs on the MVP path are Draft on purpose** (0015, 0031) — genuinely unsettled, as opposed
+to merely unaudited. That distinction is worth preserving in the status lines.
 
 **The kernel has no implementations and that is deliberate.** `runtime/kernel/` is contracts
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
