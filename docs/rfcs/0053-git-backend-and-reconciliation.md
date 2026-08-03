@@ -57,9 +57,9 @@ Consequences, stated plainly rather than discovered later:
 
 | Consequence | Response |
 |---|---|
-| No `git worktree` support | Worker isolation uses treeless workers (RFC-0049); desktop worktrees are post-v1 and, if implemented, sit behind the same artifact contract |
+| No `git worktree` support | Worker isolation is **treeless on every profile** — see below. Not a workaround: it is cheaper than a worktree and produces the same artifact |
 | Slower than C Git on very large repositories | Acceptable for the target use case; measured in RFC-0045 budgets; large-repo support is a known limit, not a surprise |
-| No hooks execution | Correct behaviour for Aidos. Executing repository-supplied hooks would be arbitrary code execution on clone (RFC-0057) |
+| No hooks execution | Correct behaviour for Aidos. Executing repository-supplied hooks would be arbitrary code execution on clone (RFC-0003) |
 | Partial clone / sparse checkout support is limited | Documented limitation; matters for very large repos on mobile, revisit if it becomes a real constraint |
 | No `.gitattributes` filter drivers (clean/smudge), no LFS by default | Declared unsupported; a project using LFS reports an unsatisfied requirement (RFC-0049) |
 
@@ -74,10 +74,10 @@ Aidos prefers the object database. Working-tree operations are the exception, no
 |---|---|
 | Read file content at a ref | Object DB (`TreeWalk`) — no checkout needed |
 | Read history, blame, diff | Object DB |
-| Session edits a file | Working tree (the user is looking at it) |
-| Worker produces changes | Object DB, in-memory `DirCache` → tree → commit (RFC-0049 treeless workers) |
+| Driver session edits a file | Working tree — the user is looking at it |
+| Worker produces changes | Object DB, in-memory `DirCache` → tree → commit (treeless workers) |
+| A build or test needs files | Scratch checkout, created and deleted around the command |
 | Commit user-visible work | Working tree → index → commit |
-| Build/test | Working tree; `PLATFORM` tier only |
 
 This preference is what makes the mobile use case efficient: reading and understanding a
 codebase requires no checkout of anything, and a worker can produce a reviewable commit without
@@ -149,6 +149,37 @@ Resolution:
 
 Automatic merge of intent is explicitly rejected. Intent is the one structure whose whole
 purpose is to represent what the human wants; silently merging it defeats it.
+
+### One kind of worker, and where the working tree fits
+
+**There is exactly one worker model: treeless, on every profile.** No `workerKind` field, no
+policy setting, no per-platform branch. Nothing decides between mechanisms, because deciding
+would mean two code paths through the component that writes the user's Git history — and the
+less-used path would get the fixes late and the tests rarely. D4 chose one Git implementation
+everywhere for the same reason; this is that argument one level up.
+
+The asymmetry that *does* exist is **driver versus worker**, not worker-kind-A versus
+worker-kind-B:
+
+| | Works in | Why |
+|---|---|---|
+| **Driver session** | the working tree | The user is looking at it. Edits must appear where they expect them |
+| **Worker session** | object DB only, own ref | Isolation without a second copy of the tree. Output is a commit either way |
+| **Build / test tool** | a scratch checkout | A compiler needs real files. `PLATFORM` tier, DESKTOP only (RFC-0033) |
+
+**The scratch checkout is not a worker.** It is a step inside one: when a `PLATFORM`-tier tool
+needs files on disk, the runtime checks the relevant commit out into a temporary directory, runs
+the command, and deletes the directory. Its lifetime is the tool call. It holds no session
+state, produces no commits, and is never an isolation boundary — the isolation was already done
+by the worker's ref.
+
+Naming it precisely matters because "worker in a worktree" and "temporary checkout for a build"
+look similar and are not. The first is a second concurrency model. The second is a scratch
+buffer.
+
+**Who decides a worker is spawned at all** is a separate question with a separate answer: the
+model proposes a declared plan and the *user* approves it (D13). What is never decided is *how*
+the worker is isolated.
 
 ### Branch switching
 

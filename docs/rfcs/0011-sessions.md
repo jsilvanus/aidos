@@ -345,8 +345,10 @@ Creating a worker is a capability (`worker:create`) and involves four things:
    **divides** that allowance. It does not multiply it. Without this rule, fan-out is an
    unbounded spend multiplier, and orchestration becomes the most expensive way to use the
    product.
-4. **An isolation mechanism** — treeless on MOBILE, optionally a worktree on DESKTOP
-   (RFC-0049). Either way the worker's output is a commit on `refs/aidos/workers/<id>`.
+4. **An isolation mechanism** — **treeless, on every profile** (RFC-0053). A worker builds its
+   commit against the object database on `refs/aidos/workers/<id>` and never touches a working
+   tree. There is exactly one kind of worker; nothing chooses between mechanisms, because a
+   choice would mean two code paths through the component that writes the user's history.
 
 #### What a worker returns
 
