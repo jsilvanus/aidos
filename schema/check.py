@@ -68,6 +68,18 @@ if rfc_dir.is_dir():
             failures.append(f"{src}: defines table '{t}' that the schema does not have")
     print(f"  RFC cross-check: {len({t for t, _ in rfc_tables})} tables referenced, all present")
 
+    # 6. No prose pseudo-DDL. RFC-0040 described a dozen tables as `Table: projects`
+    #    with indented field lists — none matching the real schema, and all invisible to
+    #    the CREATE TABLE grep above. Describe a table in DDL or do not describe it.
+    prose = [(m, md.name)
+             for md in sorted(rfc_dir.glob("*.md"))
+             for m in re.findall(r"^\s*Table:\s+(\w+)\s*$", md.read_text(), re.MULTILINE)]
+    for t, src in prose:
+        failures.append(
+            f"{src}: prose pseudo-DDL 'Table: {t}' — use real DDL so this check can see it")
+    if not prose:
+        print("  RFC prose-DDL check: none")
+
 if failures:
     print("\nFAIL")
     for f in failures:

@@ -1,489 +1,265 @@
 # RFC-0022: Local Models
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
-Local Models are AI models that run on the user's machine, enabling offline-first operation and maximal privacy. The Local Models subsystem manages download, caching, quantization, and inference of models stored locally. It prioritizes Hugging Face as the primary model source and supports formats like GGUF, Whisper, and embedding models. Local models are the default choice when available; remote models (RFC-0023) are fallbacks. The Local Models system makes Aidos privacy-respecting and network-independent.
+Local models are what make offline-first real: without on-device inference, "works on a plane" is
+marketing. This RFC defines where weights live, how they are acquired and verified, how the
+**cookbook** tells a user which models will actually run on *their* device, why loading is
+globally serialized, and why inference happens only in the foreground. The load-bearing
+constraint throughout is that a mid-range phone has roughly as much usable memory as one loaded
+model wants, and no more.
 
 ## Motivation
 
-Cloud-based AI services (OpenAI, Anthropic APIs) require internet connectivity and send data to third-party servers. This creates several problems:
+Remote inference requires connectivity and sends the user's code to somebody else's computer.
+Both are unacceptable as a baseline for this product — the primary use case is a Git project on a
+phone in airplane mode.
 
-1. **No offline support**: Work stops when internet is unavailable.
-2. **Privacy concerns**: Project data is transmitted to external services.
-3. **Cost**: Every query incurs API charges.
-4. **Latency**: Network round-trips add 100ms+ latency.
-5. **Vendor dependency**: Project success depends on provider availability and pricing.
+But local inference on a handset is genuinely hard, and the previous version of this document did
+not engage with the hard parts. It described download, caching, quantization, and a curated model
+list, and then said recommendations should be "accessible: can run on typical developer
+machines". That is the desktop framing. On the target device the questions are: does this model
+fit in RAM *alongside the context the user wants*, will loading it get the app killed, and can
+inference finish inside an execution window.
 
-Local models solve this by running inference on the user's hardware:
-
-1. **Offline**: No network required.
-2. **Private**: Data never leaves the machine.
-3. **Free**: No per-query costs (except compute).
-4. **Fast**: No network latency.
-5. **Independent**: No vendor dependency.
-
-The tradeoff is **resource consumption** (CPU/GPU, disk space, memory). Modern quantized models (int8, int4) make this tradeoff acceptable for many tasks.
+It also cached models **per project**, contradicting user scope (RFC-0054) — a second project
+would re-download three gigabytes — and it fell back to a remote provider automatically when no
+local model was available, which contradicts routing being user-owned policy (RFC-0020) at
+exactly the point where the promise matters.
 
 ## Goals
 
-1. **Define local model lifecycle**: Download, cache, quantize, serve.
-
-2. **Specify model sources**: Where are models obtained?
-
-3. **Establish format support**: GGUF, Whisper, embeddings, etc.
-
-4. **Define model catalog and discovery**: How do users find models?
-
-5. **Clarify quantization strategies**: How are models optimized for local inference?
-
-6. **Explain caching and storage management**: How is disk space managed?
-
-7. **Specify recommendations and defaults**: Which models should users download?
+1. Define where weights live and at what scope.
+2. Define the **cookbook**: which models fit *this* device, computed rather than asserted.
+3. Define acquisition, verification, and eviction.
+4. Define loading — the admission queue and why it is global.
+5. State the foreground requirement and what happens without it.
+6. State what happens when nothing fits.
 
 ## Non-goals
 
-This RFC does not specify exact inference engines (llama.cpp, onnxruntime, etc.). The architecture is engine-agnostic.
+This RFC does not define model selection per request (RFC-0020) or remote providers (RFC-0023).
 
-This RFC does not mandate specific quantization techniques. Different methods (int8, int4, NF4) are acceptable.
+This RFC does not define the inference engine's internals. GGUF execution is a dependency, not
+something Aidos implements.
 
-This RFC does not address model training or fine-tuning. Only pre-trained model serving.
-
-This RFC does not specify the exact UI for model management. That is a separate design.
+This RFC does not train, fine-tune, or merge models.
 
 ## Design
 
-### Model Sources
+### Weights live at user scope, once
 
-Primary source: **Hugging Face**
+`~/.aidos/models/` on desktop, the app-private equivalent on Android (RFC-0050). One copy, shared
+by every project.
 
-Hugging Face is the de facto hub for open-source AI models. Models are:
+This is not a filing preference. A quantized 7B is 3.5–4.5 GB; per-project caching means a user
+with three projects has spent twelve gigabytes on one model. `installed_models` and
+`model_catalog` are in `user.db` accordingly (RFC-0054).
 
-- **Discoverable**: Searchable and ranked by popularity.
-- **Versioned**: Models can be pinned to specific versions.
-- **Documented**: Each model has a model card with capabilities and limitations.
-- **Licensed**: Clear licensing information.
-- **Community-curated**: Popular models are well-tested by community.
+Weights are **content-addressed by digest**. The same model acquired twice is stored once, and a
+partially-downloaded file can never be mistaken for a complete one.
 
-Aidos will:
+### Format
 
-1. Search Hugging Face for models matching a capability (e.g., "embedding").
-2. Filter by size, format, quality, license.
-3. Download the recommended model.
-4. Cache it for future use.
+**GGUF.** Single file, self-describing, quantization built into the format, and the widest
+selection of small models that run on a phone. A model in any other format is not unsupported so
+much as unavailable — `AvailabilityReport` names it, and the user is told which conversion would
+be needed rather than seeing a failure at inference time (RFC-0049).
 
-Alternative sources (future):
+### The cookbook: what runs on *this* device
 
-- **Ollama model library**: Curated collection of models.
-- **Custom model repositories**: User-hosted or organizational.
-- **Model zoo**: Dataset-specific models.
+The cookbook answers one question — **"which models will actually work on my phone?"** — and it
+answers it by computing, not by publishing a list of sizes and hoping.
 
-### Supported Formats
+A curated set of models ships with the app: known-good, tested, with stated strengths. That is
+the *quality* filter, and a human has to do it. The cookbook then **filters and ranks that set
+against the device**, which no human can do in advance because they do not know the device.
 
-#### GGUF
-
-**GGUF** (Great-Quantum Universal Format) is the de facto standard for quantized LLMs:
-
-- **Compact**: Supports int8, int4, NF4 quantization.
-- **Efficient**: Designed for CPU inference.
-- **Compatible**: Supported by llama.cpp and other engines.
-- **Examples**: Llama, Mistral, Phi models in GGUF format.
-
-Aidos treats GGUF as the primary LLM format.
-
-#### Whisper Models
-
-**Whisper** (by OpenAI, available open-source) for speech-to-text:
-
-- **Multiple sizes**: tiny (39M), base (74M), small (244M), medium (769M), large (1.5B).
-- **Multilingual**: Supports 99+ languages.
-- **Format**: PyTorch or ONNX.
-- **Quantization**: Can be quantized for efficient inference.
-
-#### Embedding Models
-
-**Sentence-transformers** for semantic embeddings:
-
-- **ONNX export**: Efficient inference format.
-- **Small models**: Many models < 300MB.
-- **Semantic similarity**: Designed for similarity search and clustering.
-- **Multilingual**: Multi-language support available.
-- **Examples**: BERT-based, MiniLM, MPNet.
-
-#### Vision Models
-
-Future support for:
-
-- **CLIP**: Image-text matching (for semantic understanding).
-- **OCR models**: Text extraction from images.
-- **ViT**: Vision transformers for image classification.
-
-### Model Catalog and Discovery
-
-Aidos maintains a **model catalog** with curated recommendations:
+**Device profile**, sampled at first run and re-sampled when it can change:
 
 ```
-Model Catalog Entry {
-  name: String                      # "Mistral 7B"
-  model_id: String                  # "mistralai/Mistral-7B-Instruct-v0.1"
-  
-  type: String                      # "llm", "embedding", "stt"
-  format: String                    # "gguf", "pytorch", "onnx"
-  
-  size: Bytes                       # Disk size after download
-  quantizations: Map<String, Bytes> # int8, int4, etc.
-  
-  capabilities: List<String>        # What it can do
-  
-  quality_score: Float              # Community rating (0-100)
-  speed_score: Float                # Inference speed (relative)
-  accuracy_score: Float             # Accuracy on benchmarks
-  
-  memory_required: Bytes            # RAM to load
-  recommended_hardware: String      # "cpu", "gpu", "either"
-  
-  license: String                   # Model license
-  privacy_notes: String?            # Any privacy considerations
-  
-  hugging_face_id: String           # HF model identifier
-  download_url: String
-  checksum: String                  # For integrity verification
-  
-  release_date: Timestamp
-  last_updated: Timestamp
-  
-  tags: List<String>                # "instruction-following", "fast", "lightweight"
-}
+total RAM · available RAM · storage free · CPU cores and ISA
+NPU / GPU delegate present · thermal headroom · battery floor (RFC-0045)
 ```
 
-Catalog enables:
+**Model requirements**, and this is where naive answers go wrong:
 
 ```
-User request: "Download a fast embedding model"
-Catalog filters:
-  - type: "embedding"
-  - tags: ["fast"]
-  - memory_required < 2GB
-Returns: [BERT-small, MiniLM, DistilRoBERTa] ranked by speed
-User selects: DistilRoBERTa-small
-Download initiates
+resident ≈ weights (file size, after quantization)
+         + KV cache
+         + runtime overhead
 ```
 
-### Model Download and Caching
-
-**Download Process:**
-
-```
-User requests: Download model X
-Engine:
-  1. Checks if already cached
-  2. If cached: Use it
-  3. If not:
-     a. Download from HF
-     b. Verify checksum
-     c. Cache in project model directory
-     d. Index in catalog
-```
-
-**Caching Strategy:**
-
-- **Project-local cache**: Each project has its own model cache (in project root).
-- **Size management**: Warn when cache exceeds limits; offer cleanup.
-- **Sharing**: Models can be shared across projects (future: symlinks, deduplication).
-
-Example storage:
+**The KV cache is the part that catches people.** A 4 GB quantized 7B does not need 4 GB — it
+needs 4 GB *plus* a cache that grows linearly with the context window, and at long contexts that
+term can exceed the weights themselves. A model that "fits" at 4k context may be unusable at 32k.
+So the cookbook computes fit **against the context length the user actually intends to use**, and
+shows the trade:
 
 ```
-project/.aidos/models/
-  embedding-models/
-    distilroberta-small/
-      model.safetensors
-      tokenizer.json
-      config.json
-    all-minilm-l6-v2/
-      model.safetensors
-      tokenizer.json
-      
-  llm-models/
-    mistral-7b-q4/
-      model.gguf
-      config.json
-      
-  stt-models/
-    whisper-base/
-      model.safetensors
-      processor.json
+  Qwen2.5 3B · Q4_K_M · 2.0 GB
+
+    4k context     ✓ runs well          2.4 GB resident
+   16k context     ✓ runs tight         3.3 GB resident
+   32k context     ✗ will not fit       4.6 GB resident, 3.9 GB available
 ```
 
-### Quantization
+**Verdicts**, deliberately four rather than a yes/no:
 
-**Quantization** reduces model size by representing weights with fewer bits:
+| Verdict | Meaning |
+|---|---|
+| `RUNS_WELL` | Fits with headroom; sustained use is unlikely to be reclaimed by the OS |
+| `RUNS_TIGHT` | Fits, but the app is a likely victim if another app demands memory |
+| `EXCEEDS_CONTEXT` | Weights fit; the requested context does not. Offer a shorter context |
+| `WILL_NOT_FIT` | Weights alone exceed what is available |
 
-- **Full precision** (FP32): 4 bytes per weight (original).
-- **FP16**: 2 bytes per weight (50% smaller).
-- **Int8**: 1 byte per weight (75% smaller, slight accuracy loss).
-- **Int4/NF4**: 0.5 bytes per weight (87% smaller, more accuracy loss).
+**What the cookbook cannot know, and says so.** Fit is a prediction, not a guarantee. Android may
+reclaim a foreground service under memory pressure; sustained inference throttles as the device
+heats, so a model that benchmarks well for ten seconds may halve in speed over two minutes; and
+available RAM depends on what else the user is running. `RUNS_TIGHT` exists precisely to name
+this band rather than pretend the boundary is sharp.
 
-Aidos supports downloading pre-quantized models:
+After a model has actually run, measured cold-start and tokens-per-second replace the estimate
+for that device. Predictions are for models you have not run; measurements are better and the
+cookbook prefers them.
 
-```
-Model: Llama-2-7B
-Available quantizations:
-  - Full (FP32): 26GB (not practical for most machines)
-  - FP16: 13GB (requires good GPU)
-  - Int8: 7GB (laptop-friendly)
-  - Int4: 3.5GB (mobile-friendly)
+### Acquisition
 
-User download: Int4 version
-```
-
-Quantized models are available from Hugging Face (via GGUF format) or can be quantized by Aidos (future).
-
-### Cookbook and Recommendations
-
-Aidos provides a **cookbook** of recommended models for common tasks:
+**Never automatic.** A multi-gigabyte download on a phone is a decision about the user's data
+plan and storage, and the previous version's "disk space available? network available? YES →
+download" is not a decision the runtime gets to make.
 
 ```
-# Embedding
-Recommended: all-MiniLM-L6-v2 (22M, 80MB)
-  - Fast, high-quality embeddings
-  - Good for semantic search
-  - Multilingual support
-
-Alternative: all-mpnet-base-v2 (110M, 430MB)
-  - Higher quality, slower
-  - For when accuracy matters
-
-# Speech-to-Text
-Recommended: Whisper Base (74M, 290MB)
-  - Good balance of speed and accuracy
-  - Supports 99 languages
-
-Lightweight: Whisper Tiny (39M, 140MB)
-  - For mobile, very fast
-
-# Instruction-Following LLM (Local)
-Recommended: Mistral 7B Instruct (Q4, 3.5GB)
-  - Fast, locally runnable
-  - Reasonable quality for most tasks
-
-Alternative: Llama 2 7B (Q4, 3.5GB)
-  - Similar performance
-  - Different strengths/weaknesses
+user chooses a model
+    → cookbook verdict shown, with the resident estimate
+    → download, resumable, progress in the ongoing notification
+    → digest verified before the file is usable
+    → recorded in installed_models
 ```
 
-Recommendations are:
+A model whose digest does not match what the catalogue promised is **deleted, not quarantined**.
+There is no scenario in which the right response to "these are not the weights we asked for" is
+to keep them.
 
-- **Tested**: Community has validated effectiveness.
-- **Balanced**: Good tradeoff between quality and resource usage.
-- **Documented**: Clear use cases and limitations.
-- **Accessible**: Can run on typical developer machines.
+### Loading is globally serialized
 
-### Storage Management
+`ModelRuntime.load()` goes through a **single admission queue for the whole runtime**, not per
+project or per session.
 
-As models accumulate, disk usage grows. Aidos manages storage:
+One loaded model can consume most of a phone's available memory. Two concurrent loads on a
+mid-range device do not degrade gracefully; they get the process killed, which on Android means
+losing the foreground service and parking every Run. The queue admits one load at a time, and
+`RUNS_TIGHT` models are given the whole allowance.
 
-```
-Project model cache: 25GB / 100GB limit
+Eviction is least-recently-loaded, and loading a second model unloads the first unless both fit.
+Weights are `mmap`ed where the engine supports it, so a reload after eviction is page-cache warm
+and much cheaper than the first load — which is what keeps the cold-start budget (under 10
+seconds to first token, RFC-0045) reachable in practice.
 
-Options:
-  1. Delete unused models: Save 5GB
-  2. Download smaller quantization: Save 8GB
-  3. Increase limit: $$$
-  4. Move to external storage: USB drive, cloud
+### Inference requires the foreground
 
-Recommendations:
-  - Delete mistral-7b-fp32 (13GB): Not used in 2 months
-  - Use llama2-7b-q4 (3.5GB): Equivalent quality
-  - Keep embeddings: Always needed (small)
-```
+**D24.** A Run reaching a local model call runs under a foreground service with a visible ongoing
+notification; without one it does its deterministic work, parks with
+`SuspendedOperation.ForegroundRequired`, and notifies *"ready to continue"*.
 
-### Offline-First Priority
+It does **not** route to a remote model instead. That would contradict offline-first at the exact
+moment it was promised, and it would send the user's code off the device because of a scheduling
+constraint they never saw. Routing across the network boundary is user-owned policy (RFC-0020),
+and a background window is not consent.
 
-Local models are preferred by default:
+### Storage management
 
-```
-Request: "Embed this text"
-
-Engine logic:
-  1. Is embedding model downloaded? YES
-     → Use local model
-  
-  If local unavailable:
-  2. Can download embedding model? 
-     Disk space available? Network available?
-     YES → Download, then use
-  
-  If cannot download locally:
-  3. Fallback to remote provider
-     → Ask permission, record fallback
-```
-
-This ensures maximum offline capability.
-
-## Data Model (Conceptual)
+Models are the largest thing Aidos puts on the device by an order of magnitude, so the accounting
+is user-visible and honest:
 
 ```
-LocalModelRepository {
-  project_id: UUID
-  
-  cached_models: Map<ModelId, CachedModel>
-  catalog: ModelCatalog
-  download_queue: List<DownloadJob>
-  
-  configuration: LocalModelConfig {
-    cache_directory: Path
-    max_cache_size: Bytes
-    auto_quantize: Boolean
-    preferred_quantizations: List<String>
-  }
-  
-  storage_usage: StorageUsage {
-    total_used: Bytes
-    by_model: Map<ModelId, Bytes>
-    by_type: Map<String, Bytes>
-  }
-}
+  Models · 6.2 GB of 11.4 GB free
 
-CachedModel {
-  id: UUID
-  model_id: String                  # HF identifier
-  
-  local_path: Path
-  format: String                    # "gguf", "pytorch"
-  quantization: String?             # "int4", "int8"
-  
-  size_bytes: Int
-  checksum: String
-  
-  downloaded_at: Timestamp
-  last_used: Timestamp
-  access_count: Int
-  
-  inference_engine: String          # "llama.cpp", "transformers"
-}
-
-ModelCatalog {
-  entries: Map<String, ModelCatalogEntry>
-  last_updated: Timestamp
-  version: String
-}
+    Qwen2.5 3B Q4      2.0 GB    used 2h ago
+    Whisper base       0.3 GB    used yesterday
+    nomic-embed        0.5 GB    used 2h ago
+    Llama 3.1 8B Q4    3.4 GB    never run · will not fit
 ```
+
+"Never run · will not fit" is the row that earns this screen: it is the download a user made
+before the cookbook existed, or on a different device, and it is pure waste.
+
+Removal is manual. The runtime does not delete weights to make room — an automatic deletion of a
+four-gigabyte download over a metered connection is not a kindness. It reports and lets the user
+choose. There is no per-project quota, no "increase limit", and no external-storage escape hatch;
+on Android app-private storage is what exists (RFC-0050).
+
+### When nothing fits
+
+`RoutingDecision.UnavailableOffline(kind)` — **not an error**. The user is told which model kind
+is missing and what the options are: a smaller model, a shorter context, or a remote provider if
+they have configured and permitted one.
+
+A device that cannot run any local LLM is a supported configuration. It degrades to a project
+browser with Git, knowledge search over the index, and remote inference if permitted — which is
+still useful, and is a far better outcome than an app that will not open.
+
+## Data Model
+
+`schema/user.sql` is canonical: `model_catalog`, `installed_models`, and `resource_budgets`
+(`memory_mb`, `battery_floor_pct`). Device profile and cookbook verdicts are **computed, not
+stored** — the device changes, and a cached verdict about free memory is wrong within minutes.
+Measured cold-start and throughput per `(model_id, device)` are retained as metric samples
+(RFC-0037), because those are stable.
 
 ## Security
 
-Local models have security advantages:
+1. **A model file is untrusted input to a parser.** GGUF loading happens in the inference engine
+   over data from the internet; a malformed file is a memory-safety question in a native
+   dependency. Digest verification before first use is the mitigation available, and it is not a
+   complete one — this is the largest native attack surface in the product and it should be
+   stated rather than implied.
+2. **No code is executed from a model repository.** Weights only. Nothing in the acquisition path
+   runs a script, and formats that carry executable payloads — notably pickle-based checkpoints —
+   are not supported, which is a second reason for GGUF beyond convenience.
+3. **Model output is `UNTRUSTED`** (RFC-0027), local or not. Running on-device changes where
+   inference happens, not whether its output can be trusted with authority.
+4. **Downloads are the only network activity** this subsystem performs, and they are subject to
+   egress policy like anything else (RFC-0042). A local model that phones home is a contradiction
+   in terms.
 
-1. **No data transmission**: All inference happens locally.
-2. **No authentication required**: Models are files on disk.
-3. **No external logging**: Aidos controls logging.
-4. **Privacy by design**: No vendor sees project data.
+## MVP
 
-Security risks:
+1. GGUF, user scope, content-addressed by digest.
+2. Cookbook: device profile × model requirements including KV cache, four verdicts, measured
+   values replacing estimates once a model has run.
+3. Explicit acquisition, resumable, digest-verified, deleted on mismatch.
+4. Global admission queue, LRU eviction, `mmap` where available.
+5. Foreground-only inference, parking otherwise (D24).
+6. Storage screen with per-model attribution and manual removal.
+7. `UnavailableOffline` as a first-class outcome.
 
-1. **Malicious models**: A compromised model could execute arbitrary code (future mitigation: sandboxing, signing).
-2. **Model extraction**: Can users copy models (they can, models are files).
-
-## MVP Scope
-
-The MVP Local Models system includes:
-
-1. **GGUF LLM support**: Download and run quantized LLMs (Mistral, Llama, Phi).
-2. **Embedding models**: Download and run sentence-transformers.
-3. **Whisper integration**: Speech-to-text (one model size).
-4. **Model catalog**: Curated list of recommended models.
-5. **Download management**: Download, cache, verify, delete models.
-6. **Quantization support**: Allow users to choose quantization levels.
-7. **Storage warnings**: Warn when cache is full.
-
-The MVP does not include:
-
-- Quantization performed by Aidos (use pre-quantized from HF).
-- Vision models (future).
-- Model fine-tuning (future).
-- Deduplication across projects (future).
+One LLM and one embedding model must meet RFC-0045's budgets on a real mid-range phone. That is
+M21, and it gates G3.
 
 ## Future Work
 
-### Cookbook Recommendations
-
-Expand cookbook with use-case-specific models:
-
-```
-# Coding Assistance
-- Code generation: Recommended model X
-- Code review: Recommended model Y
-
-# Content Analysis
-- Sentiment: Model A
-- Summarization: Model B
-
-# Creative Writing
-- Story generation: Model C
-```
-
-### Automatic Quantization
-
-Quantize models on-device:
-
-```
-User downloads: Mistral 7B (26GB)
-Aidos offers: "Quantize to int4? (Would save 22GB)"
-User accepts: Quantization runs locally, converts to 3.5GB
-```
-
-### Model Performance Profiling
-
-Benchmark models on the user's hardware:
-
-```
-User downloads: Embedding model
-Aidos profiles: Latency on this GPU
-Reports: "This model: 50ms per embedding on your hardware"
-User decides: Accept or choose faster/slower alternative
-```
-
-### Knowledge Graph of Models
-
-Model relationships and comparisons:
-
-```
-Mistral 7B
-  Similar to: Llama 2 7B
-  Faster than: Llama 2 13B
-  Slower than: Phi 2
-  Better at: Reasoning
-  Better than: Llama 2 on benchmarks
-```
-
-### Collaborative Model Curation
-
-Community votes on models:
-
-```
-Model: Mistral 7B
-Community rating: 4.7/5 (1000 votes)
-Use cases: Coding (4.9★), Chat (4.6★), Creative (4.3★)
-```
-
-### Model Versioning
-
-Track model versions and updates:
-
-```
-Downloaded: Mistral-7B v0.1
-Update available: Mistral-7B v0.2 (better quality)
-Auto-upgrade: No
-Manual upgrade: Download v0.2
-```
+- **NPU and GPU delegates** where the platform exposes them. Substantial speedup, substantial
+  fragmentation; worth doing after the CPU path is honest.
+- **Speculative decoding** with a small draft model, if two models can be resident at once on the
+  target hardware — which today they usually cannot.
+- **Community cookbook entries**, contributed and signed, so the curated set is not limited to
+  what one maintainer has tested. The device-fit computation is unchanged; only the input list
+  grows.
+- **Per-model context presets**, so "this model at 8k" is a first-class catalogue entry rather
+  than something the user configures.
+- **Fine-tuned adapters** (LoRA) applied at load time, once there is a reason more specific than
+  that it is possible.
 
 ## Open Questions
 
-- Should Aidos support model training/fine-tuning on local hardware?
-- How should model copyright and licensing be handled (what requires attribution)?
-- Should there be a "trusted models" concept (models vetted by Aidos team)?
-- How should Aidos handle models with safety concerns (automatically flag unsafe models)?
-- Should model recommendations be personalized (learn from user's preferences)?
-- Should Aidos support quantization as a service (quantize models in background)?
-- How should model updates be handled (automatic, manual, semantic versioning)?
+- Should `RUNS_TIGHT` be offered at all by default, or only behind an explicit "show models that
+  may be unstable"? It is the band where the app gets killed, and a user who does not understand
+  the verdict will blame Aidos rather than the model.
+- Does the cookbook need to model *concurrent* load — an LLM and an embedding model resident
+  together during indexing — or is serializing them through the admission queue sufficient?
+- How should a model that runs well on one device and badly on another be presented, once
+  measurements exist across devices? Aggregating them would be misleading; showing only the
+  local measurement discards useful information.
