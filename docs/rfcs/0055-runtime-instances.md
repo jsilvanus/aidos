@@ -176,6 +176,13 @@ entire security model rests on. This is the highest-value item in this RFC.
 3. Commands that grant or approve authority additionally require a connection flagged
    `user_interactive`, which only a frontend that can present UI may claim.
 
+   **A CLI attached to a TTY claims it; a CLI without one does not.** Piped, scripted, or run in
+   CI, the CLI is not a person and cannot approve on one's behalf — a Run needing approval under
+   it **parks** rather than proceeding. Same shape as D24's foreground rule, applied to a
+   different constraint, and it preserves the property that an automated context cannot approve
+   its own escalation. This matters at M10 and M19: G2's injection suite needs approvals to work
+   interactively, and needs them to *not* work when the CLI is driven by a script.
+
 ## MVP
 
 1. Daemon on desktop, in-process on Android; `RuntimeClient` unchanged across both.

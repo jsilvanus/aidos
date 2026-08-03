@@ -141,6 +141,32 @@ Provider policy — which providers are enabled, retention claims, approved task
 `aidos.toml` and the `settings` table (RFC-0010, RFC-0036). The previous version put it in a
 `project/.aidos/config.json` that does not exist.
 
+### User-registered endpoints
+
+Not every model comes from a vendor Aidos ships an adapter for. A company running its own LLM
+behind an OpenAI-compatible API is a common and entirely reasonable case, and it must not require
+a code change.
+
+A user may register an endpoint with: a **base URL**, a **model name** the endpoint expects, an
+**API key** (into the vault), and a **label** they choose. The adapter is the generic
+OpenAI-compatible one; nothing else about the system changes.
+
+**Naming is the user's, and it is always visible.** `modelId` is what goes on the wire;
+`displayLabel` is what the user typed and what every surface shows — the model picker, the Run
+Summary, the approval card, the audit row. Someone with three endpoints called `gpt-4o` behind
+different gateways needs to see *"Work — internal gateway"* rather than three identical rows, and
+they need to see it at the moment they approve an egress, not in a settings screen.
+
+**A self-hosted endpoint on your own network is still egress.** It is not the public internet,
+and the user may reasonably care about that difference — but the data still leaves the device, so
+it is `EffectKind.Egress`, it is recorded, and taint attenuates it. What a LAN endpoint changes
+is the user's *policy*, not the mechanism: they may sensibly approve a class of egress to their
+own gateway that they would refuse to a vendor. Egress policy is per destination (RFC-0042), so
+this is expressible without a special case.
+
+It also requires network, so a self-hosted endpoint is **unavailable offline** like any other
+remote provider. Being on the same building's Wi-Fi does not make it work on a train.
+
 ### Versioning
 
 `modelVersion` is recorded on **every attempt** (`attempts.model_version`). Providers change

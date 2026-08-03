@@ -125,6 +125,18 @@ After a model has actually run, measured cold-start and tokens-per-second replac
 for that device. Predictions are for models you have not run; measurements are better and the
 cookbook prefers them.
 
+### Naming and labels
+
+Every model — bundled, downloaded, or a user-registered endpoint (RFC-0021) — carries a
+**user-visible label** distinct from its technical identifier, and the label is what surfaces
+show. The identifier is for the wire and the audit row; the label is for the person deciding
+whether to approve an egress at a bus stop.
+
+The catalogue shows, for every model: label, kind, where it runs (this device / a named
+endpoint), size or reachability, and its cookbook verdict. "Where it runs" is not decoration —
+it is the difference between a prompt that stays on the phone and one that does not, and it
+belongs next to the name rather than two screens away.
+
 ### Acquisition
 
 **Never automatic.** A multi-gigabyte download on a phone is a decision about the user's data

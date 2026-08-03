@@ -232,8 +232,13 @@ The MVP demonstrates adherence to all ten principles:
 
 As Aidos evolves, these principles should remain stable. Future work that might challenge principles and require re-evaluation:
 
-- **Collaboration**: If multi-user support is added, principles 2, 8, and 10 become more complex. Git-based workflows can handle it, but explicit resolution mechanisms are needed.
-- **Real-time feedback**: Some applications may demand real-time collaborative editing. This conflicts with offline-first. Future RFCs will need to address this carefully.
+- **Collaboration**: **Explicitly not planned** (D16). Aidos is single-user; Git is the
+  collaboration mechanism. This is stated as a closed question rather than future work,
+  because "future work" is something a contributor can reasonably design toward — carrying
+  identity fields, conflict hooks, a whose-change-is-this notion — and pay for permanently.
+  RFC-0046 reserves identity fields; reserving them is the entire commitment.
+- **Real-time collaborative editing**: incompatible with offline-first, and not a direction
+  this project will take. Named here so nobody designs around the possibility.
 - **Distributed compute**: If Aidos adds support for distributed workers across multiple machines, principle 4 (headless) is stressed but not broken.
 - **Privacy-respecting analytics**: Principle 2 (user control) suggests analytics should be opt-in and transparent. This remains true as the system grows.
 

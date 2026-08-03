@@ -186,6 +186,21 @@ Limits, stated honestly:
 5. Delimiter escaping in RFC-0025 (moved into MVP).
 6. Default `untrusted_paths` for common dependency directories.
 
+### There is no "trusted model"
+
+The question recurs — trusted models, verified providers, vetted endpoints — and the answer is
+no, permanently, because **`TrustLevel` is already spoken for**. Model output is `UNTRUSTED`
+whoever produced it: locally, remotely, from a vendor you pay, or from an LLM your own company
+hosts. Trust here is about *what may influence an authority decision*, and a model's output is a
+function of its input, which included untrusted content.
+
+A second meaning of the word in the same corpus is how a security property gets quietly weakened
+— someone reads "this is a trusted model" and concludes its tool calls need less scrutiny.
+
+What people usually want when they ask is **curation for quality**, and that exists under its own
+name: the cookbook (RFC-0022) ranks models by fit and states what they are good at. Curation and
+trust are different claims and keep different words.
+
 Not in MVP: per-token influence tracking, user-configurable attenuation policy, taint
 visualisation in the UI beyond the escalation prompt.
 

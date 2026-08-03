@@ -154,7 +154,9 @@ The MVP demonstrates the core model:
 
 The MVP does not require:
 - Multiple AI providers (one will suffice).
-- Multi-user workflows.
+- Multi-user workflows. **Explicitly not planned**, not merely unscheduled: single-user is a
+  design assumption (D16). Collaboration is mediated by Git, which is already a very good
+  multi-user system, rather than by anything Aidos would build.
 - Advanced knowledge engine features (basic Git parsing is enough).
 - Plugin SDK.
 - Desktop or mobile UIs (headless is acceptable for MVP).
