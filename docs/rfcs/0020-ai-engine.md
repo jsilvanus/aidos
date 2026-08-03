@@ -495,7 +495,7 @@ UsageMetrics {
   tokens: Int                            # Tokens used (if applicable)
   compute_time: Duration
   memory_peak: Bytes
-  cost: Currency?
+  cost: CostUnits?
 }
 ```
 

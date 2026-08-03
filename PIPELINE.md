@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 5 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 6 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -42,10 +42,12 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-accepted.
 
 - [x] **RFC-0050 Android** — rewritten. Package `fi.italeino.aidos`; in-process runtime (D5); background execution split correctly between FGS and `WorkManager` (D24); app-private storage per D2/RFC-0054; inbox-first UI; commit review no longer optional; an editor, which it previously lacked entirely
-- [ ] **RFC-0040 Storage** — next. Places project state at `~/.aidos/projects/<id>/storage.db`, contradicting D2 and `schema/`. M1 depends on it
-- [ ] **RFC-0020 AI Engine / RFC-0022 Local Models** — neither mentions D24
-- [ ] **RFC-0002, 0004, 0005, 0010, 0011, 0017, 0021, 0023, 0024, 0030, 0032, 0034, 0099** — audit
-- [ ] **RFC-0000, 0001** — vision and principles; likely fine, verify and re-accept
+- [x] **RFC-0040 Storage** — rewritten. Durability under eviction was absent entirely; `synchronous=FULL` before `UNSAFE` effects is the one place the fsync is paid
+- [x] **RFC-0022 Local Models** — rewritten. The cookbook computes device fit including KV cache, not a static size list
+- [x] **RFC-0021 Model Providers** — rewritten around `ModelAdapter`; remote calls are egress
+- [x] **RFC-0005 Scheduler** — shrunk to the wake decision; six other topics handed to their owners
+- [x] **RFC-0032, 0000, 0001, 0002, 0011, 0030, 0023, 0020** — patched: worktree isolation, clone-is-export, billing language, egress framing
+- [ ] **End-to-end reads before re-accepting**: 0000, 0001, 0002, 0004, 0010, 0011, 0017, 0020, 0023, 0024, 0030, 0032, 0034, 0099 — these had a contradiction scan and targeted patches, not a full read
 
 Then:
 

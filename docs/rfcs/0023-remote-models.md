@@ -44,7 +44,9 @@ This RFC does not mandate specific cloud providers. Anthropic, OpenAI, Google ar
 
 This RFC does not specify exact privacy policies (those are external, user-configurable).
 
-This RFC does not define pricing or billing models. Those are provider-specific.
+This RFC does not define pricing or billing. Aidos tracks **cost units for budget enforcement**
+(RFC-0028) and nothing else: it issues no invoice, reconciles against no provider statement,
+and labels its numbers estimates.
 
 This RFC does not address real-time collaboration via remote services. Single-user is the design assumption.
 
@@ -68,6 +70,24 @@ AI Engine:
 ```
 
 Remote models are transparent to sessions: they request capabilities, not specific providers.
+
+### A remote call is an egress, not a dialog
+
+The structural point, which the approval flow below sits on top of: **every remote invocation is
+`EffectKind.Egress`** and goes through the broker like any other effect (RFC-0030). Four things
+then follow without per-provider handling:
+
+- **Taint attenuates it.** A Run that has admitted `UNTRUSTED` content needs per-call approval
+  before anything leaves the device, naming the tainting source (D7, RFC-0027). This is the
+  moment that rule exists for.
+- **It is recorded** in `egress_records`: what left, to whom, under which capability.
+- **Redaction runs first** (RFC-0035, RFC-0042), and what was redacted is recorded.
+- **There is no automatic fallback.** A local model being unavailable never causes the user's
+  code to be uploaded. Crossing the network boundary is user-owned policy (RFC-0020), and a
+  missing local model is not consent.
+
+A provider's stated retention policy is a **claim, not a control**. Aidos records it so the user
+can weigh it, and defends by redacting and requiring approval — not by believing it.
 
 ### Privacy and Approval
 
@@ -93,7 +113,7 @@ User choice: "Always approve for analysis tasks"
 **Privacy Settings (Project Configuration):**
 
 ```
-project/.aidos/config.json:
+aidos.toml  (RFC-0010; runtime settings in the `settings` table, RFC-0036):
   
   remote_model_policies: {
     "anthropic": {
@@ -194,7 +214,7 @@ RemoteQueryLog {
   
   input_tokens: Int
   output_tokens: Int
-  estimated_cost: Currency
+  estimated_cost: CostUnits
   
   result_hash: String               # Hash of result (no logging content)
 }
@@ -264,7 +284,7 @@ RemoteModelConfiguration {
       action: "redact" | "reject"   # What to do with matches
     }
     
-    max_monthly_cost: Currency?
+    max_monthly_cost: CostUnits?
     automatic_approval_expiry: Duration?
   }
   
@@ -283,7 +303,7 @@ RemoteProviderConfig {
   quota: QuotaConfig {
     monthly_tokens: Int?
     daily_requests: Int?
-    cost_budget: Currency?
+    cost_budget: CostUnits?
   }
 }
 
@@ -295,7 +315,7 @@ RemoteQueryLog {
   
   input_tokens: Int
   output_tokens: Int
-  cost: Currency
+  cost: CostUnits
   latency_ms: Int
   
   data_redacted: Boolean

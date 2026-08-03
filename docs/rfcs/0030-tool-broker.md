@@ -16,7 +16,11 @@ Sessions need to interact with many external systems:
 - **Network**: Make HTTP requests, fetch data.
 - **Notifications**: Send alerts to the user or external systems.
 - **Calendar**: Check schedules, add events.
-- **Email**: Send emails to collaborators.
+- **Email**: Send mail, through a provider adapter (SMTP, or a hosted API). Post-MVP, and the
+  first tool that needs its own provider abstraction the way models do (RFC-0021) — worth
+  noting because it is the precedent for any later tool with interchangeable backends. Every
+  send is `EffectKind.Egress` and `RecoveryClass.UNSAFE`: it cannot be un-sent and cannot be
+  observed after the fact, so it is never retried.
 - **Future integrations**: Slack, Discord, GitHub APIs, CI systems, etc.
 
 Without a unified abstraction, the runtime would need to hardcode knowledge of every tool. The Tool Broker solves this by:
