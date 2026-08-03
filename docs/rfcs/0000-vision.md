@@ -80,7 +80,7 @@ This constraint forces a clearer separation of concerns. It prevents the naive p
 
 ### Git-First
 
-Git is not an add-on. It is a first-class primitive in the model. Projects are Git repositories. Sessions frequently work inside isolated Git worktrees. Decision history, intent changes, and resource updates all flow through Git.
+Git is not an add-on. It is a first-class primitive in the model. Projects are Git repositories. Sessions read through the object database rather than a checkout, and workers build commits directly against it (RFC-0053) — a phone has neither `git worktree` nor room for a second working tree. Decision history, intent changes, and resource updates all flow through Git.
 
 This choice has several consequences:
 
@@ -117,7 +117,7 @@ Vision does not specify data structures, but it does constrain them:
 
 - A **Project** contains a directory tree anchored in Git. Within this tree live:
   - A SQLite database (for sessions, intent graph, artifacts, metadata).
-  - One or more Git worktrees (for coding and versioned content).
+  - A Git repository — one working tree, plus worker refs under `refs/aidos/**`.
   - Resource files (markdown, configuration, instruction files).
 
 - **Sessions** are first-class entities with persistent identity, state, and history. They may wake and sleep many times.

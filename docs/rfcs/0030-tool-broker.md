@@ -191,7 +191,7 @@ Every tool invocation is logged:
 ```
 ToolLog {
   timestamp: Timestamp
-  session_id: UUID
+  session_id: UUID                  # recorded, never passed to the tool
   
   tool_id: String
   capability: String

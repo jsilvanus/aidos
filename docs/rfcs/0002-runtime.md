@@ -118,7 +118,7 @@ The Project Manager is responsible for:
 - Managing project-level configuration and permissions.
 
 A project is the container for all work. It contains:
-- A Git repository (or worktrees thereof).
+- A Git repository — one working tree, with worker refs under `refs/aidos/**` (RFC-0053).
 - A SQLite database for project-local state.
 - One or more sessions.
 - An Intent Graph.

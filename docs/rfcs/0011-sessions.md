@@ -94,7 +94,7 @@ A worker session performs a specific, isolated task:
 - It publishes results to its mailbox.
 - When finished, it archives itself.
 
-Example: A test-writing worker created by the driver to write tests for a specific file. It runs in an isolated Git worktree, writes tests, and publishes the test file artifact.
+Example: A test-writing worker created by the driver to write tests for a specific file. It builds its commit directly against the object database on `refs/aidos/workers/<id>` — no second checkout (RFC-0053) — and publishes the test file artifact.
 
 ### Session Lifecycle
 

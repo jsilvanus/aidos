@@ -152,7 +152,9 @@ Project state, workflows, and decision history live in Git. Version control is c
 - Interoperability with existing developer tools.
 - Portability (a project is just a Git repository).
 
-**Implications**: Every project is a Git repository. Important state (Intent Graph changes, resource updates) flows through Git commits. Sessions can work in Git worktrees. Export is trivial (clone the repo).
+**Implications**: Every project is a Git repository. Important state (Intent Graph changes, resource updates) flows through Git commits. Workers build commits directly against the object database rather than in a second checkout (RFC-0053 treeless workers), because the first platform has no `git worktree` and no room for one.
+
+**A clone is not the whole project** (D2). Git carries content and history; sessions, artifacts, capabilities, and the audit trail live in a Git-ignored `.aidos/` beside it. Moving a project *with* its history is export/import (RFC-0041), which moves the directory. An earlier version of this document said export was trivial because it was a clone — that was wrong, and it mattered, because it is the sentence someone would have designed against.
 
 **Tradeoff**: Not all state fits naturally into Git. Some state (session state, temporary queues) belongs in local storage. Aidos uses both.
 
