@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 6 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 7 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -53,7 +53,7 @@ Then:
 
 - [ ] **RFC-0052** — add the structured-hunk diff shape now that D25 is settled (M9 consumes it)
 - [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
-- [ ] **RFC-0015 revision** — the real design work: ranking, chunking, the query interface, staleness. Largest genuine design risk left in the MVP
+- [ ] **RFC-0015 revision** — **now blocked on external work, deliberately.** The knowledge engine is being ported from `jsilvanus/gitsema` (TypeScript, ~82k lines) to a standalone `gitsema-kotlin` library, and Phase 1 of that port produces an algorithm specification in `gitsema/docs/design/kotlin-port.md`. RFC-0015 should be written *from* that spec rather than ahead of it. Aidos consumes the library and writes a ~200-line adapter onto `KnowledgeContextProvider`; it does not carry the ported code
 - [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
 - [ ] **M2** Identity and scopes
 - [ ] **M3** Capability manager, with the path-escape property test
@@ -100,6 +100,15 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**The knowledge engine comes from outside.** gitsema is a content-addressed semantic index
+already keyed on blob hash — the same identity model RFC-0015 adopted, which is not a
+coincidence. Three findings from surveying it that constrain the Aidos side: its vector search
+loads every vector into memory to score (~150 MB for a 50k-blob repo, alongside a loaded LLM);
+its structural graph needs tree-sitter, a native dependency of exactly the kind D4 refused for
+Git; and its analysis capabilities — impact, semantic blame, change-points, debt scoring, expert
+attribution — are the bulk of the product, not the retrieval. Do not assume "knowledge engine"
+means "search".
 
 **`reversible` is not `RecoveryClass`, and the difference is load-bearing.** `RecoveryClass` asks
 whether an effect can be re-executed after a crash; `reversible` asks whether the user can get
