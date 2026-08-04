@@ -249,14 +249,15 @@ session_memory_entries
 
 | Kind | Meaning | Bound |
 |---|---|---|
-| `SUMMARY` | rolled-up summary of prior Runs | one active per session |
 | `FACT` | a durable learned fact | soft cap, LRU eviction |
 | `DECISION` | a choice made and its reason | uncapped; these are small and valuable |
 | `TASK_STATE` | current work state | one active per session |
 
 **Raw conversation turns are not session memory.** They belong to a Run's transcript
-(RFC-0008), which is `AGED` and compacted (RFC-0056). When a Run completes, its transcript is
-summarized into a `SUMMARY` entry and the raw turns age out.
+(RFC-0008), which is `AGED` and compacted (RFC-0056). When a Run completes its raw turns age
+out on that schedule; **nothing summarizes them into memory** (D32). What survives the Run is
+the `FACT`/`DECISION`/`TASK_STATE` entries written during it, each with mandatory `source_refs`,
+and the Run Summary — a projection over the Execution Graph (RFC-0057), not a generated text.
 
 This closes the highest-probability debt identified in review: an unbounded
 `conversation_history: List<Message>` inside the session row would grow without limit, be
@@ -507,7 +508,8 @@ CREATE TABLE memory_entries (
     id               TEXT PRIMARY KEY,
     session_id       TEXT NOT NULL,
     project_id       TEXT NOT NULL,
-    kind             TEXT NOT NULL,                   -- SUMMARY|FACT|DECISION|TASK_STATE
+    kind             TEXT NOT NULL                    -- FACT|DECISION|TASK_STATE
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                   -- never '[]' (RFC-0026)
     confidence       TEXT NOT NULL,                   -- OBSERVED|INFERRED|USER_STATED
@@ -760,9 +762,10 @@ New worker sessions inherit template defaults
 These were open questions. Each is load-bearing semantics rather than a refinement, so each is
 now decided.
 
-**How is session memory summarized as it grows?** Rolling `SUMMARY` entries; raw turns live in
-Run transcripts and are compacted on a retention schedule (see Session memory above,
-RFC-0056).
+**How is session memory summarized as it grows?** It is not (D32). There is no model-written
+summary. Raw turns live in Run transcripts and are compacted on a retention schedule (RFC-0056);
+what persists is the cited `FACT`/`DECISION`/`TASK_STATE` entries, and "what happened" is
+answered by the Run Summary projection (RFC-0057).
 
 **How do workers inherit capabilities?** By explicit attenuated delegation only, never by
 inheritance (RFC-0018). A worker receives a strict subset of its driver's authority, narrower

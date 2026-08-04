@@ -515,7 +515,9 @@ CREATE TABLE memory_entries (
     id               TEXT PRIMARY KEY,
     session_id       TEXT NOT NULL,
     project_id       TEXT NOT NULL,
-    kind             TEXT NOT NULL,                       -- SUMMARY|FACT|DECISION|TASK_STATE
+    -- No SUMMARY kind: no model-written compaction of a session (D32).
+    kind             TEXT NOT NULL
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                       -- never '[]' (RFC-0026)
     confidence       TEXT NOT NULL,                       -- OBSERVED|INFERRED|USER_STATED

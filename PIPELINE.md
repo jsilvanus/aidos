@@ -42,6 +42,7 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
 - [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
 - [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
+- [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
 - [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
 - [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
 
@@ -136,6 +137,13 @@ to design around it.
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**The last model call in a deterministic path is the one to look for.** D26 made the Run Summary a
+projection, D25 deferred model-summarized diffs, D22 refused adaptive compression — and a model
+summarizer still survived in RFC-0026's `SUMMARY` kind, where it was also the taint-laundering
+channel RFC-0027 had to patch with a `max()`. Three decisions had each removed a generation step
+without anyone checking whether the same step existed elsewhere. When a decision says "compute it,
+do not generate it", grep the corpus for the *other* places the same generation happens.
 
 **A tool's description is prompt content, and nobody had classified it.** D31 was found by a user
 question, not by the revision that should have caught it — PIPELINE's own note said to look for

@@ -677,6 +677,48 @@ server requiring that is configured out of band, deliberately, by the user.
 
 ---
 
+### D32 — Durable memory is deterministic; nothing is summarized by a model · `SETTLED`
+
+**There is no model-written summary anywhere in the memory or context path.** The `SUMMARY`
+memory kind is removed (RFC-0026, RFC-0011). Conversation history that does not fit the budget is
+**dropped with an explicit omission marker**, never compacted by a model call (RFC-0025).
+
+What crosses a Run boundary is structured and cited:
+
+| Carrier | What it is |
+|---|---|
+| `FACT`, `DECISION`, `TASK_STATE` | specific claims with mandatory `source_refs`, still carrying the max taint of their sources |
+| **Run Summary** (RFC-0057) | a SQL projection over `runs`/`tasks`/`attempts` — no model call, offline, auditable |
+| **Taint marker** | `runs.taint_level`, rendered as `⚠` at strip density and named on tap |
+
+Four reasons, each sufficient on its own:
+
+- **D6.** A model summarizing its own session is reporting on its own work, at the point where
+  the summary is consumed *instead of* the detail. D26 already refused exactly this for the Run
+  Summary and D25 for diffs; memory was the remaining place it survived.
+- **It launders taint.** RFC-0026 closed the channel with "one field and one `max()`" — a rule
+  that must be remembered at every write site. Removing the summarizer removes the channel, which
+  cannot be forgotten.
+- **It parks on a phone.** Compaction that reaches a model call has no foreground service in the
+  background case (D24), so a session's own memory write would suspend.
+- **D22 already declined this machinery.** Adaptive compression was ruled out; a summarizer is
+  that machinery under a different name, and it had survived as future work.
+
+**Taint crosses the boundary as a marker, not as prose.** A tainted Run is visibly tainted, with
+its cause nameable, and no untrusted text rides along into the next Run.
+
+**Consequence to accept, stated plainly:** a long session's older turns are *gone*, not
+compressed — the model is told how many turns were omitted so it knows its view is partial. If
+that degrades quality before the budget is reached, the trigger is D22's revisit condition, and
+the answer is a larger context window or a better recency policy — **not** a summarizer
+reintroduced under another name.
+
+**Forecloses:** "the assistant remembers the gist of last week." It remembers cited facts,
+recorded decisions, and what the graph says happened.
+**RFCs:** 0026, 0025, 0027, 0011, 0057.
+
+---
+
 ## Open
 
 ### D31 — Where does an MCP server's *tool description* sit in the prompt? · `OPEN`
@@ -740,3 +782,4 @@ It does not block M1–M17.
 | 2026-08-04 | D29 settled: the knowledge engine is a consumed library; no provider SPI; committed content only; queries report coverage. D30 settled: an MCP server's authority is fixed at enable time; no `TRUSTED` promotion; nothing spawns on project open. |
 | 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |
 | 2026-08-04 | D31 opened: an MCP server's tool *description* has no trust classification and lands in a reserved prompt section. Must be settled before M18. |
+| 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |
