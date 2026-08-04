@@ -19,9 +19,9 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 ## Status
 
 Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
-legacy RFC audit is complete (46 Accepted, 15 Draft, RFC-0099 excepted) and the last two open
-design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 is
-done**; 0031 and 0015 remain. No new decisions are required to finish them.
+legacy RFC audit is complete (47 Accepted, 14 Draft, RFC-0099 excepted) and the last two open
+design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 and
+0031 are done**; 0015 remains. No new decisions are required to finish it.
 Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Done
@@ -45,25 +45,22 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Next
 
-**Two RFC rewrites, then Phase 1.** Every decision these need is already settled. Neither
-requires the user. 0031 is self-contained; 0015 is the largest and depends on reading an external
-document.
+**One RFC rewrite, then Phase 1.** Every decision it needs is already settled and it does not
+require the user. 0015 is the largest of the three and depends on reading an external document.
 
 - [x] **RFC-0052 — structured hunks.** Done. `DiffQueries` on `RuntimeClient`; `changes()` lists
       files with hunk counts and `hunks()` fetches one file, because a card stack shows one hunk
       at a time and a phone should not receive a large fetch's every line to display eleven of
       them. `unified()` is the fallback view. `stage()` is the expensive half and is the first
       thing to cut (D25). Mirrored into `runtime/kernel/Diff.kt`, and `Preview.Diff` converted to
-      the same shape.
+      the same shape. **RFC-0052 stays Accepted; RFC-0030 amended alongside it.**
 
-- [ ] **RFC-0031 — apply D30.** The document is largely sound; three parts of its security
-      section and one sentence in its Abstract are not. Fix: delete the `TRUSTED` promotion (§7)
-      and replace it with a remembered per-`(server, project)` egress grant; add the section the
-      document is missing on what an MCP server may *not* do — raise a capability request, grow
-      its own authority, or run before a call needs it; state the enable-time grant as a set of
-      effect classes; make the Abstract agree with the MVP scope (stdio, DESKTOP, D17). Close the
-      two Open Questions per D30 — MCP resources stay out of the knowledge engine, and Aidos as an
-      inbound MCP server is a v1 non-goal. Then Accept it.
+- [x] **RFC-0031 — apply D30.** Done and Accepted. The `TRUSTED` promotion is gone, replaced by a
+      remembered per-`(server, project)` egress grant that is an ordinary capability row; the
+      enable-time grant is a set of effect classes; a new "What a server may never do" section
+      states the five prohibitions; lifecycle is lazy start and idle stop; the Abstract agrees
+      with the MVP scope. Both Open Questions closed. `mcp_servers.trust` dropped from
+      `schema/user.sql` in the same commit — it existed only to hold the removed promotion.
 
 - [ ] **RFC-0015 — rewrite against D29 and the port spec.** No longer blocked: the port
       specification exists at `docs/design/kotlin-port.md` on branch
@@ -127,6 +124,13 @@ to design around it.
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**Removing a concept means removing its column.** D30 deleted the MCP `TRUSTED` promotion, and
+`mcp_servers.trust TEXT NOT NULL DEFAULT 'UNVERIFIED'` was still sitting in `schema/user.sql`
+holding the two values that no longer mean anything. A dead column in canonical DDL is worse
+than a stale paragraph: the paragraph is prose someone may doubt, the column is a fact an
+implementor will faithfully populate. When a decision deletes a concept, grep `schema/` for it
+before calling the decision applied.
 
 **A shape decision is only made once it is made everywhere it is read.** D25 settled structured
 hunks in August and RFC-0032 already said so in prose — but `Preview.Diff` in the kernel still

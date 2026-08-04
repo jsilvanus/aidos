@@ -103,7 +103,9 @@ CREATE TABLE mcp_servers (
     endpoint_url     TEXT,
     profiles_json    TEXT NOT NULL,                       -- where it is available (RFC-0049)
     secret_refs_json TEXT NOT NULL DEFAULT '{}',          -- env var -> secret id. never values.
-    trust            TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    -- No trust column. A server's results are UNTRUSTED permanently (RFC-0027) and its
+    -- authority is the capability rows it holds in a project (D30). The removed
+    -- UNVERIFIED/TRUSTED promotion put the word "trusted" on a permanently untrusted process.
     auto_restart     INTEGER NOT NULL DEFAULT 1,
     registered_at    TEXT NOT NULL
 );
