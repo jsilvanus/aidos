@@ -1,6 +1,6 @@
 # RFC-0017: State Model
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -36,7 +36,7 @@ Aidos uses three storage layers with different roles:
 SQLite is the single source of truth for: session state, run state, capability records, audit log, artifact metadata, intent graph metadata, and all object identity records. If SQLite says an object exists in a given state, that is the ground truth.
 
 **Git (authoritative for content versions)**
-Git is the version history for objects that users care about tracking and diffing: resources (RFC-0013), instruction files, intent graph snapshots (committed periodically), and project configuration. Git is *not* authoritative for operational state (session state, run state). Git is authoritative only for content-addressed, user-visible versioned objects.
+Git is the version history for objects that users care about tracking and diffing: resources (RFC-0024, which supersedes RFC-0013), instruction files, intent graph snapshots (committed periodically), and project configuration. Git is *not* authoritative for operational state (session state, run state). Git is authoritative only for content-addressed, user-visible versioned objects.
 
 **Filesystem (authoritative for current file content)**
 The filesystem holds the working copy of files. It is always consistent with the most recent Git commit for tracked files, plus any uncommitted changes. For untracked session artifacts (e.g., scratch files), the filesystem is authoritative until the artifact is committed to SQLite.

@@ -31,7 +31,7 @@ down: what happens when Android kills the process during a write.
 2. State why there is no backend abstraction, and what is refused with it.
 3. Define durability under process eviction — the Android-first requirement.
 4. Define the transaction and concurrency rules the runtime must obey.
-5. Define migration behaviour, including refusal.
+5. Define migration behaviour, including the read-only case.
 6. State what is deliberately not stored in SQLite.
 
 ## Non-goals
@@ -157,13 +157,18 @@ open(db):
     if version == current               → proceed
     if version <  current               → apply migrations in order, record each
                                           in migration_history, then proceed
-    if version >  current               → REFUSE with SchemaTooNew
+    if version >  current               → open READ-ONLY, storage.migration_required
 ```
 
-**Refusal is a named error, not a crash and not a best-effort open.** A newer database opened by
-an older runtime is a user who downgraded the app or synced a directory from a device running a
-newer build; silently proceeding corrupts it. RFC-0029 carries the error class; RFC-0039 defines
-the migration contract.
+**A newer database opens read-only rather than refusing** (RFC-0017). Version skew between a
+phone and a desktop is the *normal* state in a mobile-first product, not an error — someone who
+upgraded on one device and opens the project on the other should still be able to read their
+work. Reading is safe because unknown columns are simply ignored; writing is not, because the
+older runtime cannot honour constraints it does not know about. RFC-0029 carries
+`storage.migration_required`; RFC-0039 defines the migration contract.
+
+An earlier version of this RFC refused outright. That was stricter than necessary and worse for
+the user, and it contradicted RFC-0017 — which had the better answer first.
 
 **Each database versions independently.** A user may upgrade the app, open one project, and leave
 another closed for months. `user.db` will be current while that project's `state.db` is three
@@ -190,10 +195,13 @@ retention. Three mechanisms hold it:
 | Secrets | `vault.db` (RFC-0035) | Blast radius, above |
 | File content and history | the Git object database | Git is authoritative for content (RFC-0017). Storing a second copy invites the two to disagree |
 | Model weights | user-scope files (RFC-0054) | Gigabytes |
+| Content ≥ 512 KB | content-addressed blob store; SQLite holds hash and size (RFC-0017, RFC-0024) | Large blobs bloat the page cache and slow every unrelated query |
 | Bulk event and tool payloads | content nodes, referenced by ID (RFC-0004) | The event bus carries references, not bodies |
 | Diagnostic logs | rotating files (RFC-0037) | Disposable, unlike the audit log |
 
-The rule underneath: **SQLite holds relationships and state; the filesystem and Git hold bytes.**
+The rule underneath: **SQLite holds relationships, state, and small content; the filesystem and
+Git hold bulk.** The threshold is 512 KB and it is stated once, in RFC-0017's ownership table —
+content below it lives inline as a BLOB, above it out-of-line by hash.
 
 ## Data Model
 
@@ -226,7 +234,7 @@ forbids.
 
 1. Three databases, created from `schema/` at first open, at the paths above.
 2. WAL, `synchronous = NORMAL`, with `FULL` before `UNSAFE` effects.
-3. Forward-only migrations, per database, refusing a newer schema by name.
+3. Forward-only migrations, per database; a newer schema opens read-only rather than refusing.
 4. The three transaction rules, with a test that fails a write transaction held across an await.
 5. Incremental vacuum during preparation windows.
 6. `busy_timeout` at 5s, with contention treated as a bug rather than absorbed.
