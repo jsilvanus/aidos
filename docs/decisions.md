@@ -543,6 +543,89 @@ proves to be the bottleneck. That is a numbers question and should be settled wi
 
 **RFCs:** 0022, 0021, 0020, 0049.
 
+### D29 — The knowledge engine is a consumed library, not an Aidos subsystem · `SETTLED`
+
+RFC-0015 was written as if Aidos would build a knowledge engine: a provider SPI, an entry
+schema, four addressing classes, an invalidation mechanism. It is instead consuming one.
+`gitsema-kotlin` — the port of `jsilvanus/gitsema` — already implements the blob-addressed model
+RFC-0015 adopted, because RFC-0015 adopted it *from* gitsema.
+
+**The library owns its schema.** Aidos owns the location (`.aidos/index/`, outside `state.db` per
+D21), the lifecycle (when indexing starts, when it yields, when it stops), and the resource
+envelope (background dispatcher, cancellable batches, no network). It does not own the DDL. The
+alternative — Aidos defining an entry shape the library writes through — makes every upstream
+schema change an Aidos migration and puts `schema/check.py` in the position of policing tables
+Aidos does not understand. The addressing-class table stays in RFC-0015 as a description of what
+Aidos relies on and would notice breaking, not as Aidos's design.
+
+**There is no provider SPI.** One provider exists. One interface already exists —
+`KnowledgeContextProvider` (RFC-0025). A `KnowledgeProvider` seam with `query`/`is_current`/
+`update`/`subscribe` is maintained for hypothetical implementors and is the same speculative
+extensibility D18 and D22 refused elsewhere. If a second knowledge source appears, the seam is
+cheap to add against a real second case.
+
+Three consequences settled with it:
+
+- **The index covers committed content only** in the MVP. Hash-on-save is elegant and re-embeds a
+  file on every keystroke, on a phone, for content superseded within minutes. Uncommitted work
+  reaches the model through the filesystem tool, which is how it reaches it anyway when the model
+  is the one editing. Debounced hash-on-idle is the upgrade, not the starting point.
+- **A query reports coverage** — blobs indexed over blobs known. Two counters. Without it, first
+  open of a large repository answers "there is no retry logic here" when the truth is "I have not
+  read most of it yet," and G3's measurement cannot distinguish an answer at minute two from an
+  answer at minute forty.
+- **No secret redaction.** RFC-0015 promised secrets in code would be redacted from the index.
+  Nothing funds a scanner, it would have false negatives, and stating it invites reliance. The
+  real property is that the index is app-private, never egresses, and holds nothing the repository
+  does not already hold. A secret committed to the repository is a secret in the repository.
+
+**Forecloses:** shipping a knowledge feature the library does not have. Aidos's contribution is
+the adapter and the resource discipline; capability gaps are upstream work in `gitsema-kotlin`.
+**RFCs:** 0015, 0025, 0054.
+
+### D30 — An MCP server's authority is fixed when it is enabled · `SETTLED`
+
+RFC-0031 established that an MCP server is a capability subject holding an attenuated grant, and
+RFC-0027 that its results are `UNTRUSTED`. What neither answered is the interaction: RFC-0055 has
+`user_interactive` capability requests, so may an untrusted process make the user's device raise
+a prompt?
+
+**No.** A server's authority is set when the user enables it for a project and does not grow at
+runtime. A call needing more fails with a message naming what is not permitted; the user changes
+the registration if they want it. A prompt raised by untrusted code is a phishing surface — the
+server picks the moment and part of the wording — and the property lost is worth more than the
+ergonomics gained: a server's maximum authority stays knowable by reading one file. Attributed,
+`EYES_ONLY` runtime requests (D26 already routes `isNewGrant` there) are future work with their
+own threat analysis, not an MVP convenience.
+
+**The grant is by effect class, at enable time.** The user answers one answerable question —
+*this server reads the network and writes files outside your project; yes or no?* — and per-call
+approval then follows the ordinary tier rules. Per-operation grants sound safer and ask the user
+to rule on forty operation names they have never seen, which is a consent dialog that trains
+people to click through. Approving every call is unusable; MCP servers are chatty.
+
+**There is no `TRUSTED` promotion for MCP servers.** RFC-0031 let the user mark a server trusted
+to relax per-call `Egress` approval. It bought fewer prompts and cost the clearest sentence in
+the security model, by putting the word *trusted* on a process whose output is untrusted
+permanently. The same ergonomics come from a remembered grant: an approved egress to a named
+server, scoped to a project, visible in the capability list and revocable there. That mechanism
+already exists and does not require a second concept that reads as if it means more.
+
+**Nothing is spawned by opening a project.** Servers start lazily on first call and shut down
+when idle. "Connect on open, show the green dot" is the obvious implementation and it executes
+third-party code before the user has asked for anything.
+
+Two adjacent questions close the same way. **MCP resources do not feed the knowledge engine** —
+index identity is the blob hash, and an MCP resource has no blob, no stable identity, and no
+invalidation story; it would need a fifth addressing class whose only member is *things that
+might have changed, we cannot tell*. They are fetched as tool results: untrusted, tainting,
+in-context, unindexed. And **Aidos does not expose itself as an MCP server** in v1; that is an
+inbound authority surface needing its own subject kind and threat model.
+
+**Forecloses:** an MCP server that adapts its own permissions as it discovers what it needs. Any
+server requiring that is configured out of band, deliberately, by the user.
+**RFCs:** 0031, 0018, 0027, 0055, 0015.
+
 ---
 
 ## Open
@@ -561,3 +644,5 @@ None.
 | 2026-08-03 | D25 settled as recommended. D26 settled: glance and voice may approve only the benign class. |
 | 2026-08-03 | D26 amended: three voice tiers, verification gates authority. `reversible` split from `RecoveryClass`. |
 | 2026-08-03 | D27 settled: native dependencies only where nothing else works and a crash is bounded. D28 settled: GGUF via llama.cpp, format per model kind. |
+| 2026-08-04 | Legacy RFC audit complete: 46 Accepted, 15 Draft, RFC-0099 excepted. |
+| 2026-08-04 | D29 settled: the knowledge engine is a consumed library; no provider SPI; committed content only; queries report coverage. D30 settled: an MCP server's authority is fixed at enable time; no `TRUSTED` promotion; nothing spawns on project open. |

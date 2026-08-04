@@ -35,8 +35,11 @@ two ways.
 **Draft (15).** 0012 Intent Graph · 0015 Knowledge Engine · 0026 Model Memory · 0031 MCP ·
 0033 Shell · 0041 Export/Import · 0043 Plugin Packaging · 0046 Identity · 0047 Project Templates ·
 0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
-Two — **0015** and **0031** — are on the MVP critical path and must be revised and accepted before
-the milestone that consumes them; see [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
+
+Two — **0015** and **0031** — are on the MVP critical path. Their *decisions* are now settled
+(`docs/decisions.md` D29 and D30) but the documents have not been rewritten to match, so both
+carry a warning banner naming what in them is superseded. They must be revised and accepted
+before the milestone that consumes them; see [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
 
 ### What the audit found, and why greps were not enough
 

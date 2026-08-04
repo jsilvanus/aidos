@@ -1,6 +1,12 @@
 # RFC-0015: Knowledge Engine
 
-Status: Draft
+Status: Draft — rewrite specified by D29, not yet applied
+
+> **This document is out of date and known to be.** The rewrite is settled in `docs/decisions.md`
+> D29: the knowledge engine is a consumed library (`gitsema-kotlin`), the library owns its schema,
+> there is no provider SPI, the MVP index covers committed content only, queries report coverage,
+> and the secret-redaction promise is withdrawn. What remains correct below is the "Index identity"
+> and "Addressing classes" sections — everything else is pending. Do not implement against it.
 
 ## Abstract
 

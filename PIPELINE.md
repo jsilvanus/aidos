@@ -18,7 +18,10 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 8 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 9 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
+legacy RFC audit is complete (46 Accepted, 15 Draft, RFC-0099 excepted) and the last two open
+design questions are settled as D29 and D30. What remains before code is three RFC rewrites that
+apply already-settled decisions — no new decisions are required to finish them.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -35,25 +38,47 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **Instruction adoption settled** — per project for the decision, per user for recognition (`known_instruction_sets`). No open questions remain anywhere in the corpus
 - [x] **Ten of eleven open questions settled** — hunk revert is a user-subject edit through the broker; reviewed/unreviewed does not survive a rebase; sessions are told when instructions were excluded; root-only discovery reports what it is not reading; the glance shows three; session summaries compose from Run summaries; the gesture grammar is horizontal-peer / vertical-list / tap-deeper; voice approvals are audited by channel; tier 2 is not motion-gated; the editor stays project-scoped
 - [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
+- [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
+- [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
+- [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
 
 ## Next
 
-**Legacy RFC audit — one document at a time, in this order.** Each is read end to end, checked
-against `docs/decisions.md`, `schema/`, and `runtime/kernel/`, fixed, and re-accepted.
+**Three RFC rewrites, then Phase 1.** Every decision these need is already settled. None of them
+requires the user. Do them in this order — 0052 is the smallest and unblocks M9, 0031 is
+self-contained, 0015 is the largest and depends on reading an external document.
 
-- [x] **RFC-0050 Android** — rewritten. Package `fi.italeino.aidos`; in-process runtime (D5); background execution split correctly between FGS and `WorkManager` (D24); app-private storage per D2/RFC-0054; inbox-first UI; commit review no longer optional; an editor, which it previously lacked entirely
-- [x] **RFC-0040 Storage** — rewritten. Durability under eviction was absent entirely; `synchronous=FULL` before `UNSAFE` effects is the one place the fsync is paid
-- [x] **RFC-0022 Local Models** — rewritten. The cookbook computes device fit including KV cache, not a static size list
-- [x] **RFC-0021 Model Providers** — rewritten around `ModelAdapter`; remote calls are egress
-- [x] **RFC-0005 Scheduler** — shrunk to the wake decision; six other topics handed to their owners
-- [x] **RFC-0032, 0000, 0001, 0002, 0011, 0030, 0023, 0020** — patched: worktree isolation, clone-is-export, billing language, egress framing
-- [ ] **End-to-end reads before re-accepting**: 0000, 0001, 0002, 0004, 0010, 0011, 0017, 0020, 0023, 0024, 0030, 0032, 0034, 0099 — these had a contradiction scan and targeted patches, not a full read
+- [ ] **RFC-0052 — structured hunks.** D25 settled that the Runtime API returns structured diff
+      hunks with identity `(path, base blob hash, hunk index)` rather than a unified-diff string,
+      because a phone reviews hunk by hunk and needs to address one. RFC-0052 does not yet carry
+      that shape. M9 consumes it. Smallest of the three; do it first.
 
-Then:
+- [ ] **RFC-0031 — apply D30.** The document is largely sound; three parts of its security
+      section and one sentence in its Abstract are not. Fix: delete the `TRUSTED` promotion (§7)
+      and replace it with a remembered per-`(server, project)` egress grant; add the section the
+      document is missing on what an MCP server may *not* do — raise a capability request, grow
+      its own authority, or run before a call needs it; state the enable-time grant as a set of
+      effect classes; make the Abstract agree with the MVP scope (stdio, DESKTOP, D17). Close the
+      two Open Questions per D30 — MCP resources stay out of the knowledge engine, and Aidos as an
+      inbound MCP server is a v1 non-goal. Then Accept it.
 
-- [ ] **RFC-0052** — add the structured-hunk diff shape now that D25 is settled (M9 consumes it)
-- [ ] **RFC-0031 revision** — narrow to stdio/desktop-only per D17; specify MCP trust policy (an MCP server is an untrusted subject *and* a capability requester; that interaction is unspecified)
-- [ ] **RFC-0015 revision** — **now blocked on external work, deliberately.** The knowledge engine is being ported from `jsilvanus/gitsema` (TypeScript, ~82k lines) to a standalone `gitsema-kotlin` library, and Phase 1 of that port produces an algorithm specification in `gitsema/docs/design/kotlin-port.md`. RFC-0015 should be written *from* that spec rather than ahead of it. Aidos consumes the library and writes a ~200-line adapter onto `KnowledgeContextProvider`; it does not carry the ported code
+- [ ] **RFC-0015 — rewrite against D29 and the port spec.** No longer blocked: the port
+      specification exists at `docs/design/kotlin-port.md` on branch
+      `claude/gitsema-kotlin-port-design-ob62a3` in `jsilvanus/gitsema`. **Read it first.** The
+      RFC should shrink hard — most of its 770 lines describe a system Aidos is not building.
+      Keep: the Index-identity and Addressing-classes sections (still correct, now framed as a
+      description of the library's model rather than Aidos's design), and the storage constraints
+      (outside `state.db` per D21, background dispatcher, cancellable, no network). Cut: the
+      `KnowledgeProvider` SPI, `KnowledgeIndex`/`ProviderState` pseudo-structures, the ranking
+      heuristics scoring on providers that do not exist, the tree-sitter symbol provider (D27
+      declined the native dependency), the GitSema-as-MCP-server paragraph, and the RFC-0013
+      reference (superseded by RFC-0024). Add: the consumption contract — what Aidos calls, what
+      it guarantees the library about resources, what the library guarantees back — coverage
+      reporting on every query, committed-content-only indexing, and the honest statement about
+      what the index does and does not protect. Then Accept it.
+
+Then Phase 1, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md):
+
 - [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
 - [ ] **M2** Identity and scopes
 - [ ] **M3** Capability manager, with the path-escape property test
@@ -79,8 +104,21 @@ against those without checking the decision they touch. Re-accept one only after
 to end. A status line nobody verified is exactly how RFC-0102's "addressed" table came to be
 wrong about four items — the same failure, one level up.
 
-**Two RFCs on the MVP path are Draft on purpose** (0015, 0031) — genuinely unsettled, as opposed
-to merely unaudited. That distinction is worth preserving in the status lines.
+**0015 and 0031 are Draft with their decisions already made.** Both now carry a banner at the top
+naming exactly what in them is superseded and by which decision. That is a deliberate state, not
+an oversight: the decisions are in `docs/decisions.md` (D29, D30) where they are durable, and the
+documents will be rewritten to match. Read the banner before reading the body — parts of both
+bodies are known-wrong, and RFC-0031's security section is wrong in three specific places while
+reading as though it were settled. When the rewrite lands, delete the banner in the same commit
+that changes the status line; a banner that outlives its own fix is the same class of defect the
+audit spent a day removing.
+
+**The architecture phase is over. Resist reopening it.** Sixty-one RFCs, thirty decisions, a
+canonical schema, and a contract surface are enough to build against. The next design question
+that arises during implementation should be answered by amending one RFC in one commit and then
+continuing — not by a new document, and not by a review. If a question genuinely cannot be
+settled that way, it belongs to the user, and the honest move is to stop and say so rather than
+to design around it.
 
 **The kernel has no implementations and that is deliberate.** `runtime/kernel/` is contracts
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
