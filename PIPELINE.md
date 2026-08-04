@@ -18,11 +18,11 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 9 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
+Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
 legacy RFC audit is complete (46 Accepted, 15 Draft, RFC-0099 excepted) and the last two open
-design questions are settled as D29 and D30. What remains before code is three RFC rewrites that
-apply already-settled decisions — no new decisions are required to finish them.
-Branch: `claude/aidos-architecture-review-miqn7p`
+design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 is
+done**; 0031 and 0015 remain. No new decisions are required to finish them.
+Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Done
 
@@ -41,17 +41,20 @@ Branch: `claude/aidos-architecture-review-miqn7p`
 - [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
 - [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
 - [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
+- [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
 
 ## Next
 
-**Three RFC rewrites, then Phase 1.** Every decision these need is already settled. None of them
-requires the user. Do them in this order — 0052 is the smallest and unblocks M9, 0031 is
-self-contained, 0015 is the largest and depends on reading an external document.
+**Two RFC rewrites, then Phase 1.** Every decision these need is already settled. Neither
+requires the user. 0031 is self-contained; 0015 is the largest and depends on reading an external
+document.
 
-- [ ] **RFC-0052 — structured hunks.** D25 settled that the Runtime API returns structured diff
-      hunks with identity `(path, base blob hash, hunk index)` rather than a unified-diff string,
-      because a phone reviews hunk by hunk and needs to address one. RFC-0052 does not yet carry
-      that shape. M9 consumes it. Smallest of the three; do it first.
+- [x] **RFC-0052 — structured hunks.** Done. `DiffQueries` on `RuntimeClient`; `changes()` lists
+      files with hunk counts and `hunks()` fetches one file, because a card stack shows one hunk
+      at a time and a phone should not receive a large fetch's every line to display eleven of
+      them. `unified()` is the fallback view. `stage()` is the expensive half and is the first
+      thing to cut (D25). Mirrored into `runtime/kernel/Diff.kt`, and `Preview.Diff` converted to
+      the same shape.
 
 - [ ] **RFC-0031 — apply D30.** The document is largely sound; three parts of its security
       section and one sentence in its Abstract are not. Fix: delete the `TRUSTED` promotion (§7)
@@ -124,6 +127,14 @@ to design around it.
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**A shape decision is only made once it is made everywhere it is read.** D25 settled structured
+hunks in August and RFC-0032 already said so in prose — but `Preview.Diff` in the kernel still
+carried `unified: String`, and RFC-0050 says the approval card and the hunk card are *the same
+component*. One of the two paths would have had to parse text, on the client, which is the exact
+outcome D25 exists to prevent. When applying a decision about a data shape, grep for every type
+that carries that data before declaring it applied; the RFC that names the decision is rarely the
+only place it lands.
 
 **Blob-hash identity keeps paying.** It was introduced in RFC-0015 for the knowledge index (so
 branch switching invalidates nothing) and turned out to solve two more problems for free: an

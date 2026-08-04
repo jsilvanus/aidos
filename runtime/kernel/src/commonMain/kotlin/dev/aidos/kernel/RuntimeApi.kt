@@ -21,6 +21,7 @@ interface RuntimeClient {
     val sessions: SessionCommands
     val capabilities: CapabilityCommands
     val knowledge: KnowledgeQueries
+    val diff: DiffQueries
     val events: EventSubscriptions
     val runtime: RuntimeInfo
 }
@@ -143,6 +144,32 @@ data class PendingApproval(
 interface KnowledgeQueries {
     suspend fun search(projectId: ProjectId, query: KnowledgeQuery): List<ContextItem>
     suspend fun indexStatus(projectId: ProjectId): IndexStatus
+}
+
+/**
+ * Diff review (RFC-0052, D25). Structured hunks, never a formatted diff string.
+ *
+ * [changes] lists files; [hunks] fetches one file's content when the card stack reaches it.
+ * [unified] is the raw fallback view, one tap away.
+ */
+interface DiffQueries {
+    suspend fun changes(projectId: ProjectId, range: DiffRange = DiffRange.WorkingTree): DiffSummary
+
+    suspend fun hunks(projectId: ProjectId, range: DiffRange, path: String): Result<FileDiff>
+
+    suspend fun unified(projectId: ProjectId, range: DiffRange, path: String): Result<String>
+
+    /** Stage a subset of hunks. Fails `diff.base_moved` if any named base has moved. */
+    suspend fun stage(projectId: ProjectId, hunks: List<HunkId>): Result<Unit>
+
+    /**
+     * Revert a subset of hunks in the working tree.
+     *
+     * An ordinary `Mutate` through the broker with an audit row, but no approval: its subject is
+     * the **user**, who is the authority an approval would be consulting. Identical to an editor
+     * save (RFC-0050).
+     */
+    suspend fun revert(projectId: ProjectId, hunks: List<HunkId>): Result<Unit>
 }
 
 interface EventSubscriptions {

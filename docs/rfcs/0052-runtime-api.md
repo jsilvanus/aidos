@@ -77,6 +77,7 @@ interface RuntimeClient {
     val sessions: SessionCommands
     val capabilities: CapabilityCommands
     val knowledge: KnowledgeQueries
+    val diff: DiffQueries
     val artifacts: ArtifactQueries
     val events: EventSubscriptions
     val runtime: RuntimeInfo
@@ -233,6 +234,174 @@ data class KnowledgeResult(
     val indexedAt: Instant
 )
 ```
+
+### Diff and Review Queries
+
+**The API returns structured hunks, never a formatted diff string (D25).** This is the single
+most consequential shape decision in the interface, and it is decided here rather than at the
+frontend because `diff(): String` would push a diff parser into every frontend — starting with
+the Android app, on the device with the least CPU and the greatest distance from JGit. Structure
+crosses the wire once; text would be re-derived by everyone who receives it.
+
+```kotlin
+interface DiffQueries {
+    /** The file-level change set. What the commit screen lists. */
+    suspend fun changes(projectId: UUID, range: DiffRange = DiffRange.WorkingTree): DiffSummary
+
+    /** The hunks of one file. What the card stack pulls, one file at a time. */
+    suspend fun hunks(projectId: UUID, range: DiffRange, path: String): Result<FileDiff>
+
+    /** The raw unified diff for one file — the fallback view, one tap away. */
+    suspend fun unified(projectId: UUID, range: DiffRange, path: String): Result<String>
+
+    /** Stage a subset of hunks. Fails if any named base has moved. */
+    suspend fun stage(projectId: UUID, hunks: List<HunkId>): Result<Unit>
+
+    /** Revert a subset of hunks in the working tree. A user-subject mutation — see below. */
+    suspend fun revert(projectId: UUID, hunks: List<HunkId>): Result<Unit>
+}
+
+sealed class DiffRange {
+    data object WorkingTree : DiffRange()                       // HEAD → working tree
+    data object Staged : DiffRange()                            // HEAD → index
+    data class Refs(val base: String, val head: String) : DiffRange()
+}
+```
+
+#### Hunk identity
+
+```kotlin
+data class HunkId(
+    val path: String,
+    val baseBlobHash: String,   // the blob the hunk was computed against
+    val index: Int              // ordinal within that file's diff, from 0
+)
+```
+
+A hunk is not a stable object — it is derived from a diff of two states, and the hunks renumber
+whenever either state moves. Naming a hunk by its ordinal alone is how a user stages the wrong
+lines. Carrying the base blob hash makes staleness **detectable rather than silent**: `stage` and
+`revert` verify that every named base is still the base, and fail with `diff.base_moved`
+(`errorClass = CONFLICT`) if it is not. The frontend restarts the review visibly — *"the file
+changed, restarting review"* — rather than applying a decision the user made about different
+content.
+
+The same key is what makes review marks correct across a history rewrite. Reviewed-ness is keyed
+on `(path, baseBlobHash)`, so a rebase, an amend, or a branch switch (RFC-0053) moves the base,
+the key misses, and the change presents as unreviewed. That is the desired behaviour and it needs
+no invalidation code — writing a mapping from old bases to new ones would be a heuristic about
+whether the user has already read something, which is exactly the claim that must not be guessed.
+
+#### Change set and hunks
+
+```kotlin
+data class DiffSummary(
+    val range: DiffRange,
+    val files: List<FileChange>,
+    val filesChanged: Int,
+    val linesAdded: Int,
+    val linesRemoved: Int
+)
+
+data class FileChange(
+    val path: String,                    // the path after the change
+    val previousPath: String?,           // set on rename
+    val kind: FileChangeKind,
+    val baseBlobHash: String?,           // null when the file is added
+    val headBlobHash: String?,           // null when the file is deleted
+    val binary: Boolean,                 // no hunks; reviewed whole-file or not at all
+    val modeChanged: Boolean,
+    val hunkCount: Int,
+    val linesAdded: Int,
+    val linesRemoved: Int,
+    val review: ReviewState,
+    val origin: ChangeOrigin
+)
+
+data class FileDiff(
+    val file: FileChange,
+    val hunks: List<DiffHunk>            // empty when `file.binary`
+)
+
+data class DiffHunk(
+    val id: HunkId,
+    val baseStart: Int,                  // 1-based line numbers, as Git reports them
+    val baseLines: Int,
+    val headStart: Int,
+    val headLines: Int,
+    val lines: List<DiffLine>
+)
+
+data class DiffLine(
+    val kind: DiffLineKind,              // CONTEXT | ADDED | REMOVED
+    val text: String,                    // without the line terminator
+    val noNewlineAtEof: Boolean = false  // Git's "\ No newline at end of file"
+)
+
+enum class FileChangeKind { ADDED, MODIFIED, DELETED, RENAMED, COPIED, TYPE_CHANGED }
+enum class DiffLineKind { CONTEXT, ADDED, REMOVED }
+```
+
+`changes()` returns file-level records with hunk *counts*, not hunk content. A card stack shows
+one hunk per screen and needs only the file it is currently in; sending every line of a
+300-file fetch to a phone that will display eleven of them is the kind of eagerness a mobile
+client cannot afford. `hunks()` fetches one file when the user reaches it.
+
+`binary`, `modeChanged`, `previousPath`, and `noNewlineAtEof` are on the wire because they are
+the cases that make hunk-level staging wrong when they are absent — a frontend that cannot tell a
+binary file from an empty diff will offer a review surface for something it cannot render, and a
+missing trailing newline reconstructed as present is a one-byte corruption the user did not
+author.
+
+#### Reviewed and unreviewed
+
+```kotlin
+enum class ReviewState {
+    APPROVED_IN_RUN,   // the user approved this content as a Preview while it was being made
+    NOT_REVIEWED
+}
+
+enum class ChangeOrigin { SESSION, USER_EDIT, FETCH, UNKNOWN }
+```
+
+Per-mutation `Preview` — required for every `EffectKind.Mutate` for security reasons (RFC-0030) —
+is the primary review surface, so by commit time most changes have already been read once, in
+context, next to the reason the model gave for making them. The commit screen's job is therefore
+to **separate what the user already approved from what they did not** and to direct attention at
+the second set. `review` and `origin` are what let it do that without the frontend inferring
+either.
+
+`origin` exists because "not reviewed" is not one thing: a change pulled from a remote, a change
+the user typed in the editor, and a change a session made under disabled per-mutation approval
+carry different amounts of surprise, and the screen says which (RFC-0050).
+
+#### Preview carries the same shape
+
+`Preview.Diff` (RFC-0030) carries a `FileDiff`, not a unified-diff string. A mid-Run approval
+card and a commit-time hunk card are the same decision at different moments and are rendered by
+the same component (RFC-0050); giving them two shapes would mean the component parses text in one
+path and reads structure in the other, which reintroduces on the client exactly the parser this
+section exists to avoid. `unified()` remains available as the fallback view for anyone who wants
+the raw thing.
+
+#### Reverting is a mutation, not a query
+
+`revert` changes the working tree, so it goes through the Tool Broker as an ordinary `Mutate`
+and gets an audit row. It asks for no approval, because its subject is the **user** — approval
+keys on the subject, and the user is the authority an approval would be consulting. This makes
+hunk revert identical to an editor save (RFC-0050), which is correct: both are a person changing
+a file by hand.
+
+`stage` is the expensive item. JGit's `DiffFormatter` yields an `EditList` but has no
+hunk-level staging, so applying a subset means constructing the resulting blob by hand and
+writing it to the index, with tests for overlapping edits, CRLF, missing trailing newlines,
+binary files, renames, and mode changes. If it has to be cut, cut staging and keep the card stack
+for reading (D25) — the read shape above does not depend on it.
+
+Model-generated diff summaries are deferred past G4 and no method reserves them. A model
+summarizing the diff it just produced is reporting on its own work at the point where a wrong
+summary is least likely to be checked (D6), and it costs an inference at the moment the user is
+waiting to commit.
 
 ### Artifact Queries
 
@@ -550,11 +719,16 @@ The MVP implements:
 6. AI response streaming via `AiResponseDelta` events.
 7. Capability request flow via `CapabilityRequested` events and `approve()`/`deny()` commands.
 8. API version negotiation on connection.
+9. `DiffQueries.changes`, `hunks`, `unified`, and `revert` — the read-and-revert half of hunk
+   review, which is what the commit screen and the card stack need.
 
 The MVP does not implement:
 - Remote frontend access (authentication, TLS).
 - Named pipe transport for Windows.
 - Full ArtifactQueries and KnowledgeQueries (read-only access is sufficient).
+- `DiffQueries.stage` if hunk-level staging proves harder than estimated at M13. It is the one
+  item here that is not cheap, and D25 names it as the thing to cut first. Reviewing hunk by
+  hunk and then committing all of it is still the product; staging a subset is the improvement.
 
 ## Future Work
 

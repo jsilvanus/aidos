@@ -117,7 +117,13 @@ fun approvalTier(
  * dialog, and the audit record.
  */
 sealed interface Preview {
-    data class Diff(val path: String, val unified: String) : Preview
+    /**
+     * Structured, not a unified-diff string (RFC-0052, D25). A mid-Run approval card and a
+     * commit-time hunk card are the same decision at different moments, rendered by the same
+     * component (RFC-0050) — two shapes would put a diff parser back in every frontend.
+     */
+    data class Diff(val fileDiff: FileDiff) : Preview
+
     data class Patch(val summary: String, val unified: String) : Preview
     data class Description(val text: String) : Preview
     data object NoChange : Preview

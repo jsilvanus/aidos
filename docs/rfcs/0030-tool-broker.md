@@ -141,6 +141,12 @@ operations, a description otherwise — without performing it. It powers dry-run
 approval dialog, and the audit record. Requiring it for `Mutate` is what makes "show me what
 the agent is about to do" a runtime feature rather than a per-tool courtesy.
 
+**`Preview.Diff` carries a structured `FileDiff` (RFC-0052), not a unified-diff string.** A
+mid-Run approval card and a commit-time hunk card are the same decision at different moments and
+are rendered by the same component (RFC-0050, D25). Handing the component a string in one path
+and structure in the other would put a diff parser in every frontend, which is the outcome D25
+exists to prevent.
+
 ### Idempotency and recovery
 
 Every operation additionally declares a `recovery_class` (RFC-0009): `PURE`, `IDEMPOTENT`,
