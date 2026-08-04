@@ -778,6 +778,28 @@ Both reuse existing machinery. Neither is settled, and the second interacts with
 that operations discovered on a later connection are usable only within the effect classes already
 granted — that clause constrains authority and says nothing about prose.
 
+**Adoption happens at enable time, not at startup**, and the distinction is load-bearing because
+D30 says nothing is spawned or connected by opening a project. A catalog cannot be adopted without
+being seen, and cannot be seen without connecting — a server advertises its operations on connect,
+on both transports. Three moments, kept separate:
+
+| Moment | What happens |
+|---|---|
+| **Enable time** (explicit user action) | Connect once, fetch the catalog, show what it claims, record the adoption hash. A legitimate spawn: the user is asking for this server, now. |
+| **Project open** | Nothing. D30 unchanged. |
+| **First call in a Run** | Lazy connect; compare advertised hash against adopted hash. |
+
+**A changed catalog must not block, because the Run may be unattended.** The shape that fits: the
+previously-adopted subset stays available and unadopted operations are **not offered to the model**
+until the user re-adopts — degradation, not failure and not a park. This inverts the incentive
+correctly. A server that silently rewrites its descriptions *loses* the ability to steer the model,
+where a design that parks the Run would hand an untrusted party a denial-of-service lever.
+
+Two details still genuinely open: what happens when the catalog is unreachable at enable time
+(adopt an empty set and adopt properly on first successful connection, most likely), and whether an
+enable-time connection to an HTTP endpoint needs its own egress approval separate from the
+effect-class grant being issued in that same exchange.
+
 **Cost of leaving it open:** it must be settled before M18 ships an MCP server to a real model.
 It does not block M1–M17.
 **RFCs:** 0031, 0025, 0027, 0016, 0008.
