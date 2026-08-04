@@ -21,8 +21,8 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
 legacy RFC audit is complete (47 Accepted, 14 Draft, RFC-0099 excepted) and the last two open
 design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 and
-0031 are done**; 0015 remains. No new decisions are required to finish it. **One new open question,
-D31**, was found while revising 0031 and is logged rather than settled — it blocks M18, not 0015.
+0031 are done**; 0015 remains. No new decisions are required to finish it. **D31 and D32 were found and
+settled** during that work; `docs/decisions.md` has no open questions.
 Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Done
@@ -42,6 +42,7 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
 - [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
 - [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
+- [x] **D31 settled (user decision, 2026-08-04)** — an MCP server's *tool description* is third-party prose that lands in RFC-0025's **reserved** `toolDescriptors` section. Taint cannot govern it (descriptors enter at step 0, so every Run in an MCP project would begin tainted and approval never clears taint), so admission does: prose is **fenced** in the structural sandbox with attribution, and each operation is **adopted by hash** over `(name, description, inputSchema)` at enable time. Unadopted operations are absent from the catalog and never interrupt a Run. New table `mcp_operation_adoptions`
 - [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
 - [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
 - [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
@@ -81,14 +82,6 @@ require the user. 0015 is the largest of the three and depends on reading an ext
       it guarantees the library about resources, what the library guarantees back — coverage
       reporting on every query, committed-content-only indexing, and the honest statement about
       what the index does and does not protect. Then Accept it.
-
-- [ ] **D31 — settle where an MCP tool *description* sits in the prompt.** Logged `OPEN` in
-      `docs/decisions.md`, not settled. A server's advertised description is third-party prose that
-      lands in RFC-0025's **reserved** `toolDescriptors` section — always included in full, next to
-      the system instructions, outside the structural sandbox, and read before any call has
-      returned so no taint applies yet. RFC-0016's finding one door over, with RFC-0016's answer
-      available: sandbox and attribute the prose, and adopt the descriptor set by hash at enable
-      time. **Blocks M18**, not M1–M17, so Phase 1 can start without it.
 
 Then Phase 1, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md):
 
@@ -145,12 +138,18 @@ channel RFC-0027 had to patch with a `max()`. Three decisions had each removed a
 without anyone checking whether the same step existed elsewhere. When a decision says "compute it,
 do not generate it", grep the corpus for the *other* places the same generation happens.
 
-**A tool's description is prompt content, and nobody had classified it.** D31 was found by a user
-question, not by the revision that should have caught it — PIPELINE's own note said to look for
-outside-authored content entering the model's context when revising 0031, and the revision looked
-at results and missed descriptors. The general lesson: when asking "is this content trusted",
-enumerate *every* field of the thing that reaches the prompt, not the one the RFC happens to
-discuss. A tool has a name, a schema, and a paragraph of prose; only two of those had a rule.
+**Taint and adoption are two controls, and which one applies is a question of *when*.** D31's
+answer generalizes: **taint governs content that arrives during a Run; adoption governs content
+that is there before it starts.** Anything sitting at high authority in every prompt cannot be
+handled by taint at all — taint present from step 0 never clears, and permanently degrades every
+Run. That is true of instruction files (RFC-0016) and of tool catalogs (D31). When new content
+enters the prompt, ask which side of the Run boundary it arrives on before reaching for a control.
+
+D31 was also found by a user question rather than by the revision that should have caught it —
+PIPELINE's own note said to look for outside-authored content entering the model's context when
+revising 0031, and the revision looked at *results* and missed *descriptors*. When asking "is this
+content trusted", enumerate every field of the thing that reaches the prompt. A tool has a name, a
+schema, and a paragraph of prose; only two of those had a rule.
 
 **"Localhost" is not one threat model across profiles.** The `http://` loopback exemption written
 for HTTP MCP was reasonable on desktop and a credential-disclosure path on Android, where any app

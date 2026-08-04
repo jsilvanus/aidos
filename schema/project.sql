@@ -507,6 +507,29 @@ CREATE TABLE instruction_adoptions (
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
+-- MCP operation adoption (RFC-0031, D31)
+--
+-- A server's tool *description* is third-party prose that reaches the model in
+-- every prompt, before any call has returned. Taint cannot govern it: descriptors
+-- enter at step 0, so counting them would leave every Run permanently tainted and
+-- approval never clears taint. Admission governs it instead — the same answer
+-- RFC-0016 gives for instruction files.
+--
+-- Keyed per operation, not per catalog, so a server adding one tool does not
+-- withdraw the rest. descriptor_hash covers (name, description, inputSchema): a
+-- constant description over a widened parameter is a real attack.
+--
+-- No FK to mcp_servers — that table is user scope, a different database (RFC-0054).
+CREATE TABLE mcp_operation_adoptions (
+    project_id      TEXT NOT NULL,
+    server_name     TEXT NOT NULL,
+    operation_name  TEXT NOT NULL,
+    descriptor_hash TEXT NOT NULL,                        -- (name, description, inputSchema)
+    adopted_at      TEXT NOT NULL,
+    PRIMARY KEY (project_id, server_name, operation_name, descriptor_hash),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
 -- ---------------------------------------------------------------------------
 -- Session memory (RFC-0011, RFC-0026)
 -- ---------------------------------------------------------------------------
