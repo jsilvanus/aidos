@@ -1,6 +1,6 @@
 # RFC-0020: AI Engine
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -29,7 +29,7 @@ The architecture is inspired by:
 - **Operating system device drivers**: Hardware abstraction (filesystem, network, etc.) via standard interfaces.
 - **Kubernetes**: Abstract workloads from execution infrastructure.
 - **Microservices**: Separate concerns (LLM reasoning, embedding search, speech processing).
-- **Plugin systems**: Extensibility without core changes.
+- **MCP servers**: extensibility without core changes (RFC-0031). A plugin host is not in v1 (D18).
 
 ## Goals
 
@@ -221,7 +221,7 @@ Providers abstract:
 
 - **Where the model runs** (local, remote, cloud).
 - **Model download and caching** (where is it stored, when to update).
-- **Authentication** (API keys, credentials).
+- **Authentication** — keys fetched from `vault.db` at call time, never held by an adapter and never in project storage (RFC-0035).
 - **Usage policies** (rate limits, quotas, privacy policies).
 
 ### Lifecycle Management
@@ -307,11 +307,15 @@ Requires re-download if needed later
 
 ### Capability Negotiation
 
-Sessions request capabilities, not specific models. The engine negotiates the best model:
+Sessions request a **model kind**, not a specific model. The engine routes (RFC-0021).
+
+`ModelKind`, never "capability" — that word means a security grant and nothing else (RFC-0018,
+RFC-0030). It once named three concepts at the same time: a grant, a tool operation, and a model
+class, and they collided in the same security reasoning.
 
 ```
 Request: {
-  capability: "embed_text",
+  kind: EMBEDDING,
   query: "Describe this concept",
   preferred_properties: { offline: true, latency_budget: 100ms }
 }
@@ -489,7 +493,7 @@ LoadedModel {
 }
 
 UsageMetrics {
-  session_id: UUID
+  session_id: UUID                       # recorded for accounting; never passed to an adapter
   
   queries: Int                           # Number of queries
   tokens: Int                            # Tokens used (if applicable)

@@ -1,6 +1,6 @@
 # RFC-0023: Remote Models
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -202,7 +202,7 @@ Every remote query is logged:
 
 ```
 RemoteQueryLog {
-  session_id: UUID
+  session_id: UUID                  # recorded; never passed to an adapter (RFC-0021)
   timestamp: Timestamp
   
   provider: String                  # "anthropic", "openai"

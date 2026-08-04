@@ -1,6 +1,6 @@
 # RFC-0000: Vision
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -31,7 +31,7 @@ The name Aidos reflects this philosophy. In Greek philosophy, Aidos represents p
 
 5. **Make permissions explicit and capability-based**, so users understand and control what workloads can access.
 
-6. **Design for long-term transparency and auditability**, with session replay and decision logging built into the architecture from the start.
+6. **Design for long-term transparency and auditability**, with decision logging built into the architecture from the start — enough to reconstruct *what happened and why*, which is not the same as re-running it (D1).
 
 7. **Create a platform for multi-domain workflows**, where the same underlying architecture supports coding, productivity, planning, research, and future applications.
 
@@ -106,8 +106,10 @@ This is not idealism; it is pragmatism. The foundation should be robust to the i
 - Users own the runtime. It runs on their device.
 - Users own the data. It lives in local storage.
 - Users own the decisions. The Intent Graph is editable. LLMs advise; users decide.
-- Users own the history. Sessions and artifacts are preserved for replay and audit.
-- Users own the extensions. The plugin system allows custom tools without requiring platform approval.
+- Users own the history. Sessions and artifacts are preserved, and the audit trail reconstructs
+  what happened. It does not re-execute it (D1).
+- Users own the extensions. MCP servers add tools without platform approval; a plugin host is
+  not in v1 (D18).
 
 Implicit trust is not permitted. Every capability that a session uses requires explicit permission. If a session needs to run shell commands, write files, or query a remote API, the permission must be granted and recorded.
 

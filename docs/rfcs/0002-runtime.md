@@ -1,6 +1,6 @@
 # RFC-0002: Runtime
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -79,7 +79,7 @@ The Aidos runtime consists of the following major components:
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
 │  │  Intent      │  │  Artifact    │  │  Resource    │        │
 │  │  Graph       │  │  Manager     │  │  Manager     │        │
-│  │  (RFC-0012)  │  │  (RFC-0014)  │  │  (RFC-0013)  │        │
+│  │  (RFC-0012)  │  │  (RFC-0024)  │  │  (RFC-0024)  │        │
 │  └──────────────┘  └──────────────┘  └──────────────┘        │
 │                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
@@ -138,7 +138,8 @@ A session is a long-lived, pausable actor. Sessions:
 - Can sleep and wake (they respond to events).
 - Maintain context and memory (conversation history, task state, local variables).
 - Operate under a set of explicit permissions and capabilities.
-- Can be replayed (their decision history is logged).
+- Can be **reconstructed** from their decision history — what was attempted, in what order,
+  under which authority. Not replayed (D1).
 
 Sessions are the execution unit of Aidos. Work happens within sessions. Users interact with sessions through frontends.
 

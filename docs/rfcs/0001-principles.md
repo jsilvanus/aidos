@@ -1,6 +1,6 @@
 # RFC-0001: Principles
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -117,7 +117,9 @@ AI reasoning steps are logged and inspectable. Users understand why agents made 
 
 Explainability means:
 - Reasoning steps are logged (e.g., LLM tokens, embeddings, search results).
-- The chain of reasoning can be inspected and replayed.
+- The chain of reasoning can be inspected — which prompt, which model and version, which
+  capability, in what order. Not replayed: re-execution would need every non-deterministic input
+  captured, at which point what exists is a recording (D1).
 - Decisions are auditable.
 - The Intent Graph itself documents the user's intent and the system's understanding.
 

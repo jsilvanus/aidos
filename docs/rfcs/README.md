@@ -26,27 +26,35 @@ run/task/attempt schema, the content-node schema, the model and tool-call envelo
 `RuntimeClient`, and the migration contract. Everything else that is Accepted may still be
 amended by an ordinary RFC diff.
 
-As of 2026-08-03 the corpus is split three ways, and the split is the point.
+As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
+two ways.
 
-**Accepted (29).** Read end to end and consistent with `docs/decisions.md`, `schema/`, and
+**Accepted (46).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft — body not audited (18).** 0000, 0001, 0002, 0004, 0005, 0010, 0011, 0017, 0020, 0021,
-0022, 0023, 0024, 0030, 0032, 0034, 0040, 0099. These were briefly Accepted on 2026-08-03 and
-reverted the same day. They are legacy documents that were patched at the top during the review
-passes without their bodies being re-read, and sampling found real contradictions with settled
-decisions — RFC-0040 placed project state outside the project, contradicting D2; RFC-0020 and
-RFC-0022 describe local inference without referencing D24 at all. Each is re-accepted
-individually once its body has been audited. **Do not implement against these without checking
-the decision they touch.**
+**Draft (15).** 0012 Intent Graph · 0015 Knowledge Engine · 0026 Model Memory · 0031 MCP ·
+0033 Shell · 0041 Export/Import · 0043 Plugin Packaging · 0046 Identity · 0047 Project Templates ·
+0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+Two — **0015** and **0031** — are on the MVP critical path and must be revised and accepted before
+the milestone that consumes them; see [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
 
-**Draft — by design (13).** 0012, 0015, 0026, 0031, 0033, 0041, 0043, 0046, 0047, 0051, 0060 and
-the reviews. Genuinely unsettled or post-MVP. Two — 0015 and 0031 — are on the MVP critical path
-and must be revised and accepted before the phase that needs them; see
-[`docs/mvp-roadmap.md`](../mvp-roadmap.md).
+### What the audit found, and why greps were not enough
 
-The lesson worth keeping: a status line is a claim about a document, and a claim nobody checked
-is how RFC-0102's "addressed" table came to be wrong about four items.
+Forty-five RFCs were marked Accepted on 2026-08-03 on the strength of their headers, and reverted
+the same day when sampling found body-level contradictions in three of four. The end-to-end reads
+that followed found the same class of defect repeatedly, and almost none of it was catchable by
+searching for stale phrases:
+
+| Kind | Example |
+|---|---|
+| A type older than its own DDL | RFC-0024's `ContentNode` had one `version` where the SQL two hundred lines below had `content_version` and `row_version` |
+| A sentence contradicting its own later section | RFC-0004 promised event replay ninety lines above the section explaining why replay is impossible |
+| Two definitions of one thing in one document | RFC-0010 carried a prose `Project { … }` block that had drifted from its own canonical SQL |
+| A claim nothing else supports | RFC-0010's "one or more Git repositories", against a `repo_fingerprints` table keyed one-per-project |
+| A security pattern the kernel exists to replace | RFC-0034 specified resolve-then-check path scoping — a TOCTOU race — where `RelPath` prevents escape by construction |
+
+Each was internally coherent. Only reading the whole document against the rest of the corpus
+surfaced them, which is the case for the reverting rather than patching.
 
 ## RFC Structure
 

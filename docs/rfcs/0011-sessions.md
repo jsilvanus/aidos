@@ -1,6 +1,6 @@
 # RFC-0011: Sessions
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -196,7 +196,9 @@ An archived session is:
 - Not active (no longer woken by events).
 - Preserved (all state, artifacts, logs are kept).
 - Queryable (user can review what the session did).
-- Replayable (session can be re-run with a different prompt or context).
+- Reconstructible (the Execution Graph says what was attempted, in what order, under which
+  authority). **Not replayable** — re-running would need every non-deterministic input captured
+  (D1). A new Run against the same intent is a new Run, not a replay of the old one.
 
 Archived sessions are the audit trail of the project. They record who did what, when, and why.
 
@@ -442,7 +444,7 @@ Driver creates new worker for Subtask 3
 
 #### Shared Resources
 
-All sessions can read project resources (RFC-0013): architecture documents, coding standards, design decisions. Resources are the common knowledge base.
+All sessions can read project content nodes (RFC-0024, which supersedes RFC-0013): architecture documents, coding standards, design decisions. They are the common knowledge base.
 
 ### Session Memory
 
@@ -464,7 +466,10 @@ Sessions are isolated by the Scheduler (RFC-0005):
 - **Namespace**: Session IDs are unique per project.
 - **Storage**: Session state is stored separately.
 - **Permissions**: Each session operates under its own capability set.
-- **Execution**: Sessions run sequentially (one at a time) to avoid concurrency issues.
+- **Execution**: parallelism is across Runs, and the worktree is the lock (D15). Within a Run at
+  most one *effectful* Task is `RUNNING`; `Read` effects may overlap (D14). Sessions do **not**
+  run one-at-a-time — that would make worker fan-out impossible, which is the whole point of
+  having workers.
 - **Failure**: Errors in one session do not affect others.
 
 The Scheduler wakes sessions one at a time, based on events and fairness.
@@ -713,14 +718,19 @@ Branch 2: Try approach Y
 Merge best version back to main
 ```
 
-### Session Replay and Debugging
+### Stepping through a reconstruction
 
-Replay a session's execution step-by-step, inspecting state at each point:
+Walk a session's recorded execution step by step, inspecting what was attempted and what came
+back at each point:
 
 ```
-Replay session from T=10:00, step through decisions,
-inspect memory and artifacts at each step
+Open Run from 10:00, step through its Tasks and Attempts,
+see the prompt, model version, capability, and result at each
 ```
+
+This is **reading the Execution Graph**, not re-executing it (D1). The distinction matters for
+what the feature can promise: it can always tell you what happened, and it can never show you
+what *would* happen if a step were changed.
 
 ### Specialized Session Types
 
