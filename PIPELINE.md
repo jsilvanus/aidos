@@ -21,7 +21,8 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
 legacy RFC audit is complete (47 Accepted, 14 Draft, RFC-0099 excepted) and the last two open
 design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 and
-0031 are done**; 0015 remains. No new decisions are required to finish it.
+0031 are done**; 0015 remains. No new decisions are required to finish it. **One new open question,
+D31**, was found while revising 0031 and is logged rather than settled — it blocks M18, not 0015.
 Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Done
@@ -80,6 +81,14 @@ require the user. 0015 is the largest of the three and depends on reading an ext
       reporting on every query, committed-content-only indexing, and the honest statement about
       what the index does and does not protect. Then Accept it.
 
+- [ ] **D31 — settle where an MCP tool *description* sits in the prompt.** Logged `OPEN` in
+      `docs/decisions.md`, not settled. A server's advertised description is third-party prose that
+      lands in RFC-0025's **reserved** `toolDescriptors` section — always included in full, next to
+      the system instructions, outside the structural sandbox, and read before any call has
+      returned so no taint applies yet. RFC-0016's finding one door over, with RFC-0016's answer
+      available: sandbox and attribute the prose, and adopt the descriptor set by hash at enable
+      time. **Blocks M18**, not M1–M17, so Phase 1 can start without it.
+
 Then Phase 1, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md):
 
 - [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
@@ -127,6 +136,13 @@ to design around it.
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**A tool's description is prompt content, and nobody had classified it.** D31 was found by a user
+question, not by the revision that should have caught it — PIPELINE's own note said to look for
+outside-authored content entering the model's context when revising 0031, and the revision looked
+at results and missed descriptors. The general lesson: when asking "is this content trusted",
+enumerate *every* field of the thing that reaches the prompt, not the one the RFC happens to
+discuss. A tool has a name, a schema, and a paragraph of prose; only two of those had a rule.
 
 **"Localhost" is not one threat model across profiles.** The `http://` loopback exemption written
 for HTTP MCP was reasonable on desktop and a credential-disclosure path on Android, where any app
