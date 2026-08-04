@@ -245,9 +245,40 @@ network intents.
 
 ## Future Work
 
-Remote execution profile: a phone session delegating a `PLATFORM`-tier step to a paired
-desktop runtime, which is the natural resolution of "I need to run tests but I am on my
-phone." This is the single most valuable post-v1 feature for the core use case, and the
-profile model is what makes it expressible.
+### Paired remote execution
+
+A phone session delegating a `PLATFORM`-tier step to a paired desktop runtime — the natural
+resolution of *"I need to run the tests but I am on my phone."* The single most valuable post-v1
+feature for the core use case, and the profile model is what makes it expressible at all.
+
+**No design exists, and that is correct for now** — it is Phase 6 / G5 (RFC-0099), v2 in D16's
+terms, and everything before it depends on the phone being sufficient alone. But several
+constraints are already settled elsewhere and are collected here so they are not rediscovered
+from five scattered Future Work sections:
+
+- **Capabilities do not cross the wire** (D16). *A desktop grant must not authorize a phone.* So
+  the first question any pairing design must answer is whose authority a delegated step runs
+  under — the desktop's own grant, approved locally, or something new. It is not "the phone's
+  capability, used remotely".
+- **The artifact is a commit.** Workers already produce commits on `refs/aidos/workers/<id>`
+  rather than mutating a shared tree (RFC-0053), so a delegated step returns the same thing a
+  local worker returns. Nothing new needs inventing for the result shape.
+- **The phone parks and resumes.** `SuspendedOperation.ChildRun` already exists, and a Run
+  parked on a remote step is structurally identical to one parked on a local worker (RFC-0006,
+  RFC-0009). Resumption after the desktop goes away is ordinary recovery, not a new failure mode.
+- **The daemon shape is the enabler** (D5, RFC-0055). Desktop already runs a runtime that serves
+  frontends over a socket; a paired phone is one more client of something that exists.
+- **Availability reporting is the fallback** (this RFC). No desktop reachable means the
+  `PLATFORM` step is unavailable and says so — the same degradation as having no desktop at all,
+  not an error.
+
+**Pairing is structurally the existing worker fan-out with the worker on another device.** That
+is reassuring, because Phase 6 is then not a rewrite — and it is a warning, because it makes
+building it early tempting, and it is the feature most likely to pull effort away from G3.
+
+**Not to be confused with pre-built index bundles** (RFC-0099 Later), which look adjacent and are
+much weaker: a bundle is a file, with no live link, no protocol, no authority question, and no
+network at the moment of use. Reaching for "the desktop can do that" twice is a pattern worth
+noticing, but these two are not the same reach.
 
 Per-tool capability probing at startup rather than static profile tables.

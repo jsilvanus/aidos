@@ -33,6 +33,8 @@ checkpointed execution, and shipping it first would mean shipping none of them p
 | Shell tool | DESKTOP-tier only (RFC-0033). The MOBILE profile must work without it |
 | Vision, OCR, translation | The `ModelKind` enum reserves them. Nothing in the thesis needs them |
 | A plugin marketplace | See above, twice over |
+| Pre-built index bundles | The phone indexes for itself, or the gate is not testing the thesis. Post-MVP — see RFC-0099 Later |
+| Structural knowledge graph | Needs tree-sitter, a native dependency D27 declines. Co-change analysis, which needs none, is in scope |
 
 **Deliberately still in, despite looking cuttable:** MCP over stdio, desktop-only (D17). It is
 the first real test of whether the tool abstraction can absorb tools the runtime did not write.
@@ -99,7 +101,7 @@ the model.
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
-| **M1** | Storage and migrations | 0040, 0039, 0054 | Fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version and refuses a downgrade with a named error, not a crash. `check.py` still green |
+| **M1** | Storage and migrations | 0040, 0039, 0054 | Fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version; a database written by a *newer* runtime opens read-only with `storage.migration_required` rather than refusing (RFC-0017). `check.py` still green |
 | **M2** | Identity and scopes | 0054, 0010, 0011 | UUIDv7 IDs are monotonic within a process and unique across two concurrent runtimes. A project registered at user scope resolves from a path and from an ID. Opening a project whose directory has moved fails with `ProjectMoved`, not a null |
 | **M3** | Capability manager | 0018, 0003 | Property test: no input to `RelPath.of` produces a path that escapes its root — including `..` in any segment, absolute forms, drive letters, NUL, and every encoding of those. Revocation by epoch invalidates outstanding handles within one step. `validate()` refuses when Run taint exceeds the grant's ceiling |
 | **M4** | Audit log | 0003, 0037 | Every `validate` and every effect writes one row naming the subject, the capability actually exercised, and the outcome. An effect with no audit row is a test failure, enforced by the broker harness, not by review |
@@ -140,7 +142,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 | **M23** | Routing policy with explicit degradation | 0020, 0049, 0023 | Routing is user-owned policy, not an engine heuristic: crossing the network boundary is never automatic unless the user said so. `UnavailableOffline` names the missing model kind and is not an error |
 | **M24** | Treeless workers | 0053, 0049, 0007 | A worker builds commits directly against the object database on `refs/aidos/workers/<id>` with no `git worktree` and no second checkout — the phone does not have room for one. The worktree is the lock (D15) |
 | **M25** | Retention and compaction | 0056, 0045 | Storage per active project stays under 512MB after 90 simulated days of use with default retention. Compaction is interruptible and resumes |
-| **M26** | On-device measurement | 0045, 0038 | **G3.** On a real mid-range phone in airplane mode: open a real repository, ask a question about the code, get a useful answer, make an edit, commit. Inside Android's execution windows. Without exhausting storage. Measured, recorded, and published in the repository — not asserted |
+| **M26** | On-device measurement | 0045, 0038 | **G3.** On a real mid-range phone in airplane mode, **with no pre-built index bundle**: open a real repository, ask a question about the code, get a useful answer, make an edit, commit. Inside Android's execution windows. Without exhausting storage. Measured, recorded, and published in the repository — not asserted |
 
 > **G3 is the gate that matters.** Everything before it is infrastructure; everything after
 > depends on it being true. A negative result here is a successful outcome for this milestone —

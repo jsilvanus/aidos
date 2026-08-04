@@ -146,6 +146,13 @@ Retention and compaction (RFC-0056)
 question about the code, receive a useful answer, make an edit, and commit — with no network,
 inside Android's execution windows, without exhausting storage.
 
+**And with no pre-built index bundle.** The phone indexes the repository itself, from nothing.
+Importing an index built elsewhere is a real and useful idea (see Later), and it is deliberately
+**not** in the MVP: the moment a bundle is available, the temptation is to demonstrate G3 with
+one, and then the gate stops testing what it exists to test. If the offline scenario only feels
+good with an index someone else built, the phone has become a viewer for work done on a desktop —
+which is a different product, and the gate should fail rather than be set up around.
+
 If this cannot be met, the correct response is to change the product, not to ship the UI and
 hope. It is scheduled here so that the answer arrives while it is still cheap to act on.
 
@@ -188,9 +195,22 @@ being a constraint and becomes the product.
 
 ### Later
 
+**Pre-built index bundles.** An index built on a desktop or in CI, exported as a
+content-addressed archive and imported by a phone, which then works offline forever. This is how
+the *structural* knowledge graph reaches a device that cannot build one — it needs tree-sitter, a
+native dependency D27 declines on Android. Deliberately after G3, so the gate measures a phone
+indexing for itself.
+
+Worth distinguishing from pairing, because they look alike and are not: a bundle is a **file**,
+with no live link, no protocol, no authority question, and no network at the moment of use. It is
+closer to downloading a model than to delegating execution.
+
+**On-device structural extraction** via WASM tree-sitter under a pure-JVM runtime such as
+Chicory, which would put graph building back on the phone and make bundles an optimisation rather
+than the only path. Unproven; gated on measured parse throughput and memory on real hardware.
+
 Plugin SDK (WASM host, RFC-0043) once the extension boundary is proven by MCP. Intent Graph as
-a first-class UI surface. Multi-device sync. Vision and OCR. Life-management surfaces on the
-same runtime.
+a first-class UI surface. Vision and OCR. Life-management surfaces on the same runtime.
 
 ### What is deliberately not in this plan
 
@@ -211,7 +231,7 @@ Milestones are gated on demonstrable behaviour, not on dates.
 | **G0** `sqlite3 < schema.sql` green; kernel interfaces compile | the contracts are real | all implementation |
 | **G1** Run survives `kill -9` at every checkpoint | durable execution works | any AI work |
 | **G2** end-to-end slice from the CLI, injection suite passes | the loop and its authority boundary work | any UI work |
-| **G3** offline edit-and-commit on a mid-range phone, airplane mode | the product thesis holds | the Android app |
+| **G3** offline edit-and-commit on a mid-range phone, airplane mode, **no pre-built index** | the product thesis holds | the Android app |
 | **G4** a person does G3 comfortably in the app | Android-first is delivered | desktop |
 | **G5** phone delegates a test run to a paired desktop | the profile model pays off | ecosystem work |
 
