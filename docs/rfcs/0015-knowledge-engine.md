@@ -1,323 +1,168 @@
 # RFC-0015: Knowledge Engine
 
-Status: Draft — rewrite specified by D29, not yet applied
-
-> **This document is out of date and known to be.** The rewrite is settled in `docs/decisions.md`
-> D29: the knowledge engine is a consumed library (`gitsema-kotlin`), the library owns its schema,
-> there is no provider SPI, the MVP index covers committed content only, queries report coverage,
-> and the secret-redaction promise is withdrawn. What remains correct below is the "Index identity"
-> and "Addressing classes" sections — everything else is pending. Do not implement against it.
+Status: Accepted 2026-08-04
 
 ## Abstract
 
-The Knowledge Engine is a unified system for understanding and querying project knowledge. It synthesizes information from many sources—codebase structure, Git history, build metadata, test results, resources, and embeddings—into a queryable index. Sessions query the Knowledge Engine to understand project context, find relevant code, discover patterns, and make informed decisions. The Knowledge Engine bridges the gap between raw project information (spread across files, tests, documentation) and structured, actionable knowledge (organized for AI reasoning and human understanding).
+The Knowledge Engine gives a session semantic access to a project's code and history: *what in
+this repository is about retry logic*, *when did this concept first appear*, *what does this
+module look like*. Aidos does not build it. It **consumes `gitsema-kotlin`** — a Kotlin
+Multiplatform port of `jsilvanus/gitsema` — as an ordinary library dependency (D29).
+
+This RFC is therefore not a design for an engine. It is a **consumption contract**: what Aidos
+calls, what Aidos guarantees the library about where it may run and what it may touch, what the
+library guarantees back, and what an honest answer looks like when the index is incomplete.
 
 ## Motivation
 
-A project contains vast amounts of information scattered across many forms:
+A session cannot be handed a repository. A 1M-line codebase does not fit in a context window,
+and arbitrary samples of it are worse than nothing — they look like evidence. Something has to
+decide which few thousand tokens of a project are relevant to the message the user just sent.
 
-- **Code structure**: Functions, classes, modules, dependencies.
-- **Git history**: Commits, branches, merges, and the reasons for changes.
-- **Tests**: What the code is supposed to do (test assertions encode intent).
-- **Documentation**: Architecture decisions, design patterns, roadmaps.
-- **Build metadata**: Dependencies, transitive relationships, build artifacts.
-- **Configuration**: Flags, environment variables, system tuning.
-- **Package managers**: Versions, compatibility, deprecation notices.
+That is a retrieval problem with a well-understood shape, and one that a Git-native,
+content-addressed index solves unusually well. It is also a problem Aidos would be foolish to
+solve twice: `gitsema` already implements it, keyed on exactly the identity model Aidos
+independently converged on, because Aidos adopted that model *from* gitsema.
 
-When a session needs to make a decision, it must reason over this information. An AI model cannot directly access the codebase; the session must provide relevant context. But which context is relevant? A 1M-line codebase cannot be fed to the model; neither can arbitrary samples.
-
-The Knowledge Engine solves this by:
-
-- **Aggregating**: Gathering information from multiple sources.
-- **Indexing**: Making it searchable and queryable.
-- **Ranking**: Returning most relevant results first.
-- **Caching**: Avoiding redundant computation.
-- **Incrementally updating**: Reflecting changes as the project evolves.
-
-The Knowledge Engine is inspired by:
-
-- **Search engines** (index, query, rank results).
-- **Language servers** (understand code structure in real time).
-- **Build systems** (track dependencies and transitive relationships).
-- **Semantic search** (embeddings for meaning-based discovery).
-- **Time-series databases** (Git history as temporal data).
+**What changed, and why this document is short.** RFC-0015 was originally written as if Aidos
+would build a knowledge engine — a provider SPI, an entry schema, an invalidation mechanism,
+ranking heuristics. D29 settled that it is consuming one instead. Most of the previous 770 lines
+described a system Aidos is not building, and describing it created the impression that someone
+had committed to building it.
 
 ## Goals
 
-1. **Define knowledge sources**: What kinds of information are indexed?
-
-2. **Specify the query model**: How do sessions query knowledge?
-
-3. **Establish provider abstraction**: How are knowledge sources plugged in?
-
-4. **Define caching and incremental updates**: How does the engine stay current?
-
-5. **Clarify relationships**: How does the Knowledge Engine relate to other concepts (resources, artifacts, Intent Graph)?
-
-6. **Explain ranking and relevance**: How are results ordered by relevance?
+1. Define the contract between Aidos and `gitsema-kotlin` precisely enough to implement against.
+2. State what Aidos owns and what the library owns, so neither is surprised.
+3. Make an incomplete index visible in every answer rather than silently confident.
+4. Record the properties Aidos depends on, so a change upstream is a change Aidos *notices*.
 
 ## Non-goals
 
-This RFC does not specify exact indexing algorithms or data structures. Implementation details are deferred.
+This RFC does not specify the library's internals, its schema, its algorithms, or its
+performance characteristics. Those live in
+[`docs/design/kotlin-port.md`](https://github.com/jsilvanus/gitsema/blob/main/docs/design/kotlin-port.md)
+in the gitsema repository, which is authoritative for the port. Where this document restates
+something from there, it does so because Aidos *relies* on it and would need to react if it
+changed — not to duplicate ownership of it.
 
-This RFC does not mandate a specific embedding model or semantic search approach. Semantics are described; implementation varies.
+It does not define prompt assembly (RFC-0025), which is the consumer of query results.
 
-This RFC does not address distributed knowledge across multiple machines. Single-project knowledge is the design assumption.
-
-This RFC does not specify performance characteristics or scalability limits. Those are implementation concerns.
-
-This RFC does not define machine learning approaches for ranking. Heuristics are acceptable for MVP.
+It does not define a plugin or provider extension mechanism. There is none.
 
 ## Design
 
-### Knowledge Sources
+### The division of ownership
 
-The Knowledge Engine aggregates from multiple sources:
+D29's split, stated as a table because it is the whole design:
 
-#### Codebase Analysis (GitSema, Tree-sitter, LSP)
+| | Owner |
+|---|---|
+| The index schema, algorithms, ranking, storage format | **`gitsema-kotlin`** |
+| Where the index lives on disk | **Aidos** |
+| When indexing starts, yields, and stops | **Aidos** |
+| The resource envelope — dispatcher, concurrency, cancellation | **Aidos** |
+| The embedding model, and whether it can reach a network | **Aidos** |
+| Presenting coverage and degradation to the user and the model | **Aidos** |
 
-Structural information about code:
+The mechanism that makes this real is dependency injection: the library's entry point takes its
+git access, its embedding provider, and its three stores as constructor arguments. **Everything
+Aidos must own is something Aidos passes in.** The split is not a convention both sides remember
+to honour — it is the shape of the constructor.
 
-- **Symbols**: Functions, classes, modules, types, constants (with locations).
-- **Call graphs**: Which functions call which.
-- **Dependencies**: Import relationships between modules.
-- **Type information**: Signatures, parameter types, return types.
-- **Documentation**: Docstrings, comments attached to symbols.
-- **Usage examples**: Where symbols are used in the codebase.
+**Aidos does not own the DDL, and `schema/` must never contain the library's tables.**
+`schema/check.py` asserts that every table named in RFC DDL exists in the canonical schema; if
+the index's tables were added there, CI would be policing a schema Aidos does not understand and
+every upstream migration would become an Aidos migration. This RFC contains no DDL for that
+reason.
 
-Example query:
+### What Aidos calls
 
-```
-"Find all functions that implement caching"
-→ Search docstrings and comments for "cache"
-→ Return matching functions with locations
-```
+Three methods. The whole surface:
 
-#### Git History
-
-Temporal information about changes:
-
-- **Commits**: What changed, when, by whom, with what message.
-- **Blame**: Which commit last modified each line.
-- **Branches**: Current branches and their purpose.
-- **Merges**: Merge history and resolution decisions.
-- **Tags**: Release tags and version information.
-
-Example query:
-
-```
-"What changes were made to payment processing last month?"
-→ Search commit log for "payment" messages, restricted to last 30 days
-→ Return commits with diffs
-```
-
-#### Test Suite
-
-Understanding of intended behavior:
-
-- **Test files**: Which test files exist, what they test.
-- **Test assertions**: What do tests assert about behavior?
-- **Coverage**: Which code is covered by tests, which is not.
-- **Test results**: Latest test run results.
-
-Example query:
-
-```
-"What does the caching system do?"
-→ Find tests related to caching
-→ Extract assertions (intended behavior)
-→ Summarize for user
-```
-
-#### Build Metadata
-
-Dependency and artifact information:
-
-- **Dependencies**: What external packages does the project use?
-- **Versions**: Current versions, version constraints.
-- **Build artifacts**: What does the build produce?
-- **Build times**: Performance baseline.
-
-Example query:
-
-```
-"What HTTP libraries are we using?"
-→ Query dependency graph
-→ Return [reqwest 0.11, http 0.2]
-→ Link to docs, changelogs
-```
-
-#### Resources (RFC-0013)
-
-Authored knowledge:
-
-- **Architecture documents**: System design, component descriptions.
-- **Coding standards**: Conventions, patterns, anti-patterns.
-- **Roadmaps**: Planned features, direction.
-- **Decision logs**: Rationale for architectural choices.
-
-Example query:
-
-```
-"What are our coding conventions?"
-→ Query resources tagged "standards"
-→ Return Coding Standards resource
-```
-
-#### Embeddings
-
-Semantic understanding of code and documentation:
-
-- **Code embeddings**: Vectors representing code semantics.
-- **Text embeddings**: Vectors representing documentation and comments.
-- **Similarity search**: Find semantically similar code/docs.
-
-Example query:
-
-```
-"How do we handle rate limiting?"
-→ Embed the query
-→ Find semantically similar code
-→ Return rate limiting implementations
-```
-
-### Provider Abstraction
-
-Knowledge comes from **providers**. The Knowledge Engine defines a provider interface:
-
-```
-KnowledgeProvider {
-  name: String                      # "GitSema", "TreeSitter", "Embeddings"
-  
-  /// Return indexed knowledge of given type
-  query(query_type: String, params: Map) -> List<KnowledgeItem>
-  
-  /// Check if provider has current information
-  is_current() -> Boolean
-  
-  /// Update indices if needed
-  update() -> void
-  
-  /// Register for change events
-  subscribe(topic: String) -> Subscription
-}
-
-KnowledgeItem {
-  id: String
-  provider: String
-  type: String                      # "function", "commit", "test", "resource"
-  source_location: Location?        # File, line, etc.
-  content: String                   # Docstring, commit message, etc.
-  metadata: Map<String, Any>
-  relevance_score: Float?           # Optional ranking
+```kotlin
+interface SemanticIndex {
+    suspend fun index(ref: String, onProgress: (IndexProgress) -> Unit = {}): IndexResult
+    suspend fun search(query: Query): List<Match>
+    suspend fun status(): IndexStatus
 }
 ```
 
-Providers are pluggable. Future providers can be added without modifying the Knowledge Engine:
+A `Match` carries a blob hash, the paths that blob has been seen at, a line span, a score, and
+its provenance (`VECTOR` / `FTS` / `HYBRID`) — never an Aidos domain type. The adapter maps it
+into `ContextItem` (RFC-0025) on the way out.
 
-```
-Built-in providers (MVP):
-  - GitSema (code structure)
-  - GitHistory (Git commits)
-  - TestAnalyzer (test suite)
-  - ResourceProvider (resources)
+Aidos reaches this through `KnowledgeContextProvider` (RFC-0025, `runtime/kernel/Knowledge.kt`),
+which is the only interface the rest of the runtime sees. **That interface exists because
+RFC-0025 needs a seam for prompt assembly, not because a second knowledge source is anticipated.**
+There is exactly one implementation and no `KnowledgeProvider` SPI: a `query`/`is_current`/
+`update`/`subscribe` seam maintained for hypothetical implementors is the speculative
+extensibility D18 and D22 refused elsewhere. If a second source ever appears, the seam is cheap
+to add against a real second case.
 
-Future providers:
-  - SemanticEmbeddings
-  - BuildDependencies
-  - PackageMetadata
-  - CustomKnowledgeProvider (plugins)
-```
+### What Aidos guarantees the library
 
-### Queries and Responses
+1. **A background dispatcher.** Indexing never runs on a foreground/UI dispatcher, and never
+   inside a Run's step (RFC-0009). It is a scheduled job (RFC-0044).
+2. **Cancellation, and that cancellation is honoured.** Aidos cancels indexing on app
+   backgrounding, foreground-service loss (D24), and project close. See the reciprocal guarantee
+   below.
+3. **An `EmbeddingProvider` that does not reach a network.** The library never dials out; it
+   calls what it is handed. On MOBILE that is a local GGUF model through llama.cpp (D28). **The
+   "no network" property is Aidos's to keep, not the library's to promise** — which is the right
+   place for it, since Aidos is where egress policy lives (RFC-0042, RFC-0027).
+4. **Storage under `.aidos/index/`**, never in `state.db` (D21, RFC-0054). Embedding writes would
+   contend with the single writer (RFC-0007) and would inflate the file the user backs up with
+   entirely rebuildable data.
+5. **A bounded concurrency and batch size**, passed at construction, subject to the device's
+   resource budget (RFC-0045).
 
-Sessions query the Knowledge Engine:
+### What the library guarantees back
 
-```
-Query {
-  type: String                      # "function", "relevant_code", "history", etc.
-  keywords: List<String>?           # Search terms
-  filters: Map<String, Any>?        # Restrict by type, date, author, etc.
-  limit: Int?                       # Max results (default 10)
-  include_reasoning: Boolean?       # Include why results are relevant
-}
-
-Response {
-  results: List<KnowledgeItem>
-  total_count: Int
-  time_ms: Int                      # Query time
-  reasoning: String?                # Explanation of ranking
-}
-```
-
-Example queries:
-
-```
-// Find functions implementing authentication
-{
-  type: "function",
-  keywords: ["authentication", "login"],
-  filters: { module: "auth" },
-  limit: 5
-}
-
-// Find recent changes to payment code
-{
-  type: "history",
-  keywords: ["payment"],
-  filters: { since: "2025-07-01" },
-  limit: 20
-}
-
-// Find code similar to this snippet
-{
-  type: "semantic",
-  content: "fn cache_get(key: &str) -> Option<Vec<u8>> {...}",
-  limit: 3
-}
-
-// What tests cover this module?
-{
-  type: "test_coverage",
-  filters: { module: "payment" }
-}
-```
+1. **Blob-hash identity**, with the consequences below.
+2. **Content-addressed idempotency.** A blob is embedded once per model. Re-running an
+   interrupted index re-walks already-safe ground rather than re-embedding it, so interruption is
+   cheap rather than merely safe.
+3. **Cooperative cancellation.** `index()` calls `ensureActive()` at the top of both its
+   commit-mapping and blob loops — once per commit, once per batch — rather than relying on store
+   calls happening to redispatch. A cancelled run leaves the resume cursor untouched, so the next
+   run resumes from the last known-good point.
+4. **Search never blocks on indexing.** Before any vectors exist for the active model, `search()`
+   returns FTS-only results marked `degraded`. It does not wait, and it does not return empty.
+5. **Bounded search memory.** Vectors are int8-quantized in a memory-mapped flat file, scored
+   through a bounded top-K min-heap: **O(topK), not O(stored vectors)**. This matters more than it
+   sounds — the original TypeScript implementation materialised the whole vector table per query,
+   roughly 150 MB for a 50k-blob repository, which is incompatible with a loaded LLM competing for
+   the same phone's memory.
 
 ### Index identity: address by content hash, not by path
 
 **The unit of index identity is the Git object hash, not the file path.**
 
 A path is a *name* that points to different content at different times, and to different content
-on different branches. Indexing by path therefore requires invalidation on every change and
-every checkout, re-embeds identical content once per commit that touches it, and cannot answer
-questions about history without a second index.
+on different branches. Indexing by path requires invalidation on every change and every checkout,
+re-embeds identical content once per commit that touches it, and cannot answer questions about
+history without a second index.
 
 A blob hash is immutable and content-addressed. Index it once, and the entry is correct
 permanently, on every branch, in every commit that has ever referenced it.
 
-This is the model proven by GitSema (`jsilvanus/gitsema`): *"treats blob hashes as the unit of
-identity, so identical content is only embedded once regardless of how many commits reference
-it."* It is also the model the rest of the architecture already converged on — content-addressed
-blobs with reference counting (RFC-0056), object-database-first reads (RFC-0053), and an indexed
-`content_hash` on every ContentNode (RFC-0024).
+This is the model the rest of the architecture already converged on — content-addressed blobs
+with reference counting (RFC-0056), object-database-first reads (RFC-0053), an indexed
+`content_hash` on every ContentNode (RFC-0024), and the identity a diff hunk needs (D25).
 
 Four consequences, in rising order of importance:
 
 1. **Deduplication is automatic.** A file unchanged across 500 commits is embedded once. A file
-   copied between directories is embedded once. Vendored dependencies shared between branches
-   are embedded once.
-
+   copied between directories is embedded once. Vendored dependencies shared between branches are
+   embedded once.
 2. **History is nearly free.** Searching across time is not a separate feature. Every blob ever
-   committed is already in the index, and "what did this look like before the refactor?" is a
-   lookup rather than a re-index.
-
+   committed is already indexed, and "what did this look like before the refactor?" is a lookup.
 3. **Incremental indexing is a set difference.** Indexing a new commit means: list the blobs in
    its tree, subtract the blobs already indexed, embed the remainder. Usually a handful of files.
-
-4. **Branch switching costs nothing.** This is the one that matters most, and it removes a
-   problem RFC-0053 otherwise has to solve. `git checkout` changes which blobs are *visible*; it
-   changes no blob. So there is nothing to invalidate. The reconciliation protocol updates the
-   path→blob mapping — a cheap tree read — and every derived fact remains valid.
+4. **Branch switching costs nothing.** This is the one that matters most, and it removes a problem
+   RFC-0053 would otherwise have to solve. `git checkout` changes which blobs are *visible*; it
+   changes no blob. There is nothing to invalidate.
 
 On a phone, where re-indexing is expensive in both battery and time, that last point is the
 difference between semantic search being usable and being something the user turns off.
@@ -325,453 +170,193 @@ difference between semantic search being usable and being something the user tur
 ### Addressing classes
 
 Not all knowledge is blob-addressable, and pretending otherwise is how caches go stale silently.
-Every provider declares which class each fact belongs to.
+This table describes **the library's model, and what Aidos would notice breaking** — it is not
+Aidos's design and Aidos does not enforce it.
 
 | Class | Key | Cacheable | Examples |
 |---|---|---|---|
-| **Blob-addressed** | blob SHA | **forever** | embeddings, tree-sitter symbols, text extraction, per-file summaries, OCR output |
-| **Tree-addressed** | tree SHA | **forever** | import graph, call graph, project structure at a snapshot |
-| **Commit-addressed** | commit SHA | **forever** | diffs, commit messages, blame, authorship |
-| **State-addressed** | working-tree fingerprint | **no — invalidate** | uncommitted edits, LSP cross-file types, build metadata, test results, dependency resolution |
+| **Blob-addressed** | blob SHA | **forever** | embeddings, text extraction, per-file facts |
+| **Tree-addressed** | tree SHA | **forever** | project structure at a snapshot |
+| **Commit-addressed** | commit SHA | **forever** | diffs, commit messages, authorship |
+| **State-addressed** | working-tree fingerprint | **no — invalidate** | uncommitted edits, build metadata, test results |
 
 The first three are immutable by construction and never require invalidation. Only the
-state-addressed class does, and it is the smallest and cheapest to recompute.
+state-addressed class does — and in the MVP, Aidos does not use it at all.
 
-Tree-addressed facts are worth noting: a call graph is a function of an entire snapshot, but
-tree hashes are immutable too, so it is cacheable — and computable *incrementally* from the
-blobs that changed between two trees rather than from scratch.
+### The MVP indexes committed content only
 
-### Caching and updates
+Uncommitted work is not indexed (D29). Hash-on-save is elegant and re-embeds a file on every
+keystroke, on a phone, for content that is superseded within minutes.
 
-```kotlin
-data class IndexEntry(
-    val addressKey: String,        // blob, tree, or commit SHA; or a state fingerprint
-    val addressClass: AddressClass,
-    val providerId: String,
-    val providerVersion: Int,      // bump to invalidate this provider's entries
-    val facts: ByteArray,
-    val computedAt: Instant
-)
-```
+Uncommitted work reaches the model through the filesystem tool — which is how it reaches the
+model anyway when the model is the one editing. Debounced hash-on-idle is the upgrade, not the
+starting point.
 
-### Index storage
+The honest consequence: **immediately after the user edits a file, the index does not know about
+that edit.** A query answers from committed content. This is a real limitation and it is stated
+in the coverage report below rather than left for the user to infer.
 
-**The index lives outside the operational database**, at `.aidos/index/` (RFC-0054). It is never
-in `state.db`. Two reasons: embedding writes would contend with the single writer (RFC-0007),
-and vectors would inflate the file the user backs up and exports with data that is entirely
-rebuildable.
+### Every query reports coverage
 
-**Start with brute force and measure before adding a dependency.** For a typical project — a few
-thousand unique blobs — an exhaustive cosine scan over a memory-mapped float array is on the
-order of milliseconds, well inside the 200 ms query target (RFC-0045), and it has no dependency,
-no index build step, and no corruption mode. An approximate-nearest-neighbour index earns its
-place only when measurement shows brute force missing the target on a real repository on a real
-phone.
+**A query reports how much of the repository it actually searched.** Two counters: blobs indexed
+over blobs known.
 
-This is deliberate sequencing, not laziness: a vector index chosen before the workload is known
-is a dependency chosen on a guess, and on mobile the guess costs binary size and a native build.
+Without this, first open of a large repository answers *"there is no retry logic in this
+codebase"* when the truth is *"I have not read most of it yet"* — and the answer is
+indistinguishable from a confident, complete one. It also makes G3's measurement meaningless,
+because an answer at minute two and an answer at minute forty look identical.
 
-`providerVersion` is the only invalidation mechanism needed for immutable classes. When a
-provider's extraction logic changes, bump the version; old entries become unreachable and are
-reclaimed (RFC-0056). No timestamps, no staleness flags, no cache-coherence protocol.
+Coverage is composed **in Aidos's adapter**, by calling `status()` alongside `search()` — this is
+the intended division, confirmed with the library's maintainer, not a stopgap. Coverage is
+index-level state that does not vary per query, so attaching it to every `Match` would mean a
+metadata round trip per search for a number identical across all results in that moment.
 
-Updates happen:
+`degraded` on a `Match` is a *different* claim and both are needed: it means "this specific model
+has no vectors yet, so this result is FTS-only", which coverage cannot express, and coverage means
+"12% of this repository is indexed", which `degraded` cannot express. **Ten confident,
+non-degraded matches from a 12%-indexed repository would otherwise look complete.**
 
-1. **On commit or checkout**: read the new tree, diff the blob set against the index, enqueue
-   the difference. Usually a handful of blobs.
-2. **On working-tree change**: only state-addressed facts are affected. Uncommitted file content
-   is indexed under a content hash computed on the fly, so an edited-but-uncommitted file is
-   still blob-addressed — it simply has a hash Git has not seen yet.
-3. **On provider upgrade**: bump `providerVersion`; re-index lazily on query rather than eagerly.
+Both reach the model as part of the context item's provenance (RFC-0025) and the user through
+`IndexStatus` on the Runtime API (RFC-0052).
 
-Indexing runs on the `background` dispatcher in cancellable batches (RFC-0007), and on MOBILE it
-is deferred work with no latency guarantee (RFC-0049). Queries never block on indexing: they run
-against whatever is indexed and mark results from unindexed content as such.
+### What the index does and does not protect
 
-### GitSema
+**It does not redact secrets.** An earlier version of this RFC promised that secrets in code
+would be detected and excluded. That promise is withdrawn (D29). Nothing funds a scanner, any
+scanner would have false negatives, and stating the guarantee invites reliance on it.
 
-GitSema is the reference implementation of this model and the first knowledge provider.
+The real properties, which are worth more because they are true:
 
-**On DESKTOP and HEADLESS_SERVER**, it integrates today with no new work: it already exposes an
-MCP server, so it is registered at user scope and enabled per project (RFC-0031, RFC-0054).
+- The index is **app-private storage**, under the same protection as `state.db`.
+- The index **never egresses**. It is not synced (D16), not exported by default (RFC-0041), and
+  not readable by an MCP server or any other tool subject.
+- The index **holds nothing the repository does not already hold**. It is derived, and deleting
+  it loses nothing but the time to rebuild.
 
-**On MOBILE it cannot run.** It requires a Node.js runtime, `git` on `PATH`, and a native SQLite
-binding — three independent blockers under the mobile profile (RFC-0049). Semantic search on a
-phone therefore needs a native KMP provider implementing the same blob-addressed model against
-JGit's object database and the local embedding model.
+**A secret committed to the repository is a secret in the repository.** The index does not make
+that worse and does not pretend to make it better. The place to solve that is a pre-commit
+control, not a retrieval index.
 
-That port is real work, but it is the correct work: the mobile use case is *understanding a
-codebase offline*, and understanding without semantic retrieval is grep. The addressing model
-above is what makes it feasible on a phone at all.
+One thing the index *does* protect against is worth naming: because embedding runs against a
+local model (D28), indexing a private repository does not transmit its contents anywhere. That is
+a property of Aidos's provider choice — guarantee 3 above — not of the library.
 
-### Ranking and Relevance
+### Availability and degradation
 
-Results are ranked by relevance. Heuristics for MVP:
+The knowledge engine is a **degradable** capability (RFC-0049). It is never a hard dependency of
+the core loop:
 
-1. **Keyword match**: How many query terms appear in the result?
-2. **Recency**: Recent changes rank higher.
-3. **Popularity**: Frequently-used code ranks higher.
-4. **Test coverage**: Well-tested code ranks higher.
-5. **Location specificity**: Results in the queried module rank higher.
+| Condition | Behaviour |
+|---|---|
+| No index yet | Search returns FTS-only, marked `degraded`; coverage reports 0 embedded |
+| Indexing in progress | Search answers from what exists; coverage reports the fraction |
+| No embedding model available | FTS-only, permanently, reported through `AvailabilityReport` |
+| Index corrupt or deleted | Rebuild from Git; nothing is lost |
 
-Example ranking:
+A session whose knowledge query returns nothing is not a failed session. It reads files with the
+filesystem tool, which is what it would do anyway.
 
-```
-Query: "Find caching code"
+### Structural graph: not on the device
 
-Result 1: CacheManager struct in cache.rs
-  - All keywords match ✓
-  - 95% test coverage
-  - 200+ uses in codebase
-  - Score: 0.95
+The library's structural graph — call edges, import edges, symbol-level identity — requires
+tree-sitter, a native dependency **D27 declines** for this use: a viable non-native alternative
+arguably exists, and the blast radius of a crash is an incomplete graph rather than a lost Run,
+so the presumption is against it.
 
-Result 2: Comment in utils.rs mentioning "cache"
-  - Partial keyword match
-  - Not in a module named "cache"
-  - Score: 0.42
-```
+Aidos therefore ships **no structural graph in the MVP**, and no on-device parsing. Co-change
+analysis ("what changes together"), which needs no parsing at all because it derives from commit
+provenance, is the part of that capability that remains available.
 
-Semantic ranking (future):
+The port specification describes a desktop-built, phone-imported graph bundle as the path to
+structural answers without on-device parsing. Aidos does not depend on it, and if it ever
+arrives, graph queries must report *unavailable* rather than returning a silently empty result.
 
-```
-Embed query: "Find implementations of cache eviction"
-Find semantically similar code
-Rank by embedding distance
-```
+## Data Model
 
-### Querying Patterns
+Aidos stores nothing for the knowledge engine. There is no `IndexEntry` table, no provider
+registry, no cached-fact store. The index is the library's, at `.aidos/index/`, in a schema Aidos
+does not define and does not migrate.
 
-Common session queries:
-
-#### Understanding
-
-"What does this module/function do?"
-
-```
-Query Knowledge Engine:
-  - Function docstrings and comments
-  - Tests for the module (encode intended behavior)
-  - Related code (what calls this, what it calls)
-  - Design decisions (from resources)
-```
-
-#### Finding Examples
-
-"How do we implement X? Show me an example."
-
-```
-Query Knowledge Engine:
-  - Find implementations of X in codebase
-  - Find tests for X
-  - Find documentation about X
-  - Rank by relevance and simplicity
-```
-
-#### History and Context
-
-"Why did we implement it this way? What changed?"
-
-```
-Query Knowledge Engine:
-  - Git blame for relevant code
-  - Commit messages explaining changes
-  - Decision log entries
-  - Related architecture documents
-```
-
-#### Dependency Analysis
-
-"What does this code depend on? What depends on it?"
-
-```
-Query Knowledge Engine:
-  - Imports and dependencies
-  - Call graph (what calls this)
-  - Reverse dependencies
-  - Version information
-```
-
-#### Quality and Risk Assessment
-
-"Is this well-tested? Is it critical?"
-
-```
-Query Knowledge Engine:
-  - Test coverage
-  - Number of uses
-  - Recent changes (high recent churn = risky)
-  - Issues or TODOs in code
-```
-
-## Data Model (Conceptual)
-
-```
-KnowledgeIndex {
-  project_id: UUID
-  
-  providers: Map<String, ProviderState>
-  
-  // Raw indices (maintained by providers)
-  symbol_index: Map<String, List<Symbol>>
-  commit_index: Index<Commit>
-  test_index: Map<String, List<Test>>
-  resource_index: List<Resource>
-  
-  // Derived indices
-  call_graph: Graph<String, String>        // caller → callee
-  dependency_graph: Graph<String, String>  // module → dependency
-  usage_index: Map<Symbol, List<Location>> // where is symbol used
-  
-  metadata: Map<String, Any>
-}
-
-ProviderState {
-  provider_id: String
-  last_update: Timestamp
-  is_current: Boolean
-  indexed_items: Int
-  cache_size_bytes: Int
-}
-```
+The only Aidos-side type is the adapter's output, `ContextItem` (RFC-0025,
+`runtime/kernel/Knowledge.kt`), which carries the trust level that feeds the Run's taint
+computation (RFC-0027). **Indexed project content is `PROJECT` trust, not `TRUSTED`** — it is
+repository content, and a query result is repository content that has been ranked.
 
 ## Lifecycle
 
-### Initialization
+**First open of a project.** Indexing does not start automatically on a metered or battery-
+constrained device. It is offered, then runs as a scheduled job (RFC-0044) under the resource
+budget (RFC-0045). Search works immediately, degraded, from the first FTS rows written.
 
-When a project is created or Knowledge Engine is enabled:
+**Steady state.** Indexing runs after commits, incrementally — a set difference against what is
+already indexed, usually a handful of blobs.
 
-```
-Initialize Knowledge Engine
-Scan project for knowledge sources
-Bootstrap providers (GitSema, GitHistory, etc.)
-Build initial indices
-```
+**Interruption.** Process death mid-index is routine on Android (D3), not exceptional. The resume
+cursor is written only after a full pass completes, so an interrupted run leaves the previous
+cursor in place and the next run re-walks conservatively without re-embedding anything.
 
-Initial indexing may take time for large projects.
+**Model change.** Embeddings are keyed by `(blob hash, model)`, so a new model is additive rather
+than destructive — the old vectors remain valid for the old model. Aidos pins the embedding model
+(RFC-0022); changing it is a deliberate re-index, not a silent one.
 
-### Continuous Operation
-
-As the project evolves:
-
-```
-On git commit:
-  → GitHistory provider updates
-  → Dependent indices (call graph, usage) are invalidated
-  → Lazy re-index on next query
-
-On file change:
-  → GitSema provider updates
-  → Symbol index is refreshed
-
-On test run:
-  → TestAnalyzer provider updates
-  → Coverage index is refreshed
-
-On resource modification:
-  → ResourceProvider updates
-```
-
-### Invalidation
-
-Invalidation applies to **state-addressed facts only**. Blob-, tree-, and commit-addressed
-entries are immutable and are never invalidated — see "Index identity" above.
-
-| Change | Invalidates | Does **not** invalidate |
-|---|---|---|
-| `git checkout`, branch switch | nothing | embeddings, symbols, call graph, blame |
-| New commit | nothing | everything already indexed; new blobs are *added* |
-| History rewrite (rebase, amend) | nothing | entries stay valid; some become unreachable and are reclaimed |
-| Working-tree edit | that file's state-addressed facts | its blob-addressed entry, once the new content is hashed |
-| Build or dependency change | build metadata, dependency graph | code embeddings and symbols |
-| Test run | test results, coverage | everything else |
-| Provider logic change | that provider's entries, via `providerVersion` | other providers |
-
-The row that matters: **branch switching invalidates nothing.** An earlier version of this RFC
-treated a filesystem change as making the index stale, which on a repository with active
-branches meant near-continuous re-indexing — and on a phone, that is the difference between a
-feature and a battery complaint.
-
-## Examples
-
-### Example 1: Understanding a Module
-
-Session queries: "Help me understand the payment module"
-
-```
-Knowledge Engine queries:
-  1. Find all files in payment/ module
-  2. Extract docstrings and comments
-  3. Find tests for payment
-  4. Find commits modifying payment
-  5. Find resources mentioning payment
-  6. Find usages of payment functions
-
-Returns:
-  - Module structure (functions, classes, types)
-  - Test examples (show intended behavior)
-  - Recent changes (git blame, commit messages)
-  - Design decisions (from resources)
-  - Usage patterns
-```
-
-Session now understands payment module context.
-
-### Example 2: Finding Code to Reuse
-
-Session queries: "Find examples of retry logic in the codebase"
-
-```
-Knowledge Engine queries:
-  1. Find symbols with "retry" in name/docstring
-  2. Find tests mentioning "retry"
-  3. Find commits mentioning "retry"
-  4. Find code semantically similar to retry patterns
-
-Returns (ranked):
-  1. ExponentialBackoffRetry struct (50 uses, 95% test coverage)
-  2. retry_with_timeout function (20 uses, 80% test coverage)
-  3. Commented discussion of retry in git log
-  4. Retry pattern in README
-
-Session can copy or adapt top result.
-```
-
-### Example 3: Impact Analysis
-
-Session needs to modify a critical function. Query: "What might break if I modify load_user_config()?"
-
-```
-Knowledge Engine queries:
-  1. Find all calls to load_user_config
-  2. Find tests for load_user_config
-  3. Find recent changes to load_user_config
-  4. Find dependent modules
-
-Returns:
-  - 47 call sites (across 12 modules)
-  - 23 tests (coverage 92%)
-  - Last modified 3 months ago
-  - Critical path: initialization, config validation, caching
-
-Session sees high risk and decides to add comprehensive tests first.
-```
+**Deletion.** The index is disposable. `rm -rf .aidos/index/` loses only time.
 
 ## Security Considerations
 
-### Information Disclosure
+Covered above under "What the index does and does not protect". In summary: app-private, never
+egressed, holds nothing the repository does not, no secret redaction promised, and — because
+embedding is local — indexing does not transmit a private repository anywhere.
 
-The Knowledge Engine indexes project code and documentation. This index should not leak outside the project.
-
-### Sensitive Content
-
-Secrets (API keys, passwords) that appear in code or comments should be redacted from indices.
-
-### Access Control (Future)
-
-Future work might restrict what knowledge certain sessions can access (e.g., a worker session shouldn't access all company secrets embedded in code).
+Query results are `PROJECT` trust and participate in taint (RFC-0027) like any other project
+content. A query result is not a special category of evidence.
 
 ## MVP Scope
 
-The Knowledge Engine is a **query broker** over pluggable providers, not a monolithic knowledge
-base. Its own API surface is narrow and stable (`KnowledgeContextProvider`, RFC-0025); providers
-evolve behind it.
+The MVP implements:
 
-The MVP includes:
+1. The adapter from `KnowledgeContextProvider` (RFC-0025) onto `SemanticIndex`.
+2. Storage at `.aidos/index/`, injected, outside `state.db`.
+3. Indexing as a cancellable background job under the resource budget.
+4. A local embedding provider (D28); no network path.
+5. Coverage composition — `status()` alongside `search()` — surfaced to both the model and the UI.
+6. FTS-first degraded search from the first rows written.
 
-1. **Content-addressed index storage** with the four addressing classes and `providerVersion`
-   invalidation. This is the foundation and must be right before any provider is written —
-   retrofitting content addressing onto a path-keyed index is a rebuild.
-2. **Blob-addressed providers**: file text extraction, tree-sitter symbols.
-3. **Commit-addressed provider**: Git history, messages, blame.
-4. **Keyword search** across indexed content, with simple heuristic ranking.
-5. **Incremental indexing** as a blob set difference on commit and checkout.
-6. **`KnowledgeContextProvider`** returning ranked, token-budgeted `ContextItem`s to prompt
-   construction (RFC-0025), each carrying its source node's trust level (RFC-0027).
+The MVP does not implement:
 
-The MVP does not include:
+- Uncommitted-content indexing.
+- Any structural graph, on-device parsing, or symbol-level identity.
+- Multi-repo or cross-project search (D16 — the index is not synced).
+- Ranking-weight tuning. The library's defaults ship as defaults; validating them needs a
+  retrieval-evaluation harness and real device measurement, which is a G3 activity.
 
-- **Semantic embeddings.** Deferred to Phase 3, where they are the substance of the offline
-  proof (RFC-0099 G3) rather than an enhancement.
-- LSP integration (state-addressed, desktop-first, and the most expensive provider to maintain).
-- Build metadata and test-result providers.
-- Sophisticated ranking, graph traversal queries, cross-project knowledge.
+## Known dependency risks
 
-Deliberate sequencing note: content addressing comes first even though embeddings come later,
-because the addressing model determines whether embeddings are affordable on a phone at all.
+Recorded because they are real and dated, not to be discovered at M16:
+
+- **`androidTarget()` is not yet wired in `gitsema-kotlin`.** The library builds and tests on the
+  JVM target only. This is **blocked on environment access** — an Android SDK and a network path
+  to Google's Maven — rather than scheduled work, and no shared-source changes are expected when
+  it lands. Aidos is Android-first, so this is the gap that matters most, and M16 cannot complete
+  without it.
+- **Not yet run against a real repository at scale.** Testing to date is against throwaway
+  repositories. Aidos's G3 measurement is where index build time, battery cost, and query latency
+  on a real repository on real hardware get discovered.
+- **The library has no CI.** Its test suite is green locally and re-run by hand; nothing enforces
+  that on push. Aidos should pin a version rather than track a branch.
+- **FTS5 uses a Porter/ASCII tokenizer**, which fits English source and comments better than it
+  fits anything else. Flagged in the port specification as a matter for Aidos's adapter to
+  consider; not addressed in the MVP.
 
 ## Future Work
 
-### Semantic Search
+**Uncommitted content**, via debounced hash-on-idle rather than hash-on-save.
 
-Embed code and documentation. Search by semantic similarity:
+**Structural answers** from a desktop-built, phone-imported graph bundle — available only for
+repositories someone has pre-built, and reporting *unavailable* otherwise.
 
-```
-Query: "How do I implement caching?"
-→ Embed query
-→ Find semantically similar code
-→ Return cache implementations (even if not keyword-matched)
-```
+**Retrieval evaluation** (precision@k, recall@k, MRR) against a real corpus, which is what would
+turn the ranking weights from inherited constants into a decision.
 
-### Knowledge Graphs
-
-Build explicit knowledge graphs:
-
-```
-Concept: "Authentication"
-  Related to: users, permissions, security
-  Implemented in: auth.rs, login.rs
-  Tested by: auth_tests.rs
-  Documented in: Security guide resource
-```
-
-### Cross-Project Knowledge
-
-Share knowledge across projects (future, when collaboration is added).
-
-### Automatic Summaries
-
-Generate summaries of modules or functions:
-
-```
-"Here is a summary of the payment module: [auto-generated summary]"
-```
-
-### Anomaly Detection
-
-Detect unusual patterns:
-
-```
-"This function has 10x more recent changes than typical"
-"This module is unused by any tests"
-"This code is more complex than typical for its age"
-```
-
-### Temporal Queries
-
-Query how knowledge has changed over time:
-
-```
-"How has the caching strategy evolved?"
-"Show complexity trends for this module"
-"Who were the main contributors to this area?"
-```
-
-### Custom Providers
-
-Support plugins for custom knowledge sources:
-
-```
-Custom provider: Linter Results
-Custom provider: Performance Benchmarks
-Custom provider: Security Scans
-```
-
-## Open Questions
-
-- How should the Knowledge Engine handle code that is temporarily broken or incomplete (WIP branches)?
-- Should embeddings be computed eagerly or lazily? Eagerly is more responsive but costly for large projects.
-- How should the Knowledge Engine handle merge conflicts in Git history?
-- Should the Knowledge Engine index documentation external to the project (linked wikis, etc.)?
-- How should knowledge staleness be communicated to sessions (e.g., "this code may have changed recently")?
-- Should the Knowledge Engine rank results differently for different types of queries (e.g., "understand" vs. "find examples")?
-- How should performance be balanced against accuracy for large projects?
+**Capability gaps are upstream work.** Aidos's contribution here is the adapter and the resource
+discipline. A knowledge feature the library does not have is a `gitsema-kotlin` change, not an
+Aidos one — which is the point of consuming a library rather than building an engine (D29).

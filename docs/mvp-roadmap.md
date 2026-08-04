@@ -75,7 +75,7 @@ carry text the user did not author into the model's context.
 | RFC | Needed by | What is wrong with it |
 |---|---|---|
 | **0031 MCP** | *done* | Revised and Accepted 2026-08-04. D30 applied: authority fixed at enable time, no `TRUSTED` promotion, lazy start, and a "what a server may never do" section that settles the untrusted-subject-as-capability-requester interaction (it may not). D17 amended in the same pass: both transports ship, HTTP on every profile |
-| **0015 Knowledge Engine** | M16 (Phase 3) | The blob-hash-keyed index model is settled and correct. Everything above it — ranking, chunking, the query interface, what happens when the index is stale — is not. This is the largest genuine design risk left in the MVP and it sits on the load-bearing gate |
+| **0015 Knowledge Engine** | *done* | Revised and Accepted 2026-08-04, 777 lines → 362. D29 applied: the engine is a *consumed library* (`gitsema-kotlin`), not an Aidos subsystem — no provider SPI, committed content only, every query reports coverage, secret redaction withdrawn. What was "the largest genuine design risk left in the MVP" is now a dependency risk instead, and a narrower one: see the RFC's "Known dependency risks" |
 
 ---
 
@@ -141,7 +141,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 |---|---|---|---|
 | **M20** | Model runtime at user scope | 0022, 0054, 0045 | Weights are user-scope, not per-project. Loading is globally serialized through an admission queue — one loaded model can saturate a phone. Digest is verified on install |
 | **M21** | One local LLM on a mid-range phone | 0022, 0045 | Cold start to first token under 10 seconds. It survives being backgrounded and reloaded. It runs only in a foreground service (D24); a background Run parks with `ForegroundRequired` rather than silently routing remote |
-| **M22** | Local embeddings and the knowledge index | 0015, 0024, 0021 | Index identity is the Git blob hash, so switching branches invalidates nothing. Re-indexing after a branch switch touches only genuinely new blobs. Embeddings live outside the operational database (D21). *Requires RFC-0015 revised and accepted first* |
+| **M22** | Local embeddings and the knowledge index | 0015, 0024, 0021 | `gitsema-kotlin` is consumed as a library, constructed with Aidos-supplied storage (`.aidos/index/`, outside `state.db` per D21), a local-only `EmbeddingProvider`, and a bounded concurrency. Index identity is the Git blob hash, so switching branches invalidates nothing. Indexing is a cancellable background job that survives process death without re-embedding. **Every query reports coverage** — blobs indexed over blobs known — composed in Aidos's adapter. Search degrades to FTS-only rather than blocking. Blocked on `androidTarget()` landing upstream |
 | **M23** | Routing policy with explicit degradation | 0020, 0049, 0023 | Routing is user-owned policy, not an engine heuristic: crossing the network boundary is never automatic unless the user said so. `UnavailableOffline` names the missing model kind and is not an error |
 | **M24** | Treeless workers | 0053, 0049, 0007 | A worker builds commits directly against the object database on `refs/aidos/workers/<id>` with no `git worktree` and no second checkout — the phone does not have room for one. The worktree is the lock (D15) |
 | **M25** | Retention and compaction | 0056, 0045 | Storage per active project stays under 512MB after 90 simulated days of use with default retention. Compaction is interruptible and resumes |
@@ -184,13 +184,14 @@ Genuinely parallel once G0 landed, against frozen contracts:
 | Security | M3, M4, M7 | M1 |
 | Tools | M12, M13 | M11 |
 | AI providers | M14 | M9 |
-| Knowledge | M22 | RFC-0015 revision — otherwise nothing. The cleanest parallel stream |
+| Knowledge | M22 | `androidTarget()` landing in `gitsema-kotlin` — otherwise nothing. The cleanest parallel stream |
 | Frontends | M10, M28 | M9's mock only |
 | Testing | M8, M17 | the thing under test |
 
 **RFC revisions are unblocked work available right now** and each one removes a Phase 2/3
-blocker: RFC-0031 (narrow it and specify MCP trust) and RFC-0015 (the real design work).
-RFC-0016 was the first of the three and is done.
+blocker. All three are now done — 0016, then 0031, then 0015 — so nothing in Phase 1 or Phase 2
+waits on an RFC revision. What Knowledge waits on now is upstream: `androidTarget()` in
+`gitsema-kotlin`.
 
 ## If it slips
 

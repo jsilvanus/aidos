@@ -18,11 +18,11 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
-legacy RFC audit is complete (47 Accepted, 14 Draft, RFC-0099 excepted) and the last two open
-design questions are settled as D29 and D30. Of the three RFC rewrites that apply them, **0052 and
-0031 are done**; 0015 remains. No new decisions are required to finish it. **D31 and D32 were found and
-settled** during that work; `docs/decisions.md` has no open questions.
+Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done, and so
+is the RFC backlog.** All three rewrites have landed — 0052, 0031, 0015 — and 0015's rewrite
+closed the last item that was blocking a milestone. **48 Accepted, 13 Draft**, RFC-0099 excepted.
+`docs/decisions.md` has no open questions: D31 and D32 were found during this work and settled,
+and D17 was amended. **Phase 1 (M1) is the next work, and it waits on the user's go-ahead.**
 Branch: `claude/aidos-rfc-revisions-3ido05`
 
 ## Done
@@ -45,12 +45,13 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **D31 settled (user decision, 2026-08-04)** — an MCP server's *tool description* is third-party prose that lands in RFC-0025's **reserved** `toolDescriptors` section. Taint cannot govern it (descriptors enter at step 0, so every Run in an MCP project would begin tainted and approval never clears taint), so admission does: prose is **fenced** in the structural sandbox with attribution, and each operation is **adopted by hash** over `(name, description, inputSchema)` at enable time. Unadopted operations are absent from the catalog and never interrupt a Run. New table `mcp_operation_adoptions`
 - [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
 - [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
+- [x] **RFC-0015 rewritten and Accepted** (D29) — 777 lines → 362. The knowledge engine is a consumed library, and the consumption contract is now concrete because `gitsema-kotlin`'s constructor *is* the ownership split: git access, embedding provider, and all three stores are injected, so "Aidos owns the location, the lifecycle, and the resource envelope" holds by construction rather than by convention. Every query reports coverage, composed in Aidos's adapter. **The ~150 MB vector-materialisation constraint is retired** — the port scores through a memory-mapped int8 file with a bounded top-K heap, O(topK) not O(stored vectors)
 - [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
 
 ## Next
 
-**One RFC rewrite, then Phase 1.** Every decision it needs is already settled and it does not
-require the user. 0015 is the largest of the three and depends on reading an external document.
+**The three RFC rewrites are done.** What follows is Phase 1, which the user has asked not to
+start without an explicit go-ahead.
 
 - [x] **RFC-0052 — structured hunks.** Done. `DiffQueries` on `RuntimeClient`; `changes()` lists
       files with hunk counts and `hunks()` fetches one file, because a card stack shows one hunk
@@ -68,22 +69,17 @@ require the user. 0015 is the largest of the three and depends on reading an ext
       **Then D17 amended** in a second commit at the user's direction: both transports ship, HTTP
       everywhere, with the egress/TLS/redirect/credential-path consequences written out.
 
-- [ ] **RFC-0015 — rewrite against D29 and the port spec.** No longer blocked: the port
-      specification exists at `docs/design/kotlin-port.md` on branch
-      `claude/gitsema-kotlin-port-design-ob62a3` in `jsilvanus/gitsema`. **Read it first.** The
-      RFC should shrink hard — most of its 770 lines describe a system Aidos is not building.
-      Keep: the Index-identity and Addressing-classes sections (still correct, now framed as a
-      description of the library's model rather than Aidos's design), and the storage constraints
-      (outside `state.db` per D21, background dispatcher, cancellable, no network). Cut: the
-      `KnowledgeProvider` SPI, `KnowledgeIndex`/`ProviderState` pseudo-structures, the ranking
-      heuristics scoring on providers that do not exist, the tree-sitter symbol provider (D27
-      declined the native dependency), the GitSema-as-MCP-server paragraph, and the RFC-0013
-      reference (superseded by RFC-0024). Add: the consumption contract — what Aidos calls, what
-      it guarantees the library about resources, what the library guarantees back — coverage
-      reporting on every query, committed-content-only indexing, and the honest statement about
-      what the index does and does not protect. Then Accept it.
+- [x] **RFC-0015 — rewritten against D29 and the port spec, and Accepted.** 777 lines → 362.
+      Written from `docs/design/kotlin-port.md` and from `gitsema-kotlin` PR #1, which implements
+      it. Everything on the cut list is gone; the keep list survives, reframed as a description of
+      the library's model rather than Aidos's design. The consumption contract is now concrete
+      rather than aspirational, because the library's constructor *is* the D29 ownership split —
+      everything Aidos must own is injected. Adds a **Known dependency risks** section: the
+      library has no `androidTarget()` yet, has never run against a real repository at scale, and
+      has no CI.
 
-Then Phase 1, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md):
+**Phase 1**, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) — **do not start without the
+user's go-ahead**:
 
 - [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
 - [ ] **M2** Identity and scopes
@@ -204,14 +200,31 @@ with the *result* rather than the definition, and a tool never supplies its own 
 writing its own interpretation guidance would be an UNTRUSTED subject telling the model how to
 weigh its own evidence.
 
-**The knowledge engine comes from outside.** gitsema is a content-addressed semantic index
-already keyed on blob hash — the same identity model RFC-0015 adopted, which is not a
-coincidence. Three findings from surveying it that constrain the Aidos side: its vector search
-loads every vector into memory to score (~150 MB for a 50k-blob repo, alongside a loaded LLM);
-its structural graph needs tree-sitter, a native dependency of exactly the kind D4 refused for
-Git; and its analysis capabilities — impact, semantic blame, change-points, debt scoring, expert
-attribution — are the bulk of the product, not the retrieval. Do not assume "knowledge engine"
-means "search".
+**The knowledge engine comes from outside, and two of its three constraints are gone.** The
+survey that produced this note found three things constraining the Aidos side. Where they stand
+after RFC-0015's rewrite against `gitsema-kotlin` PR #1:
+
+- **Vector search materialising ~150 MB — retired.** The port scores off a memory-mapped
+  int8-quantized flat file through a bounded top-K min-heap: O(topK), not O(stored vectors), with
+  a test asserting an 8 MB heap-delta ceiling. This was the single biggest risk on the Aidos side
+  and it is simply no longer there.
+- **The structural graph needing tree-sitter — still true, and declined.** D27's presumption
+  holds; no on-device parsing ships. Co-change analysis, which needs no parsing, remains.
+- **The analysis capabilities being the bulk of the product — still true.** "Knowledge engine"
+  still does not mean "search". Aidos consumes the retrieval core (Tier 1); everything above it
+  is upstream work Aidos may or may not ever ask for.
+
+The general lesson worth keeping: a constraint recorded from a survey has a shelf life. Re-check
+it against the dependency's current state before designing around it — this one had been quietly
+false for a while.
+
+**Reviewing a dependency's PR paid for itself.** RFC-0015's four open questions went to
+`gitsema-kotlin` PR #1 as a review comment rather than being guessed at. Two were real defects and
+were fixed upstream within the hour (`Indexer` had no cooperative cancellation, so a mid-index
+cancel was dispatcher-dependent; `status().lastIndexedCommit` read an in-process var that
+under-reports after Android process death — D3's own hazard, in a dependency). Two were design
+questions answered definitively, so the RFC states facts instead of assumptions. **Read the
+dependency, not just its README** — both defects were visible only in the source.
 
 **`reversible` is not `RecoveryClass`, and the difference is load-bearing.** `RecoveryClass` asks
 whether an effect can be re-executed after a crash; `reversible` asks whether the user can get

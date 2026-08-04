@@ -29,17 +29,18 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (46).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (48).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (15).** 0012 Intent Graph · 0015 Knowledge Engine · 0026 Model Memory · 0031 MCP ·
-0033 Shell · 0041 Export/Import · 0043 Plugin Packaging · 0046 Identity · 0047 Project Templates ·
-0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+**Draft (13).** 0012 Intent Graph · 0026 Model Memory · 0033 Shell · 0041 Export/Import ·
+0043 Plugin Packaging · 0046 Identity · 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK ·
+0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
 
-Two — **0015** and **0031** — are on the MVP critical path. Their *decisions* are now settled
-(`docs/decisions.md` D29 and D30) but the documents have not been rewritten to match, so both
-carry a warning banner naming what in them is superseded. They must be revised and accepted
-before the milestone that consumes them; see [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
+**0015 and 0031 left Draft on 2026-08-04**, rewritten against the decisions that had been
+settled ahead of them (D29 and D30) and accepted. Both carried a banner naming what in them was
+superseded; each banner was deleted by the commit that made the document right, which is the only
+acceptable lifetime for one. RFC-0015 shrank 777 lines → 362 in the process: most of it described
+a knowledge engine Aidos is not building.
 
 ### What the audit found, and why greps were not enough
 
