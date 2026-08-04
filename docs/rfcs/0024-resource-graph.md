@@ -1,6 +1,6 @@
 # RFC-0024: Resource Graph
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -40,7 +40,16 @@ It does not define resource editing mechanics (RFC-0013).
 
 ### The ContentNode
 
-Every piece of content in a project is a ContentNode. Nodes differ by their mutability policy, not by their type.
+Every piece of content in a project is a ContentNode. Nodes differ by their mutability policy,
+not by their type.
+
+Two pairs of fields are worth noticing because an earlier version of this type collapsed each
+into one. **`createdBy` is a kind and an id**, not a bare UUID: "which session" and "which user"
+are different questions and an audit trail that cannot tell them apart cannot answer either
+(RFC-0046). And **`contentVersion` and `rowVersion` are different things** — the first is the
+revision a user sees, the second is the optimistic-concurrency token (RFC-0017). They were once
+one field named `version`, which meant a concurrent write bumped what looked like a user-visible
+revision.
 
 ```kotlin
 data class ContentNode(
@@ -58,10 +67,13 @@ data class ContentNode(
     val contentType: String,           // MIME type
     val sizeBytes: Long,
     val createdAt: Instant,
-    val createdBy: UUID,               // session or user ID
+    val createdByKind: ActorKind,      // SESSION | USER | RUNTIME (RFC-0046)
+    val createdById: String,
     val updatedAt: Instant,
-    val updatedBy: UUID?,
-    val version: Int,                  // increments on each update (for mutable nodes)
+    val updatedByKind: ActorKind?,
+    val updatedById: String?,
+    val contentVersion: Int,           // user-visible revision; increments for VERSIONED nodes
+    val rowVersion: Int,               // optimistic concurrency token (RFC-0017)
     val state: ContentNodeState,
     val tags: List<String>
 )
