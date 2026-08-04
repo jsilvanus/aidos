@@ -117,7 +117,7 @@ misattributed to the model.
 Agent loop (RFC-0008)                One remote provider adapter
 Prompt construction (RFC-0025)       Filesystem tool + Git tool (JGit)
 Trust and taint (RFC-0027)           CLI frontend over the Runtime API
-MCP stdio, desktop only (RFC-0031)
+MCP: stdio on desktop, HTTP anywhere (RFC-0031)
 ```
 
 MCP is here rather than in a later ecosystem phase because it is the first real test of whether

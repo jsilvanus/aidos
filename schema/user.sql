@@ -97,17 +97,24 @@ CREATE TABLE installed_models (
 -- MCP servers are registered here and merely *requested* by projects (RFC-0031).
 CREATE TABLE mcp_servers (
     name             TEXT PRIMARY KEY,
-    command          TEXT NOT NULL,
-    args_json        TEXT NOT NULL DEFAULT '[]',
-    transport        TEXT NOT NULL,                       -- stdio|http
-    endpoint_url     TEXT,
+    transport        TEXT NOT NULL CHECK (transport IN ('stdio','http')),
+    command          TEXT,                                -- stdio only
+    args_json        TEXT NOT NULL DEFAULT '[]',          -- stdio only
+    endpoint_url     TEXT,                                -- http only; https required (RFC-0031)
     profiles_json    TEXT NOT NULL,                       -- where it is available (RFC-0049)
-    secret_refs_json TEXT NOT NULL DEFAULT '{}',          -- env var -> secret id. never values.
+    secret_refs_json TEXT NOT NULL DEFAULT '{}',          -- stdio: env var -> secret id.
+                                                          -- http:  header  -> secret id.
+                                                          -- never values (RFC-0035).
     -- No trust column. A server's results are UNTRUSTED permanently (RFC-0027) and its
     -- authority is the capability rows it holds in a project (D30). The removed
     -- UNVERIFIED/TRUSTED promotion put the word "trusted" on a permanently untrusted process.
     auto_restart     INTEGER NOT NULL DEFAULT 1,
-    registered_at    TEXT NOT NULL
+    registered_at    TEXT NOT NULL,
+
+    -- Each transport needs exactly its own half. An http row with a `command`
+    -- would be a spawnable registration reachable over the network (D17 amended).
+    CHECK (transport <> 'stdio' OR (command      IS NOT NULL AND endpoint_url IS NULL)),
+    CHECK (transport <> 'http'  OR (endpoint_url IS NOT NULL AND command      IS NULL))
 );
 
 -- Reserved. No plugin host in v1 (RFC-0043).

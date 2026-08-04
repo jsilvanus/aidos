@@ -36,10 +36,13 @@ checkpointed execution, and shipping it first would mean shipping none of them p
 | Pre-built index bundles | The phone indexes for itself, or the gate is not testing the thesis. Post-MVP — see RFC-0099 Later |
 | Structural knowledge graph | Needs tree-sitter, a native dependency D27 declines. Co-change analysis, which needs none, is in scope |
 
-**Deliberately still in, despite looking cuttable:** MCP over stdio, desktop-only (D17). It is
-the first real test of whether the tool abstraction can absorb tools the runtime did not write.
-Finding out at Phase 2 is cheap; finding out after every built-in tool has been written against
-the assumption that the runtime authored it is not.
+**Deliberately still in, despite looking cuttable:** MCP, both transports — stdio on desktop,
+streamable HTTP on every profile (D17, amended). It is the first real test of whether the tool
+abstraction can absorb tools the runtime did not write. Finding out at Phase 2 is cheap; finding
+out after every built-in tool has been written against the assumption that the runtime authored
+it is not. HTTP is in because the network is already a used path (M23 routes to remote providers;
+Git fetch and push egress on every profile), and because deferring it would validate the tool
+abstraction on exactly one transport — the one whose threat model is least like a plugin's.
 
 ---
 
@@ -71,7 +74,7 @@ carry text the user did not author into the model's context.
 
 | RFC | Needed by | What is wrong with it |
 |---|---|---|
-| **0031 MCP** | M14 (Phase 2) | Specifies stdio *and* streamable HTTP; D17 says stdio only, desktop only, for the MVP. Trust policy for MCP-sourced tools is a sentence where it needs to be a section — an MCP server is an untrusted subject (RFC-0027) that can also be a capability *requester* (RFC-0055 `user_interactive`), and that interaction is unspecified |
+| **0031 MCP** | *done* | Revised and Accepted 2026-08-04. D30 applied: authority fixed at enable time, no `TRUSTED` promotion, lazy start, and a "what a server may never do" section that settles the untrusted-subject-as-capability-requester interaction (it may not). D17 amended in the same pass: both transports ship, HTTP on every profile |
 | **0015 Knowledge Engine** | M16 (Phase 3) | The blob-hash-keyed index model is settled and correct. Everything above it — ranking, chunking, the query interface, what happens when the index is stale — is not. This is the largest genuine design risk left in the MVP and it sits on the load-bearing gate |
 
 ---
@@ -125,7 +128,7 @@ the model.
 | **M15** | Prompt construction and instructions | 0025, 0016, D22 | Token budget derives from the selected model's context window. Assembly that cannot fit returns to routing once for a larger candidate — a bounded two-phase negotiation, not a loop. An unadopted instruction file does not reach the system turn; `runs.instruction_set_hash` records which set governed the Run |
 | **M16** | Agent loop with trust and taint | 0008, 0027, D6, D7 | The full cycle runs: resolve model → assemble → checkpoint → invoke → validate schema → resolve capability → apply taint → execute → checkpoint. Taint is monotonic within a Run. A tainted Run is denied egress and escalates naming the specific untrusted content. The model never confirms its own success |
 | **M17** | Injection suite | 0027, 0038 | A corpus of hostile repository content — README, source comments, commit messages, tool output, MCP responses — none of which escalates authority. New attacks are added to the corpus, not fixed in a special case |
-| **M18** | MCP over stdio, desktop only | 0031, D17, D23 | An off-the-shelf MCP server's tools appear in the broker with `EffectKind` and `RecoveryClass` assigned, run under a capability, and taint the Run as `UNTRUSTED`. An MCP server cannot approve its own capability request (RFC-0055 `user_interactive`). *Requires RFC-0031 revised and accepted first* |
+| **M18** | MCP, both transports | 0031, D17, D23 | An off-the-shelf MCP server's tools appear in the broker with `EffectKind` and `RecoveryClass` assigned, run under a capability, and taint the Run as `UNTRUSTED`. An MCP server cannot raise a capability request at all (D30). **stdio** on desktop with a scrubbed child environment; **streamable HTTP** on every profile — HTTPS enforced, certificates validated, cross-host redirects refused, every call `Egress`, and a tainted Run denied the transport. Nothing spawns or connects on project open |
 | **M19** | End-to-end | — | **G2.** Create project → task → model → tool → commit → artifact → audit, from the CLI, in one command sequence, with the audit trail reconstructing it afterwards |
 
 ### Phase 3 — Offline proof · the load-bearing phase
@@ -196,6 +199,10 @@ Cut in this order, and stop when the thesis sentence is still true:
 1. **M33 voice/STT** — not in the sentence.
 2. **M18 MCP** — expensive to cut, because the information it buys arrives late instead. Cut it
    only if Phase 2 is otherwise at risk, and cut it as a *deferral to Phase 5*, not a deletion.
+   The transports can be cut separately: dropping **HTTP** keeps the tool-abstraction finding and
+   loses MCP on MOBILE; dropping **stdio** keeps MCP on every profile and loses the subprocess
+   lifecycle. Prefer cutting stdio — HTTP is the transport that reaches the phone, and the
+   scrubbed-environment work it skips is already needed for the shell tool.
 3. **M34 F-Droid** — sideload the APK for G4 and publish after.
 4. **M25 retention** to a fixed cap with a manual purge — the honest version is real work and a
    90-day storage problem is not a launch blocker.

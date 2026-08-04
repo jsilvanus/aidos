@@ -29,9 +29,9 @@ Without a unified abstraction, the runtime would need to hardcode knowledge of e
 2. **Enforcing permissions**: Each tool access is checked against capabilities.
 3. **Logging execution**: Every tool invocation is logged.
 4. **Publishing events**: Tool completion triggers events for interested sessions.
-5. **Enabling extensibility**: MCP servers register as tools (RFC-0031, desktop-only in the
-   MVP per D17). A plugin host is **not** in v1 (D18), so RFC-0060 describes a surface nothing
-   implements yet.
+5. **Enabling extensibility**: MCP servers register as tools (RFC-0031 — stdio on desktop,
+   streamable HTTP on every profile, both in the MVP per D17). A plugin host is **not** in v1
+   (D18), so RFC-0060 describes a surface nothing implements yet.
 
 ## Goals
 
@@ -362,7 +362,7 @@ MVP includes:
 Not included:
 
 - HTTP tool, notification tool.
-- MCP adapter (RFC-0031 — desktop only when it lands).
+- MCP adapter (RFC-0031 — stdio on desktop, HTTP on every profile).
 - `CHECKABLE` recovery probes.
 - Read caching across steps.
 

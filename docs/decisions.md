@@ -221,7 +221,7 @@ knowledge; pairing gives access to compute.
 device-local sequence numbers, no autoincrement IDs in those two structures.
 **RFCs:** 0099, 0046, 0053.
 
-### D17 — MCP ships in the MVP, desktop only · `SETTLED`
+### D17 — MCP ships in the MVP: stdio on desktop, HTTP on every profile · `SETTLED`
 
 MCP stdio lands with the first vertical slice (Phase 2), not in a later ecosystem phase.
 
@@ -233,7 +233,45 @@ finding worth having in month four rather than month fourteen.
 **Consequence to accept:** the MVP is no longer purely first-party. The MCP trust model becomes
 MVP-critical rather than future hardening.
 **Does not change D18.**
-**RFCs:** 0031, 0099.
+
+**Amended 2026-08-04 — streamable HTTP is in the MVP too, on every profile.** This decision was
+originally titled *"MCP ships in the MVP, desktop only"* and scoped the MVP to stdio. That scope
+limit is lifted: HTTP transport ships in Phase 2 alongside stdio, and MCP is therefore available
+on MOBILE when online.
+
+The reason the limit existed was platform reality — Android cannot spawn arbitrary binaries, so
+*stdio* MCP genuinely does not exist there — and it was over-applied to MCP as a whole. Network
+connectivity is already a used, decided path in the MVP: M23 routes to remote model providers as
+user-owned policy, and Git fetch/push egress on every profile. Withholding HTTP MCP did not keep
+the network boundary closed; it only kept one tool family from crossing a boundary that others
+already cross. RFC-0049 and RFC-0050 had in fact already modelled HTTP MCP as available
+everywhere — `AvailabilityTier.NETWORKED` names it by name — so the corpus was written for this
+and only the MVP phasing said otherwise.
+
+**What it costs, stated rather than discovered:**
+
+- **Every call to an HTTP server is `Egress` by construction.** A stdio server can hold `Read`
+  and no `Egress`; an HTTP server reaches the network to do anything at all. Consequently a
+  tainted Run cannot call an HTTP MCP server *at all* under D7, where it could still call a stdio
+  one for a read. The remembered per-`(server, project)` egress grant (D30) carries the
+  ergonomics.
+- **Credentials move from the spawn environment to request headers.** There is no child process,
+  so `secret_ref` resolves into an `Authorization` header. The promise that a secret never enters
+  project configuration or the audit log has to hold on that path too.
+- **The endpoint is a new trust surface.** A URL in a user-scope file is somewhere the runtime
+  will POST project content. HTTPS is required, certificates are validated, and redirects to a
+  different host are refused — otherwise the endpoint is one redirect away from an exfiltration
+  target.
+- **The scrubbed-environment defence does not apply, and does not need to.** With no child
+  process there is nothing to hand a runtime token to, and the server cannot reach the local
+  filesystem or the runtime socket at all. The risk moves rather than growing: from *a local
+  process holding your privileges* to *your project content on someone else's machine*.
+
+**The invariant that keeps the thesis testable:** the core mobile use case must not depend on MCP
+at all. An unreachable server is a degraded tool family (RFC-0049), never a failure, and G3 is
+measured with the network off to prove nothing on the thesis path degrades without it.
+
+**RFCs:** 0031, 0099, 0049, 0050.
 
 ### D18 — No plugin host in v1; WASM-only when it lands · `SETTLED`
 
@@ -646,3 +684,4 @@ None.
 | 2026-08-03 | D27 settled: native dependencies only where nothing else works and a crash is bounded. D28 settled: GGUF via llama.cpp, format per model kind. |
 | 2026-08-04 | Legacy RFC audit complete: 46 Accepted, 15 Draft, RFC-0099 excepted. |
 | 2026-08-04 | D29 settled: the knowledge engine is a consumed library; no provider SPI; committed content only; queries report coverage. D30 settled: an MCP server's authority is fixed at enable time; no `TRUSTED` promotion; nothing spawns on project open. |
+| 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |

@@ -41,6 +41,7 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
 - [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
 - [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
+- [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
 - [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
 
 ## Next
@@ -61,6 +62,8 @@ require the user. 0015 is the largest of the three and depends on reading an ext
       states the five prohibitions; lifecycle is lazy start and idle stop; the Abstract agrees
       with the MVP scope. Both Open Questions closed. `mcp_servers.trust` dropped from
       `schema/user.sql` in the same commit — it existed only to hold the removed promotion.
+      **Then D17 amended** in a second commit at the user's direction: both transports ship, HTTP
+      everywhere, with the egress/TLS/redirect/credential-path consequences written out.
 
 - [ ] **RFC-0015 — rewrite against D29 and the port spec.** No longer blocked: the port
       specification exists at `docs/design/kotlin-port.md` on branch
@@ -124,6 +127,14 @@ to design around it.
 only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
+
+**A scope limit written as a platform fact outlives the platform fact.** D17 said MCP was
+"desktop only" in the MVP because Android cannot spawn a subprocess — true of *stdio*, and it
+silently became the rule for MCP as a whole, including the transport that works fine on a phone.
+It read as a security posture for months and was really an observation over-applied. The tell was
+that RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere and nobody
+noticed the corpus disagreeing with the decision. When a decision limits scope, check whether the
+limit follows from the reason given or is broader than it.
 
 **Removing a concept means removing its column.** D30 deleted the MCP `TRUSTED` promotion, and
 `mcp_servers.trust TEXT NOT NULL DEFAULT 'UNVERIFIED'` was still sitting in `schema/user.sql`
