@@ -252,9 +252,11 @@ and only the MVP phasing said otherwise.
 
 - **Every call to an HTTP server is `Egress` by construction.** A stdio server can hold `Read`
   and no `Egress`; an HTTP server reaches the network to do anything at all. Consequently a
-  tainted Run cannot call an HTTP MCP server *at all* under D7, where it could still call a stdio
-  one for a read. The remembered per-`(server, project)` egress grant (D30) carries the
-  ergonomics.
+  tainted Run needs per-call approval, naming the tainting source, for *every* call to an HTTP
+  server under D7 — where it could still call a stdio one for a read with no friction. Egress is
+  attenuated to per-call approval rather than denied; denial is reserved for out-of-project
+  mutation, secrets, and wider-scope workers (RFC-0027). The remembered per-`(server, project)`
+  grant (D30) carries the ergonomics on the untainted path.
 - **Credentials move from the spawn environment to request headers.** There is no child process,
   so `secret_ref` resolves into an `Authorization` header. The promise that a secret never enters
   project configuration or the audit log has to hold on that path too.
