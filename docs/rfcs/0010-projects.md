@@ -1,6 +1,6 @@
 # RFC-0010: Projects
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -79,14 +79,28 @@ Mutable project knowledge: architecture documents, coding standards, roadmaps, m
 
 Immutable outputs: plans, patches, reports, transcripts, generated code, test results. Artifacts record provenance (which session created them, from which intent, at what time). They are append-only and auditable.
 
-#### Git Repositories
+#### One Git repository
 
-One or more Git repositories containing versioned code and content. A project may have a monolithic repository or multiple repositories (via Git submodules or worktrees). Repositories are the source of truth for code and versioned resources.
+**A project is exactly one Git repository.** Not one or more, and not a repository plus
+worktrees.
+
+The rest of the architecture already assumed this and this RFC did not: `repo_fingerprints` is
+keyed `project_id PRIMARY KEY`, so external-mutation detection has one fingerprint per project
+(RFC-0053); reconciliation speaks of *the* repository throughout; and worker isolation is
+treeless refs inside the one repository rather than additional checkouts. A second repository
+would need a second fingerprint, a second reconciliation state, and an answer to which one a
+relative path means.
+
+Git **submodules** work, because to Git they are one repository with pointers — Aidos sees the
+superproject's tree and does not descend. A user wanting several repositories worked on together
+opens several projects; the inbox aggregates across them (RFC-0050).
 
 #### Configuration
 
 Project-wide settings:
-- AI model preferences and API keys.
+- AI model preferences. **Not API keys** — secrets live in the user-scope vault and never in
+  project storage (RFC-0035, RFC-0017). `aidos.toml` is Git-tracked, so a key written here would
+  be committed, pushed, and in every clone.
 - Default permissions and security policies.
 - Integration settings (MCP servers, webhooks, external tools).
 - Session templates and defaults.
@@ -348,30 +362,9 @@ is self-describing, so the path is never authoritative.
 
 ## Data Model (Conceptual)
 
-```
-Project {
-  id: UUID                          # Unique project identifier
-  name: String                      # Human-readable name
-  description: String?
-  created_at: Timestamp
-  owner: UserId?                    # (Single-user MVP: implicit)
-  
-  storage: ProjectStorage {
-    git_root: Path                  # Root directory (Git repository)
-    database: DatabaseRef           # SQLite database
-  }
-  
-  configuration: ProjectConfig      # (see above)
-  
-  metadata: Map<String, Any>?
-}
-```
-
-A `Project` record deliberately does **not** embed its sessions, content nodes, or artifacts.
-An earlier version modelled `resources: Map<ResourceId, Resource>` and
-`artifacts: Map<ArtifactId, Artifact>` as fields, which would require loading every artifact in
-a project's history into memory to open it — on a phone. Contents are queried by `project_id`,
-paged, never materialized wholesale.
+Superseded by the canonical DDL above. An earlier version of this RFC carried a second,
+prose-shaped `Project { ... }` block here that had drifted from the SQL a hundred lines earlier —
+two definitions of one table in one document, which is the drift this corpus keeps correcting.
 
 ## Lifecycle
 

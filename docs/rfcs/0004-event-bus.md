@@ -1,6 +1,6 @@
 # RFC-0004: Event Bus
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -308,7 +308,13 @@ Rules:
 
 ### Event Persistence
 
-Events are persisted in the order they occur. This creates a complete audit trail and enables replay.
+Events are persisted in the order they occur, which is what makes **audit reconstruction**
+possible — what happened, in what order, caused by what.
+
+It does **not** enable replay. Re-executing the log does not reproduce the state, because model
+sampling, provider versions, wall-clock, filesystem races, user-driven Git changes and MCP
+responses are all non-deterministic (D1). See "Audit reconstruction, not deterministic replay"
+below; an earlier version of this sentence promised replay and the promise was never true.
 
 **Storage**: Events are stored in the project's SQLite database with the following structure:
 
