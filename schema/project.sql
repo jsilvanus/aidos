@@ -136,7 +136,11 @@ CREATE TABLE capabilities (
     scope_json           TEXT NOT NULL,
     constraints_json     TEXT NOT NULL,                   -- includes budget (RFC-0028)
     issued_at            TEXT NOT NULL,
-    issued_by            TEXT NOT NULL,
+    -- Two columns, never one polymorphic identifier (RFC-0046). A grant may be
+    -- issued by the user or delegated by a holder, so an untyped `issued_by`
+    -- was ambiguous exactly where attribution matters.
+    issued_by_kind       TEXT NOT NULL,                   -- USER|SESSION|WORKER|RUNTIME
+    issued_by_id         TEXT NOT NULL,
     parent_capability_id TEXT,
     allows_delegation    INTEGER NOT NULL DEFAULT 0,
     expires_at           TEXT,
@@ -323,6 +327,7 @@ CREATE TABLE runs (
     taint_level          TEXT NOT NULL DEFAULT 'TRUSTED', -- RFC-0027, monotonic
     taint_source_node_id TEXT,
     platform_profile     TEXT NOT NULL,                   -- RFC-0049
+    device_id            TEXT NOT NULL,                   -- which machine ran this (RFC-0046)
     network_available    INTEGER NOT NULL DEFAULT 0,
     degraded_tools       TEXT NOT NULL DEFAULT '[]',
     instruction_set_hash TEXT,                            -- RFC-0016; NULL = none adopted
@@ -543,6 +548,12 @@ CREATE TABLE memory_entries (
                      CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                       -- never '[]' (RFC-0026)
+    -- Who wrote it, distinct from what justifies it (RFC-0046). `confidence`
+    -- says how the claim was arrived at; this says which actor recorded it, so
+    -- a USER_STATED fact and a session's inference are told apart by origin
+    -- rather than by trusting the confidence field alone.
+    created_by_kind  TEXT NOT NULL,                       -- USER|SESSION|WORKER|RUNTIME
+    created_by_id    TEXT NOT NULL,
     confidence       TEXT NOT NULL,                       -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
     created_at       TEXT NOT NULL,

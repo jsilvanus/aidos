@@ -20,7 +20,8 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done, and so
 is the RFC backlog.** All three rewrites have landed — 0052, 0031, 0015 — and 0015's rewrite
-closed the last item that was blocking a milestone. **48 Accepted, 13 Draft**, RFC-0099 excepted.
+closed the last item that was blocking a milestone. **49 Accepted, 12 Draft** — RFC-0046 was
+audited on top, after a check showed Draft RFCs were governing frozen Phase-0 artifacts.
 `docs/decisions.md` has no open questions: D31 and D32 were found during this work and settled,
 and D17 was amended. **Phase 1 (M1) is the next work, and it waits on the user's go-ahead.**
 Branch: `claude/aidos-rfc-revisions-3ido05`
@@ -45,6 +46,7 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **D31 settled (user decision, 2026-08-04)** — an MCP server's *tool description* is third-party prose that lands in RFC-0025's **reserved** `toolDescriptors` section. Taint cannot govern it (descriptors enter at step 0, so every Run in an MCP project would begin tainted and approval never clears taint), so admission does: prose is **fenced** in the structural sandbox with attribution, and each operation is **adopted by hash** over `(name, description, inputSchema)` at enable time. Unadopted operations are absent from the catalog and never interrupt a Run. New table `mcp_operation_adoptions`
 - [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
 - [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
+- [x] **RFC-0046 audited and Accepted** — it was Draft while `runtime/kernel/Ids.kt`'s `ActorRef` and four columns of canonical DDL cited it, which no milestone had caught because no milestone *names* it. Four defects: `runs` had no `device_id` though the RFC reserves it; `memory_entries` had no attribution at all; `capabilities.issued_by TEXT` was the untyped identifier the RFC exists to eliminate; and the RFC put device identity in a JSON file while `schema/` has a `device_identity` table. Three fixed in `schema/`, the fourth in the RFC — the schema was right
 - [x] **RFC-0015 rewritten and Accepted** (D29) — 777 lines → 362. The knowledge engine is a consumed library, and the consumption contract is now concrete because `gitsema-kotlin`'s constructor *is* the ownership split: git access, embedding provider, and all three stores are injected, so "Aidos owns the location, the lifecycle, and the resource envelope" holds by construction rather than by convention. Every query reports coverage, composed in Aidos's adapter. **The ~150 MB vector-materialisation constraint is retired** — the port scores through a memory-mapped int8 file with a bounded top-K heap, O(topK) not O(stored vectors)
 - [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
 
@@ -161,6 +163,15 @@ It read as a security posture for months and was really an observation over-appl
 that RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere and nobody
 noticed the corpus disagreeing with the decision. When a decision limits scope, check whether the
 limit follows from the reason given or is broader than it.
+
+**"Which RFCs does the MVP depend on" is not the same question as "which RFCs does a milestone
+name".** Every RFC named by an MVP milestone was Accepted — that check passes and is not the one
+that mattered. The one that mattered was: which *Draft* documents are cited by `schema/` and
+`runtime/kernel/`, the two artifacts Phase 0 froze. RFC-0046 was governing `ActorRef` and four DDL
+columns while unaudited, and auditing it found three schema defects. Two Draft RFCs are still
+cited by canonical DDL — 0026 (`memory_entries`) and 0047 (`projects.project_type`). **Grep the
+frozen artifacts for Draft-RFC citations before trusting a milestone table's RFC column**: that
+column lists what a milestone *builds*, not what constrains it.
 
 **Removing a concept means removing its column.** D30 deleted the MCP `TRUSTED` promotion, and
 `mcp_servers.trust TEXT NOT NULL DEFAULT 'UNVERIFIED'` was still sitting in `schema/user.sql`

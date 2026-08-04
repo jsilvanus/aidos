@@ -1,6 +1,6 @@
 # RFC-0046: Identity, Actors, and Future Collaboration
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -49,7 +49,7 @@ An actor is anything that can cause an audited action.
 ```kotlin
 data class ActorRef(
     val kind: ActorKind,
-    val id: UUID
+    val id: String        // a UUIDv7, carried as a String like every ID (RFC-0054)
 )
 
 enum class ActorKind {
@@ -66,10 +66,24 @@ enum class ActorKind {
 different questions — *who did this* versus *who may do this* — but an actor that cannot be a
 capability subject cannot take an authorised action, so the sets align by construction.
 
-Every attributed record carries `(actor_kind, actor_id)` as two columns, never one polymorphic
-identifier. The pattern this replaces — `created_by TEXT` meaning "session or user ID" — made it
-impossible to join, impossible to constrain with a foreign key, and ambiguous whenever a UUID
-could be either.
+**Every attributed record carries a typed pair — a kind column and an id column — never one
+polymorphic identifier.** The pattern this replaces, `created_by TEXT` meaning "session or user
+ID", made it impossible to join, impossible to constrain with a foreign key, and ambiguous
+whenever a UUID could be either.
+
+**The pair is named for the question the table answers, not uniformly `actor_*`.** An earlier
+version of this RFC mandated `actor_kind`/`actor_id` everywhere, which the schema does not do and
+should not: the three questions are genuinely different, and collapsing their names would lose
+that.
+
+| Table | Columns | Question |
+|---|---|---|
+| `audit_log` | `actor_kind` / `actor_id` | who *took this action* |
+| `content_nodes`, `intent_nodes`, `memory_entries` | `created_by_kind` / `created_by_id` | who *authored this record* |
+| `capabilities` | `subject_kind` / `subject_id` | who *may act* (RFC-0018), plus `issued_by_kind` / `issued_by_id` for who granted it |
+
+What is invariant is the *shape*: two columns, one of them a closed enum drawn from `ActorKind`.
+What varies is the noun, and it varies on purpose.
 
 `RUNTIME` matters more than it looks. Crash recovery transitions Runs, migrations rewrite rows,
 compaction discards payloads. Attributing those to the user would be a lie, and attributing them
@@ -88,6 +102,13 @@ data class DeviceIdentity(
 )
 ```
 
+It is stored as a **single row in `device_identity` in `user.db`** (user scope, RFC-0054), not
+as a JSON file — an earlier version of this RFC said `~/.aidos/identity/device.json`, which the
+canonical schema contradicts, and the schema is right. A one-row table gets the same
+transactionality, backup, and migration handling as everything else at user scope; a sidecar JSON
+file would be the only piece of runtime state with its own read/write path and its own corruption
+mode.
+
 Local, self-assigned, never registered anywhere. It exists because a project directory can be
 copied between devices (RFC-0041) and "which machine did this Run happen on?" is a question the
 audit trail should answer — particularly given that the same project is expected to move between
@@ -101,8 +122,8 @@ local audit records and in exports the user chooses to make.
 
 Three things, all cheap now and expensive later:
 
-1. **`actor_kind` / `actor_id` on every attributed record.** In use today with a single user;
-   the shape does not change when there are several.
+1. **A typed actor pair on every attributed record**, named per the table above. In use today
+   with a single user; the shape does not change when there are several.
 2. **`device_id` on audit records and Runs.** In use today for provenance.
 3. **A nullable `signature` column on audit records.** Unused, unpopulated, and unread in v1.
    It exists so that a future signed audit trail does not require rewriting the table that must
@@ -135,19 +156,22 @@ arguably sufficient for the intended audience).
 
 ## Data Model
 
+The canonical DDL is `schema/`; this restates only the shape it commits to.
+
 ```sql
--- Applied to audit_log, content_nodes, capabilities, memory_entries, intent nodes.
--- Two columns, never one polymorphic identifier.
-actor_kind TEXT NOT NULL,        -- 'USER' | 'SESSION' | 'WORKER' | 'MCP_SERVER' | 'RUNTIME'
-actor_id   TEXT NOT NULL,
-device_id  TEXT NOT NULL,
+-- The typed pair, named per the table above. The kind column is always drawn
+-- from ActorKind; PLUGIN never appears in v1 (RFC-0043).
+<noun>_kind TEXT NOT NULL,       -- 'USER' | 'SESSION' | 'WORKER' | 'MCP_SERVER' | 'RUNTIME'
+<noun>_id   TEXT NOT NULL,
 
--- Audit log only. Reserved; never written in v1.
-signature  TEXT
+-- Provenance of place, on audit_log and runs.
+device_id   TEXT NOT NULL,
 
--- ~/.aidos/identity/device.json  (user scope, RFC-0054)
--- { "device_id": "...", "display_name": "...", "platform_profile": "MOBILE", ... }
+-- audit_log only. Reserved; never written in v1.
+signature   TEXT
 ```
+
+`device_identity` is one row in `user.db`, keyed `CHECK (id = 1)`.
 
 ## Security
 

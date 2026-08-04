@@ -29,12 +29,16 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (48).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (49).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (13).** 0012 Intent Graph · 0026 Model Memory · 0033 Shell · 0041 Export/Import ·
-0043 Plugin Packaging · 0046 Identity · 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK ·
-0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+**Draft (12).** 0012 Intent Graph · 0026 Model Memory · 0033 Shell · 0041 Export/Import ·
+0043 Plugin Packaging · 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0099 Roadmap ·
+and the reviews. Genuinely unsettled or post-MVP.
+
+**0046 Identity left Draft on 2026-08-04.** No milestone names it, but `ActorRef` in
+`runtime/kernel/` and four columns of canonical DDL cite it — a Draft document governing frozen
+contracts. The audit found four defects; three were fixed in `schema/`, one in the RFC.
 
 **0015 and 0031 left Draft on 2026-08-04**, rewritten against the decisions that had been
 settled ahead of them (D29 and D30) and accepted. Both carried a banner naming what in them was
