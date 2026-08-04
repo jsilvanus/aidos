@@ -1,6 +1,6 @@
 # RFC-0034: Filesystem
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -228,43 +228,49 @@ Result:
   moved: Boolean
 ```
 
-### Virtual Resources
+### `.git/` is readable and not writable
 
-Some files are generated at runtime (not persisted):
+**No `Mutate` effect may target a path inside `.git/`.** Reads are allowed; every write, move,
+and delete is refused with a named error that says why, so the model is told the boundary rather
+than meeting a mysterious failure.
 
-```
-Virtual file: ".aidos/manifest.json"
-  - Generated from project state
-  - Read-only (write fails)
-  - Fresh on every access
-  
-Virtual directory: ".aidos/diagnostics"
-  - Contains AI diagnostics, logs
-  - Auto-generated from runtime state
-  
-Sessions can:
-  - Read virtual files
-  - List virtual directories
-  - Cannot write/delete virtual resources
-```
+This is an escalation boundary, not tidiness. An agent that can write inside `.git/` escapes
+every other control by writing a file and waiting:
 
-### Conflict Detection
+| Path | What it buys an attacker |
+|---|---|
+| `.git/hooks/pre-commit` | arbitrary code execution the next time **the user** runs `git`. RFC-0053's "Aidos never runs hooks" protects Aidos and does nothing here |
+| `.git/config` | `core.fsmonitor` and `core.pager` execute commands; so do aliases. Changing a remote `url` silently redirects the next push |
 
-When writing, detect conflicts:
+Legitimate changes to Git's own state go through the **Git tool** (RFC-0032), which offers typed
+operations with previews and audit records. That is more work than a raw write and it is the
+right trade: a config change should be a reviewable operation, not a blind file write.
 
-```
-Session A writes: src/module.rs
-Session B simultaneously writes: src/module.rs
+`.gitignore` is unaffected — it lives in the working tree, not in `.git/`.
 
-Tool Broker detects conflict:
-  1. Both sessions see the same modification time initially
-  2. Session A's write succeeds (creates version A)
-  3. Session B's write fails with ConflictError
-  4. Session B can:
-     - Read latest version
-     - Merge manually
-     - Retry with overwrite
-```
+### No virtual filesystem
+
+The previous version described `.aidos/manifest.json` and `.aidos/diagnostics` as *virtual* —
+generated on read, never persisted, writes refused. That is removed.
+
+Nothing in the kernel or the schema implements a virtual layer, and building one would create a
+second way to ask the runtime questions, with different semantics, reachable by a model. Project
+state is a `RuntimeClient` call (RFC-0052); a diagnostic bundle is something the user exports
+(RFC-0037). `.aidos/` is real runtime state on disk, and the filesystem tool does not serve it.
+
+### There is no write-conflict protocol
+
+The previous version described two sessions writing one file simultaneously, the second failing
+with `ConflictError`. That race cannot arise: at most one *effectful* Task is `RUNNING` per Run
+(D14), and across Runs the worktree is the lock (D15). Two sessions do not reach the same file at
+the same moment.
+
+What genuinely happens is **the user editing a file outside Aidos** — in an editor, or by
+switching branches. That is external mutation, detected by repository fingerprint and handled by
+reconciliation (RFC-0053), not by a conflict protocol inside the filesystem tool.
+
+Building conflict detection here would mean maintaining a mechanism for a race the concurrency
+model prevents, while the real case went to a different subsystem.
 
 ### Metadata Operations
 
@@ -335,9 +341,12 @@ FilesystemLog {
 
 Filesystem access is protected:
 
-1. **Path restriction**: All paths validated against project root.
-2. **Capability checks**: Operations gated by capabilities.
-3. **Symlink handling**: Symlinks resolved; targets must stay in project.
+1. **Escape is structural**: a path that could leave the root cannot be constructed (`RelPath`),
+   so there is no per-call-site check to forget. Symlinks resolve at open and are re-checked
+   against the handle's root, in one place.
+2. **Capability checks**: authority is a named capability exercised, not a permission string
+   matched (RFC-0018).
+3. **`.git/` is not writable**, on any profile, by any session — see above.
 4. **Content validation**: Detect and reject invalid content (future).
 5. **Audit logging**: All access logged.
 6. **Atomic writes**: Prevent partial/corrupted writes.
@@ -451,13 +460,26 @@ Write validation:
   If invalid: Reject with ValidationError
 ```
 
+## Resolved
+
+- **Symlinks** — followed for reads, re-checked against the handle root at open. Not created.
+- **`.git/` writes** — refused (2026-08-03).
+- **Virtual resources** — not built (2026-08-03).
+- **Read caching across steps** — not in the MVP (2026-08-03). A cached read can serve content
+  the user changed underneath it, which is the whole reason RFC-0053's reconciliation exists. If
+  reads later prove expensive, key any cache on the **blob hash** rather than the path, so it
+  invalidates for free.
+- **Concurrent writes to one file** — cannot arise as described. At most one *effectful* Task is
+  `RUNNING` per Run (D14) and the worktree is the lock across Runs (D15), so the two-sessions-
+  race the previous version described is prevented rather than detected. What remains is the user
+  editing a file outside Aidos, which is reconciliation (RFC-0053), not conflict detection.
+- **Search indexing** — RFC-0015's concern, not this tool's.
+
 ## Open Questions
 
-- Should symbolic links be supported? (Security risk vs. convenience)
-- Should file permissions be mutable? (Or always 0644?)
-- How should very large files be handled (streaming vs. full)?
-- Should there be a trash/recycle bin before permanent deletion?
-- Should file content be indexed for search (RFC-0015)?
-- How should concurrent writes to the same file be resolved?
-- Should there be a "watch" capability for reactive file changes?
-- Should the filesystem tool support file compression?
+- Should file permissions be mutable, or always `0644`? Mutable permissions are an escalation
+  surface for very little benefit.
+- Very large files: streaming reads versus refusing above a threshold. RFC-0045's budgets should
+  decide it with a number.
+- Trash before permanent deletion. Attractive given `delete` is irreversible, and it is a second
+  storage cost on the device with the least of it.

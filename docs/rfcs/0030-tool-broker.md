@@ -441,8 +441,15 @@ interface and could not be deferred past the first tool.
   Execution Graph (RFC-0019) where it is meaningful, and `preview()` plus Git history covers
   the practical need for the common case.
 
+- **Tool versioning is resolved silently by the broker** (2026-08-03), not exposed as a
+  different `ToolDescriptor` per version. The version is recorded on the attempt for provenance.
+  A model that can see tool versions will condition on them, and then behaviour depends on a
+  number nobody meant to be an interface.
+- **`Read` results are not cached across steps in the MVP** (2026-08-03). A cached read can serve
+  content the user changed underneath it, which is the whole reason RFC-0053's reconciliation
+  exists. Measure first; if reads prove expensive, key any cache on the **blob hash** rather than
+  the path, so it invalidates for free.
+
 ## Open Questions
 
-- Should tool versioning be exposed to the model (different `ToolDescriptor` per tool version),
-  or resolved silently by the broker?
-- Should `Read` operations be cached across steps within a Run, and if so keyed on what?
+None.
