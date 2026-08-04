@@ -262,6 +262,25 @@ match real patterns.
 Not in MVP: property-based testing, fuzzing of tool arguments, chaos testing, UI tests,
 performance benchmarks.
 
+### Generated documentation is guarded by a staleness test
+
+Where a document is derived from a source of truth in the codebase, it is **generated**, and a
+test fails when the committed copy no longer matches what the generator produces.
+
+This is already the pattern for the schema — `schema/check.py` runs in CI and fails when an RFC
+names a table the schema does not define — and it is why that particular class of drift stopped.
+It should be the pattern wherever the same shape appears:
+
+| Generated from | Guarded copy |
+|---|---|
+| `schema/*.sql` | DDL quoted in RFCs |
+| `runtime/kernel/` | interface listings quoted in RFCs |
+| tool registry | `resultGuidance` and tool docs surfaced to a model (RFC-0030) |
+
+The rule is not "keep the docs updated". It is **make staleness fail a build**, because the
+alternative is a document that looks current and is not — which is precisely how this corpus
+came to have four items marked addressed that were not.
+
 ## Future Work
 
 Property-based tests for path resolution and budget arithmetic — both are pure functions with

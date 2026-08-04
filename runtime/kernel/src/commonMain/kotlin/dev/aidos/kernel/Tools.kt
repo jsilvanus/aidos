@@ -16,6 +16,24 @@ data class ToolDescriptor(
     val description: String,
     val inputSchema: JsonObject,
 
+    /**
+     * How to *read* this operation's output — what is significant, useful thresholds, caveats,
+     * and what a citation should look like.
+     *
+     * Distinct from [description], which says how to *call* it. A knowledge tool returning
+     * ranked matches with similarity scores is the clearest case: without guidance a model
+     * treats `0.4` as a finding, and with it treats it as weak evidence. That difference is D6
+     * — a model confirming its own success on evidence that does not support it.
+     *
+     * Emitted with the tool *result*, not with the tool definition, so it stays out of the
+     * MCP-shaped surface above (D23).
+     *
+     * **Runtime-authored, and `TRUSTED` accordingly.** A tool never supplies its own — least of
+     * all an MCP server, which is an `UNTRUSTED` subject (RFC-0027) and would otherwise be
+     * telling the model how to weigh its own output.
+     */
+    val resultGuidance: String? = null,
+
     // Runtime-side. Never sent to the model.
     val effect: EffectKind,
     val requiredPermission: Permission,

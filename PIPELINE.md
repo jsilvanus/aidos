@@ -18,7 +18,7 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 ## Status
 
-Link 7 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
+Link 8 · 2026-08-03 · Phase 0 complete, Phase 1 not started. Legacy RFC audit in progress.
 Branch: `claude/aidos-architecture-review-miqn7p`
 
 ## Done
@@ -100,6 +100,15 @@ aimed at the highest-authority position in the prompt, and the injection defence
 were guarding a different door. The fix is *adoption* — a set does not steer a model until a
 human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
 carry content from outside the user's authorship into the model's context.
+
+**Tool descriptions are two halves, and the second one has no other home.** gitsema splits them:
+`guideTools.ts` (1,814 lines) says how to *call* each capability, `interpretations.ts` (695) says
+how to *read* the result — thresholds, caveats, what a citation should look like — and a
+`docsSync` test stops the two drifting from the generated skill file. Aidos had only the first
+half; `ToolDescriptor.resultGuidance` is the second. It is runtime-authored and TRUSTED, emitted
+with the *result* rather than the definition, and a tool never supplies its own — an MCP server
+writing its own interpretation guidance would be an UNTRUSTED subject telling the model how to
+weigh its own evidence.
 
 **The knowledge engine comes from outside.** gitsema is a content-addressed semantic index
 already keyed on blob hash — the same identity model RFC-0015 adopted, which is not a

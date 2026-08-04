@@ -260,6 +260,32 @@ Sessions can decide whether to:
 - **Escalate**: Report error to user.
 - **Ignore**: Proceed despite failure.
 
+### Telling the model how to read a result
+
+`ToolDescriptor.description` and `inputSchema` say how to **call** an operation. Nothing said how
+to **read** what comes back, and for some tools that is the harder half.
+
+A knowledge query returning ranked matches with similarity scores is the clear case. A score of
+`0.4` is weak evidence; a model with no guidance reports it as a finding. That is D6 in a new
+costume — the model confirming its own success on evidence that does not support it — and it is
+not fixed by a better `description`, because the problem appears after the call, not before it.
+
+So `ToolDescriptor` carries **`resultGuidance`**: a short, runtime-authored statement of what the
+result shape means, what is significant, useful thresholds, caveats, and what a citation should
+look like. It is emitted **with the result**, not with the tool definition, so the MCP-shaped
+surface (D23) is unchanged and no server sees a field it does not understand.
+
+**It is runtime-authored and `TRUSTED`, and a tool never supplies its own.** An MCP server is an
+`UNTRUSTED` subject (RFC-0027); letting one describe how to weigh its own output would hand an
+untrusted party the interpretation of its own evidence. For MCP-sourced tools `resultGuidance` is
+either absent or written by Aidos.
+
+**Prior art worth copying, not just referencing.** `jsilvanus/gitsema` keeps exactly this split —
+`guideTools.ts` for how to call, `interpretations.ts` for how to read — as one registry feeding
+three consumers, with a `docsSync` test that fails when the committed skill file drifts from the
+source of truth. That discipline is the same one `schema/check.py` enforces here, and it is worth
+carrying over along with the content (RFC-0038).
+
 ## Data Model (Conceptual)
 
 ```
