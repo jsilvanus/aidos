@@ -472,6 +472,79 @@ eyes-free case.
 
 ---
 
+### D27 — Native dependencies: only where nothing else works and a crash is bounded · `SETTLED`
+
+**The rule.** Accept a native dependency only when **both** hold:
+
+1. **No viable pure-JVM alternative exists** — not "none is as fast", but none is good enough.
+2. **A crash is bounded by machinery that already exists**, so a segfault degrades rather than
+   destroys.
+
+This is the counterpart to D4, and the pair is the policy. D4 rejected libgit2-via-JNI for Git
+on grounds — per-ABI builds, contributor build complexity, a native crash surface in a
+safety-critical component — that apply word for word to an inference engine. The tests above are
+why the answers differ:
+
+| | Pure-JVM alternative? | Blast radius of a crash |
+|---|---|---|
+| **Git** | **Yes** — JGit, good enough | Corrupted history. Unbounded, unrecoverable |
+| **Inference** | **No** — nothing competitive exists | A failed Run. Bounded, already recoverable |
+
+The second column is the load-bearing half. RFC-0009 assumes the process dies without warning,
+because Android does that routinely — so a segfault in the inference engine is a failure mode the
+durable execution model **already handles**: the Run resumes from its last checkpoint. A native
+crash mid-`git commit` is exactly what D4 refused to risk, and no checkpoint saves it.
+
+**Applied:**
+
+- **llama.cpp — accepted.** Inference passes both tests. See RFC-0022.
+- **JGit — unchanged.** Git fails test 1.
+- **tree-sitter — leans reject.** Used for structural extraction in the knowledge index. An
+  alternative arguably exists (heuristic extraction) and the blast radius is an incomplete graph
+  rather than a lost Run, so the presumption is against it. Revisit with a specific proposal.
+
+**Costs accepted, stated rather than discovered:** per-ABI builds (`arm64-v8a` at minimum,
+`x86_64` for the emulator); F-Droid reproducible builds are harder with native code and RFC-0050
+commits to F-Droid, so this is validated early rather than at M34; and the GGUF loader becomes a
+concrete attack surface — a C++ parser reading a file from the internet, mitigated by digest
+verification and not fully.
+
+**Forecloses:** a pure-JVM build of Aidos with local inference. Anyone wanting one gets remote
+providers only, which is a supported configuration (RFC-0022, "when nothing fits").
+**RFCs:** 0022, 0049, 0050.
+
+### D28 — GGUF via llama.cpp for LLM; format is per model kind · `SETTLED`
+
+**Local LLM inference is GGUF, executed by llama.cpp.** The format decision made this
+inevitable — GGUF *is* llama.cpp's format — and the previous RFCs chose GGUF without naming the
+engine, which left the most consequential dependency in the product unstated.
+
+Three reasons, the third being the one that is not merely convenience:
+
+- **Model availability.** Nearly every open model appears as GGUF within days. ONNX conversion of
+  a modern LLM is fiddly — dynamic shapes, KV cache plumbing — and would be ours to do.
+- **Quantization quality.** The k-quants are tuned for quality-per-byte and are why a 3B is
+  useful on a phone at all.
+- **GBNF grammars.** RFC-0021 specifies that an adapter for a model *without* native tool calling
+  uses constrained decoding — a grammar admitting only well-formed calls. That is llama.cpp's
+  GBNF. It is not an optimisation; it is the mechanism by which a local model that cannot do
+  function calling still participates in the agent loop. ONNX Runtime has no equivalent.
+
+**Format is per `ModelKind`, not global.** ONNX Runtime is genuinely better for embeddings, STT
+and TTS — `onnxruntime-android` is an official Maven artifact with Kotlin bindings and no
+hand-written JNI, and NNAPI gives far better NPU access. It is nevertheless **not in the MVP**: a
+second native runtime doubles the APK, the ABI matrix, the crash surface, and the F-Droid
+problem, for a benefit concentrated in kinds that are not on the critical path. Embeddings run
+through llama.cpp; STT, if voice survives the Phase 4 cut, uses whisper.cpp in the same family.
+TTS is the genuine gap, and TTS is M33 — the first thing cut.
+
+**Revisit after G3, with measurement**, specifically for NPU-accelerated embeddings if indexing
+proves to be the bottleneck. That is a numbers question and should be settled with numbers.
+
+**RFCs:** 0022, 0021, 0020, 0049.
+
+---
+
 ## Open
 
 None.
@@ -486,3 +559,5 @@ None.
 | 2026-08-02 | D24 settled: (a) foreground service primary, (d) preparation-only fallback, (b) and (c) rejected. |
 | 2026-08-03 | D25 recommended: diff review moves earlier and goes hunk-by-hunk; Runtime API returns structured hunks. |
 | 2026-08-03 | D25 settled as recommended. D26 settled: glance and voice may approve only the benign class. |
+| 2026-08-03 | D26 amended: three voice tiers, verification gates authority. `reversible` split from `RecoveryClass`. |
+| 2026-08-03 | D27 settled: native dependencies only where nothing else works and a crash is bounded. D28 settled: GGUF via llama.cpp, format per model kind. |

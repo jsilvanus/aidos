@@ -61,12 +61,41 @@ with three projects has spent twelve gigabytes on one model. `installed_models` 
 Weights are **content-addressed by digest**. The same model acquired twice is stored once, and a
 partially-downloaded file can never be mistaken for a complete one.
 
-### Format
+### Format and engine, per model kind
 
-**GGUF.** Single file, self-describing, quantization built into the format, and the widest
-selection of small models that run on a phone. A model in any other format is not unsupported so
-much as unavailable — `AvailabilityReport` names it, and the user is told which conversion would
-be needed rather than seeing a failure at inference time (RFC-0049).
+| Kind | Format | Engine | Status |
+|---|---|---|---|
+| `LLM` | GGUF | **llama.cpp** | MVP |
+| `EMBEDDING` | GGUF | llama.cpp | MVP |
+| `STT` | GGUF | whisper.cpp | Phase 4, cut with voice (M33) |
+| `TTS` | — | — | **gap**; see Future Work |
+| everything else | — | — | not local |
+
+**GGUF, executed by llama.cpp** (D27, D28). GGUF is a single self-describing file with
+quantization built in and the widest selection of small models that run on a phone — and it is
+llama.cpp's format, so choosing it chose the engine. Saying so explicitly matters: the previous
+version named the format and left "a native dependency" unattributed, which is the most
+consequential dependency in the product going unstated.
+
+Three things follow, and they are costs rather than details:
+
+- **Per-ABI native builds** — `arm64-v8a` at minimum, `x86_64` for the emulator. `armeabi-v7a` is
+  not worth it for a device that cannot run a model anyway.
+- **F-Droid reproducible builds are harder with native code**, and RFC-0050 commits to F-Droid.
+  Validate this early rather than discovering it at M34.
+- **The GGUF loader is the attack surface** named in Security below — concretely, llama.cpp's
+  parser reading a file from the internet.
+
+**Why llama.cpp and not ONNX Runtime**, which is better for embeddings and STT and ships official
+Kotlin bindings: RFC-0021 requires **constrained decoding** for models without native tool
+calling, and that is llama.cpp's GBNF. It is the mechanism by which a local model that cannot do
+function calling still participates in the agent loop, and ONNX has no equivalent. A second
+native runtime also doubles the ABI matrix, crash surface and F-Droid problem. See D28 for when
+to revisit.
+
+A model in a format no engine here reads is **unavailable, not unsupported** —
+`AvailabilityReport` names it and says which conversion would be needed, rather than failing at
+inference time (RFC-0049).
 
 ### The cookbook: what runs on *this* device
 
@@ -312,6 +341,11 @@ M21, and it gates G3.
 
 - **NPU and GPU delegates** where the platform exposes them. Substantial speedup, substantial
   fragmentation; worth doing after the CPU path is honest.
+- **ONNX Runtime for embeddings and STT**, revisited after G3 with measurement (D28). Better NPU
+  access and official Kotlin bindings, against a doubled native surface — a numbers question.
+- **Local TTS**, which is the one kind the ggml family does not serve well today. RFC-0057's
+  spoken summaries depend on it, and without it eyes-free operation is unavailable rather than
+  degraded.
 - **Speculative decoding** with a small draft model, if two models can be resident at once on the
   target hardware — which today they usually cannot.
 - **Community cookbook entries**, contributed and signed, so the curated set is not limited to
