@@ -68,56 +68,68 @@ Example:
 
 ### Path Scoping
 
-All filesystem operations are relative to project root:
+**Escape is prevented by construction, not by checking afterwards.**
+
+The previous version specified resolve-then-check: build the absolute path, resolve symlinks,
+test whether the result is still inside the root, deny if not. That is the pattern `RelPath`
+exists to replace, and it is wrong in two ways. It is a **time-of-check/time-of-use** race — a
+symlink can change between the check and the open — and it puts the security decision in every
+call site, where one missing check is a full escape.
+
+Instead, a path that could escape **cannot be constructed**:
+
+```kotlin
+RelPath.of(raw): Result<RelPath>     // runtime/kernel/, canonical
+
+  rejects:  empty · leading / or \ · any segment equal to ".."
+            NUL · a drive-letter prefix (C:)
+```
+
+A `RelPath` is a value that is relative and has no upward component, and there is no other way to
+name a file. Tools take a `ResourceHandle` whose root was fixed at grant time (RFC-0018) and a
+`RelPath` beneath it; neither the tool nor the model ever handles an absolute path.
+
+**Symlinks are resolved at open time and re-checked against the handle's root**, because a
+`RelPath` with no `..` can still point at a symlink out of the tree. That check is in one place —
+the handle — rather than at every call site, which is the difference that matters.
 
 ```
-Project root: /projects/myapp
-
-Session requests: filesystem:read { path: "../../../etc/passwd" }
-Tool Broker:
-  1. Resolve absolute path: /projects/myapp/../../../etc/passwd
-  2. Resolve symlinks (if needed)
-  3. Check if result is within project root
-  4. If outside: Deny with ScopeError
-  5. If inside: Proceed with operation
-
-Allowed paths:
-  - "src/main.rs" → /projects/myapp/src/main.rs ✓
-  - ".git/config" → /projects/myapp/.git/config ✓
-  - "docs/" → /projects/myapp/docs/ ✓
-
-Denied paths:
-  - "../outside.txt" → /projects/outside.txt ✗
-  - "/etc/passwd" → /etc/passwd ✗
-  - "symlink_to_outside" → /other/location ✗
+  "src/main.rs"        → RelPath ✓, beneath handle root ✓      → allowed
+  "docs/"              → RelPath ✓                             → allowed
+  "../outside.txt"     → RelPath.of fails                      → never reaches the tool
+  "/etc/passwd"        → RelPath.of fails                      → never reaches the tool
+  "symlink_to_outside" → RelPath ✓, resolves outside root      → denied at open
 ```
+
+M3's property test is the guarantee: no input to `RelPath.of` produces a path that escapes its
+root, across `..` in any segment, absolute forms, drive letters, NUL, and encodings of those.
 
 ### Capability Model
 
 File operations are gated by capabilities:
 
-```
-Read access: "filesystem:read"
-  - Read file contents
-  - List directory contents
-  - Get file metadata
-  - Check file existence
+Authority is a **named capability the caller exercises**, not a permission string the broker
+matches (RFC-0018). A call names the `capabilityId` it is using; one naming none is denied rather
+than searched for a grant that would allow it.
 
-Write access: "filesystem:write"
-  - Create/modify files
-  - Create directories
-  - Requires "filesystem:read" to check conflicts
+Each operation declares its effect and recovery class, and the broker derives behaviour from them
+(RFC-0030):
 
-Delete access: "filesystem:delete"
-  - Delete files
-  - Remove directories (recursive)
-  - Requires "filesystem:read" to list contents
+| Operation | Effect | Recovery | Preview |
+|---|---|---|---|
+| `read`, `list`, `stat`, `exists` | `Read` | `PURE` | n/a |
+| `write` | `Mutate(IN_PROJECT)` | `IDEMPOTENT` — same bytes, same result | **`Preview.Diff`** |
+| `mkdir` | `Mutate(IN_PROJECT)` | `IDEMPOTENT` | `Description` |
+| `move` | `Mutate(IN_PROJECT)` | `CHECKABLE` — probe whether the destination exists | `Description` |
+| `delete` | `Mutate(IN_PROJECT, reversible = false)` | `CHECKABLE` | `Preview.Diff` of what is lost |
 
-Move access: "filesystem:move"
-  - Rename files/directories
-  - Move between directories
-  - Requires "filesystem:read" and "filesystem:write"
-```
+**`delete` is irreversible and typed as such.** A file the user has not committed exists nowhere
+else, so deleting it is not undoable by Git — which puts it in D26's readback tier rather than the
+benign one, and keeps it off the single-word voice approval path (RFC-0053, RFC-0057).
+
+`write` returning `IDEMPOTENT` is worth stating: writing identical bytes twice leaves the same
+state, so a crashed write is safely re-run. `move` is `CHECKABLE` because after a crash the
+runtime can look at whether the destination is there.
 
 ### Read Operations
 
