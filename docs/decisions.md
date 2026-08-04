@@ -262,6 +262,15 @@ and only the MVP phasing said otherwise.
   will POST project content. HTTPS is required, certificates are validated, and redirects to a
   different host are refused — otherwise the endpoint is one redirect away from an exfiltration
   target.
+- **No `http://` loopback exemption on MOBILE**, though DESKTOP and HEADLESS_SERVER keep one. A
+  loopback TCP port on Android is an unauthenticated shared namespace — any app holding
+  `INTERNET` can bind or connect to it, and the socket carries no peer identity to check — so an
+  app squatting the port would receive the project content and the credential. RFC-0055 answers
+  the same question for the desktop runtime socket with a `0600` Unix socket and a token;
+  loopback TCP on Android has neither. **Consequently an MCP server running on the phone itself
+  is not reachable in v1.** The safe form is Android's own IPC, where the platform authenticates
+  the calling package; it is future work in RFC-0031 and must not be approximated by relaxing
+  this rule.
 - **The scrubbed-environment defence does not apply, and does not need to.** With no child
   process there is nothing to hand a runtime token to, and the server cannot reach the local
   filesystem or the runtime socket at all. The risk moves rather than growing: from *a local

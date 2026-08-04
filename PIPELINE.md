@@ -128,6 +128,13 @@ only. When Phase 1 starts, implementations go in a sibling module, not into `:ke
 the contract module implementation-free is what lets the frontend streams start against
 `MockRuntimeClient` at G0.
 
+**"Localhost" is not one threat model across profiles.** The `http://` loopback exemption written
+for HTTP MCP was reasonable on desktop and a credential-disclosure path on Android, where any app
+holding `INTERNET` can bind or connect to a loopback port and the socket carries no peer identity.
+RFC-0055 had already solved the same problem for the desktop runtime socket — `0600` Unix socket
+plus a token — which is the tell: when a rule leans on *local means safe*, check what "local"
+authenticates on each profile before writing the exemption. On MOBILE it authenticates nothing.
+
 **A scope limit written as a platform fact outlives the platform fact.** D17 said MCP was
 "desktop only" in the MVP because Android cannot spawn a subprocess — true of *stdio*, and it
 silently became the rule for MCP as a whole, including the transport that works fine on a phone.
