@@ -1,0 +1,232 @@
+# PIPELINE — Aidos MVP
+
+The live tracking document for MVP implementation. An agent working through
+[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) reads this first and updates it in the same commit
+as the work. Everything not written down here is lost between links.
+
+---
+
+## Goal
+
+Build the Aidos MVP: a person opens a real Git repository on a mid-range Android phone, in
+airplane mode, asks a question about the code, gets a useful answer, makes an edit, reviews the
+diff, and commits. That is RFC-0099 Phases 0–4, ending at gate G4. The work is
+RFC-driven — `docs/rfcs/` is the design, `schema/` is the canonical DDL, `runtime/kernel/` is
+the contract surface, and `docs/decisions.md` says why the architecture is this and not
+something else. Implementation follows the RFCs; where implementation reveals a design problem,
+the RFC is amended in a separate commit *before* the code that departs from it.
+
+## Status
+
+Link 9 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done.** The
+legacy RFC audit is complete (46 Accepted, 15 Draft, RFC-0099 excepted) and the last two open
+design questions are settled as D29 and D30. What remains before code is three RFC rewrites that
+apply already-settled decisions — no new decisions are required to finish them.
+Branch: `claude/aidos-architecture-review-miqn7p`
+
+## Done
+
+- [x] **M0.1** `schema/` — 54 tables in three files, `check.py` green in CI
+- [x] **M0.2** `runtime/kernel/` — KMP common interfaces, compiling under `allWarningsAsErrors`, contract tests green
+- [x] **M0.3** `docs/decisions.md` — 26 settled decisions, none open
+- [x] **M0.4** Acceptance pass — corrected: 29 Accepted, 18 reverted to Draft pending a body audit
+- [x] **G0 met**
+- [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
+- [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
+- [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call
+- [x] **Branch switching specified** (RFC-0053) — enabled; uncommitted changes are discarded after a warning naming what is lost, with "commit first" as the primary action. No per-branch WIP. `EffectKind.Mutate` gains `reversible`, and D26's benign class now requires it
+- [x] **Instruction adoption settled** — per project for the decision, per user for recognition (`known_instruction_sets`). No open questions remain anywhere in the corpus
+- [x] **Ten of eleven open questions settled** — hunk revert is a user-subject edit through the broker; reviewed/unreviewed does not survive a rebase; sessions are told when instructions were excluded; root-only discovery reports what it is not reading; the glance shows three; session summaries compose from Run summaries; the gesture grammar is horizontal-peer / vertical-list / tap-deeper; voice approvals are audited by channel; tier 2 is not motion-gated; the editor stays project-scoped
+- [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
+- [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
+- [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
+- [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
+
+## Next
+
+**Three RFC rewrites, then Phase 1.** Every decision these need is already settled. None of them
+requires the user. Do them in this order — 0052 is the smallest and unblocks M9, 0031 is
+self-contained, 0015 is the largest and depends on reading an external document.
+
+- [ ] **RFC-0052 — structured hunks.** D25 settled that the Runtime API returns structured diff
+      hunks with identity `(path, base blob hash, hunk index)` rather than a unified-diff string,
+      because a phone reviews hunk by hunk and needs to address one. RFC-0052 does not yet carry
+      that shape. M9 consumes it. Smallest of the three; do it first.
+
+- [ ] **RFC-0031 — apply D30.** The document is largely sound; three parts of its security
+      section and one sentence in its Abstract are not. Fix: delete the `TRUSTED` promotion (§7)
+      and replace it with a remembered per-`(server, project)` egress grant; add the section the
+      document is missing on what an MCP server may *not* do — raise a capability request, grow
+      its own authority, or run before a call needs it; state the enable-time grant as a set of
+      effect classes; make the Abstract agree with the MVP scope (stdio, DESKTOP, D17). Close the
+      two Open Questions per D30 — MCP resources stay out of the knowledge engine, and Aidos as an
+      inbound MCP server is a v1 non-goal. Then Accept it.
+
+- [ ] **RFC-0015 — rewrite against D29 and the port spec.** No longer blocked: the port
+      specification exists at `docs/design/kotlin-port.md` on branch
+      `claude/gitsema-kotlin-port-design-ob62a3` in `jsilvanus/gitsema`. **Read it first.** The
+      RFC should shrink hard — most of its 770 lines describe a system Aidos is not building.
+      Keep: the Index-identity and Addressing-classes sections (still correct, now framed as a
+      description of the library's model rather than Aidos's design), and the storage constraints
+      (outside `state.db` per D21, background dispatcher, cancellable, no network). Cut: the
+      `KnowledgeProvider` SPI, `KnowledgeIndex`/`ProviderState` pseudo-structures, the ranking
+      heuristics scoring on providers that do not exist, the tree-sitter symbol provider (D27
+      declined the native dependency), the GitSema-as-MCP-server paragraph, and the RFC-0013
+      reference (superseded by RFC-0024). Add: the consumption contract — what Aidos calls, what
+      it guarantees the library about resources, what the library guarantees back — coverage
+      reporting on every query, committed-content-only indexing, and the honest statement about
+      what the index does and does not protect. Then Accept it.
+
+Then Phase 1, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md):
+
+- [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
+- [ ] **M2** Identity and scopes
+- [ ] **M3** Capability manager, with the path-escape property test
+
+Full breakdown with done-when conditions: [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md).
+
+## Notes for the next link
+
+**Phase 0 artifacts are real, not aspirational.** `schema/check.py` and the `runtime/` build
+both run in CI (`.github/workflows/schema.yml`, `.github/workflows/runtime.yml`). If either goes
+red, fix it before doing anything else — they are the only two things currently preventing the
+corpus from drifting from the code, and that drift is what the third architecture review found
+had already happened once.
+
+**`schema/` governs.** Where an RFC's DDL and `schema/` disagree, the schema is right and the
+RFC is the bug. Change both in the same commit. `check.py` asserts that every table named in RFC
+DDL exists in the schema, so a new RFC table is a CI failure until it is in `schema/`.
+
+**Accepted is not frozen**, and Accepted is a claim someone checked. The first acceptance pass
+marked 45 RFCs Accepted on the strength of their headers; sampling four found body-level
+contradictions in three, so 18 went back to Draft with `— body not audited`. Do not implement
+against those without checking the decision they touch. Re-accept one only after reading it end
+to end. A status line nobody verified is exactly how RFC-0102's "addressed" table came to be
+wrong about four items — the same failure, one level up.
+
+**0015 and 0031 are Draft with their decisions already made.** Both now carry a banner at the top
+naming exactly what in them is superseded and by which decision. That is a deliberate state, not
+an oversight: the decisions are in `docs/decisions.md` (D29, D30) where they are durable, and the
+documents will be rewritten to match. Read the banner before reading the body — parts of both
+bodies are known-wrong, and RFC-0031's security section is wrong in three specific places while
+reading as though it were settled. When the rewrite lands, delete the banner in the same commit
+that changes the status line; a banner that outlives its own fix is the same class of defect the
+audit spent a day removing.
+
+**The architecture phase is over. Resist reopening it.** Sixty-one RFCs, thirty decisions, a
+canonical schema, and a contract surface are enough to build against. The next design question
+that arises during implementation should be answered by amending one RFC in one commit and then
+continuing — not by a new document, and not by a review. If a question genuinely cannot be
+settled that way, it belongs to the user, and the honest move is to stop and say so rather than
+to design around it.
+
+**The kernel has no implementations and that is deliberate.** `runtime/kernel/` is contracts
+only. When Phase 1 starts, implementations go in a sibling module, not into `:kernel`. Keeping
+the contract module implementation-free is what lets the frontend streams start against
+`MockRuntimeClient` at G0.
+
+**Blob-hash identity keeps paying.** It was introduced in RFC-0015 for the knowledge index (so
+branch switching invalidates nothing) and turned out to solve two more problems for free: an
+instruction set's identity is the hash of its `(filename, blob hash)` pairs, which makes change
+detection exact with no watcher and gives a Run a precise answer to "what steered you" — and it
+is the same identity a diff hunk needs (D25). If a subsystem needs to know whether project
+content changed, reach for the blob hash before writing a cache invalidation scheme.
+
+**RFC-0016's revision found a security hole, not just bloat.** Instruction files were going into
+the system turn as trusted text. A cloned repository's `AGENTS.md` is attacker-controlled prose
+aimed at the highest-authority position in the prompt, and the injection defences in RFC-0025
+were guarding a different door. The fix is *adoption* — a set does not steer a model until a
+human has seen it, tracked by hash. Worth remembering when revising 0031 and 0015: both also
+carry content from outside the user's authorship into the model's context.
+
+**Tool descriptions are two halves, and the second one has no other home.** gitsema splits them:
+`guideTools.ts` (1,814 lines) says how to *call* each capability, `interpretations.ts` (695) says
+how to *read* the result — thresholds, caveats, what a citation should look like — and a
+`docsSync` test stops the two drifting from the generated skill file. Aidos had only the first
+half; `ToolDescriptor.resultGuidance` is the second. It is runtime-authored and TRUSTED, emitted
+with the *result* rather than the definition, and a tool never supplies its own — an MCP server
+writing its own interpretation guidance would be an UNTRUSTED subject telling the model how to
+weigh its own evidence.
+
+**The knowledge engine comes from outside.** gitsema is a content-addressed semantic index
+already keyed on blob hash — the same identity model RFC-0015 adopted, which is not a
+coincidence. Three findings from surveying it that constrain the Aidos side: its vector search
+loads every vector into memory to score (~150 MB for a 50k-blob repo, alongside a loaded LLM);
+its structural graph needs tree-sitter, a native dependency of exactly the kind D4 refused for
+Git; and its analysis capabilities — impact, semantic blame, change-points, debt scoring, expert
+attribution — are the bulk of the product, not the retrieval. Do not assume "knowledge engine"
+means "search".
+
+**`reversible` is not `RecoveryClass`, and the difference is load-bearing.** `RecoveryClass` asks
+whether an effect can be re-executed after a crash; `reversible` asks whether the user can get
+their work back. Branch switching found the conflation: discarding uncommitted changes is
+in-project, untainted, and perfectly re-runnable, so it satisfied every clause of D26's benign
+class and would have been approvable by one spoken word while cycling. `approvalTier()` in the
+kernel now encodes the corrected rule, with tests. When adding an operation, answer both
+questions separately.
+
+**Approval keys on the subject, not the act.** A user editing a file and a user reverting a hunk
+both go through the broker as ordinary mutations and both get audit rows — but neither asks for
+approval, because the user is the authority an approval would consult. Only session-subject
+mutations can need one. This came up twice in one day; it is the rule, not a special case.
+
+**Verification, not modality, gates authority.** D26 first said voice could approve only the
+benign class. The eyes-free loop overturned that: a user who asked what, where, why, and what-if-
+I-refuse and heard structured answers has verified more than someone tapping a card they glanced
+at. What survives as never-by-voice is the set that changes the *authority envelope* rather than
+exercising it — egress, tainted Runs, new grants — because a structured readback cannot verify
+those. Apply the same test to any future approval surface.
+
+**The graph is why the glance surface is cheap.** RFC-0057's Run Summary is a SQL projection
+over `runs`/`tasks`/`attempts` — instant, offline, no inference, checkable against the audit
+trail. Asking a model to summarize its own Run would be D6, would cost ten seconds at a
+two-second interaction, and would park with no foreground service (D24) in exactly the eyes-free
+case that motivated it. When a new surface needs "what happened", reach for a query first.
+
+**A mapping test is owed.** Once persistence lands at M1, add a test asserting every non-derived
+kernel field has a schema column. It was noted when the kernel was written and not built,
+because there was nothing to map to yet. It is the third leg of the CI that keeps design and
+code together.
+
+**Do not start Phase 2 with M8 amber.** The crash-recovery suite is the one metric with no
+acceptable degradation. If a Run does not resume correctly from *every* `kill -9` checkpoint,
+every AI-layer bug found afterwards will be misattributed to the model.
+
+**Commit standards** are in `CLAUDE.md`: reference the RFC, explain the *why*, one logical change
+per commit, tests pass before committing.
+
+---
+
+## Working across sessions
+
+This plan is long. Use the `session-pipeline` skill (`.claude/skills/session-pipeline/`) to work
+it across session limits: on wake, schedule the next wakeup **first**, then re-orient, then work
+one coherent piece, then commit, push, and update this document.
+
+Wakeup message to carry forward verbatim:
+
+```
+SESSION PIPELINE — link N.
+
+FIRST ACTION: schedule the next wakeup.
+  send_later(delay_minutes = 305, message = <this message, with N incremented>)
+Do this before reading files, before git status, before anything.
+
+Repo:    /home/user/aidos  (github.com/jsilvanus/aidos)
+Branch:  claude/aidos-architecture-review-miqn7p
+Plan:    PIPELINE.md  (breakdown in docs/mvp-roadmap.md)
+
+Goal: Build the Aidos MVP — offline Git work on an Android phone. RFC-0099 Phases 0-4,
+gate G4. Work is RFC-driven: docs/rfcs/ is the design, schema/ is canonical DDL,
+runtime/kernel/ is the contract surface, docs/decisions.md says why. Implementation
+follows the RFCs; if implementation reveals a design problem, amend the RFC in a
+separate commit first.
+
+Then: re-orient (git status, git log, read PIPELINE.md), take the item under "Next",
+make real progress on it, commit, push, and update PIPELINE.md — including "Notes for
+the next link" — in the same commit. End the turn.
+
+Stop the chain — schedule nothing further — if the goal is met, the user says stop, or
+you are blocked on something only the user can resolve. Say which, explicitly, in both
+the final message and PIPELINE.md.
+```

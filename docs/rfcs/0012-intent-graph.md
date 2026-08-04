@@ -122,8 +122,7 @@ Goal {
   title: String
   description: String?
   priority: Int (1=highest)
-  status: GoalStatus (not_started | in_progress | blocked | done | archived)
-  owner: SessionId?
+  # status is derived, not stored — see "Status is derived" below
 }
 ```
 
@@ -138,9 +137,8 @@ SubGoal {
   description: String?
   parent_goal: NodeId
   priority: Int
-  status: GoalStatus
   estimated_effort: String? ("small", "medium", "large")
-  owner: SessionId?
+  # status is derived; ownership is expressed by TARGETED edges (RFC-0019)
 }
 ```
 
@@ -155,7 +153,7 @@ Constraint {
   description: String?
   applies_to: NodeId
   severity: ConstraintSeverity (must_have | should_have | nice_to_have)
-  status: "active" | "relaxed" | "superseded"
+  lifecycle: "active" | "relaxed" | "superseded"   # authorship state, not progress
 }
 ```
 
@@ -170,11 +168,31 @@ AcceptanceCriterion {
   id: NodeId
   description: String
   applies_to: NodeId
-  is_met: Boolean
-  verified_by: SessionId? | UserId?
-  verified_at: Timestamp?
+  check: CriterionCheck?            # mechanical check, if one exists
+  verification: Verification?       # how it came to be considered met
+}
+
+CriterionCheck {                    # e.g. "tests pass", "file exists", "command exits 0"
+  kind: CheckKind
+  spec: String
+}
+
+Verification {
+  met: Boolean
+  verified_by_kind: 'USER' | 'CHECK'   # never 'SESSION'
+  verified_by_id: UUID?                # the user, or the Run whose check evaluated it
+  verified_at: Timestamp
 }
 ```
+
+`verified_by_kind` has no `SESSION` variant, for the same reason `IMPLEMENTS` edges require
+confirmation (RFC-0019): a model that can mark its own acceptance criteria met can declare its
+own work complete, and derived status would then be derived from the model's opinion of itself.
+
+A criterion is met when a **mechanical check** passes, or when the **user** says so. A session
+can run the check — that is ordinary work — but the check's result is the verification, not the
+session's report of it. Criteria with no mechanical check are user-verified, which is honest:
+"the API spec is in OpenAPI format" is checkable, "the design is good" is not.
 
 Example: "API spec in OpenAPI format" is an acceptance criterion for the "Design API" goal.
 
@@ -196,37 +214,109 @@ Every node in the Intent Graph has:
 
 ```
 IntentNode {
-  id: NodeId                        # Unique within the graph
-  project_id: UUID                  # Backref to project
-  
+  id: NodeId                        # UUIDv7, globally unique (RFC-0054)
+  project_id: UUID
+
   type: NodeType                    # Goal, SubGoal, Constraint, etc.
   title: String
   description: String?
-  
-  status: NodeStatus                # not_started | in_progress | blocked | done | archived
+
   priority: Int                     # 1=highest, determines ordering
-  
-  owner: SessionId?                 # Which session is working on this
-  
+
+  # NOTE: there is no authored `status` field. See "Status is derived" below.
+  user_assertion: StatusAssertion?  # explicit user claim, with provenance
+  lifecycle: NodeLifecycle          # ACTIVE | ARCHIVED — authorship state, not progress
+
   created_at: Timestamp
-  created_by: SessionId | UserId
+  created_by_kind: 'USER' | 'SESSION'
+  created_by_id: UUID
   modified_at: Timestamp
-  modified_by: SessionId | UserId
-  
+  modified_by_kind: 'USER' | 'SESSION'
+  modified_by_id: UUID
+
   constraints: List<NodeId>         # Constraints that apply
   acceptance_criteria: List<NodeId> # Conditions for "done"
-  
+
   dependencies: List<NodeId>        # Other nodes this depends on
-  dependents: List<NodeId>          # Nodes that depend on this
-  
-  related_artifacts: List<ArtifactId>  # Artifacts addressing this intent
-  related_resources: List<ResourceId>  # Resources relevant to this intent
-  
-  tags: List<String>                # For querying ("api", "backend", "ui")
-  
+                                    # (dependents are derived; see Acyclicity)
+
+  tags: List<String>
   metadata: Map<String, Any>?
 }
+
+StatusAssertion {
+  claimed: NodeStatus               # what the user says is true
+  asserted_at: Timestamp
+  asserted_by: UserId
+  note: String?                     # why they overrode the derived value
+}
 ```
+
+Two fields were removed. `owner: SessionId` implied a session holds a node, which does not
+survive parallel workers (RFC-0007) — ownership is expressed by `TARGETED` edges instead.
+`related_artifacts` and `related_resources` duplicated links that already exist through
+`IMPLEMENTS` → Run → `PRODUCED` → ContentNode; a denormalized list here is a fourth place for
+provenance to disagree with itself (RFC-0019, "One fact, one place").
+
+### Status is derived, never authored
+
+**An intent node has no stored `status`.** Progress is computed:
+
+```
+derived_status(node) =
+    from IMPLEMENTS edges (RFC-0019) → the Run outcomes that actually served this node
+    ∧ acceptance criteria evaluation
+    ∧ status of child nodes and dependencies
+```
+
+The reason is a failure mode that would otherwise be certain. A Run implements "add auth" and
+writes `status = done`. Then the user reverts the commit; or the Run partially failed and the
+model reported success; or a later change broke it. **The field still reads `done`.** An intent
+graph that misreports state is worse than none, because the user stops trusting it — and worse,
+because it silently feeds task instructions into prompt construction (RFC-0025), so the model
+inherits the false belief.
+
+Derived status values:
+
+| Value | Derivation |
+|---|---|
+| `NOT_STARTED` | no `TARGETED` or `IMPLEMENTS` edges |
+| `IN_PROGRESS` | a `TARGETED` Run is non-terminal |
+| `NEEDS_REVIEW` | `IMPLEMENTS` edges exist but are unconfirmed (RFC-0019) |
+| `DONE` | confirmed `IMPLEMENTS` edges and all acceptance criteria satisfied |
+| `BLOCKED` | a dependency is not `DONE`, or the last Run failed unrecoverably |
+| `STALE` | was `DONE`, but content it produced is `DANGLING` or was reverted (RFC-0053) |
+
+`STALE` is the state that only exists because status is derived. A stored field cannot represent
+"this was done and then undone by something outside the system," and that is a normal event in a
+Git-first product.
+
+**The user can always override**, and the override is recorded as a claim rather than as truth:
+
+```
+Goal: Add user authentication
+  Derived:   NEEDS_REVIEW  (2 runs, unconfirmed)
+  You said:  DONE          (3 days ago — "shipped manually, runs were exploratory")
+```
+
+Both are shown. The derived value never disappears. A model reading the graph sees both, and the
+distinction between "the system observed this" and "the user asserted this" is preserved through
+to prompt construction.
+
+**Cost:** one join and a small evaluator. **Benefit:** the graph cannot lie.
+
+### Acyclicity
+
+The Intent Graph is a DAG, and this is enforced at write time rather than assumed:
+
+- Adding a dependency edge that would create a cycle is rejected with `intent.cycle_rejected`
+  (RFC-0029). A dependency cycle deadlocks status derivation and any future planner.
+- Parent/child containment is likewise acyclic.
+- `dependents` is **derived** by reverse lookup, not stored. Storing both directions means they
+  can disagree, and reconciling them is work with no upside.
+
+The check is a reachability test on insert — cheap at intent-graph scale (tens to hundreds of
+nodes), and it turns a class of subtle deadlock into an immediate, explainable error.
 
 ### Editability
 
@@ -243,24 +333,101 @@ Users can:
 
 User edits are changes to the Intent Graph and should be tracked (ideally through Git commits with commit messages).
 
-#### AI Systems (Proposed Edits)
+#### AI Systems (Proposals Only)
 
-AI sessions can propose modifications to the Intent Graph:
+**A session can never write to the Intent Graph. It can only create a proposal, which only the
+user resolves.**
 
+This is the load-bearing rule of this RFC, and the reason is a closed loop. The model *reads*
+intent — task instructions come from the current intent node (RFC-0025, precedence 5) — and the
+model *proposes* intent. If it could also approve, it would invent goals, read its own invented
+goals back as instructions, and drift arbitrarily from what the user wanted, each step locally
+plausible and none of them checked. The approval gate is what breaks the loop.
+
+An earlier version of this RFC contained exactly that defect in its own example: *"AI proposes
+sub-goals → **Driver approves** → AI creates worker sessions."* A driver session is a model, not
+a user. That sequence is the loop with no human in it.
+
+### Proposals
+
+A proposal is a **separate object, not a node in a "proposed" state.**
+
+That distinction matters. A proposed node placed in the graph is already in the graph: it
+appears in queries, it feeds prompt construction, and if the user never answers it lingers
+indefinitely as pseudo-intent that everything downstream treats as real.
+
+```kotlin
+data class IntentProposal(
+    val id: UUID,
+    val projectId: UUID,
+    val operations: List<IntentOperation>,   // atomic: all applied or none
+    val rationale: String,                   // why, in the model's words
+    val proposedByRunId: UUID,
+    val proposedAt: Instant,
+    val runTaint: TrustLevel,                // RFC-0027
+    val state: ProposalState,
+    val resolvedBy: UserId?,                 // ONLY a user. never a session.
+    val resolvedAt: Instant?
+)
+
+sealed class IntentOperation {
+    data class AddNode(val parent: NodeId?, val node: IntentNodeDraft) : IntentOperation()
+    data class ModifyNode(val id: NodeId, val changes: NodeChanges) : IntentOperation()
+    data class AddDependency(val from: NodeId, val to: NodeId) : IntentOperation()
+    data class ArchiveNode(val id: NodeId) : IntentOperation()
+}
+
+enum class ProposalState { PENDING, ACCEPTED, ACCEPTED_WITH_EDITS, REJECTED, SUPERSEDED, EXPIRED }
 ```
-AI: "I notice you want an API that works offline. This is challenging because
-     REST APIs typically require network. I recommend using a local database
-     with sync-on-connect. Should I add this as a sub-goal under 'Design API'?"
 
-User: "Yes, add it"
-→ New sub-goal added to graph, marked as "proposed" until user confirms
-```
+**Operations are batched and atomic.** Decomposing a goal into five sub-goals is *one* proposal
+with five operations, accepted or rejected as a unit. Five separate prompts would train the user
+to click through them, which defeats the gate.
 
-AI proposals should:
-- Be clearly marked as "proposed" or "suggested".
-- Include reasoning and tradeoffs.
-- Require user confirmation before being incorporated.
-- Be logged as part of the audit trail.
+**Proposals expire** (default 30 days) rather than accumulating. A stale proposal describing a
+plan for code that has since changed is noise, and a pile of them makes the pending list
+something the user stops reading.
+
+**Proposals carry the taint of the Run that made them** (RFC-0027). A proposal from a Run that
+read untrusted content is shown as such:
+
+> Proposed by *refactor-auth*, which read untrusted content from
+> `node_modules/left-pad/README.md`. Review carefully.
+
+Untrusted content cannot cause an intent change on its own — the user still approves — but the
+user deserves to know that the suggestion may originate from a document rather than from
+analysis.
+
+### Proposals in context
+
+A pending proposal is included in prompt construction **as a pending proposal, clearly labelled,
+never as intent**. The model needs to know one exists so it does not re-propose the same thing;
+it must not read it as an accepted goal.
+
+This is the same distinction the derived-status design makes between what the system observed
+and what someone asserted, applied to the proposal stage.
+
+### What a session may and may not do
+
+| | |
+|---|---|
+| **May** | read the graph; create proposals; propose `IMPLEMENTS` edges (RFC-0019) |
+| **May not** | create, modify, or archive nodes directly |
+| **May not** | resolve any proposal, including its own or another session's |
+| **May not** | set status — status is derived (see below) |
+| **May not** | confirm an `IMPLEMENTS` edge — confirmation is the user's or acceptance criteria's |
+
+The row that most often gets violated in implementations is the last two. "Mark goals as done
+when acceptance criteria are met" was previously listed as something an AI session does; it is
+not. Acceptance criteria are *evaluated*, and the evaluation is what marks the goal — the model
+does not get to assert the outcome of its own work.
+
+### Audit
+
+Every proposal and every resolution is audited with the actor (RFC-0046): which Run proposed,
+which user resolved, what changed, and the rationale. The Intent Graph's Git snapshot commit
+message references the proposal ID, so `git log` on the intent snapshot reads as a decision
+history rather than a series of unexplained state changes.
 
 ### Versioning and Storage
 
@@ -334,26 +501,135 @@ Session queries:
 
 An AI session can:
 
-1. **Understand intent**: Read the Intent Graph, understand what the project is trying to achieve.
+1. **Understand intent**: read the graph and the pending proposals.
+2. **Propose refinements**: decomposition, constraints, priorities — as proposals (above).
+3. **Propose `IMPLEMENTS` edges**: assert that a Run served a goal, subject to confirmation
+   (RFC-0019).
+4. **Flag conflicts**: detect contradictory goals or unsatisfiable dependencies, as a proposal
+   or a note.
 
-2. **Propose refinements**: Suggest breaking down a goal, adding constraints, reordering priorities.
+It cannot update status, resolve proposals, or confirm its own `IMPLEMENTS` assertions.
 
-3. **Update status**: Mark goals as done when acceptance criteria are met.
-
-4. **Relate artifacts**: Connect created artifacts to the intent nodes they address.
-
-5. **Flag conflicts**: Detect when two goals conflict or dependencies are unsatisfiable.
-
-Example workflow:
+Corrected example workflow — note who approves:
 
 ```
 Driver session reads Intent Graph
-→ Sees goal: "Implement payment system"
-→ Queries AI: "Break this down into concrete tasks"
-→ AI proposes sub-goals: "Design payment schema", "Implement Stripe integration", etc.
-→ Driver approves
-→ AI creates worker sessions for each sub-goal
+→ sees goal: "Implement payment system"
+→ asks the model to decompose it
+→ creates ONE proposal with four AddNode operations, plus rationale
+→ Run parks: Task(kind = USER_PROMPT), Run state YIELDED     ← RFC-0006
+        ⋮                    (may be hours or days)
+→ USER reviews and accepts, with edits to two of the four
+→ proposal ACCEPTED_WITH_EDITS; nodes created; audited
+→ completion event resumes the Run                            ← RFC-0009
+→ driver creates worker sessions for the accepted sub-goals
 ```
+
+The pause is real and may be long: a proposal on a phone at 23:00 is answered the next morning.
+That is exactly what the durable execution model exists to survive (RFC-0009) — the Run is a row,
+not a suspended coroutine, so the process can die and restart in between.
+
+**Unattended Runs do not propose-and-wait.** A scheduled Run (RFC-0044) that would park on a
+proposal instead records the proposal as pending, completes, and notifies. Blocking a background
+Run on a human who is asleep holds resources for nothing.
+
+## Data Model
+
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+```sql
+-- Note the absence of a `status` column. Status is derived (see "Status is derived").
+CREATE TABLE intent_nodes (
+    id                  TEXT PRIMARY KEY,             -- UUIDv7 (RFC-0054)
+    project_id          TEXT NOT NULL,
+    type                TEXT NOT NULL,                -- GOAL|SUB_GOAL|CONSTRAINT|ACCEPTANCE_CRITERION
+    title               TEXT NOT NULL,
+    description         TEXT,
+    priority            INTEGER NOT NULL DEFAULT 100,
+    lifecycle           TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE|ARCHIVED (authorship, not progress)
+    parent_id           TEXT,
+    -- user override of derived status, stored as a timestamped claim
+    asserted_status     TEXT,
+    asserted_at         TEXT,
+    asserted_by_user_id TEXT,
+    assertion_note      TEXT,
+    -- acceptance criteria only
+    check_kind          TEXT,
+    check_spec          TEXT,
+    verification_met    INTEGER,
+    verified_by_kind    TEXT,                         -- USER | CHECK. never SESSION.
+    verified_by_id      TEXT,
+    verified_at         TEXT,
+    created_at          TEXT NOT NULL,
+    created_by_kind     TEXT NOT NULL,
+    created_by_id       TEXT NOT NULL,
+    modified_at         TEXT NOT NULL,
+    modified_by_kind    TEXT NOT NULL,
+    modified_by_id      TEXT NOT NULL,
+    tags                TEXT NOT NULL DEFAULT '[]',
+    row_version         INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (parent_id)  REFERENCES intent_nodes(id),
+    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+);
+
+-- Dependencies only. `dependents` is derived by reverse lookup.
+-- Acyclicity is enforced on insert, not assumed.
+CREATE TABLE intent_edges (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    from_node_id TEXT NOT NULL,
+    to_node_id   TEXT NOT NULL,
+    edge_kind    TEXT NOT NULL,                       -- DEPENDS_ON|CONSTRAINS|ACCEPTS
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (project_id)   REFERENCES projects(id),
+    FOREIGN KEY (from_node_id) REFERENCES intent_nodes(id),
+    FOREIGN KEY (to_node_id)   REFERENCES intent_nodes(id),
+    UNIQUE (from_node_id, to_node_id, edge_kind)
+);
+
+CREATE INDEX idx_intent_project    ON intent_nodes(project_id, lifecycle, priority);
+CREATE INDEX idx_intent_parent     ON intent_nodes(parent_id);
+CREATE INDEX idx_intent_edges_from ON intent_edges(from_node_id, edge_kind);
+CREATE INDEX idx_intent_edges_to   ON intent_edges(to_node_id, edge_kind);
+```
+
+Two things the schema makes enforceable that prose could not:
+
+**There is no `status` column.** Writing the table is what makes the derived-status decision
+concrete — it is considerably harder to accidentally add a status field to a table that visibly
+does not have one than to a design document that says status should be derived.
+
+**`CHECK (verified_by_kind IN ('USER','CHECK'))`.** The rule that a session may not verify its own
+acceptance criteria is enforced by the database, not by a code path that could be forgotten.
+
+```sql
+CREATE TABLE intent_proposals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    operations_json TEXT NOT NULL,        -- atomic batch
+    rationale TEXT NOT NULL,
+    proposed_by_run_id TEXT NOT NULL,
+    proposed_at TEXT NOT NULL,
+    run_taint TEXT NOT NULL,              -- RFC-0027
+    state TEXT NOT NULL,                  -- PENDING | ACCEPTED | ... | EXPIRED
+    resolved_by_user_id TEXT,             -- ONLY a user (RFC-0046)
+    resolved_at TEXT,
+    expires_at TEXT NOT NULL,
+    audit_ref TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (proposed_by_run_id) REFERENCES runs(id)
+);
+
+CREATE INDEX idx_proposals_pending ON intent_proposals(project_id, expires_at)
+    WHERE state = 'PENDING';
+```
+
+`resolved_by_user_id` has no session variant by construction. A schema that cannot express
+"a session approved this" is a stronger guarantee than a rule saying it must not.
 
 ## Data Model (Conceptual)
 
@@ -519,23 +795,45 @@ Constraints are not enforced automatically (the system does not prevent a user f
 
 ## MVP Scope
 
-The MVP Intent Graph includes:
+**The Intent Graph is built last.** It is a leaf in the dependency graph (RFC-0099): the
+execution model, the content graph, and the agent loop all work without it, and nothing depends
+on it. It is also the hardest of the three graphs to get right. Building it early is how a
+project spends a year on planning machinery before proving the execution loop.
 
-1. **Goal hierarchy**: Goals and sub-goals.
-2. **Constraints and criteria**: Add constraints and acceptance criteria to goals.
-3. **Status tracking**: Track progress (not_started, in_progress, done).
-4. **Simple versioning**: Basic Git-based versioning.
-5. **Querying**: Sessions can query the graph (what's the next priority? what goals are blocked?).
-6. **Editing**: Users can directly edit the graph via UI or API.
-7. **AI annotations**: AI sessions can link artifacts to intent nodes.
+**MVP is a task list, not a DAG.** Concretely:
+
+1. Flat or single-level goals with titles, descriptions, and priority.
+2. `TARGETED` edges from Runs, so the list knows what is being worked on.
+3. **Derived status** — this is not deferrable, because retrofitting derivation after a stored
+   `status` field exists means migrating data that was never trustworthy.
+4. User assertions with provenance.
+5. **The proposal gate** — sessions propose, only users resolve. Also not deferrable: a system
+   that ships with sessions writing intent directly cannot later be told to stop, because by
+   then the graph is full of unreviewed model output and nobody can tell which parts the user
+   actually wanted.
+6. Git snapshot of the graph, with conflict detection (RFC-0053).
 
 The MVP does not include:
 
-- Visual graph editing (future).
-- Graph templates (future).
-- Automatic conflict detection (future).
-- Sophisticated diff/merge (future).
-- Full proposal workflow for AI (future).
+- Sub-goal hierarchies, dependencies, and the acyclicity checker — a task list has no cycles.
+- Constraints and acceptance criteria as node types.
+- Confirmed `IMPLEMENTS` edges (MVP shows `NEEDS_REVIEW` and stops there).
+- Proposal expiry sweeps, `SUPERSEDED` detection, and accept-with-edits (MVP is accept or
+  reject whole).
+- Visual editing, templates, diff/merge UI.
+
+### A note on presentation
+
+The Intent Graph is a graph in the data model. It should **not** be a node-link diagram in the
+UI. A force-directed canvas is unusable on a phone and only marginally useful on a desktop.
+
+The forms that work: an **outline or checklist** with derived status and a visible override
+marker; a **"what's next"** query answering priority and blockers; and a **timeline** of
+status transitions. Reserve any canvas view for a desktop power-user feature, if ever.
+
+The same principle applies to the other two graphs: the Execution Graph presents as a timeline,
+and the Resource Graph as an on-demand provenance trail ("why does this file look like this?").
+Graphs are how the data is modelled, not how it is shown.
 
 ## Future Work
 

@@ -63,9 +63,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 - [docs/README.md](docs/README.md) — Documentation structure.
 - [docs/principles.md](docs/principles.md) — Ten core principles.
 - [docs/vision.md](docs/vision.md) — Mission statement.
-- [docs/roadmap.md](docs/roadmap.md) — Four-phase evolution.
+- [docs/roadmap.md](docs/roadmap.md) — Index into the three levels of plan.
+- [docs/decisions.md](docs/decisions.md) — Why the architecture is this and not something else.
 
-**RFCs (25+):**
+**RFCs (62):**
 - All architectural decisions documented as RFCs in [docs/rfcs/](docs/rfcs/).
 - See [docs/rfcs/README.md](docs/rfcs/README.md) for RFC process and index.
 
@@ -93,11 +94,22 @@ For AI-assisted development, see [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-**Current phase:** Architecture foundation (Phase 1).
+**Current phase:** Phase 0 (Contracts) complete as of 2026-08-03. Phase 1 (Execution kernel) not
+yet started.
 
-All foundational RFCs (25+) are complete and accepted. Core runtime and first UI implementations are in progress.
+Phase 0 produced three checkable artifacts rather than prose: [`schema/`](schema/) — 53 tables
+of canonical DDL, validated in CI; [`runtime/kernel/`](runtime/) — the KMP contract surface,
+compiling with contract tests and no implementations; and
+[`docs/decisions.md`](docs/decisions.md) — 24 architecture decisions with none open. 45 of the
+62 RFCs are Accepted; what remains Draft is deliberate and listed in
+[docs/rfcs/README.md](docs/rfcs/README.md).
 
-See [RFC-0099: Roadmap](docs/rfcs/0099-roadmap.md) for the full project timeline and long-term vision.
+**No feature implementation exists yet.** That is the accurate statement, and the roadmap is
+ordered so it stays accurate rather than optimistic.
+
+- [RFC-0099: Roadmap](docs/rfcs/0099-roadmap.md) — the phases and why they are in that order
+- [MVP roadmap](docs/mvp-roadmap.md) — the ordered work breakdown, with gates
+- [PIPELINE.md](PIPELINE.md) — live progress
 
 ## Questions?
 

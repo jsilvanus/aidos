@@ -1,6 +1,6 @@
 # RFC-0003: Security
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -55,32 +55,131 @@ This RFC does not address collaboration security (how to share capabilities acro
 
 ### Threat Model
 
-**Threat 1: Rogue AI Agent**
+The adversary Aidos is designed against is **not** someone who has already compromised the
+device. It is content and code that the user's agent will read or run in the course of ordinary
+work, and which the user has no reason to have inspected.
 
-An AI session is tricked into performing malicious actions (e.g., deleting files, exfiltrating data, running malware). Mitigation: Capabilities restrict what a session can do. A session without filesystem write permission cannot delete files.
+**Threat 1 (primary): Indirect prompt injection**
 
-**Threat 2: Malicious Tool Integration**
+An attacker writes content the agent will read — a README in a vendored dependency, an issue
+body, a fetched web page, an MCP server's response — containing instructions aimed at the
+model. This is the highest-likelihood threat, because reading untrusted text is what a coding
+agent does all day.
 
-An external tool (MCP server, shell script) is compromised and attempts to escalate privileges or access protected resources. Mitigation: Tools are invoked through the Tool Broker, which checks permissions. A tool cannot access resources the session does not have capability for.
+*What does not work:* asking the model to ignore instructions inside delimiters. That makes the
+model the enforcement point, and models are not reliable enforcement points.
 
-**Threat 3: Secret Leakage**
+*Mitigation:* the danger is not that the model read the text, it is that its next tool call
+carries the session's full authority. **A Run whose context has admitted untrusted content
+operates under an attenuated capability set for the remainder of the Run** (RFC-0027):
+in-project reversible work continues frictionlessly, while egress, secrets, out-of-project
+mutation, and `UNSAFE` effects require per-call approval naming the specific tainting content.
+Structural sandboxing with mandatory delimiter escaping (RFC-0025) is defence in depth.
 
-A session accidentally includes an API key in an artifact or log. Mitigation: Secrets are stored encrypted at rest. Loggers are configured to redact secrets. Sessions must explicitly request secret access.
+*Residual risk:* an injected instruction can still cause in-project damage — writing nonsense
+into the user's source. Git makes that reviewable and revertible. This is accepted.
 
-**Threat 4: Session-to-Session Interference**
+**Threat 2: Hostile project content — "clone equals execution"**
 
-One session attempts to access another session's data or modify another session's state. Mitigation: Sessions are isolated. They can communicate through artifacts and events, but they cannot directly access each other's memory or storage.
+The user clones or imports a project from someone else. If any project-supplied file can cause
+code to run or authority to be granted, opening a repository is equivalent to running it.
 
-**Threat 5: Privilege Escalation**
+*Mitigation, structural:* project configuration expresses **preferences and requests only**
+(RFC-0010). It cannot contain secrets, capability grants, or executable commands. MCP servers
+and plugins are registered at **user scope** and merely *requested* by name from a project
+(RFC-0031, RFC-0054). Git hooks are never executed (RFC-0053). Nothing executable is fixed at
+anything but build time on MOBILE (RFC-0049).
 
-A low-privilege session attempts to acquire high-privilege capabilities. Mitigation: Capabilities are granted by the user, not by sessions. A session cannot grant itself additional capabilities.
+*Why this matters more than it appears:* the earlier design allowed a Git-tracked
+`mcp_servers` block containing a `command` string, which made `git pull` a code-execution
+primitive.
+
+**Threat 3: Malicious or compromised tool provider**
+
+An MCP server or plugin attempts to escalate, exfiltrate, or steer the agent.
+
+*Mitigation:* tool providers are **capability subjects in their own right** (RFC-0018) holding
+attenuated grants, rather than borrowing the calling session's authority — otherwise a hostile
+provider inherits whatever the session holds. Their output is `UNTRUSTED` and taints the Run.
+Spawned processes receive a **scrubbed environment** with no runtime connection token
+(RFC-0055), which prevents the specific attack of a spawned MCP server connecting back to the
+runtime and approving its own capability request.
+
+*Honest limitation:* a subprocess with the same user ID is not sandboxed by virtue of being a
+subprocess. On DESKTOP, platform sandboxing is applied where available; the load-bearing
+controls are the attenuated grant, the scrubbed environment, and audit.
+
+**Threat 4: Local process on the user's machine**
+
+Another program running as the same user attempts to drive the runtime through its API.
+
+*Mitigation:* owner-only socket permissions plus a connection token; authority-granting
+commands additionally require a `user_interactive` connection (RFC-0052, RFC-0055). "Same
+device implies trusted" was not a defensible model once the runtime began spawning processes it
+does not trust.
+
+**Threat 5: Runaway cost and self-amplification**
+
+Not an attacker at all, and more likely than any of the above: an event loop between two
+sessions, or an agent loop that never terminates, spending money and battery.
+
+*Mitigation:* hard step ceilings, budgets enforced as capability constraints, causal-depth
+limits, wake-rate circuit breakers, and no event replay on boot (RFC-0008, RFC-0028).
+
+**Threat 6: Secret leakage into recorded state**
+
+A credential reaches a prompt, an event payload, an artifact, or a diagnostic bundle. This needs
+no attacker — it is the default behaviour of a system that records everything for auditability,
+which this one does deliberately.
+
+*Mitigation:* the vault holds values; consumers hold references; the redactor runs unconditionally
+at every persistence and transmission boundary (RFC-0035). **A session cannot read a secret, only
+cause one to be used** — which is what makes exfiltration-by-injection structurally impossible
+rather than merely unlikely.
+
+**Threat 7: Privilege escalation by a session**
+
+A session attempts to widen its own authority, or a worker attempts to exceed its parent's.
+
+*Mitigation:* capabilities are created only by the Capability Manager and granted only by the
+user. Delegation is strictly attenuating in scope, constraints, expiry, and budget (RFC-0018,
+RFC-0028). A session cannot resolve a proposal, confirm its own `IMPLEMENTS` edge, or verify its
+own acceptance criteria (RFC-0012, RFC-0019) — the model may propose, run, and report, but never
+confirm its own success.
+
+**Threat 8: Session-to-session interference**
+
+One session reads or influences another's work.
+
+*Mitigation:* per-subject capabilities; no shared memory; coordination through artifacts and
+events only. Event subscriptions are themselves capability-checked and events carry a visibility
+class (RFC-0004) — without which the bus is a side channel around the entire model, since a
+narrow worker could subscribe to `**` and observe everything.
 
 **What We Do Not Protect Against:**
 
-- **Compromised OS**: If the operating system is compromised, Aidos cannot guarantee safety. We assume the OS is trustworthy.
-- **Untrusted Hardware**: We assume the hardware is not malicious.
-- **Side-channel Attacks**: We do not protect against timing attacks, cache attacks, or other side-channel exploits.
-- **Coerced User**: If the user is coerced to grant dangerous permissions, Aidos cannot stop them.
+- **Compromised OS or hardware**: assumed trustworthy.
+- **Side-channel attacks**: out of scope.
+- **A coerced or careless user**: if the user approves everything, no control helps. This is why
+  escalation prompts must be *rare and specific* — a design constraint, not a disclaimer. In
+  particular, in-project reversible work is deliberately frictionless so that the prompts which
+  do appear carry signal.
+- **A malicious runtime build**: users are expected to obtain Aidos from a trusted source.
+- **The model being wrong**: correctness of model output is not a security property. Git
+  history and preview-before-mutate are the mitigations for bad output, not the capability
+  model.
+
+### Capability model: what the term means here
+
+RFC-0018 defines the mechanism. Two properties are worth stating at this level, because they
+determine whether the rest of this threat model holds:
+
+- **Designation travels with authority.** A subject exercises a *named* capability, and
+  hierarchical resources are reached through handles that resolve paths against their own root.
+  The runtime never searches for an authority that would permit a requested operation. Without
+  this, the model is an ACL keyed by session identity and Threat 1 is unmitigated.
+- **Authority is contextual, not static.** The effective grant is a function of the held
+  capability *and* the Run's taint (RFC-0027).
 
 ### Capability-Based Access Control
 
@@ -242,6 +341,56 @@ The entire security model is based on the principle that nothing is implicitly t
 - External tools do not have implicit access to secrets or files.
 - Frontends must authenticate with the runtime.
 - Operations do not proceed without explicit permission checks.
+
+## Data Model
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+### The audit log
+
+The audit log is the security record. It is append-only, `PERMANENT` retention (RFC-0056), and
+**cannot be disabled, sampled, or dropped under pressure** — it is not a log level (RFC-0037).
+
+```sql
+CREATE TABLE audit_log (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    sequence      INTEGER NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    kind          TEXT NOT NULL,           -- CapabilityGranted, ToolInvoked, SecretResolved, ...
+    actor_kind    TEXT NOT NULL,           -- USER|SESSION|WORKER|MCP_SERVER|PLUGIN|RUNTIME
+    actor_id      TEXT NOT NULL,
+    device_id     TEXT NOT NULL,           -- RFC-0046
+    subject_ref   TEXT,                    -- what was acted upon
+    capability_id TEXT,                    -- the authority exercised, where applicable
+    detail_json   TEXT NOT NULL DEFAULT '{}',  -- redacted before write (RFC-0035)
+    signature     TEXT,                    -- reserved; never written in v1 (RFC-0046)
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX idx_audit_sequence ON audit_log(project_id, sequence);
+CREATE INDEX idx_audit_actor ON audit_log(actor_kind, actor_id, occurred_at);
+CREATE INDEX idx_audit_kind  ON audit_log(project_id, kind, occurred_at);
+```
+
+Four properties are structural rather than conventional:
+
+- **Two-column actor attribution** (`actor_kind`, `actor_id`), never one polymorphic identifier
+  (RFC-0046). A single `created_by TEXT` meaning "session or user" cannot be joined, cannot carry
+  a foreign key, and is ambiguous whenever a UUID could be either.
+- **`RUNTIME` is a real actor.** Crash recovery transitions Runs, migrations rewrite rows, and
+  compaction discards payloads. Attributing those to the user would be a lie; attributing them to
+  nothing would leave unexplained changes in the record.
+- **`detail_json` is redacted before it is written** (RFC-0035). Tool errors routinely embed
+  command lines, and command lines routinely embed credentials.
+- **`signature` exists and stays empty in v1.** A signature scheme designed against no threat
+  model and no key management would be worse than none — but the column must exist now, because
+  this is the table that must never be rewritten.
+
+The `sequence` is per project and monotonic, so a gap is detectable. Detection is the point: an
+audit log whose deletions are invisible is not an audit log.
 
 ## Data Model
 

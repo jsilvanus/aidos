@@ -1,6 +1,6 @@
 # RFC-0000: Vision
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -31,7 +31,7 @@ The name Aidos reflects this philosophy. In Greek philosophy, Aidos represents p
 
 5. **Make permissions explicit and capability-based**, so users understand and control what workloads can access.
 
-6. **Design for long-term transparency and auditability**, with session replay and decision logging built into the architecture from the start.
+6. **Design for long-term transparency and auditability**, with decision logging built into the architecture from the start — enough to reconstruct *what happened and why*, which is not the same as re-running it (D1).
 
 7. **Create a platform for multi-domain workflows**, where the same underlying architecture supports coding, productivity, planning, research, and future applications.
 
@@ -80,14 +80,14 @@ This constraint forces a clearer separation of concerns. It prevents the naive p
 
 ### Git-First
 
-Git is not an add-on. It is a first-class primitive in the model. Projects are Git repositories. Sessions frequently work inside isolated Git worktrees. Decision history, intent changes, and resource updates all flow through Git.
+Git is not an add-on. It is a first-class primitive in the model. Projects are Git repositories. Sessions read through the object database rather than a checkout, and workers build commits directly against it (RFC-0053) — a phone has neither `git worktree` nor room for a second working tree. Decision history, intent changes, and resource updates all flow through Git.
 
 This choice has several consequences:
 
 - The version control history becomes a permanent record of the project's evolution and reasoning.
 - Merge conflicts and branching workflows are natural to Aidos rather than foreign.
 - Export and backup are trivial: the entire project is a Git repository.
-- Collaboration (when it exists in future versions) is mediated by Git, not by real-time collaboration APIs.
+- Collaboration is Git. Not a future Aidos feature mediated by Git — Git itself, used normally.
 
 ### Vendor Independence
 
@@ -106,8 +106,10 @@ This is not idealism; it is pragmatism. The foundation should be robust to the i
 - Users own the runtime. It runs on their device.
 - Users own the data. It lives in local storage.
 - Users own the decisions. The Intent Graph is editable. LLMs advise; users decide.
-- Users own the history. Sessions and artifacts are preserved for replay and audit.
-- Users own the extensions. The plugin system allows custom tools without requiring platform approval.
+- Users own the history. Sessions and artifacts are preserved, and the audit trail reconstructs
+  what happened. It does not re-execute it (D1).
+- Users own the extensions. MCP servers add tools without platform approval; a plugin host is
+  not in v1 (D18).
 
 Implicit trust is not permitted. Every capability that a session uses requires explicit permission. If a session needs to run shell commands, write files, or query a remote API, the permission must be granted and recorded.
 
@@ -117,7 +119,7 @@ Vision does not specify data structures, but it does constrain them:
 
 - A **Project** contains a directory tree anchored in Git. Within this tree live:
   - A SQLite database (for sessions, intent graph, artifacts, metadata).
-  - One or more Git worktrees (for coding and versioned content).
+  - A Git repository — one working tree, plus worker refs under `refs/aidos/**`.
   - Resource files (markdown, configuration, instruction files).
 
 - **Sessions** are first-class entities with persistent identity, state, and history. They may wake and sleep many times.
@@ -154,7 +156,9 @@ The MVP demonstrates the core model:
 
 The MVP does not require:
 - Multiple AI providers (one will suffice).
-- Multi-user workflows.
+- Multi-user workflows. **Not planned.** Aidos is single-user, and **Git is the collaboration
+  tool** — it is already an excellent one, it works offline, and it is what every developer
+  already uses to work with other people. Aidos will not build a second one alongside it.
 - Advanced knowledge engine features (basic Git parsing is enough).
 - Plugin SDK.
 - Desktop or mobile UIs (headless is acceptable for MVP).

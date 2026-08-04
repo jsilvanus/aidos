@@ -1,6 +1,6 @@
 # RFC-0010: Projects
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -79,14 +79,28 @@ Mutable project knowledge: architecture documents, coding standards, roadmaps, m
 
 Immutable outputs: plans, patches, reports, transcripts, generated code, test results. Artifacts record provenance (which session created them, from which intent, at what time). They are append-only and auditable.
 
-#### Git Repositories
+#### One Git repository
 
-One or more Git repositories containing versioned code and content. A project may have a monolithic repository or multiple repositories (via Git submodules or worktrees). Repositories are the source of truth for code and versioned resources.
+**A project is exactly one Git repository.** Not one or more, and not a repository plus
+worktrees.
+
+The rest of the architecture already assumed this and this RFC did not: `repo_fingerprints` is
+keyed `project_id PRIMARY KEY`, so external-mutation detection has one fingerprint per project
+(RFC-0053); reconciliation speaks of *the* repository throughout; and worker isolation is
+treeless refs inside the one repository rather than additional checkouts. A second repository
+would need a second fingerprint, a second reconciliation state, and an answer to which one a
+relative path means.
+
+Git **submodules** work, because to Git they are one repository with pointers — Aidos sees the
+superproject's tree and does not descend. A user wanting several repositories worked on together
+opens several projects; the inbox aggregates across them (RFC-0050).
 
 #### Configuration
 
 Project-wide settings:
-- AI model preferences and API keys.
+- AI model preferences. **Not API keys** — secrets live in the user-scope vault and never in
+  project storage (RFC-0035, RFC-0017). `aidos.toml` is Git-tracked, so a key written here would
+  be committed, pushed, and in every clone.
 - Default permissions and security policies.
 - Integration settings (MCP servers, webhooks, external tools).
 - Session templates and defaults.
@@ -162,7 +176,20 @@ Projects are isolated from each other:
 
 #### Namespace Isolation
 
-Each project has its own namespace for sessions, artifacts, resources, and configuration. Session IDs, artifact IDs, etc. are unique within the project only.
+Each project has its own namespace for sessions, artifacts, and configuration. **IDs are UUIDv7
+and globally unique**, not merely unique within a project (RFC-0054): imports must not collide,
+a project copied to another device must keep its identity, and cross-project references need to
+be expressible later. `project_id` columns provide isolation, not uniqueness.
+
+#### Scope Isolation
+
+Not everything belongs to a project. Model weights, the model catalog, the secrets vault,
+installed plugins, MCP registrations, and device identity are **user scope** (RFC-0054). A
+per-project model cache would download the same multi-gigabyte weights once per project and try
+to load them concurrently on a device with one pool of RAM.
+
+"Everything is a Project" is therefore restated as: **everything actionable belongs to a
+project.**
 
 #### Storage Isolation
 
@@ -182,53 +209,93 @@ The Knowledge Engine (RFC-0015) maintains separate indices per project. A sessio
 
 ### Git as Project Spine
 
-Every project is a Git repository. This provides:
+Every project is backed by a Git repository. This provides:
 
-1. **History**: Every change to Intent Graph, resources, and decisions is a commit.
-2. **Branching**: Projects can explore alternative workflows in branches.
-3. **Merge**: Branches can be merged, resolving conflicts.
-4. **Export/Import**: A project is portable (it is just a Git repository).
-5. **Audit**: The commit log is an immutable record of who did what and when.
+1. **History**: content changes and intent snapshots are commits.
+2. **Branching and merge**: alternative lines of work.
+3. **Content portability**: the repository moves between machines by ordinary Git means.
+4. **Audit**: the commit log records what changed and when.
 
-Projects may have multiple Git repositories (for code, documentation, knowledge bases). These are coordinated via Git submodules or worktrees, but the project remains the logical unit.
+**A project is not "just a Git repository."** The repository holds versioned content; the
+runtime holds operational state — sessions, Runs, artifacts, capabilities, audit — which is not
+versioned and must not be committed. Both live in the project directory:
+
+```
+<project-root>/
+├── .git/                  content history
+├── aidos.toml             project config, Git-tracked
+├── src/, docs/ ...        the user's content
+└── .aidos/                runtime state, Git-IGNORED (RFC-0054)
+    ├── state.db
+    ├── blobs/
+    └── index/
+```
+
+Consequences, stated because the earlier claim obscured them:
+
+- **Cloning the repository on another device gives you the content and none of the sessions,
+  artifacts, or audit trail.** That is correct behaviour, not a defect: operational state is
+  device-local and not mergeable. Moving a project *with* its history is what export/import is
+  for (RFC-0041), and it moves the whole directory including `.aidos/`.
+- Git is authoritative for content; SQLite for operational state; and the user may change Git
+  behind the runtime's back at any time, which is reconciled per RFC-0053.
+- The runtime never commits automatically without an explicit capability grant, never runs
+  repository hooks, and confines its own refs to `refs/aidos/**`.
+
+Multiple repositories per project are out of scope for v1. The project is one repository plus
+its runtime state.
 
 ### Project Configuration
 
 Project configuration includes:
 
+Project configuration lives in `aidos.toml`, which is **Git-tracked and therefore travels with
+the repository to other machines and other people**. That single fact determines what may
+appear in it.
+
+```toml
+name        = "weather-app"
+description = "..."
+
+[requirements]                      # RFC-0049: what this project expects, advisory only
+tools    = ["fs", "git", "shell"]
+optional = ["shell"]
+network  = "optional"
+
+[ai]
+preferred_model_kind = "llm.coding" # a preference, resolved against the user's catalog
+                                    # never a provider, never an API key
+
+[mcp]
+requested = ["github"]              # names only (RFC-0031)
+
+[knowledge]
+enabled_providers = ["git", "treesitter"]
+exclude_paths     = ["node_modules/**", "build/**"]
+
+[trust]                             # RFC-0027
+untrusted_paths = ["node_modules/**", "vendor/**", "third_party/**"]
+
+[session]
+default_timeout_seconds = 300
 ```
-Project Config {
-  name: String
-  description: String?
-  
-  AI Configuration:
-    default_model: ModelId
-    model_preferences: Map<UsageType, ModelId>
-    api_keys: SecretStore
-    
-  Security Policy:
-    default_permissions: CapabilitySet
-    session_permission_defaults: Map<SessionRole, CapabilitySet>
-    
-  Integration Configuration:
-    mcp_servers: List<MCPServerConfig>
-    webhooks: List<WebhookConfig>
-    
-  Session Defaults:
-    default_timeout: Duration
-    default_memory_limit: Bytes
-    worker_isolation: "worktree" | "process" | "sandbox"
-    
-  Knowledge Engine Configuration:
-    enabled_providers: List<ProviderType>
-    embedding_model: ModelId
-    indexing_schedule: Cron?
-    
-  Scheduler Configuration:
-    max_concurrent_sessions: Int
-    event_retention: Duration
-}
-```
+
+**What may never appear in project configuration:**
+
+| Removed | Why | Where it lives now |
+|---|---|---|
+| `api_keys: SecretStore` | credentials in version control | user-scope vault (RFC-0035) |
+| `default_permissions: CapabilitySet` | a pulled branch would change the security policy | grants are user actions, per session (RFC-0018) |
+| `session_permission_defaults` | same | same |
+| `mcp_servers` with `command` | cloning becomes code execution | user-scope registry (RFC-0031) |
+| `webhooks` | inbound network surface defined by a repo | user scope, if ever |
+| `default_memory_limit` | not enforceable (RFC-0005) | removed |
+| `worker_isolation` | an implementation detail chosen by profile (RFC-0049) | removed |
+
+The rule, stated once: **project configuration expresses preferences and requests. Authority
+and secrets are granted by the user, at user scope, never by a file that arrives over the
+network.** Everything in `aidos.toml` is treated as `PROJECT` trust at best, and content under
+`untrusted_paths` as `UNTRUSTED` (RFC-0027).
 
 ### Relationships to Other Concepts
 
@@ -260,36 +327,44 @@ Instructions (from AGENTS.md, CLAUDE.md, etc.) are project-scoped. The Instructi
 
 The Scheduler maintains project-local subscriptions, event logs, and scheduled tasks. Each project has its own scheduler state.
 
+## Data Model
+
+> **Schema note.** `schema/project.sql` is the canonical DDL. The block below is the same
+> definition, reproduced here so this RFC is readable on its own; where the two ever differ,
+> the schema file governs and this RFC is the bug.
+
+```sql
+CREATE TABLE projects (
+    id                TEXT PRIMARY KEY,               -- UUIDv7 (RFC-0054)
+    name              TEXT NOT NULL,
+    description       TEXT,
+    root_path         TEXT NOT NULL,
+    project_type      TEXT NOT NULL DEFAULT 'generic', -- RFC-0047
+    template_id       TEXT,
+    template_version  TEXT,
+    state             TEXT NOT NULL DEFAULT 'OPEN',    -- CREATING|OPEN|CLOSING|CLOSED
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    state_updated_at  TEXT NOT NULL,
+    row_version       INTEGER NOT NULL DEFAULT 1       -- optimistic concurrency (RFC-0017)
+);
+```
+
+This table was referenced by roughly twenty foreign keys across the RFC set and defined nowhere
+until the schema was extracted. Note what it does **not** contain: no capability set, no secrets,
+no session list, no artifact list. Authority lives in `capabilities` (RFC-0018), secrets at user
+scope (RFC-0035), and contents are queried by `project_id` rather than materialized here
+(RFC-0010 "Data Model (Conceptual)" below).
+
+`root_path` is where the project lives on *this* device. It is cached in the user-scope
+`project_registry` (RFC-0054) and re-derived on open if the directory moved — a project directory
+is self-describing, so the path is never authoritative.
+
 ## Data Model (Conceptual)
 
-```
-Project {
-  id: UUID                          # Unique project identifier
-  name: String                      # Human-readable name
-  description: String?
-  created_at: Timestamp
-  owner: UserId?                    # (Single-user MVP: implicit)
-  
-  storage: ProjectStorage {
-    git_root: Path                  # Root directory (Git repository)
-    database: DatabaseRef           # SQLite database
-  }
-  
-  configuration: ProjectConfig      # (see above)
-  
-  state: ProjectState {
-    active_sessions: Set<SessionId>
-    archived_sessions: Set<SessionId>
-    intent_graph: IntentGraphId     # Ref to RFC-0012
-    resources: Map<ResourceId, Resource>    # Refs to RFC-0013
-    artifacts: Map<ArtifactId, Artifact>    # Refs to RFC-0014
-    knowledge: KnowledgeIndexRef    # Ref to RFC-0015
-    instructions: InstructionSetRef # Ref to RFC-0016
-  }
-  
-  metadata: Map<String, Any>?
-}
-```
+Superseded by the canonical DDL above. An earlier version of this RFC carried a second,
+prose-shaped `Project { ... }` block here that had drifted from the SQL a hundred lines earlier —
+two definitions of one table in one document, which is the drift this corpus keeps correcting.
 
 ## Lifecycle
 

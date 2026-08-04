@@ -1,6 +1,17 @@
 # RFC-0014: Artifacts
 
-Status: Draft
+Status: **Superseded by RFC-0024**
+
+> **This RFC is retained for its motivation and vocabulary, not as an implementation target.**
+>
+> RFC-0024 (Resource Graph) unifies resources and artifacts into a single `ContentNode`
+> abstraction. An "artifact" is a `ContentNode` with `MutabilityPolicy.IMMUTABLE` or
+> `APPEND_ONLY`, and its lineage is expressed as `provenance_edges`.
+>
+> Note one substantive change: this RFC implies artifacts are retained forever. RFC-0024 and RFC-0056
+> keep the *record and its provenance* permanently while allowing the *payload* to be compacted
+> on a retention schedule. Nothing that answers "what happened" is ever discarded; the bytes it
+> happened to may be. Implement RFC-0024.
 
 ## Abstract
 

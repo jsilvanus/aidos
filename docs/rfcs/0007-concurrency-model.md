@@ -1,6 +1,6 @@
 # RFC-0007: Concurrency Model
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -60,30 +60,55 @@ RuntimeDispatchers
 
 **`main` dispatcher**: Single-threaded. All inbound frontend commands are received here. All outbound events are published here. State machines (project lifecycle, session wakeup/sleep) advance here. No blocking operations are permitted on this dispatcher.
 
-**`session` dispatcher**: A bounded thread pool (default: min(4, CPU cores)). Session Runs execute here as coroutines. Each Run is a coroutine launched on this dispatcher. Multiple projects' sessions can execute in parallel. Within a single project, only one session Run executes at a time (enforced by the per-project session lock — see below).
+**`session` dispatcher**: A bounded thread pool (default: min(4, CPU cores) on DESKTOP, single-threaded on MOBILE). Each Run is a coroutine launched here. Runs in different projects execute in parallel, and Runs within a project execute in parallel unless they contend on the working tree or the device-global model runtime (see Working-Tree Lock below).
 
 **`io` dispatcher**: An unbounded thread pool for I/O operations. SQLite reads, SQLite writes, filesystem reads and writes, and network calls execute here. The io dispatcher is never used for business logic — only for I/O adapters.
 
 **`background` dispatcher**: A low-priority bounded pool for work that must not impact session responsiveness: Knowledge Engine indexing, background Git status, telemetry flushing, export operations.
 
-### Per-Project Session Lock
+### Working-Tree Lock, not Project Lock
 
-Within a project, session Runs execute serially. This is enforced by a `Mutex` held per project.
+The contended resource is the **working tree and Git index**, not the project. Two Runs that
+never touch the working tree do not conflict and must not be serialized against each other.
 
 ```kotlin
 class ProjectExecutionContext(val projectId: UUID) {
-    val sessionMutex = Mutex()
-    // ... other per-project state
+    val worktreeMutex = Mutex()      // guards working tree + .git/index
+    val writeContext: ProjectWriteContext
 }
 ```
 
-When a session Run begins, it acquires `sessionMutex`. It releases the mutex only when:
-- The Run completes (COMPLETED, FAILED, CANCELLED)
-- The Run yields at a safe serialization point (awaiting an async operation)
+A Run acquires `worktreeMutex` only for the duration of an effect that touches the working tree
+or the Git index — not for the whole Run. It is released at the next checkpoint.
 
-While a Run holds the mutex, no other session Run in the same project can start. When the Run yields, the mutex is released, allowing another Run to proceed. When the yielded Run is resumed, it re-acquires the mutex before continuing.
+**Treeless workers do not acquire it at all.** A worker that builds a commit directly against
+the object database with an in-memory index (RFC-0049) contends on nothing: blob, tree, and
+commit objects are content-addressed and immutable, and each worker writes its result to its own
+`refs/aidos/workers/<id>` ref. Several such workers run genuinely in parallel, each with its own
+Run, transcript, Execution Graph subtree, and audit attribution.
 
-This gives the semantics of a "mostly single-threaded" project with cooperative multitasking — the design intent of the original Scheduler RFC — while not blocking the thread.
+This replaces an earlier per-project session mutex under which *all* Runs in a project
+serialized. That was over-broad: it was written to protect the working tree, but it also blocked
+the parallel worker model that RFC-0011 depends on, and it would have made a driver session
+waiting on three workers strictly slower than doing the work itself.
+
+What still serializes, and why:
+
+| Resource | Scope of serialization | Reason |
+|---|---|---|
+| Working tree + Git index | per project | a single shared checkout; JGit index locking |
+| SQLite writes | per project | single-writer discipline (below) |
+| Model inference | **per device** | weights are user scope; RAM admits one large model (RFC-0020) |
+| Object-database writes | none | content-addressed and immutable |
+| Ref updates | per ref | JGit performs a compare-and-swap on the ref |
+
+Model inference being device-global is usually the real limit on a phone, not the working tree.
+Four workers can plan in parallel; their model calls queue. On desktop with a remote provider,
+they proceed concurrently.
+
+Because parallel workers are now possible on every profile, the invariant that **at most one
+Task per Run is `RUNNING`** (RFC-0006) becomes load-bearing: parallelism is across Runs, never
+inside one. That keeps each Run's audit trail a single ordered sequence.
 
 ### SQLite Single-Writer Discipline
 
@@ -156,7 +181,7 @@ Git operations vary in duration from milliseconds (status, diff) to minutes (clo
 
 Long-running Git operations (fetch, push, large clone) should be launched as background coroutines. The session requesting the operation yields and subscribes to a completion event. The Git operation publishes a completion event when done.
 
-Git operations that modify project-tracked files should acquire the per-project session lock before writing, to prevent races between Git-managed files and session file writes.
+Git operations that modify the working tree or the index acquire `worktreeMutex` for the duration of the operation only. Object-database writes (blob, tree, and commit creation) acquire nothing; ref updates are compare-and-swap. This is what allows treeless workers to commit in parallel.
 
 ### Cancellation Propagation
 
@@ -179,18 +204,57 @@ This means the cancellation semantics from RFC-0006 are implemented naturally: w
 
 Kotlin coroutines on JVM (and KMP targets with native memory model) do not guarantee memory visibility across coroutine dispatchers without explicit synchronization. The following rules apply:
 
-1. Session state accessed from multiple coroutines must be read and written inside the per-project session mutex.
+1. Session state accessed from multiple coroutines is read and written through `ProjectWriteContext`, not held in shared mutable objects. With parallel Runs there is no single lock that makes ad hoc shared state safe.
 2. Event Bus state (subscriber registry, event queue) is owned by the `main` dispatcher and accessed only there.
 3. SQLite state is owned by the `ProjectWriteContext` mutex and accessed through it.
-4. Read-only configuration (project metadata, capability definitions) is safe to read from any dispatcher after it has been loaded, because it is treated as immutable once loaded.
+4. Immutable-once-loaded data — project metadata, tool descriptors, model descriptors — is safe
+   to read from any dispatcher.
+5. **Capabilities are not in category 4.** They are revocable, and a cached capability is valid
+   only while its `revocation_epoch` matches the project's current epoch (RFC-0018). Every
+   validation compares epochs; a mismatch forces a re-read from SQLite.
+
+Rule 5 corrects an earlier version of this RFC, which listed "capability definitions" as
+immutable-once-loaded and safe to read without synchronization. That directly contradicted
+RFC-0018's guarantee that revocation takes effect immediately, and the contradiction resolved
+in favour of the cache — meaning a revoked capability could continue to authorize work. Epoch
+comparison makes staleness detectable rather than depending on an invalidation message being
+delivered.
 
 ### Android Specifics
 
-On Android, the `main` dispatcher corresponds to the Android main thread (Looper). The runtime must not perform blocking operations on the main thread.
+Android is the first target, so its constraints shape the model rather than being handled as
+exceptions. See RFC-0049 for the full platform profile and RFC-0009 for the execution model
+that makes these constraints survivable.
 
-Android imposes background execution limits on apps not in the foreground. The runtime should use a foreground service for long-running session work. Session state is always persisted to SQLite, so if the foreground service is killed, recovery proceeds as per RFC-0006.
+**Dispatchers.** The runtime's `main` dispatcher is a dedicated single thread, *not* the Android
+main (UI) thread. Binding runtime state machines to the UI looper would couple runtime progress
+to UI lifecycle and make every runtime operation a jank risk. The UI thread is a client of the
+Runtime API like any other.
 
-The `background` dispatcher on Android should use a WorkManager coroutine adapter for operations that can be deferred (Knowledge Engine indexing, cleanup) and a foreground service for interactive session work.
+**Execution windows.** Android does not grant long uninterrupted execution:
+
+- Interactive Runs execute in a **foreground service** with a user-visible ongoing notification
+  and a declared FGS type. This is a user-consented, visible mode of operation, not a
+  background trick.
+- The executor carries a **deadline budget** and stops cleanly at a checkpoint when the
+  remaining window cannot cover the next step (RFC-0009). It never starts work it cannot
+  finish.
+- Eviction is routine, not exceptional. A killed service is indistinguishable from a pause:
+  recovery resumes from the last committed checkpoint.
+
+**Deferred work.** The `background` dispatcher uses `WorkManager` for indexing, compaction, and
+cleanup. `WorkManager` periodic work has a 15-minute floor and no timing guarantee, and exact
+alarms require special-access permission. Therefore **no session semantics may depend on a
+timer firing at a precise moment** (RFC-0044). Timers on MOBILE are best-effort hints.
+
+**Boot behaviour.** The runtime does not replay a backlog of stale events on start. Pending
+events are coalesced per session and topic, and events older than the staleness window are
+recorded and discarded (RFC-0028). A phone that was off overnight must not wake and spend
+tokens catching up on file-change notifications.
+
+**Concurrency, honestly.** On MOBILE the `session` dispatcher is bounded to a single thread. A
+phone has neither the memory headroom to run several model-bearing Runs concurrently nor a
+reason to: the user is watching one thing.
 
 ### Desktop Specifics
 
@@ -214,7 +278,7 @@ class RuntimeDispatchers(
 // Per-project execution context
 class ProjectExecutionContext(
     val projectId: UUID,
-    val sessionMutex: Mutex,
+    val worktreeMutex: Mutex,
     val writeContext: ProjectWriteContext,
     val scope: CoroutineScope
 )

@@ -21,107 +21,139 @@ This document is your guide to understanding Aidos. Read this first, then dive i
 - Organize output: Create and track artifacts (code, documents, analysis) with full provenance.
 - Extend via plugins: Add custom tools, models, knowledge sources, and more.
 
-## Major Engines
+## How Aidos is layered
 
-Aidos consists of several integrated engines:
+Everything depends on kernel contracts. Services depend on the kernel, never directly on each
+other. This is the rule that keeps the dependency graph acyclic.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Frontend (Android, Desktop, Web)   │
-│              (RFC-0050, RFC-0051)                   │
-└────────────────────┬────────────────────────────────┘
-                     │ Runtime API (RFC-0052)
-┌────────────────────▼────────────────────────────────┐
-│            Headless Runtime (KMP)                   │
-│                                                     │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  Session Manager (RFC-0011)                 │   │
-│  │  • Long-lived workers with state & perms    │   │
-│  │  • Driver & worker roles                    │   │
-│  └─────────────────────────────────────────────┘   │
-│                     ↓                               │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  AI Engine (RFC-0020)                       │   │
-│  │  • LLM, embeddings, voice, vision, OCR      │   │
-│  │  • Local models (RFC-0022)                  │   │
-│  │  • Cloud fallback (RFC-0023)                │   │
-│  │  • Model Providers (RFC-0021)               │   │
-│  └─────────────────────────────────────────────┘   │
-│                     ↓                               │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  Tool Broker (RFC-0030)                     │   │
-│  │  • Unified tool interface                   │   │
-│  │  • Git (RFC-0032), Shell (RFC-0033)         │   │
-│  │  • Filesystem (RFC-0034)                    │   │
-│  │  • MCP (RFC-0031), Plugins (RFC-0060)       │   │
-│  │  • Capability-based permissions (RFC-0003) │   │
-│  └─────────────────────────────────────────────┘   │
-│                     ↓                               │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  Knowledge Engine (RFC-0015)                │   │
-│  │  • Synthesizes understanding                │   │
-│  │  • Multiple sources (files, Git, artifacts) │   │
-│  │  • Semantic search & indexing               │   │
-│  └─────────────────────────────────────────────┘   │
-│                     ↓                               │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  Intent Graph (RFC-0012)                    │   │
-│  │  • Persistent goal representation           │   │
-│  │  • Editable by sessions                     │   │
-│  │  • Separate from execution                  │   │
-│  └─────────────────────────────────────────────┘   │
-│                     ↓                               │
-│  ┌─────────────────────────────────────────────┐   │
-│  │  Storage Backend (RFC-0040)                 │   │
-│  │  • SQLite by default                        │   │
-│  │  • Persistent state, logs, indexes          │   │
-│  │  • Export/import projects (RFC-0041)        │   │
-│  └─────────────────────────────────────────────┘   │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-                     ↓
-              (projects, Git, tools)
+┌──────────────────────────────────────────────────────────────┐
+│  Frontends — Android (RFC-0050), Desktop (RFC-0051), CLI      │
+└───────────────────────────┬──────────────────────────────────┘
+                            │  Runtime API (RFC-0052)
+                            │  daemon on desktop, in-process on Android (RFC-0055)
+┌───────────────────────────▼──────────────────────────────────┐
+│  SERVICES                                                     │
+│  Projects (0010)      Sessions (0011)     Intent Graph (0012) │
+│  Content graph (0024) Knowledge (0015)    Instructions (0016) │
+│  Model runtime (0020) Git (0032/0053)     Import/export (0041)│
+├───────────────────────────────────────────────────────────────┤
+│  KERNEL — every service depends on these; they depend on none │
+│                                                               │
+│  Scopes and identity (0054)     Capability manager (0018)     │
+│  State store (0017/0040)        Effect broker (0030)          │
+│  Execution graph (0019)         Durable executor (0009)       │
+│  Agent loop (0008)              Event bus (0004)              │
+│  Audit log (0037)               Budget ledger (0028)          │
+├───────────────────────────────────────────────────────────────┤
+│  CROSS-CUTTING                                                │
+│  Platform profiles (0049) · Trust and taint (0027)            │
+│  Errors (0029) · Concurrency (0007) · Retention (0056)        │
+└───────────────────────────────────────────────────────────────┘
 ```
+
+Note what this diagram does *not* claim. An earlier version drew a strict downward stack —
+Sessions above the AI Engine above the Tool Broker above the Knowledge Engine — which asserted a
+cycle, since the Knowledge Engine needs embeddings from the AI Engine and the Tool Broker sits
+beside both rather than beneath them. There is no such stack. There is a kernel and there are
+services.
+
+## The centre: the agent loop
+
+One cycle is the reason the rest exists (RFC-0008):
+
+```
+    ┌─────────────────────────────────────────────────────────┐
+    │                                                          │
+    ▼                                                          │
+ select model ─▶ assemble prompt ─▶ [checkpoint] ─▶ call model │
+ (RFC-0020)      (RFC-0025)         (RFC-0009)                 │
+                                                     │         │
+                                                     ▼         │
+                                          validate schema      │
+                                          resolve capability   │
+                                          apply taint policy ──┤
+                                          (0008, 0018, 0027)   │
+                                                     │         │
+                                                     ▼         │
+                                          execute effect ──────┘
+                                          [checkpoint]
+                                          (0030, 0009)
+```
+
+Every step boundary is a checkpoint, which is what lets a Run survive Android evicting the
+process mid-task and resume where it left off.
+
+## Android first, and what that means
+
+The primary use case is **making progress on Git projects, offline, from a phone**: reading,
+understanding, planning, editing, reviewing, committing. Not running CI on a handset.
+
+Android cannot offer a general shell, cannot spawn arbitrary interpreters, and grants only short
+background windows. Rather than treating these as exceptions scattered through other documents,
+the architecture makes them explicit (RFC-0049):
+
+- **Platform profiles** declare what a device can do. Tools declare where they run.
+- **Unavailable tools are never offered to the model**, so it cannot propose them and the user
+  never sees a denial for something that could not have worked.
+- **Projects declare requirements**, and unmet ones are reported when the project opens — before
+  a session spends anything.
+- **Work is portable**: a Run that could not run tests still produces a commit, and the record
+  says what was skipped so a capable device can continue it.
+
+The constraint improves the runtime rather than limiting it. Short execution windows force
+checkpointed execution (RFC-0009); no subprocesses removes the largest class of sandbox escape;
+and no worktree support leads to **treeless workers** that build commits directly against the
+object database — cheaper and safer than a second checkout, on any platform.
 
 ## Key Concepts
 
-**Projects** (RFC-0010): Top-level containers. Each project is a Git repository with its own:
-- Intent Graph (goals you want to accomplish)
-- Resources (architecture docs, standards, roadmap)
-- Artifacts (outputs: code, analysis, documents)
-- Storage (session state, logs, indexes)
+**Scopes** (RFC-0054): **user** (device identity, model weights, secrets, plugins, MCP
+registrations), **workspace** (grouping and shared defaults), **project** (all work). The
+principle is *everything actionable belongs to a project* — not *everything is a project*.
 
-**Sessions** (RFC-0011): Long-lived workers. Each session:
-- Runs in a project
-- Has a role (driver or worker)
-- Has permissions (what it can access/do)
-- Can be paused/resumed
-- Produces artifacts
+**Projects** (RFC-0010): a Git repository plus runtime state in a Git-ignored `.aidos/`.
+Project config expresses preferences and requests; it never carries secrets or authority,
+because it arrives over the network.
 
-**Intent Graph** (RFC-0012): An editable, persistent representation of goals. Not code; just what you want to achieve. Sessions run to accomplish Intent Graph nodes.
+**Sessions** (RFC-0011): long-lived workers. States are `CREATED → SLEEPING ⇄ RUNNING →
+ARCHIVED`. Memory is bounded — a rolling summary plus facts and decisions, not an unbounded
+transcript.
 
-**Resources** (RFC-0013): Mutable project knowledge. Architecture docs, coding standards, roadmap—whatever needs to be kept in sync as the project evolves.
+**Runs, Tasks, Attempts** (RFC-0019): the Execution Graph. Not a log written beside execution —
+**it is the program**. The executor (RFC-0009) drives these rows, which is why recovery is a
+query rather than a restore.
 
-**Artifacts** (RFC-0014): Immutable outputs with full provenance. When a session produces something (code, analysis, document), it's tracked with who made it, when, and what influenced it.
+**Capabilities** (RFC-0018): security grants. Designation travels with authority: hierarchical
+resources are reached through handles that resolve paths against their own root, and every other
+exercise names its capability. The runtime never searches for an authority that would permit an
+operation.
 
-**Knowledge Engine** (RFC-0015): Synthesizes understanding by combining multiple sources:
-- Your project files (Git history)
-- Resources (docs you've written)
-- Artifacts (previous outputs)
-- External APIs (via MCP plugins)
+**Trust and taint** (RFC-0027): content carries an inbound trust level. A Run that has read
+untrusted content operates under reduced authority for the rest of the Run. This, not prompt
+formatting, is the answer to prompt injection.
 
-**Instruction Engine** (RFC-0016): Discovers and merges instructions from:
-- Your project (custom domain rules)
-- Frameworks/languages (conventions)
-- Aidos built-ins (safety guidelines)
-→ Result: unified instruction set for the AI.
+**Content nodes** (RFC-0024): resources and artifacts unified. Mutability is a policy field, not
+a type. Records and provenance are permanent; payloads are reclaimable (RFC-0056).
+
+**Intent Graph** (RFC-0012): what you want, separate from how it was done. Deliberately a leaf —
+build it late and small.
+
+**Effects** (RFC-0030): every tool operation is `Read`, `Mutate`, `Egress`, or `Notify`, with a
+mandatory preview for mutations and a declared recovery class for crash handling.
+
+**Knowledge Engine** (RFC-0015): a query broker over pluggable providers, not a monolith.
+
+**Instruction Engine** (RFC-0016): resolves AGENTS.md, CLAUDE.md, and similar into one
+instruction set.
 
 ## Which RFC Should I Read Next?
 
 ### If you're **new to Aidos:**
 1. [RFC-0000: Vision](docs/rfcs/0000-vision.md) — Why Aidos exists; the problem it solves.
 2. [RFC-0001: Principles](docs/rfcs/0001-principles.md) — Ten core design principles.
-3. [RFC-0010: Projects](docs/rfcs/0010-projects.md) — The top-level concept.
+3. [RFC-0049: Platform Capability Profiles](docs/rfcs/0049-platform-capability-profiles.md) — What Android-first actually means.
+4. [RFC-0010: Projects](docs/rfcs/0010-projects.md) — The top-level concept.
 
 ### If you're a **user** (want to use Aidos):
 4. [RFC-0050: Android](docs/rfcs/0050-android.md) — First UI; workflows on mobile.
@@ -134,7 +166,9 @@ Aidos consists of several integrated engines:
 9. [RFC-0031: MCP](docs/rfcs/0031-mcp.md) — Model Context Protocol for tool/data discovery.
 
 ### If you're **contributing to the runtime** (core development):
-10. [RFC-0002: Runtime Architecture](docs/rfcs/0002-runtime.md) — High-level design of the engine.
+10. [RFC-0008: Agent Loop](docs/rfcs/0008-agent-loop.md) — **The centre of the system. Read this first.**
+10b. [RFC-0009: Durable Execution](docs/rfcs/0009-durable-execution.md) — How Runs survive eviction.
+10c. [RFC-0002: Runtime Architecture](docs/rfcs/0002-runtime.md) — High-level design of the engine.
 11. [RFC-0003: Security](docs/rfcs/0003-security.md) — Capability-based access control.
 12. [RFC-0004: Event Bus](docs/rfcs/0004-event-bus.md) — How subsystems communicate.
 13. [RFC-0005: Scheduler](docs/rfcs/0005-scheduler.md) — Session lifecycle and fairness.
@@ -177,7 +211,11 @@ Aidos consists of several integrated engines:
 ---
 
 **Repository structure:**
-- `/docs/rfcs/` — All 25+ RFCs
+- `/docs/rfcs/` — All RFCs
+- `/schema/` — Canonical SQL schema, validated in CI
+- `/docs/decisions.md` — Architecture decision record: why it is this and not something else
+- `/docs/decisions/` — Long-form analysis behind individual decisions
+- `/docs/reviews/` — Architecture reviews
 - `/ARCHITECTURE.md` — This file (your map)
 - `/CLAUDE.md` — Development practices and AI assistance
 - `/README.md` — Quick start

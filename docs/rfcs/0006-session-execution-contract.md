@@ -1,6 +1,6 @@
 # RFC-0006: Session Execution Contract
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -42,18 +42,17 @@ A Run is the unit of execution within a session. When a session wakes in respons
 
 A Run is not the same as a Session. A session persists for weeks or months. A Run typically lasts seconds to minutes. A session with a long history has many completed Runs.
 
+**`Run` is defined once, in RFC-0019.** This RFC previously carried a second, incompatible
+definition — one in which a Run spawned Attempts directly, contradicting RFC-0019 where a Run
+contains Tasks and Tasks contain Attempts. The containment hierarchy is:
+
 ```
-Run
-  id: UUID
-  session_id: UUID
-  trigger_event_id: UUID           # The event that woke this session
-  started_at: Timestamp
-  ended_at: Timestamp?
-  state: RunState
-  error: String?
-  artifact_ids: List<UUID>         # Artifacts produced in this run
-  attempt_count: Int               # How many Attempts this Run spawned
+Run  ──contains──▶  Task  ──contains──▶  Attempt
 ```
+
+A Run corresponds to one execution of the agent loop (RFC-0008); each loop step produces Tasks;
+each execution of a Task is an Attempt. See RFC-0019 for the schema and RFC-0009 for how the
+executor drives these rows.
 
 ### Run State Machine
 
@@ -76,8 +75,38 @@ Run
       │  RUNNING   │  (back to running after yield)
       └────────────┘
 
-RunState: PENDING | RUNNING | YIELDED | COMPLETED | FAILED | CANCELLED
+RunState: PENDING | RUNNING | YIELDED | COMPLETED | FAILED | CANCELLED | INTERRUPTED
 ```
+
+The enumeration is defined in RFC-0019 and reproduced here in full; the diagram above shows
+the common path and omits the failure edges, which exist from every non-terminal state:
+
+- any non-terminal state → `FAILED` (unrecoverable error, RFC-0029)
+- any non-terminal state → `CANCELLED` (user cancellation, or `PRIORITY_INTERRUPT`)
+- `RUNNING` or `YIELDED` → `INTERRUPTED` (process died; set by recovery, RFC-0009)
+
+**Run state and Task state compose** as follows. Previously the two machines were defined
+independently, so a Run whose Task was blocked on approval for three days was described as
+`RUNNING` by RFC-0019 and `YIELDED` by this RFC, with nothing specifying which.
+
+| Run state | Legal states of its Tasks |
+|---|---|
+| `PENDING` | all `PENDING` |
+| `RUNNING` | exactly one `RUNNING`; others `PENDING`, terminal, or `SKIPPED` |
+| `YIELDED` | **one or more** in `AWAITING_APPROVAL` or `AWAITING_INPUT`; no Task `RUNNING` |
+| `COMPLETED` | all terminal; none `FAILED` |
+| `FAILED` | at least one `FAILED`; no Task `RUNNING` |
+| `CANCELLED` | no Task `RUNNING`; unstarted Tasks `SKIPPED` |
+| `INTERRUPTED` | transient; recovery resolves to `RUNNING` or `FAILED` |
+
+The invariant that makes this checkable: **at most one Task per Run is `RUNNING`**, because the
+executor is a single-stepping driver (RFC-0009). It is asserted in tests.
+
+Note that `YIELDED` permits *several* parked Tasks. A driver session that has fanned out to three
+workers holds three `COMPOSITE` Tasks in `AWAITING_INPUT` simultaneously, each with its
+`awaiting_run_id` set (RFC-0019). None of them is `RUNNING` — the work is happening in the child
+Runs — so the one-running-Task invariant holds while genuine parallelism proceeds. An earlier
+version required exactly one parked Task, which would have made worker fan-out unrepresentable.
 
 A Run in YIELDED state is not blocking the scheduler. The session is dormant at a safe serialization point, waiting for an async operation to complete. When the async operation resolves, the run transitions back to RUNNING.
 
@@ -104,25 +133,52 @@ The following are safe serialization points:
 
 ### Yield Semantics
 
-When a session is about to initiate an async operation (AI call, long tool call, user approval prompt), it yields:
+When a Run must wait for something that may outlive the process — an approval, user input, or
+a child session — it yields:
 
-1. Persist the current serialization state to SQLite.
-2. Mark the Run as YIELDED with a continuation descriptor.
-3. Return control to the runtime event loop.
-4. Register a callback with the async operation.
+1. Commit the outcome of the current step (RFC-0009 checkpoint).
+2. Mark the Run `YIELDED` and the awaiting Task `AWAITING_APPROVAL` / `AWAITING_INPUT`.
+3. Return from `drive()`. No coroutine remains suspended.
 
-The continuation descriptor contains:
-- The serialization point identifier
-- The suspended operation type (ai_call, tool_call, user_prompt)
-- Any handles needed to resume (e.g., the AI call's correlation ID)
+The `Continuation` record describes **what is being waited for**, for display and for
+correlating the completion event. It is not a resumable handle:
 
-When the async operation completes:
-1. The callback fires.
-2. The runtime creates a wakeup event for the session.
-3. The scheduler dispatches the session.
-4. The session loads its serialization state from SQLite.
-5. The session resumes from the continuation descriptor.
-6. The Run transitions back to RUNNING.
+```kotlin
+data class Continuation(
+    val runId: UUID,
+    val taskId: UUID,
+    val suspendedOperation: SuspendedOperation,
+    val pendingResultCorrelationId: String?
+)
+
+sealed class SuspendedOperation {
+    data class AiCall(val requestId: UUID, val modelCapability: ModelCapability) : SuspendedOperation()
+    data class ToolCall(val toolName: String, val operationId: UUID) : SuspendedOperation()
+    data class UserPrompt(val promptId: UUID, val question: String) : SuspendedOperation()
+    data class CapabilityApproval(val requestId: UUID, val permission: Permission) : SuspendedOperation()
+    data class ChildRun(val childRunId: UUID, val childSessionId: UUID) : SuspendedOperation()
+    data class ForegroundRequired(val reason: ForegroundReason) : SuspendedOperation()
+}
+
+enum class ForegroundReason { LOCAL_INFERENCE }
+```
+
+`ForegroundRequired` covers a background Run that has reached work the platform will not permit
+outside a foreground service — on MOBILE, a local model call without an FGS (decision D24). The
+Run parks and notifies "ready to continue" rather than failing or silently routing to a remote
+model. It resumes when the user opens the app.
+
+`ChildRun` and `CapabilityApproval` are new. Waiting on a worker session was previously
+unrepresentable — the flagship Driver/Worker workflow in RFC-0011 had the driver "yield while
+the worker runs", and no suspension type could express it.
+
+When the awaited thing completes, its completion event resumes the Run by calling `drive()`
+(RFC-0009). The executor reads the next runnable Task from SQLite. **There is no in-memory
+continuation to restore**, which is why this survives process death.
+
+Short waits — an in-process model call or a fast tool call within one execution window — do not
+yield. They are ordinary `suspend` calls inside a single step, bracketed by checkpoints. Yield
+is for waits that can outlive the process, not for every asynchronous operation.
 
 ### AI Streaming Calls
 
@@ -143,21 +199,33 @@ If the stream is interrupted (network failure, model error), the AI Engine publi
 
 ### Resumption After Process Restart
 
-When the runtime process terminates unexpectedly (crash, OOM, device restart), sessions that were running or yielded must be recoverable.
+Process termination is **routine, not exceptional**. On Android the foreground service can be
+evicted at any moment (RFC-0049), so recovery is a normal code path exercised constantly rather
+than a rare emergency procedure.
 
-Recovery sequence on process start:
+Recovery is specified in RFC-0009 and summarized here:
 
-1. Load all projects from the filesystem.
-2. For each project, open its SQLite database.
-3. Query for Runs in RUNNING or YIELDED state.
-4. For each such Run, transition it to INTERRUPTED state.
-5. For each INTERRUPTED Run, determine the last safe serialization point.
-6. If the last serialization point was before an AI call: re-queue the AI call.
-7. If the last serialization point was after an AI call but before a tool call: resume from the model response.
-8. If the last serialization point was after a tool call but before the next step: resume from the tool result.
-9. If the state cannot be determined reliably: transition the Run to FAILED with reason "process_restart".
+1. Acquire the project lock (RFC-0055) and open SQLite.
+2. Reconcile against Git if the repository fingerprint moved (RFC-0053). A Run whose repository
+   changed underneath it is failed with `git.repo_mutated` rather than resumed — resuming a
+   plan built against a different tree is how silent corruption happens.
+3. Release orphaned budget reservations (RFC-0028).
+4. For each `Attempt` in `RUNNING` state, apply its **recovery class**: `PURE` and `IDEMPOTENT`
+   re-execute, `CHECKABLE` probes first, `UNSAFE` is never retried and is surfaced to the user
+   as `INDETERMINATE` (RFC-0029).
+5. Re-validate the capabilities the remaining Tasks require. Authority that expired or was
+   revoked during the downtime is not reinstated.
+6. Call `drive()`. Execution continues from whatever the rows say.
 
-The recovery sequence must be idempotent. If the same Run is recovered twice (e.g., due to two rapid crashes), the second recovery must detect that the Run was already handled and not duplicate work.
+Recovery is idempotent because it is derived from committed state rather than from a
+reconstruction procedure: running it twice reaches the same rows. Yielded Runs are *not*
+transitioned to INTERRUPTED — a Run waiting for an approval was not interrupted by the crash,
+and marking it so would lose the wait.
+
+**Note on the previous design.** Steps 5–8 of the earlier sequence assumed the runtime could
+resume mid-procedure from a serialization-point label. That is only possible if session logic is
+an interpretable step machine, which it now is (RFC-0009). Without that, the label identified
+where execution *had been* but provided no way to continue from there.
 
 ### Cancellation
 
@@ -197,54 +265,33 @@ The only exception is a PRIORITY_INTERRUPT event (e.g., user sends a "stop immed
 
 ## Data Model
 
-### Run
+`Run`, `Task`, and `Attempt` are defined in RFC-0019 and are not restated here. The executor's
+additional columns (`step_index`, `max_steps`, `ordinal`, `awaiting_run_id`,
+`idempotency_key`, `recovery_class`) are defined in RFC-0009.
 
-```kotlin
-data class Run(
-    val id: UUID,
-    val sessionId: UUID,
-    val triggerEventId: UUID,
-    val startedAt: Instant,
-    val endedAt: Instant?,
-    val state: RunState,
-    val error: String?,
-    val artifactIds: List<UUID>,
-    val lastSerializationPoint: SerializationPointId?
-)
+This RFC contributes one table:
 
-enum class RunState {
-    PENDING, RUNNING, YIELDED, COMPLETED, FAILED, CANCELLED, INTERRUPTED
-}
+```sql
+CREATE TABLE continuations (
+    run_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    suspended_operation TEXT NOT NULL,     -- AI_CALL | TOOL_CALL | USER_PROMPT
+                                           -- | CAPABILITY_APPROVAL | CHILD_RUN
+    operation_detail_json TEXT NOT NULL,
+    correlation_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+CREATE INDEX idx_continuations_correlation ON continuations(correlation_id);
 ```
 
-### Continuation
-
-```kotlin
-data class Continuation(
-    val runId: UUID,
-    val serializationPointId: SerializationPointId,
-    val suspendedOperation: SuspendedOperation,
-    val pendingResultCorrelationId: String?
-)
-
-sealed class SuspendedOperation {
-    data class AiCall(val requestId: UUID, val modelCapability: ModelCapability) : SuspendedOperation()
-    data class ToolCall(val toolName: String, val operationId: UUID) : SuspendedOperation()
-    data class UserPrompt(val promptId: UUID, val question: String) : SuspendedOperation()
-}
-```
-
-### SerializationState
-
-```kotlin
-data class SerializationState(
-    val runId: UUID,
-    val sessionMemorySnapshot: SessionMemorySnapshot,
-    val pendingContinuation: Continuation?,
-    val capturedAt: Instant,
-    val sequenceNumber: Long  // monotonically increasing; latest wins on recovery
-)
-```
+There is no `SerializationState` table. Session state is not snapshotted into a blob at yield
+points; it lives in the ordinary domain tables, which is what makes recovery a query rather
+than a restore. The earlier `sessionMemorySnapshot` field would have rewritten the whole of a
+session's memory on every yield — unbounded write amplification on the device least able to
+afford it.
 
 ## Security
 

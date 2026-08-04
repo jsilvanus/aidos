@@ -1,6 +1,6 @@
 # RFC-0024: Resource Graph
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -40,7 +40,16 @@ It does not define resource editing mechanics (RFC-0013).
 
 ### The ContentNode
 
-Every piece of content in a project is a ContentNode. Nodes differ by their mutability policy, not by their type.
+Every piece of content in a project is a ContentNode. Nodes differ by their mutability policy,
+not by their type.
+
+Two pairs of fields are worth noticing because an earlier version of this type collapsed each
+into one. **`createdBy` is a kind and an id**, not a bare UUID: "which session" and "which user"
+are different questions and an audit trail that cannot tell them apart cannot answer either
+(RFC-0046). And **`contentVersion` and `rowVersion` are different things** — the first is the
+revision a user sees, the second is the optimistic-concurrency token (RFC-0017). They were once
+one field named `version`, which meant a concurrent write bumped what looked like a user-visible
+revision.
 
 ```kotlin
 data class ContentNode(
@@ -50,17 +59,21 @@ data class ContentNode(
     val name: String,
     val description: String?,
     val mutabilityPolicy: MutabilityPolicy,
-    val sensitivityLevel: SensitivityLevel,
+    val sensitivityLevel: SensitivityLevel,     // outbound: may this leave the device?
     val egressEligibility: EgressEligibility,
+    val trustLevel: TrustLevel,                 // inbound: may this influence decisions? RFC-0027
     val storageLocation: StorageLocation,
     val contentHash: String,           // SHA-256 of content
     val contentType: String,           // MIME type
     val sizeBytes: Long,
     val createdAt: Instant,
-    val createdBy: UUID,               // session or user ID
+    val createdByKind: ActorKind,      // SESSION | USER | RUNTIME (RFC-0046)
+    val createdById: String,
     val updatedAt: Instant,
-    val updatedBy: UUID?,
-    val version: Int,                  // increments on each update (for mutable nodes)
+    val updatedByKind: ActorKind?,
+    val updatedById: String?,
+    val contentVersion: Int,           // user-visible revision; increments for VERSIONED nodes
+    val rowVersion: Int,               // optimistic concurrency token (RFC-0017)
     val state: ContentNodeState,
     val tags: List<String>
 )
@@ -109,12 +122,40 @@ enum class EgressEligibility {
 }
 ```
 
+### Labels are assigned automatically, by origin
+
+Labels that depend on user diligence are labels that stay at their default, and a default-open
+label is not a control. Every node is classified on creation from its origin, with no user
+action required:
+
+| Origin | sensitivity | egress | trust |
+|---|---|---|---|
+| File in a repository with no remote, or a private remote | INTERNAL | REQUIRES_APPROVAL | PROJECT |
+| File in a repository with a public remote | PUBLIC | ELIGIBLE | PROJECT |
+| Path matching `[trust] untrusted_paths` (vendored deps) | INTERNAL | REQUIRES_APPROVAL | UNTRUSTED |
+| Matches a secret pattern (RFC-0035 detector) | SECRET | BLOCKED | PROJECT |
+| Output of a network tool or MCP server | INTERNAL | REQUIRES_APPROVAL | UNTRUSTED |
+| Output of a local tool over project files | inherits input | inherits input | UNTRUSTED |
+| Authored by the user in a frontend | INTERNAL | REQUIRES_APPROVAL | TRUSTED |
+
+`REQUIRES_APPROVAL` as the common default resolves to the user's routing policy (RFC-0020)
+rather than prompting on every file: a user whose policy says `remote_egress = "always"` for a
+project is not asked again. This is what keeps the control real without making it unusable —
+an earlier design would either have blocked the primary MVP flow (remote model plus project
+code) or been silently defaulted to `ELIGIBLE` everywhere, and neither is a control.
+
+Users may override any label, and overrides are recorded.
+
+Detection of a secret pattern is immediate and unconditional: the node is labelled SECRET,
+excluded from all prompts and exports, and the detection is audited without recording the
+value (RFC-0056).
+
 ### ContentNodeState
 
 ```
 CREATING → ACTIVE → SUPERSEDED → ARCHIVED
-                 ↓
-              DELETED
+              ↓  ↘
+          DELETED  DANGLING
 ```
 
 - CREATING: content is being written to storage. Not yet queryable.
@@ -122,8 +163,19 @@ CREATING → ACTIVE → SUPERSEDED → ARCHIVED
 - SUPERSEDED: an updated version exists (only for VERSIONED mutability).
 - ARCHIVED: content is preserved but no longer active.
 - DELETED: the content has been removed. The node record is retained for provenance.
+- DANGLING: the node's record exists but its content is no longer reachable — typically after
+  an external Git history rewrite or a branch switch (RFC-0053). Not an error state; an honest
+  one. A phone that switched branches has artifacts referencing content not currently checked
+  out, and saying so is better than a broken read.
 
-IMMUTABLE nodes transition: CREATING → ACTIVE only. They can never be SUPERSEDED or DELETED while referenced by provenance edges from ACTIVE nodes.
+IMMUTABLE nodes transition CREATING → ACTIVE, and thereafter only to ARCHIVED or DANGLING.
+
+**Content reclamation.** An earlier version made IMMUTABLE nodes undeletable while referenced by
+provenance edges — and provenance edges are never deleted, so nothing could ever be reclaimed.
+On a mobile-first product that is a storage-exhaustion design. The resolution separates the
+record from the payload: **node records and provenance edges are permanent; content payloads
+are reclaimable** on the retention schedule (RFC-0056). "What was produced, by what, from what"
+survives forever; the 400KB it produced does not have to.
 
 ### Storage Locations
 
@@ -145,8 +197,14 @@ sealed class StorageLocation {
 ```
 
 **Small content (< 512KB)**: Stored as SQLite BLOB for fast access and atomic writes.
-**Large content (≥ 512KB)**: Stored on the filesystem, with the path and a content hash in SQLite.
+**Large content (≥ 512KB)**: Stored in the content-addressed blob store at `.aidos/blobs/<hash>`,
+with the hash and size in SQLite. Identical content is stored once and reference-counted
+(RFC-0056) — an agent loop re-reads the same files many times across steps, and without dedup
+each read is a copy.
 **Versioned resources**: Stored as Git-tracked files; each version is a Git commit.
+
+The 512KB threshold is the single value used across the architecture; RFC-0017 states the same
+number for the same objects.
 
 The Resource Graph stores metadata and the storage location reference in SQLite. It does not store content directly (except small blobs).
 
@@ -173,7 +231,51 @@ enum class ProvenanceEdgeKind {
 }
 ```
 
-Provenance edges are immutable. Once created, they cannot be deleted. This preserves the complete derivation history even if nodes are archived or deleted.
+Provenance edges are immutable. Once created, they cannot be deleted. This preserves the complete
+derivation history even if nodes are archived or deleted.
+
+### Acyclicity
+
+The provenance graph is a DAG, enforced on insert rather than assumed. Adding an edge whose
+target can already reach its source is rejected with `content.cycle_rejected` (RFC-0029).
+
+This is not theoretical: `VERSION_OF` combined with `DERIVED_FROM` can close a loop — B is
+derived from A, then A is later recorded as a new version of B — and a cycle makes the recursive
+provenance query non-terminating. The query below guards with `depth < 10`, which caps runaway
+traversal but silently truncates legitimate deep chains and does not prevent the cycle from
+existing. The write-time check does.
+
+Because edges are immutable, the check runs once, at insert, and the invariant then holds
+permanently.
+
+### Unified provenance traversal
+
+Answering *"why does this file look like this?"* crosses all three graphs:
+
+```
+ContentNode ◀─PRODUCED─ Attempt ◀── Task ◀── Run ─IMPLEMENTS─▶ IntentNode
+     │
+     └─DERIVED_FROM─▶ ContentNode ─DERIVED_FROM─▶ …
+```
+
+Three tables, two edge representations (`execution_edges`, `provenance_edges`), and foreign-key
+containment. Every frontend and every audit view needs this same walk, so it is written **once**,
+as a service over the existing schema:
+
+```kotlin
+interface ProvenanceService {
+    suspend fun explain(nodeId: UUID, depth: Int = 5): ProvenanceTrail
+    suspend fun contributionsTo(intentNodeId: UUID): List<ContentNode>
+    suspend fun consumersOf(nodeId: UUID): List<Run>
+}
+```
+
+This is a service, not a schema change — no fourth edge table, no denormalized lineage column.
+The temptation to add one should be resisted: it would become a fifth source of truth for
+provenance, and RFC-0019's "One fact, one place" exists because four was already too many.
+
+`ProvenanceTrail` is what the UI renders as an on-demand trail, not as a graph canvas — see
+RFC-0012 for why none of the three graphs should be drawn as node-link diagrams.
 
 ### Promotion and Demotion
 
@@ -225,8 +327,15 @@ SELECT * FROM provenance;
 **Find all artifacts produced by a session:**
 ```sql
 SELECT cn.* FROM content_nodes cn
-WHERE cn.created_by = ? AND cn.kind IN (SELECT kind FROM artifact_kinds);
+WHERE cn.created_by_kind = 'SESSION'
+  AND cn.created_by_id = ?
+  AND cn.mutability_policy IN ('IMMUTABLE', 'APPEND_ONLY');
 ```
+
+The previous form referenced an `artifact_kinds` table that does not exist, and relied on
+`created_by` being an untyped identifier that could be either a session or a user. `created_by`
+is split into `created_by_kind` and `created_by_id` so the discriminator is explicit. "Artifact"
+is a mutability policy, not a set of kinds — which is the whole point of this RFC.
 
 **Find content eligible for inclusion in a remote model prompt:**
 ```sql
@@ -246,15 +355,19 @@ CREATE TABLE content_nodes (
     mutability_policy TEXT NOT NULL,
     sensitivity_level TEXT NOT NULL,
     egress_eligibility TEXT NOT NULL,
+    trust_level TEXT NOT NULL DEFAULT 'UNTRUSTED',   -- RFC-0027; conservative default
     storage_location_json TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     content_type TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    created_by TEXT NOT NULL,
+    created_by_kind TEXT NOT NULL,                   -- 'SESSION' | 'USER' | 'RUNTIME'
+    created_by_id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    updated_by TEXT,
-    version INTEGER NOT NULL DEFAULT 1,
+    updated_by_kind TEXT,
+    updated_by_id TEXT,
+    content_version INTEGER NOT NULL DEFAULT 1,      -- user-visible revision
+    row_version INTEGER NOT NULL DEFAULT 1,          -- optimistic concurrency (RFC-0017)
     state TEXT NOT NULL DEFAULT 'ACTIVE',
     tags TEXT NOT NULL DEFAULT '[]',  -- JSON array
     FOREIGN KEY (project_id) REFERENCES projects(id)

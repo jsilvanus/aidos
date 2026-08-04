@@ -1,516 +1,260 @@
 # RFC-0040: Storage
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
-Storage is the persistence layer for Aidos projects. Projects need to store mutable data: project metadata, session state, logs, indexes, caches, and intermediate results. SQLite is the initial backend providing ACID guarantees, full-text search, and portability. Future backends (PostgreSQL, alternative databases) are possible through a provider abstraction. Storage enforces data isolation per project and supports efficient queries for Knowledge Engine (RFC-0015) and Instruction Engine (RFC-0016).
+Aidos persists to **three SQLite databases**, one per scope: `user.db`, `vault.db`, and a
+per-project `state.db`. This RFC does not list their tables — [`schema/`](../../schema/) is the
+canonical DDL and CI executes it. What this RFC defines is everything the schema file cannot say:
+why there are three databases and not one, why there is no storage provider abstraction, how a
+transaction survives a phone killing the process mid-write, how migrations run, and what is
+deliberately kept *out* of the database.
 
 ## Motivation
 
-Aidos projects accumulate data over time:
+The previous version of this document described a `StorageProvider` interface with
+`query(sql, params)`, a roadmap to PostgreSQL, RocksDB, DuckDB, and distributed storage, and a
+table layout that resembles nothing the system actually has — a JSON-blob `intent_graph`, an
+`embeddings` table inside the project database, `resources` and `artifacts` tables superseded by
+RFC-0024. It was written before `schema/` existed and before most of the decisions in
+`docs/decisions.md` were made.
 
-1. **Project metadata**: Name, description, created_at, configuration.
-2. **Session state**: Intent Graph (RFC-0012), session logs, operation history.
-3. **Indexes**: Knowledge Engine (RFC-0015) indexes, embeddings, full-text search.
-4. **Caches**: Compiled instructions, model outputs, analysis results.
-5. **Artifacts**: Intermediate files, diagnostic data.
-6. **Logs**: Tool operations (RFC-0030), model queries, events.
-
-Without a unified storage abstraction, subsystems would use ad-hoc approaches: flat files, multiple databases, inconsistent schemas. Storage provides:
-
-1. **ACID guarantees**: Transactions prevent corruption.
-2. **Structured queries**: Efficient retrieval of indexed data.
-3. **Isolation**: Projects don't interfere with each other.
-4. **Portability**: Projects are exportable (RFC-0041).
-5. **Performance**: Indexes and caching for fast access.
-6. **Debugging**: Audit trail and diagnostics.
+Extracting the canonical schema changed this RFC's job. It is no longer the place where tables
+are described — that duplication is exactly how the corpus drifted. It is the place where the
+*storage engine's behaviour* is specified, and that turns out to be the part nobody had written
+down: what happens when Android kills the process during a write.
 
 ## Goals
 
-1. **Define storage architecture**: What data is persisted and where?
-2. **Specify SQLite backend**: How is data organized in SQLite?
-3. **Establish provider abstraction**: How could alternative backends be added?
-4. **Clarify data isolation**: How are projects isolated?
-5. **Define schema versioning**: How do schemas evolve?
-6. **Explain query patterns**: What queries does Aidos perform?
-7. **Define performance requirements**: What latency is acceptable?
+1. State why storage is three databases and where each lives.
+2. State why there is no backend abstraction, and what is refused with it.
+3. Define durability under process eviction — the Android-first requirement.
+4. Define the transaction and concurrency rules the runtime must obey.
+5. Define migration behaviour, including the read-only case.
+6. State what is deliberately not stored in SQLite.
 
 ## Non-goals
 
-This RFC does not specify exact SQL schema (that is implementation detail).
+This RFC does not define tables, columns, indexes, or constraints. `schema/` governs, and where
+this RFC and the schema disagree, the schema is right.
 
-This RFC does not mandate specific optimization strategies (e.g., partitioning).
+This RFC does not define retention or compaction policy (RFC-0056), performance budgets
+(RFC-0045), or the export format (RFC-0041).
 
-This RFC does not address distributed storage or replication in the MVP.
-
-This RFC does not specify cloud storage backends in the MVP.
+This RFC does not define secret storage beyond where the file sits (RFC-0035).
 
 ## Design
 
-### Storage Architecture
+### Three databases
 
-Each project has a dedicated storage backend:
+| File | Scope | Contents | Why separate |
+|---|---|---|---|
+| `user.db` | user | device identity, project registry, workspaces, model catalog, installed models, MCP servers, user settings, known instruction sets | Survives deleting any project. Model weights are multi-gigabyte and shared; a per-project catalogue would re-download them |
+| `vault.db` | user, isolated | secrets only (RFC-0035) | **Blast radius.** A project export, a diagnostic bundle, or a backup of `state.db` cannot carry credentials, because they are not in the file. Structural, not a filter someone has to remember to apply |
+| `<project>/.aidos/state.db` | project | everything about one project: sessions, runs, tasks, attempts, capabilities, content nodes, intent, audit | Travels with the project directory and is Git-ignored (D2). Deleting the directory deletes it, with no orphan left behind in a central store |
 
-```
-Project: "myapp"
-  Storage path: ~/.aidos/projects/myapp/storage.db
-  
-Project: "research"
-  Storage path: ~/.aidos/projects/research/storage.db
+The previous version placed project state at `~/.aidos/projects/<name>/storage.db`, which put
+runtime state *outside* the project and implied Aidos owns a copy of your repository. It does
+not — see D2, and RFC-0054 for the scope model.
 
-Storage isolation:
-  - Separate database per project
-  - Sessions cannot access other project data
-  - Encryption per project (future)
-```
-
-### Storage Provider Interface
-
-Storage is abstracted through a provider interface:
+Per profile:
 
 ```
-StorageProvider {
-  /// Initialize storage for a project
-  init(project_id: UUID, config: StorageConfig) -> Storage
-  
-  /// Execute a query
-  query(sql: String, params: List<Any>) -> Result<Rows>
-  
-  /// Begin transaction
-  begin_transaction() -> Transaction
-  
-  /// Commit transaction
-  commit(tx: Transaction) -> Result<void>
-  
-  /// Rollback transaction
-  rollback(tx: Transaction) -> Result<void>
-  
-  /// Create index
-  create_index(name: String, table: String, columns: List<String>) -> Result<void>
-  
-  /// Export data
-  export(path: Path) -> Result<void>
-  
-  /// Import data
-  import(path: Path) -> Result<void>
-}
+DESKTOP   ~/.aidos/user.db, ~/.aidos/secrets/vault.db, <project>/.aidos/state.db
+MOBILE    /data/data/fi.italeino.aidos/files/… — same layout, app-private (RFC-0050)
 ```
 
-### SQLite Backend (MVP)
+### There is no storage provider abstraction, and that is a decision
 
-SQLite is the initial backend:
+SQLite, directly. No `StorageProvider`, no `query(sql, params)` pass-through, no second backend.
 
-```
-Provider: SQLite
-Advantages:
-  - Zero-config, serverless
-  - ACID transactions
-  - Full-text search (FTS5)
-  - JSON support
-  - Small footprint
-  - Portable (single file)
-  - Wide tooling support
+The previous version proposed one, with PostgreSQL, RocksDB, and DuckDB named as future
+providers. All three are wrong for this product: PostgreSQL means a server, which contradicts
+offline-first and single-user; RocksDB has no SQL, so nothing above it would survive the swap;
+DuckDB is an analytics engine for a workload Aidos does not have.
 
-Configuration:
-  database_path: "/path/to/storage.db"
-  journal_mode: "WAL"  # Write-Ahead Logging
-  synchronous: "NORMAL"
-  busy_timeout: "5000ms"
-  cache_size: "-64000"  # 64MB in-memory cache
-```
+More importantly, an interface whose widest method is `query(sql, params)` is not an abstraction.
+It is a pass-through that forbids using anything SQLite is good at — FTS5, partial indexes, `WITHOUT
+ROWID`, WAL semantics — in exchange for portability to a backend nobody will build. The cost is
+paid on every query forever; the benefit begins never.
 
-### Data Organization
+**The real portability boundary is `schema/` plus typed repository functions.** If a second
+engine is ever genuinely needed, the schema file is the specification to port and the repository
+functions are the surface to reimplement. That is a better position than a lowest-common-
+denominator interface written a decade earlier by someone guessing.
 
-Core tables in SQLite:
+### Durability under eviction
 
-```
-Table: projects
-  id: UUID (PRIMARY KEY)
-  name: String
-  description: String
-  created_at: Timestamp
-  updated_at: Timestamp
-  version: Int
+This is the section the previous version lacked entirely, and it is the one that matters most on
+the target platform. Android kills the process without warning (D3, D24). A phone is not a
+server that shuts down politely.
 
-Table: sessions
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  role: String  # "driver", "worker"
-  state: String  # "active", "paused", "completed"
-  started_at: Timestamp
-  last_activity: Timestamp
-  config: JSON
+**`journal_mode = WAL`, `synchronous = NORMAL`, as the default.**
 
-Table: intent_graph
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  version: Int
-  graph_data: JSON  # Serialized graph
-  created_at: Timestamp
-  created_by: SessionId
+The reasoning is specific rather than cargo-culted. In WAL mode, `NORMAL` means a committed
+transaction survives **process death** — the OS page cache holds it and the kernel writes it out
+regardless of what happened to the process — but may be lost on **power failure or kernel
+panic**. On a phone, process death is routine and power failure is rare. Paying an fsync on every
+commit to defend against the rare case would slow every checkpoint write in the system, and
+checkpoint writes are the inner loop of durable execution (RFC-0009).
 
-Table: resources
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  name: String
-  resource_type: String  # "architecture", "standards", etc.
-  content: TEXT
-  source: String  # Where it came from
-  updated_at: Timestamp
-  version: Int
-
-Table: artifacts
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  name: String
-  content: BLOB
-  checksum: String  # SHA-256
-  artifact_type: String
-  created_at: Timestamp
-  created_by: SessionId
-  provenance: JSON  # Full provenance tree
-  version: Int
-
-Table: tool_logs
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  session_id: UUID
-  tool_id: String
-  capability: String
-  operation: String
-  success: Boolean
-  error: String?
-  duration_ms: Int
-  timestamp: Timestamp
-  
-Index: (project_id, timestamp)
-
-Table: model_queries
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  session_id: UUID
-  provider: String
-  model: String
-  task: String
-  input_tokens: Int
-  output_tokens: Int
-  cost: Currency
-  timestamp: Timestamp
-
-Table: indexes
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  name: String  # e.g., "file_search", "code_embeddings"
-  index_type: String  # "fts", "embedding", "custom"
-  state: String  # "building", "ready", "stale"
-  last_updated: Timestamp
-
-Table: embeddings
-  id: UUID (PRIMARY KEY)
-  project_id: UUID (FOREIGN KEY)
-  document_id: UUID  # Reference to artifact/resource
-  model: String  # Embedding model used
-  vector: BLOB  # Serialized vector
-  metadata: JSON
-```
-
-### Query Patterns
-
-Common queries Aidos performs:
+**The exception, and it is the interesting one:**
 
 ```
-1. Knowledge Engine (RFC-0015):
-   SELECT * FROM resources WHERE project_id = ? AND resource_type = ?
-   SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at DESC
-   
-2. Instruction Engine (RFC-0016):
-   SELECT * FROM resources WHERE name IN (...)
-   ORDER BY priority DESC
-
-3. Tool Broker (RFC-0030):
-   INSERT INTO tool_logs (...)
-   SELECT * FROM tool_logs WHERE project_id = ? AND session_id = ?
-   
-4. Artifact retrieval (RFC-0014):
-   SELECT * FROM artifacts WHERE id = ?
-   SELECT * FROM artifacts WHERE project_id = ? AND artifact_type = ?
-
-5. Intent Graph (RFC-0012):
-   SELECT graph_data FROM intent_graph WHERE project_id = ? ORDER BY version DESC LIMIT 1
-
-6. Full-text search (future):
-   SELECT * FROM resources WHERE content MATCH ?
+Before an effect whose RecoveryClass is UNSAFE:
+    write the attempt row with synchronous = FULL
+    fsync
+    then execute the effect
 ```
 
-### Transactions and Consistency
+An `UNSAFE` effect — `git push`, an HTTP POST, a notification — cannot be re-run and cannot be
+observed afterwards. If the record that it was *attempted* is lost, recovery has no way to know
+it happened, and the user gets a duplicate push. Every other recovery class tolerates a lost
+record, because `PURE` and `IDEMPOTENT` re-execute safely and `CHECKABLE` can probe. So the fsync
+is paid exactly where losing the write is unrecoverable, and nowhere else.
 
-Storage enforces ACID:
+This falls directly out of `RecoveryClass` existing. Without the taxonomy, the only options would
+have been fsync everything (slow) or fsync nothing (silently duplicate a push).
 
-```
-Scenario: Session A and B both write Intent Graph
+**A naming collision worth flagging.** SQLite calls moving the WAL back into the main database a
+*checkpoint*. RFC-0009 calls a durable step boundary a *checkpoint*. They are unrelated. In code
+and comments, say "WAL checkpoint" or "execution checkpoint" — never the bare word.
 
-Session A:
-  BEGIN TRANSACTION
-  INSERT intent_graph (version=5, data=...)
-  COMMIT
+`wal_autocheckpoint` is left at its default page count, with an explicit WAL checkpoint at project
+close and during the deterministic-preparation window (RFC-0050). An unbounded `-wal` file on a
+phone is a storage-exhaustion bug waiting for a long session.
 
-Session B (simultaneously):
-  BEGIN TRANSACTION
-  INSERT intent_graph (version=5, data=...)
-  COMMIT → CONFLICT (same version)
-  
-Session B retry:
-  Fetch latest version (5)
-  Increment to version=6
-  INSERT intent_graph (version=6, data=...)
-  COMMIT → SUCCESS
+### Transactions and concurrency
 
-Result: No data loss, version is consistent
-```
+**One writer at a time.** SQLite permits a single writer per database; that is a constraint the
+runtime must design around rather than discover under load.
 
-### Schema Versioning
+Three rules:
 
-Storage supports schema evolution:
+1. **A write transaction may never span an external wait.** Not a model call, not a tool effect,
+   not user input. A transaction held open across an inference is a transaction held open for
+   fifty seconds, and every other Run blocks behind it. Write the checkpoint, commit, then act.
+2. **One runtime per project** (RFC-0055). The project lock is what makes SQLite's single-writer
+   model sufficient — the second runtime never opens the database, so `SQLITE_BUSY` between
+   processes is prevented rather than handled.
+3. **Concurrent Runs within one runtime do contend.** D15 puts parallelism across Runs, so two
+   Runs may write at once. `busy_timeout` is set to 5 seconds, and any write that hits it is a
+   bug in rule 1, not a condition to retry indefinitely.
 
-```
-Table: schema_version
-  version: Int (PRIMARY KEY)
-  applied_at: Timestamp
-  migrations: JSON  # Descriptions of changes
+The previous version illustrated concurrency with two sessions writing the Intent Graph and
+resolving by version retry. That contradicts D14 and D15 and describes a conflict-detection
+scheme the schema does not implement. Optimistic concurrency in Aidos is the `row_version` column
+(RFC-0017), and the Intent Graph is nodes and edges, not a versioned JSON blob.
 
-MVP v1 schema version: 1
-When v2 adds new tables: version increments to 2
-Migration script: v1 → v2
+### Migrations
 
-On storage init:
-  1. Read current schema_version from database
-  2. If < current app version: Run migrations
-  3. Apply all pending migrations in order
-  4. Increment version
-```
-
-### Performance Optimization
-
-Indexes for fast queries:
+Forward-only, run at open, before anything else touches the database.
 
 ```
-Indexes:
-  - (project_id, created_at) on artifacts
-  - (project_id, resource_type) on resources
-  - (project_id, timestamp) on tool_logs
-  - FTS index on resource content (full-text search)
-  - (project_id, session_id) on tool_logs
-  
-Query optimization:
-  - EXPLAIN QUERY PLAN for slow queries
-  - Lazy-load large BLOBs (provenance, vectors)
-  - Cache frequently accessed metadata in memory
+open(db):
+    read schema_versions.version        -- singleton row
+    if version == current               → proceed
+    if version <  current               → apply migrations in order, record each
+                                          in migration_history, then proceed
+    if version >  current               → open READ-ONLY, storage.migration_required
 ```
 
-### Data Export and Import
+**A newer database opens read-only rather than refusing** (RFC-0017). Version skew between a
+phone and a desktop is the *normal* state in a mobile-first product, not an error — someone who
+upgraded on one device and opens the project on the other should still be able to read their
+work. Reading is safe because unknown columns are simply ignored; writing is not, because the
+older runtime cannot honour constraints it does not know about. RFC-0029 carries
+`storage.migration_required`; RFC-0039 defines the migration contract.
 
-Projects are portable (RFC-0041):
+An earlier version of this RFC refused outright. That was stricter than necessary and worse for
+the user, and it contradicted RFC-0017 — which had the better answer first.
 
-```
-Export flow:
-  1. Dump entire SQLite database
-  2. Optionally encrypt with user key
-  3. Optionally sign with user signature
-  4. Package as .aidos-project file
+**Each database versions independently.** A user may upgrade the app, open one project, and leave
+another closed for months. `user.db` will be current while that project's `state.db` is three
+versions behind, and each is migrated when it is opened. There is no global schema version.
 
-Import flow:
-  1. Receive .aidos-project file
-  2. Verify signature (if present)
-  3. Decrypt with user key (if encrypted)
-  4. Create new SQLite database
-  5. Restore data
-  6. Validate schema version and migrate if needed
-```
+### Size and growth
 
-## Data Model (Conceptual)
+The budget is RFC-0045's: **under 512MB per active project after 90 days of use** with default
+retention. Three mechanisms hold it:
 
-```
-StorageBackend {
-  project_id: UUID
-  provider: StorageProvider
-  
-  connection: DatabaseConnection
-  transaction_log: List<Transaction>
-  
-  schema_version: Int
-  indexes: List<IndexDescriptor>
-}
+- **Retention and compaction** (RFC-0056) prune what is prunable. The audit log is not — it is
+  `PERMANENT` and never compacted.
+- **`auto_vacuum = INCREMENTAL`.** A full `VACUUM` rewrites the whole database and blocks; on a
+  phone with a 400MB project that is a visible freeze and a storage spike of equal size.
+  Incremental vacuum reclaims a bounded number of pages per call and runs during the
+  deterministic-preparation window.
+- **Bulk content is not in the database** — see below.
 
-StorageProvider {
-  name: String                      # "sqlite", "postgres"
-  config: Map<String, Any>
-  
-  init: (project_id, config) -> Storage
-  query: (sql, params) -> Result<Rows>
-  transaction: () -> Transaction
-}
+### What is deliberately not stored in SQLite
 
-Transaction {
-  id: UUID
-  started_at: Timestamp
-  operations: List<Operation>
-  
-  commit: () -> Result<void>
-  rollback: () -> Result<void>
-}
+| Data | Where it lives | Why |
+|---|---|---|
+| Embeddings | separate file, own format (D21) | Vectors are large, written in bulk, read by similarity — none of which SQLite rows are good at, and they would dominate the database's size |
+| Secrets | `vault.db` (RFC-0035) | Blast radius, above |
+| File content and history | the Git object database | Git is authoritative for content (RFC-0017). Storing a second copy invites the two to disagree |
+| Model weights | user-scope files (RFC-0054) | Gigabytes |
+| Content ≥ 512 KB | content-addressed blob store; SQLite holds hash and size (RFC-0017, RFC-0024) | Large blobs bloat the page cache and slow every unrelated query |
+| Bulk event and tool payloads | content nodes, referenced by ID (RFC-0004) | The event bus carries references, not bodies |
+| Diagnostic logs | rotating files (RFC-0037) | Disposable, unlike the audit log |
 
-StorageLog {
-  timestamp: Timestamp
-  query: String  # Redacted if sensitive
-  duration_ms: Int
-  rows_affected: Int
-  success: Boolean
-}
-```
+The rule underneath: **SQLite holds relationships, state, and small content; the filesystem and
+Git hold bulk.** The threshold is 512 KB and it is stated once, in RFC-0017's ownership table —
+content below it lives inline as a BLOB, above it out-of-line by hash.
+
+## Data Model
+
+[`schema/`](../../schema/) is canonical: `user.sql`, `vault.sql`, `project.sql`, and `check.py`
+which executes all three in CI, verifies foreign keys resolve, verifies no table is defined in two
+files, and verifies every table named in RFC DDL exists.
+
+**This RFC deliberately contains no DDL.** The previous version described a dozen tables in a
+prose pseudo-syntax (`Table: projects`, `id: UUID (PRIMARY KEY)`), none of which matched the real
+schema and none of which CI could see — the check greps for `CREATE TABLE`, and prose is
+invisible to it. That is how a storage RFC came to describe an `embeddings` table that D21
+forbids.
 
 ## Security
 
-Storage security considerations:
+1. **Project isolation is by file.** Sessions in one project cannot reach another project's
+   database, because it is a different file behind a different capability scope (RFC-0018).
+2. **Secrets are in a different file**, with its own path and its own permissions. Exporting a
+   project cannot leak them by omission of a filter.
+3. **SQL statements are never logged.** The previous version proposed logging queries for audit,
+   which is both the wrong record and a leak — parameter values appear in statements. The audit
+   trail is `audit_log`'s typed events (RFC-0003), redacted per RFC-0035.
+4. **Encryption at rest** is the platform's: full-disk encryption on Android and whatever the
+   desktop provides. Per-database encryption is Future Work, and the honest current statement is
+   that an unlocked device exposes the projects.
+5. **A database file is untrusted input** when it arrives from outside — import validates schema
+   version and integrity before use (RFC-0041), and never executes anything from it.
 
-1. **Data isolation**: Projects cannot access each other's data (separate databases).
-2. **Transaction integrity**: ACID properties prevent corruption.
-3. **Secrets protection**: Sensitive data encrypted at-rest (future).
-4. **Query logging**: SQL queries logged for audit (with redaction).
-5. **Access control**: Only the project's sessions access its storage.
-6. **Backup integrity**: Backups encrypted and signed (future).
+## MVP
 
-## MVP Scope
+1. Three databases, created from `schema/` at first open, at the paths above.
+2. WAL, `synchronous = NORMAL`, with `FULL` before `UNSAFE` effects.
+3. Forward-only migrations, per database; a newer schema opens read-only rather than refusing.
+4. The three transaction rules, with a test that fails a write transaction held across an await.
+5. Incremental vacuum during preparation windows.
+6. `busy_timeout` at 5s, with contention treated as a bug rather than absorbed.
 
-MVP includes:
-
-1. **SQLite backend**: Single database per project, WAL mode.
-2. **Core tables**: Projects, sessions, intent graph, resources, artifacts, tool logs.
-3. **Transactions**: ACID guarantees for multi-step operations.
-4. **Schema versioning**: Support migration scripts.
-5. **Indexing**: Create indexes for common query patterns.
-6. **Export/import**: Dump and restore entire database.
-7. **Logging**: Log all storage operations.
-
-Not included:
-
-- Alternative backends (future).
-- Encryption at-rest (future).
-- Replication or clustering (future).
-- Query caching (future).
-- Sharding (future).
-- Backup automation (future).
+Not in the MVP: alternative backends (not ever, absent a reason that does not currently exist),
+encryption at rest beyond the platform's, replication, sharding, query caching.
 
 ## Future Work
 
-### Alternative Backends
-
-Support multiple storage providers:
-
-```
-PostgreSQL backend:
-  - For shared deployments
-  - Supports concurrent users
-  - Network-accessible
-
-RocksDB backend:
-  - Embedded key-value store
-  - Better for large embedded projects
-
-DuckDB backend:
-  - Optimized for analytics
-  - OLAP-style queries
-```
-
-### Encryption at Rest
-
-Encrypt data in SQLite:
-
-```
-Configuration:
-  encryption: {
-    enabled: true
-    key_derivation: "argon2"
-    cipher: "ChaCha20-Poly1305"
-  }
-
-On storage init:
-  1. Derive key from user password
-  2. Enable SQLite encryption
-  3. All data encrypted transparently
-```
-
-### Query Caching
-
-Cache frequently accessed data:
-
-```
-Cache layer:
-  - LRU cache for recent queries
-  - Invalidate on writes
-  - Optional persistent cache file
-
-Example:
-  Query: SELECT * FROM resources WHERE type = "architecture"
-  First: Hits database, stores in cache
-  Second: Returns from cache (< 1ms)
-  Write: Invalidates architecture cache
-  Third: Rebuilds cache from database
-```
-
-### Incremental Backup
-
-Support incremental backups:
-
-```
-Backup types:
-  - Full: Export entire database
-  - Incremental: Export only changes since last backup
-  - Differential: Export changes since baseline
-  
-Backup scheduling:
-  - Manual on-demand
-  - Automatic (daily/weekly)
-  - On project modifications
-```
-
-### Query Optimization Tools
-
-Tools to diagnose storage performance:
-
-```
-Storage diagnostics:
-  - EXPLAIN QUERY PLAN for slow queries
-  - Index suggestions
-  - Query profiling
-  - Cache hit/miss rates
-  
-Example usage:
-  aidos storage analyze myapp
-  → Detects slow queries
-  → Suggests indexes
-  → Reports fragmentation
-```
-
-### Distributed Storage
-
-Support shared storage for teams (future):
-
-```
-Distributed architecture:
-  - Central PostgreSQL server
-  - Multiple clients read/write
-  - Conflict resolution via version vectors
-  - Peer-to-peer replication option
-```
+- **Per-database encryption** keyed by the device keystore, for the stolen-unlocked-phone case
+  that full-disk encryption does not cover.
+- **FTS5 over content nodes**, once the knowledge engine's retrieval design settles (RFC-0015).
+  It is deliberately not built ahead of that decision.
+- **Incremental export** (RFC-0041), so moving a large project does not mean re-copying it.
+- **Storage diagnostics** — per-table size attribution in the diagnostic bundle, so "why is this
+  project 800MB" has an answer that is not a guess.
 
 ## Open Questions
 
-- Should storage support sharding per project? (Or one DB per project?)
-- How should large BLOBs (embeddings, large artifacts) be stored efficiently?
-- Should there be a WAL pruning strategy to limit disk usage?
-- How should backup encryption keys be managed?
-- Should storage support streaming for large exports?
-- How long should old tool logs be retained?
-- Should there be automatic vacuum/optimization jobs?
-- Should storage metrics (query count, latency) be exposed?
+None. The previous version's list was answered elsewhere as the architecture settled: embeddings
+live outside the operational database (D21), retention is RFC-0056, WAL growth is bounded by
+explicit checkpoints above, and export is RFC-0041. Sharding and backup-key management were
+questions about a distributed product this one is not.

@@ -1,6 +1,6 @@
 # RFC-0019: Execution Graph
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -66,33 +66,47 @@ Run (top-level execution for a user request)
 
 A Run is the top-level unit of execution, created by the Session Execution Contract when a session wakes in response to an event. A Run contains one or more Tasks.
 
+This is the **only** definition of `Run`. RFC-0006 previously carried a second, incompatible
+one; it now references this.
+
 ```kotlin
 data class Run(
     val id: UUID,
     val sessionId: UUID,
     val projectId: UUID,
     val triggerEventId: UUID,          // the event that initiated this run
-    val intentNodeId: UUID?,           // optional link to the Intent Graph
     val startedAt: Instant,
     val endedAt: Instant?,
     val state: RunState,
-    val error: String?,                // if FAILED, why
-    val artifactIds: List<UUID>,       // artifacts produced during this run
-    val taskIds: List<UUID>,           // tasks in execution order
+    val error: AidosError?,            // RFC-0029
     val userMessageSummary: String?,   // short summary of what the user asked
-    val retryPolicy: RetryPolicy
+    val retryPolicy: RetryPolicy,
+    val stepIndex: Int,                // RFC-0009 executor position
+    val maxSteps: Int,                 // RFC-0008 termination ceiling
+    val taintLevel: TrustLevel,        // RFC-0027, monotonic within the Run
+    val platformProfile: PlatformProfile  // RFC-0049, recorded for provenance
 )
 
 enum class RunState {
     PENDING,      // Created, not yet dispatched
     RUNNING,      // Session is actively processing
-    YIELDED,      // Waiting for async operation (AI call, tool call, approval)
+    YIELDED,      // Waiting for something that may outlive the process (RFC-0006)
     COMPLETED,    // All tasks completed successfully
     FAILED,       // One or more tasks failed unrecoverably
     CANCELLED,    // User cancelled the run
     INTERRUPTED   // Process terminated unexpectedly during this run
 }
 ```
+
+**`Run` no longer carries `artifactIds`, `taskIds`, or `intentNodeId`.** The first two were
+denormalized JSON arrays duplicating relationships that foreign keys already express. The third
+duplicated what `TARGETED` and `IMPLEMENTS` edges express, and could not represent a Run serving
+more than one intent node — or, more importantly, a Run that ended up serving a *different* node
+than the one it started from. Tasks are found by `tasks.run_id ORDER BY ordinal`; produced
+content through `PRODUCED` edges; intent links through `TARGETED` / `IMPLEMENTS`. See "One fact,
+one place" below.
+
+The composition rules between `RunState` and `TaskState` are defined in RFC-0006.
 
 ### Task
 
@@ -102,19 +116,18 @@ A Task is a discrete unit of work within a Run. Tasks correspond to individual A
 data class Task(
     val id: UUID,
     val runId: UUID,
+    val planId: UUID?,                 // null for emergent tasks; set for declared plans
     val sessionId: UUID,
     val projectId: UUID,
+    val ordinal: Int,                  // execution order within the Run
     val kind: TaskKind,
-    val description: String,           // human-readable, e.g. "Read /project/src/auth.kt"
+    val description: String,           // human-readable, e.g. "Read src/auth.kt"
     val toolName: String?,             // if kind == TOOL_CALL
-    val modelCapability: String?,      // if kind == MODEL_CALL, e.g. "claude-opus/chat"
-    val inputRef: UUID?,               // artifact or resource used as input
-    val outputRef: UUID?,              // artifact produced as output
+    val modelCapability: String?,      // if kind == MODEL_CALL
     val state: TaskState,
-    val startedAt: Instant,
+    val startedAt: Instant?,           // null while PENDING
     val endedAt: Instant?,
-    val attemptIds: List<UUID>,
-    val currentAttemptId: UUID?,
+    val awaitingRunId: UUID?,          // if parked on a child session's Run (RFC-0006)
     val retryPolicy: RetryPolicy
 )
 
@@ -150,16 +163,19 @@ data class Attempt(
     val startedAt: Instant,
     val endedAt: Instant?,
     val state: AttemptState,
-    val error: AttemptError?,
-    val inputSnapshot: String?,        // JSON snapshot of inputs at attempt start
-    val outputSnapshot: String?,       // JSON snapshot of output (for audit)
-    val modelProvider: String?,        // if a model call: which provider was used
-    val modelVersion: String?,         // if a model call: which model version
+    val error: AidosError?,            // RFC-0029; class drives retryability
+    val inputSnapshot: String?,        // AGED, compactable (RFC-0056)
+    val outputSnapshot: String?,       // AGED, compactable
+    val promptPackage: PromptPackage?, // RFC-0025; AGED
+    val modelProvider: String?,
+    val modelVersion: String?,
     val tokensInput: Int?,
     val tokensOutput: Int?,
-    val toolResult: String?,           // if a tool call: structured result summary
-    val capabilityId: UUID?,           // the capability exercised (if any)
-    val auditRef: UUID                 // audit log entry for this attempt
+    val costUnits: Long?,              // RFC-0028
+    val capabilityId: UUID?,           // the authority actually exercised
+    val idempotencyKey: String?,       // RFC-0009
+    val recoveryClass: RecoveryClass,  // RFC-0009; gates retry
+    val auditRef: UUID
 )
 
 enum class AttemptState {
@@ -169,22 +185,72 @@ enum class AttemptState {
     CANCELLED
 }
 
-data class AttemptError(
-    val code: ErrorCode,
-    val message: String,
-    val isRetryable: Boolean,
-    val category: ErrorCategory
-)
-
-enum class ErrorCategory {
-    CAPABILITY_DENIED,
-    TOOL_ERROR,
-    MODEL_ERROR,
-    TIMEOUT,
-    CANCELLED,
-    UNKNOWN
-}
+// Errors are AidosError (RFC-0029). `AttemptError` and the local ErrorCategory enum are
+// removed: they duplicated RFC-0052's ErrorCode over the same domain with different members,
+// and retryability is a property of the error class, not a per-site boolean.
 ```
+
+Retry decisions read the error's **class** (RFC-0029): `TRANSIENT` and `RATE_LIMITED` retry,
+everything else does not. `retryOnCategories` in `RetryPolicy` below is therefore a set of
+error *classes*.
+
+**Retry safety.** A Task may only be retried if its effect's `recovery_class` (RFC-0009) is
+`PURE`, `IDEMPOTENT`, or `CHECKABLE`. Retrying an `UNSAFE` effect is forbidden regardless of
+policy — an interrupted `git push` or outbound notification must never be silently repeated.
+
+### Task creation: emergent and declared
+
+Tasks are created in one of two modes.
+
+**Emergent (default).** The agent loop appends Tasks as the model emits tool calls (RFC-0008).
+Nothing is planned ahead; the Task list is the record of what the model decided to do, one step
+at a time. This is correct for ordinary work — an agent asked to fix a typo should not produce a
+project plan first.
+
+**Declared.** The model proposes a batch of Tasks with `DEPENDS_ON` edges *before* any of them
+executes. The Run parks on a `USER_PROMPT` Task, the user sees the plan, and execution begins
+only on approval.
+
+Declared mode is required when a plan would:
+
+- spawn worker sessions (fan-out multiplies cost and is hard to stop once started),
+- exceed a configured cost or step estimate,
+- or be explicitly requested by the user ("plan this first").
+
+Otherwise emergent is used. The distinction is about *reversibility*: a plan you can watch
+unfold one step at a time needs no approval; a plan that commits five sessions to hours of work
+does.
+
+```
+Run (driver)
+  Task 1  MODEL_CALL   "plan this"           → proposes Tasks 3-6 + dependencies
+  Task 2  USER_PROMPT  approve the plan      ← Run YIELDED here, possibly for hours
+  Task 3  COMPOSITE    worker: schema
+  Task 4  COMPOSITE    worker: endpoints     DEPENDS_ON 3
+  Task 5  COMPOSITE    worker: tests         DEPENDS_ON 3
+  Task 6  MODEL_CALL   review and integrate  DEPENDS_ON 4, 5
+```
+
+A plan is a proposal, and — as with intent proposals (RFC-0012) — **the model proposes and the
+user approves.** A driver approving its own plan is the same closed loop one level up.
+
+Re-planning after a failure creates a **new** plan; the failed one is retained with its outcome.
+The history of what was planned is as informative as the history of what ran.
+
+### Scheduling with dependencies
+
+The executor's `nextRunnableTask` (RFC-0009) selects the lowest-ordinal `PENDING` Task whose
+`DEPENDS_ON` predecessors are all `COMPLETED`. A Task whose dependency `FAILED` transitions to
+`SKIPPED` rather than running.
+
+**Fan-out does not violate the one-running-Task invariant.** RFC-0006 requires at most one Task
+per Run in `RUNNING`. A `COMPOSITE` Task that spawns a worker does no work itself: it creates a
+child Run and immediately parks in `AWAITING_INPUT` with `awaiting_run_id` set. So Tasks 4 and 5
+above are both parked simultaneously while their child Runs execute in parallel.
+
+The parallelism lives in the child Runs, not in the parent's Task list. The parent Run's audit
+trail stays a single ordered sequence, and each worker gets its own Run, transcript, Execution
+Graph subtree, and audit attribution.
 
 ### Retry Policy
 
@@ -219,16 +285,112 @@ data class ExecutionEdge(
 enum class NodeKind { RUN, TASK, ATTEMPT, ARTIFACT, INTENT_NODE }
 
 enum class EdgeKind {
-    CONTAINS,          // Run CONTAINS Task; Task CONTAINS Attempt
-    PRODUCED,          // Attempt PRODUCED Artifact
-    CONSUMED,          // Task CONSUMED Artifact (used as input)
-    TRIGGERED_BY,      // Run TRIGGERED_BY Event
-    IMPLEMENTS,        // Run IMPLEMENTS IntentNode (links execution to intent)
+    PRODUCED,          // Attempt PRODUCED ContentNode
+    CONSUMED,          // Task CONSUMED ContentNode (used as input)
+    TARGETED,          // Run TARGETED IntentNode  — declared at Run creation; a fact
+    IMPLEMENTS,        // Run IMPLEMENTS IntentNode — asserted at completion; needs confirmation
     RETRY_OF,          // Attempt RETRY_OF prior Attempt
-    CANCELLED_BY,      // Attempt CANCELLED_BY event or user action
-    DEPENDS_ON         // Task DEPENDS_ON Task (ordering within a run)
+    PRODUCED_CALL,     // MODEL_CALL Task PRODUCED_CALL the TOOL_CALL Tasks it emitted (RFC-0008)
+    DEPENDS_ON         // Task DEPENDS_ON Task (explicit ordering beyond `ordinal`)
 }
 ```
+
+### `TARGETED` and `IMPLEMENTS` are different claims
+
+A single `IMPLEMENTS` edge conflated two things that are routinely not the same, and left
+unanswered *when* it is written and *who* asserts it.
+
+| | `TARGETED` | `IMPLEMENTS` |
+|---|---|---|
+| Written | at Run creation | at Run completion |
+| By | the runtime, from the trigger | proposed by the model, or by the user |
+| Means | "this Run was started for that goal" | "this Run actually served that goal" |
+| Trust | **fact** — the runtime observed it | **assertion** until confirmed |
+| Drives | `IN_PROGRESS` status (RFC-0012) | `DONE` status, once confirmed |
+
+They diverge constantly. A Run started to "fix the login bug" often ends up refactoring the
+session store; a Run targeting one goal frequently satisfies a different one. Recording only the
+declared target loses what happened; recording only the outcome loses what was intended.
+
+**Confirmation.** An `IMPLEMENTS` edge carries `confirmed: Boolean` and `confirmed_by`. It
+becomes confirmed when acceptance criteria evaluate true, or when the user confirms it. Until
+then the intent node derives `NEEDS_REVIEW` (RFC-0012), not `DONE`.
+
+This matters because the model writes the proposal. Provenance is precisely the thing that must
+not rest on an unverified model assertion — an agent that can mark its own work complete will,
+and the graph then reports success it did not achieve. Distinguishing proposed from confirmed
+costs one boolean and preserves the property that the graph does not lie.
+
+### Acyclicity
+
+`DEPENDS_ON` edges must not form a cycle; insertion performs a reachability check and rejects
+with `execution.cycle_rejected` (RFC-0029). Run → Task → Attempt containment is acyclic by
+construction, since it is expressed with foreign keys rather than edges.
+
+### One fact, one place
+
+`CONTAINS`, `TRIGGERED_BY`, and `CANCELLED_BY` are removed. Each duplicated something a column
+already stated: containment is `tasks.run_id` and `attempts.task_id`, triggering is
+`runs.trigger_event_id`, and cancellation is the Attempt's state plus its audit record.
+
+Provenance was previously representable in four places at once — `runs.artifact_ids`,
+`tasks.output_ref`, `PRODUCED` edges here, and `provenance_edges` in RFC-0024 — with nothing
+reconciling them. The rule now:
+
+| Fact | Single source |
+|---|---|
+| Which Tasks a Run contains | `tasks.run_id`, ordered by `tasks.ordinal` |
+| Which Attempts a Task contains | `attempts.task_id`, ordered by `attempt_number` |
+| Which content an Attempt produced | `execution_edges` with `PRODUCED` |
+| How content derives from other content | `provenance_edges` (RFC-0024) |
+| Which event triggered a Run | `runs.trigger_event_id` |
+
+`execution_edges` records execution→content facts; `provenance_edges` records content→content
+facts. They answer different questions and neither is derivable from the other.
+
+### Cross-graph edge direction
+
+> **The Execution Graph is the only graph with outbound cross-graph edges. The Intent Graph and
+> the Resource Graph never reference each other, and never reference execution.**
+
+```
+IntentNode ◀──TARGETED───── Run
+IntentNode ◀──IMPLEMENTS─── Run
+                             │ FK
+                            Task
+                             │ FK
+                           Attempt ──PRODUCED──▶ ContentNode
+                                                      │ DERIVED_FROM
+                                                      ▼
+                                                 ContentNode
+```
+
+Everything points away from intent and toward content, with execution as the hub. This is what
+"intent is WHAT, execution is HOW" becomes once it is a schema: intent is a pure sink, content is
+a pure product, and the runtime is the only party that knows the two are related.
+
+**The reverse directions are queries, not edges.** "Which Runs served this goal?" is
+`execution_edges WHERE to_node_id = ? AND edge_kind IN ('TARGETED','IMPLEMENTS')`, served by
+`idx_edges_to`. "Which artifacts satisfy this goal?" is a two-hop traversal through execution
+(`ProvenanceService.contributionsTo`, RFC-0024) — slightly more work than a direct link, and
+correct, because the answer is *what Runs produced while serving that goal*, which is a fact
+about execution rather than a property of the goal.
+
+Four reasons the reverse edges do not exist, in descending order of cost:
+
+1. **Write amplification on the wrong structure.** Intent nodes are few, small, user-facing, and
+   snapshotted to Git. Runs are created continuously. A back-pointer would mean every Run
+   creation writes to an intent node — dirtying the structure that gets committed.
+2. **Two sources of truth.** They can disagree, and then a goal's real progress is undefined.
+   The same reason `runs.artifact_ids` was removed.
+3. **Each side must survive without the other.** A goal with no Runs is normal; a Run with no
+   intent target is normal (most ad-hoc requests are). Neither may require the other.
+4. **Direction encodes authorship.** Execution knows what it was serving. Intent derives what is
+   serving it — which is precisely the derived-status rule in RFC-0012.
+
+A convenience back-pointer added later — an `IntentNode.runs` list, a `ContentNode.intentId` —
+violates this invariant even when it looks harmless. If a traversal is awkward, extend
+`ProvenanceService`; do not add an edge.
 
 ### Query Model
 
@@ -236,12 +398,17 @@ The Execution Graph supports the following key queries:
 
 **"What happened during this Run?"**
 ```sql
-SELECT t.id, t.kind, t.description, t.state, a.attempt_number, a.state, a.error_json
+SELECT t.id, t.kind, t.description, t.state,
+       a.attempt_number, a.state, a.error_code, a.error_class
 FROM tasks t
-JOIN attempts a ON a.task_id = t.id
+LEFT JOIN attempts a ON a.task_id = t.id
 WHERE t.run_id = ?
-ORDER BY t.started_at, a.attempt_number;
+ORDER BY t.ordinal, a.attempt_number;
 ```
+
+`LEFT JOIN` and `ORDER BY ordinal`: an inner join hides `PENDING` and `SKIPPED` Tasks, which
+have no Attempts and are exactly what the user needs to see when a Run failed partway.
+Ordering by `started_at` would drop unstarted Tasks out of position.
 
 **"What produced this Artifact?"**
 ```sql
@@ -255,12 +422,45 @@ WHERE e.to_node_id = ?;
 
 **"What did the AI do to implement this intent?"**
 ```sql
-SELECT r.id, r.started_at, r.state, r.user_message_summary
+SELECT r.id, r.started_at, r.state, r.user_message_summary,
+       e.edge_kind, e.confirmed
 FROM runs r
-JOIN execution_edges e ON e.from_node_id = r.id AND e.edge_kind = 'IMPLEMENTS'
+JOIN execution_edges e ON e.from_node_id = r.id
+                      AND e.edge_kind IN ('TARGETED', 'IMPLEMENTS')
 WHERE e.to_node_id = ?
 ORDER BY r.started_at;
 ```
+
+Both edge kinds are returned. `TARGETED` answers "what was aimed at this goal", `IMPLEMENTS`
+with `confirmed = 1` answers "what actually delivered it", and the difference between the two
+sets is usually the most informative thing on the screen.
+
+**"What happened, in two seconds?"**
+
+The glanceable and spoken Run Summary (RFC-0057) is a **projection of these rows**, not a
+generated sentence:
+
+```sql
+SELECT r.state, r.step_index, r.max_steps, r.taint_level, r.error_class,
+       COUNT(DISTINCT t.id)                  AS tasks,
+       SUM(a.tokens_input + a.tokens_output) AS tokens,
+       SUM(a.cost_units)                     AS cost
+FROM runs r
+LEFT JOIN tasks t    ON t.run_id  = r.id
+LEFT JOIN attempts a ON a.task_id = t.id
+WHERE r.id = ?
+GROUP BY r.id;
+```
+
+Per-file change totals come from `tool_calls` joined to each `Mutate`'s recorded preview, and the
+pending set from Tasks in `AWAITING_APPROVAL`, `AWAITING_INPUT`, or parked on
+`ForegroundRequired`.
+
+This is the strongest argument for the graph being the program rather than a log beside it. A
+summary computed from execution rows is instant, works offline, needs no inference, and is
+checkable against the audit trail — where a model asked to summarize its own Run would be none
+of those, and would be D6 besides. **Nothing is stored:** a persisted summary is a cache of
+derived state that goes stale precisely when the Run changes.
 
 **"Show me all failed runs in this session"**
 ```sql
@@ -278,34 +478,64 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     trigger_event_id TEXT NOT NULL,
-    intent_node_id TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT,
     state TEXT NOT NULL,
-    error TEXT,
-    artifact_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    error_code TEXT,                                  -- RFC-0029
+    error_class TEXT,
+    error_detail_json TEXT,
     user_message_summary TEXT,
     retry_policy_json TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id)
+    step_index INTEGER NOT NULL DEFAULT 0,            -- RFC-0009
+    max_steps INTEGER NOT NULL DEFAULT 24,            -- RFC-0008
+    taint_level TEXT NOT NULL DEFAULT 'TRUSTED',      -- RFC-0027
+    taint_source_node_id TEXT,
+    platform_profile TEXT NOT NULL,                   -- RFC-0049
+    network_available INTEGER NOT NULL DEFAULT 0,
+    degraded_tools TEXT NOT NULL DEFAULT '[]',
+    row_version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (session_id) REFERENCES sessions(id),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE execution_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    proposed_by_task_id TEXT NOT NULL,       -- the MODEL_CALL that produced it
+    proposed_at TEXT NOT NULL,
+    state TEXT NOT NULL,                     -- PROPOSED | APPROVED | REJECTED | SUPERSEDED
+    resolved_by_user_id TEXT,                -- ONLY a user (RFC-0046)
+    resolved_at TEXT,
+    task_count INTEGER NOT NULL,
+    estimated_steps INTEGER,
+    estimated_cost_units INTEGER,            -- RFC-0028
+    spawns_workers INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (run_id) REFERENCES runs(id)
 );
 
 CREATE TABLE tasks (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
+    plan_id TEXT,                            -- NULL for emergent tasks
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,                         -- execution order within the Run
     kind TEXT NOT NULL,
     description TEXT NOT NULL,
     tool_name TEXT,
     model_capability TEXT,
-    input_ref TEXT,
-    output_ref TEXT,
     state TEXT NOT NULL,
-    started_at TEXT NOT NULL,
+    started_at TEXT,
     ended_at TEXT,
+    awaiting_run_id TEXT,                             -- if parked on a child Run (RFC-0006)
     retry_policy_json TEXT NOT NULL,
-    FOREIGN KEY (run_id) REFERENCES runs(id)
+    row_version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (run_id) REFERENCES runs(id),
+    FOREIGN KEY (plan_id) REFERENCES execution_plans(id),
+    UNIQUE (run_id, ordinal)
 );
+
+CREATE INDEX idx_plans_run ON execution_plans(run_id, proposed_at);
 
 CREATE TABLE attempts (
     id TEXT PRIMARY KEY,
@@ -314,34 +544,60 @@ CREATE TABLE attempts (
     started_at TEXT NOT NULL,
     ended_at TEXT,
     state TEXT NOT NULL,
-    error_json TEXT,
-    input_snapshot TEXT,
-    output_snapshot TEXT,
+    error_code TEXT,                                  -- RFC-0029
+    error_class TEXT,
+    error_detail_json TEXT,
+    input_snapshot TEXT,                              -- AGED, compactable (RFC-0056)
+    output_snapshot TEXT,                             -- AGED, compactable
+    prompt_package_json TEXT,                         -- RFC-0025, AGED
     model_provider TEXT,
     model_version TEXT,
+    provider_retention_json TEXT,                     -- RFC-0026: stated retention at call time
     tokens_input INTEGER,
     tokens_output INTEGER,
-    tool_result TEXT,
-    capability_id TEXT,
+    cost_units INTEGER,                               -- RFC-0028
+    capability_id TEXT,                               -- the authority actually exercised
+    idempotency_key TEXT,                             -- RFC-0009
+    recovery_class TEXT NOT NULL DEFAULT 'PURE',      -- RFC-0009
     audit_ref TEXT NOT NULL,
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
+    FOREIGN KEY (task_id) REFERENCES tasks(id),
+    FOREIGN KEY (capability_id) REFERENCES capabilities(id),
+    UNIQUE (task_id, attempt_number)
 );
 
+-- Execution → content and execution → intent facts.
+-- Content → content lineage is provenance_edges (RFC-0024).
 CREATE TABLE execution_edges (
     id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
     from_node_id TEXT NOT NULL,
     from_node_kind TEXT NOT NULL,
     to_node_id TEXT NOT NULL,
     to_node_kind TEXT NOT NULL,
-    edge_kind TEXT NOT NULL
+    edge_kind TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,   -- IMPLEMENTS only; see above
+    confirmed_by_kind TEXT,                 -- 'USER' | 'ACCEPTANCE_CRITERIA'
+    confirmed_by_id TEXT,
+    confirmed_at TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    UNIQUE (from_node_id, to_node_id, edge_kind)
 );
 
-CREATE INDEX idx_runs_session ON runs(session_id);
-CREATE INDEX idx_tasks_run ON tasks(run_id);
-CREATE INDEX idx_attempts_task ON attempts(task_id);
+CREATE INDEX idx_runs_session ON runs(session_id, started_at DESC);
+CREATE INDEX idx_runs_state ON runs(project_id, state);
+CREATE INDEX idx_tasks_run ON tasks(run_id, ordinal);
+CREATE INDEX idx_tasks_runnable ON tasks(run_id, state, ordinal);
+CREATE INDEX idx_attempts_task ON attempts(task_id, attempt_number);
+CREATE INDEX idx_attempts_running ON attempts(state) WHERE state = 'RUNNING';
 CREATE INDEX idx_edges_from ON execution_edges(from_node_id, edge_kind);
 CREATE INDEX idx_edges_to ON execution_edges(to_node_id, edge_kind);
 ```
+
+`execution_edges` spans heterogeneous node kinds, so SQLite cannot enforce referential
+integrity on it. `project_id` and the uniqueness constraint bound the damage; a consistency
+check (RFC-0038) verifies that every edge endpoint resolves. This is a known and accepted
+limitation of a generic edge table, which is why containment was moved to real foreign keys
+rather than being expressed here.
 
 ## Security
 
@@ -355,16 +611,33 @@ Attempt records are append-only: they may have their state updated but their con
 
 The MVP implements:
 
-1. Run, Task, and Attempt tables with state machines as defined.
-2. `CONTAINS`, `PRODUCED`, `TRIGGERED_BY`, and `RETRY_OF` edge types.
-3. Basic retry logic for tool calls (max 3 attempts, no backoff).
-4. Query: "what happened during this Run?" (for the CLI audit display).
-5. Query: "what produced this Artifact?" (for artifact provenance).
-6. `tokens_input` and `tokens_output` tracking per Attempt.
+1. Run, Task, and Attempt tables with the state machines and composition rules (RFC-0006).
+2. `PRODUCED`, `PRODUCED_CALL`, and `RETRY_OF` edge types.
+3. Retry driven by error class (RFC-0029) and gated by recovery class (RFC-0009); max 3
+   attempts, no backoff.
+4. Query: "what happened during this Run?" (CLI audit display).
+5. Query: "what produced this content?" (provenance).
+6. Per-Attempt `tokens_input`, `tokens_output`, `cost_units`, and `capability_id`.
+7. Per-Run `taint_level` and `platform_profile` recording.
+
+8. `TARGETED` edges — written by the runtime at Run creation whenever a Run has an originating
+   intent node. These are facts and cost nothing, and without them the Intent Graph cannot
+   derive `IN_PROGRESS` (RFC-0012).
+
+9. `DEPENDS_ON` edges and dependency-aware scheduling; `SKIPPED` on failed dependencies.
+10. `COMPOSITE` tasks parking on child Runs, enabling worker fan-out (RFC-0011).
+11. Declared plans with the approval step, for any plan that spawns workers.
+
+`DEPENDS_ON` and `COMPOSITE` were previously deferred. They are in MVP because the driver/worker
+model depends on both, and that model is the thing that distinguishes Aidos from a chat loop
+(RFC-0102). Deferring them means shipping a runtime that cannot orchestrate.
 
 The MVP does not implement:
-- `IMPLEMENTS` edges (requires Intent Graph integration).
-- `DEPENDS_ON` edges (requires multi-task planning within a session).
+- `IMPLEMENTS` edges and their confirmation flow (arrives with the Intent Graph; until then
+  intent nodes derive at most `IN_PROGRESS`).
+- Concurrent `RUNNING` Tasks within one Run — fan-out is via parked `COMPOSITE` tasks, and the
+  one-running-Task invariant holds.
+- Cost and step estimation for plans (`estimated_*` recorded when available, not required).
 - Configurable retry policies (fixed retry count only).
 - Compensation graphs.
 

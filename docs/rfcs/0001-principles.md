@@ -1,6 +1,6 @@
 # RFC-0001: Principles
 
-Status: Draft
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -117,7 +117,9 @@ AI reasoning steps are logged and inspectable. Users understand why agents made 
 
 Explainability means:
 - Reasoning steps are logged (e.g., LLM tokens, embeddings, search results).
-- The chain of reasoning can be inspected and replayed.
+- The chain of reasoning can be inspected — which prompt, which model and version, which
+  capability, in what order. Not replayed: re-execution would need every non-deterministic input
+  captured, at which point what exists is a recording (D1).
 - Decisions are auditable.
 - The Intent Graph itself documents the user's intent and the system's understanding.
 
@@ -152,7 +154,9 @@ Project state, workflows, and decision history live in Git. Version control is c
 - Interoperability with existing developer tools.
 - Portability (a project is just a Git repository).
 
-**Implications**: Every project is a Git repository. Important state (Intent Graph changes, resource updates) flows through Git commits. Sessions can work in Git worktrees. Export is trivial (clone the repo).
+**Implications**: Every project is a Git repository. Important state (Intent Graph changes, resource updates) flows through Git commits. Workers build commits directly against the object database rather than in a second checkout (RFC-0053 treeless workers), because the first platform has no `git worktree` and no room for one.
+
+**A clone is not the whole project** (D2). Git carries content and history; sessions, artifacts, capabilities, and the audit trail live in a Git-ignored `.aidos/` beside it. Moving a project *with* its history is export/import (RFC-0041), which moves the directory. An earlier version of this document said export was trivial because it was a clone — that was wrong, and it mattered, because it is the sentence someone would have designed against.
 
 **Tradeoff**: Not all state fits naturally into Git. Some state (session state, temporary queues) belongs in local storage. Aidos uses both.
 
@@ -188,7 +192,7 @@ Everything is a project means:
 
 **Implications**: The data model is organized around projects. Each project is independent. Projects can export and import, but they do not share storage or state.
 
-**Rationale**: This model scales from personal use (one person, many projects) to future collaborative scenarios (multiple people, shared projects, clear scope boundaries).
+**Rationale**: This model fits personal use — one person, many projects — which is what Aidos is for. Working with other people is Git's job (D16).
 
 ## Data Model
 
@@ -230,8 +234,14 @@ The MVP demonstrates adherence to all ten principles:
 
 As Aidos evolves, these principles should remain stable. Future work that might challenge principles and require re-evaluation:
 
-- **Collaboration**: If multi-user support is added, principles 2, 8, and 10 become more complex. Git-based workflows can handle it, but explicit resolution mechanisms are needed.
-- **Real-time feedback**: Some applications may demand real-time collaborative editing. This conflicts with offline-first. Future RFCs will need to address this carefully.
+- **Collaboration**: **not planned** (D16). Aidos is single-user and **Git is the collaboration
+  tool**. This is a closed question, not future work — "future work" is something a contributor
+  can reasonably design toward, carrying identity fields, conflict hooks and a
+  whose-change-is-this notion, and paying for them permanently. RFC-0046 reserves identity
+  fields; reserving them is the entire commitment, and nothing should be built on the
+  expectation that more is coming.
+- **Real-time collaborative editing**: incompatible with offline-first, and not a direction
+  this project will take. Named here so nobody designs around the possibility.
 - **Distributed compute**: If Aidos adds support for distributed workers across multiple machines, principle 4 (headless) is stressed but not broken.
 - **Privacy-respecting analytics**: Principle 2 (user control) suggests analytics should be opt-in and transparent. This remains true as the system grows.
 
