@@ -1,6 +1,6 @@
 # RFC-0030: Tool Broker
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-03
 
 ## Abstract
 
@@ -29,7 +29,9 @@ Without a unified abstraction, the runtime would need to hardcode knowledge of e
 2. **Enforcing permissions**: Each tool access is checked against capabilities.
 3. **Logging execution**: Every tool invocation is logged.
 4. **Publishing events**: Tool completion triggers events for interested sessions.
-5. **Enabling extensibility**: New tools can be added via the plugin system (RFC-0060).
+5. **Enabling extensibility**: MCP servers register as tools (RFC-0031, desktop-only in the
+   MVP per D17). A plugin host is **not** in v1 (D18), so RFC-0060 describes a surface nothing
+   implements yet.
 
 ## Goals
 
@@ -80,9 +82,9 @@ interface Tool {
         handle: ResourceHandle,
         operation: String,
         arguments: JsonObject
-    ): Preview                           // required for Mutate effects; see below
+    ): Result<Preview>                   // required for Mutate effects; see below
 
-    suspend fun cancel(operationId: UUID)
+    suspend fun cancel(operationId: String)
 }
 ```
 
@@ -106,11 +108,11 @@ sealed interface EffectKind {
     // Observes state. Cacheable, retryable, no approval.
     object Read : EffectKind
 
-    // Changes state inside the project. Previewable, retryable if idempotent.
-    data class Mutate(val scope: MutationScope) : EffectKind
+    // Changes state. Previewable; approval depends on scope, taint, and reversibility.
+    data class Mutate(val scope: MutationScope, val reversible: Boolean = true) : EffectKind
 
     // Sends data outside the device. Subject to egress policy and taint attenuation.
-    data class Egress(val destination: EgressTarget) : EffectKind
+    data class Egress(val destination: String) : EffectKind
 
     // Reaches the user. Rate-limited, never silently repeated.
     object Notify : EffectKind
@@ -122,10 +124,17 @@ Behaviour is derived from the effect, uniformly:
 | Effect | Approval | Preview | Retry | Taint attenuation (RFC-0027) |
 |---|---|---|---|---|
 | `Read` | no | n/a | yes | none |
-| `Mutate` in project | no | **required** | if idempotent | preview recorded |
+| `Mutate` in project, reversible | no | **required** | if idempotent | preview recorded |
+| `Mutate` in project, **irreversible** | yes — readback tier (D26) | required | if idempotent | **denied** |
 | `Mutate` outside project | yes | required | if idempotent | **denied** |
-| `Egress` | per capability | request shown | if idempotent | **per-call approval** |
+| `Egress` | per capability | request shown | `UNSAFE` in practice, so no | **per-call approval** |
 | `Notify` | no | n/a | **never** | none |
+
+**`reversible` is a separate axis from `RecoveryClass`.** The first asks whether the *user* can
+get their work back; the second asks whether the *executor* may re-run the effect after a crash.
+A branch switch discarding uncommitted changes is in-project and perfectly re-runnable, and it
+annihilates an hour of typing — which is why conflating them let it into D26's benign class
+(RFC-0053).
 
 **Preview** returns the effect a mutation *would* have — a diff for file writes, a patch for Git
 operations, a description otherwise — without performing it. It powers dry-run mode, the
@@ -145,20 +154,26 @@ Retryable operations carry an `idempotency_key` supplied by the executor.
 
 Tools are gated by capabilities (RFC-0003):
 
-```
-Session requests: "Run command: rm -rf /"
+The order is fixed and is the same for every tool (RFC-0008):
 
-Tool Broker:
-  1. Check session capabilities: Does session have "shell:exec"?
-  2. If no: Deny with PermissionError
-  3. If yes:
-     a. Check parameters: Command sanitization
-     b. Invoke tool
-     c. Log execution
-     d. Publish event
+```
+1. validate arguments against the operation's JSON Schema
+2. resolve the capability the caller NAMED — ToolCall.capabilityId, not a search
+3. apply taint attenuation (RFC-0027) and the approval tier (D26)
+4. reserve budget (RFC-0028)
+5. preview, if the effect is Mutate
+6. write the audit row
+7. execute
+8. taint the Run from the result's trust level
 ```
 
-Permission checks happen before tool invocation. A session cannot bypass permissions.
+Two things about step 2 that the previous version got wrong. Authority is a **named capability
+exercised**, not a permission string matched — the caller says which grant it is using, and a
+call naming none is denied rather than searched for a grant that would allow it. And the check
+happens against a `ResourceHandle` whose scope was fixed at grant time, so "sanitize the
+arguments" is not the defence; the handle is (RFC-0018).
+
+A session cannot bypass this. There is one path.
 
 ### Event Publishing
 
@@ -192,24 +207,18 @@ Events enable:
 
 Every tool invocation is logged:
 
-```
-ToolLog {
-  timestamp: Timestamp
-  session_id: UUID                  # recorded, never passed to the tool
-  
-  tool_id: String
-  capability: String
-  
-  request: ToolRequest              # Redacted if sensitive
-  result: ToolResult
-  
-  success: Boolean
-  error: String?
-  
-  duration_ms: Int
-  resources_used: Map<String, Any>
-}
-```
+Two records, not one, and `schema/project.sql` is canonical for both:
+
+- **`audit_log`** — the permanent security record: actor, capability exercised, subject, outcome.
+  Append-only, `PERMANENT` retention, never compacted (RFC-0003, RFC-0056).
+- **`tool_calls`** — the operational record joined to the Execution Graph: which Attempt, which
+  arguments, what came back. Subject to retention like the rest of the graph.
+
+They are separate because they have different lifetimes and different readers. Collapsing them
+into one `ToolLog` — as the previous version did — means either compacting the audit trail or
+retaining every tool argument forever.
+
+`session_id` is recorded on both and passed to neither. The tool never learns who called it.
 
 Logs enable:
 
@@ -325,7 +334,9 @@ The Tool Broker enforces security via:
 
 1. **Capability checks**: Every operation verified against permissions.
 2. **Input validation**: Tool inputs are validated before execution.
-3. **Isolation**: Tools run in sandboxed contexts (where possible).
+3. **Isolation**: built-in tools run in-process and are trusted code; isolation comes from the
+   handle they are given, not from a sandbox. There is no plugin sandbox in v1 (D18), and
+   claiming "sandboxed where possible" overstated what exists.
 4. **Audit logging**: All operations logged.
 5. **Timeout enforcement**: Long-running tools are interrupted.
 
