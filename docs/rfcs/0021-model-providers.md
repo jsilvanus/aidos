@@ -167,6 +167,26 @@ this is expressible without a special case.
 It also requires network, so a self-hosted endpoint is **unavailable offline** like any other
 remote provider. Being on the same building's Wi-Fi does not make it work on a train.
 
+### Endpoint health is learned, not polled
+
+RFC-0049 promises that unavailable things are never offered, and above this RFC says a missing
+credential is discovered at configuration time rather than by a Run failing at step six. Both
+promises are empty unless something actually establishes whether an endpoint answers.
+
+**Verified once, at registration.** A registration that cannot reach its endpoint is reported
+immediately, while the user is looking at the form and can fix it.
+
+**Downgraded on failure during use.** A call returning 401, 404, or timing out marks the endpoint
+unavailable and tells the user *why* — an expired key reads as *"your key for Work — internal
+gateway is no longer accepted"*, not as a failed Run. Credential expiry is therefore the same
+mechanism as any other health failure and needs no separate machinery.
+
+**Re-verified when asked, or when the network returns** after a period offline.
+
+**Never polled in the background.** A periodic reachability check is battery spent on a question
+nobody asked, and on a device that is offline by default it would be answering "no" almost every
+time. Health is a fact learned from use, not a metric maintained.
+
 ### Versioning
 
 `modelVersion` is recorded on **every attempt** (`attempts.model_version`). Providers change

@@ -203,6 +203,63 @@ four-gigabyte download over a metered connection is not a kindness. It reports a
 choose. There is no per-project quota, no "increase limit", and no external-storage escape hatch;
 on Android app-private storage is what exists (RFC-0050).
 
+### Ongoing management
+
+Acquisition is a moment; a model's life is longer. Five things happen to it afterwards, and each
+was previously unspecified.
+
+#### The embedding model is pinned per project
+
+**A project's embedding model is fixed when its index is first built**, recorded as
+`knowledge.embedding_model_id` in project settings (RFC-0036). Changing it requires an explicit
+re-index that states its cost before it starts.
+
+This is not conservatism. **Vectors from different embedding models are not comparable** — cosine
+similarity across two embedding spaces is not merely less accurate, it is meaningless. So the
+naive alternative, keeping old vectors and embedding new content with the new model, does not
+degrade gracefully: it silently produces rankings that mix two incompatible spaces, and nothing
+in the output reveals it. That option is rejected outright rather than deferred.
+
+Storing vectors per `(blob, model)` would be coherent and multiplies vector storage on the device
+with the least of it. Also rejected, for a capability almost nobody needs.
+
+**The consequence, stated rather than discovered:** a user who wants a better embedding model
+pays a full re-index. On a phone with a large repository that is a foreground-service job
+measured in hours. The app says so before starting, and the job is resumable like any other
+indexing (RFC-0009) — an interrupted re-index resumes, it does not restart.
+
+This matches the upstream index implementation's locked-model-set behaviour, so the two agree
+rather than needing reconciliation.
+
+#### Updates are offered, never applied
+
+A newer quantization or revision of an installed model appears in the catalogue as *"newer
+available"* with its own cookbook verdict — a Q4 you can run may have a Q5 you cannot. The
+existing copy keeps working and is not replaced until the user says so, for the same reason
+acquisition is never automatic: it is their storage and their data plan.
+
+#### A model removed while a Run is parked on it
+
+The Run **fails with a named error identifying the model**, at resume. It does not resume into a
+missing model and it does not silently substitute another — substitution would change what
+produced the work without saying so, and every attempt already records `model_id` and
+`model_version` precisely so that question has an answer.
+
+#### Deprecation
+
+A catalogue entry withdrawn upstream stops being offered and says why. **An installed copy keeps
+working.** Aidos does not delete weights the user has because someone else stopped publishing
+them.
+
+#### Nothing syncs between devices
+
+D16: no state sync. A model installed on desktop is not installed on the phone; an endpoint
+registered on one is unknown to the other. Both must be set up per device.
+
+This is the honest consequence rather than an oversight, and the API key makes it unavoidable in
+any case — the vault does not travel (RFC-0035, RFC-0041). What *would* be worth carrying later
+is the non-secret part of an endpoint registration, and that is Future Work rather than a gap.
+
 ### When nothing fits
 
 `RoutingDecision.UnavailableOffline(kind)` — **not an error**. The user is told which model kind
