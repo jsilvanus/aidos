@@ -48,8 +48,9 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-03, 29 RFCs are **Accepted** and 18 more are Draft pending a body audit — see [the status split](rfcs/README.md#status). Accepted means implementation may begin against
-them, not that they are frozen — see
+As of 2026-08-04, 48 RFCs are **Accepted** and 13 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
+blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
+against them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
 "What Should Stabilise First", and it is unchanged.
 
@@ -61,10 +62,11 @@ them, not that they are frozen — see
 Nothing in the MVP depends on these. They stay Draft because approving a design nobody is about
 to build is how a corpus accumulates authority it has not earned.
 
-### Still Draft, and **on** the MVP path
+### Was Draft and **on** the MVP path — all three now closed
 
-These two are needed and are not yet acceptable as written. Each must be revised and accepted
-*before* the milestone that consumes it. This is tracked as real work, not as a caveat.
+These were needed and were not acceptable as written; each had to be revised and accepted
+*before* the milestone that consumed it. **All three are done, so no milestone is blocked on an
+RFC revision.** Kept here as a record of what the revisions found, which was more than bloat.
 
 RFC-0016 was the third and was closed on 2026-08-03: cut from 657 lines to ~230 per D22, and the
 revision turned up a security hole rather than just bloat — instruction files were reaching the
@@ -119,7 +121,7 @@ the model.
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
-| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048, D25 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path. **Diffs are returned as structured hunks with stable identity, not as a formatted string** — pending D25 sign-off, and the reason D25 is a Phase 2 decision rather than a Phase 4 one |
+| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048, D25 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path. **Diffs are returned as structured hunks with stable identity, not as a formatted string** (D25, settled; the shape is specified in RFC-0052 and mirrored in `runtime/kernel/Diff.kt`) — and the reason D25 is a Phase 2 decision rather than a Phase 4 one |
 | **M10** | CLI frontend | 0052 | Create a project, list sessions, send a message, watch the event stream, approve a pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream with a hole in it |
 | **M11** | Effect broker | 0030, 0029, 0028 | Every invocation passes through validation → capability resolution → budget reservation → preview → audit → taint, in that order. A tool registered without a `RecoveryClass` is rejected at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed |
 | **M12** | Filesystem tool | 0034 | Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool |

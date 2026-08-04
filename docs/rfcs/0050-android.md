@@ -343,7 +343,7 @@ state in the frontend is a consistency bug waiting for a reason to appear.
 2. Runtime in-process in a foreground service, with the ongoing notification as a real surface.
 3. `WorkManager` for deterministic preparation only; parking with `ForegroundRequired` otherwise.
 4. Availability reported at project open.
-5. Diff and commit review — hunk card stack, pending D25 sign-off.
+5. Diff and commit review — hunk card stack (D25, settled; structured hunks per RFC-0052).
 6. Notifications: ongoing, needs-you, terminal — the strip density of the Run Summary.
 7. Spoken summaries and voice approvals where a local TTS model is installed (RFC-0057).
 8. F-Droid build.
