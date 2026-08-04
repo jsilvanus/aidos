@@ -190,7 +190,7 @@ Everything is a project means:
 
 **Implications**: The data model is organized around projects. Each project is independent. Projects can export and import, but they do not share storage or state.
 
-**Rationale**: This model scales from personal use (one person, many projects) to future collaborative scenarios (multiple people, shared projects, clear scope boundaries).
+**Rationale**: This model fits personal use — one person, many projects — which is what Aidos is for. Working with other people is Git's job (D16).
 
 ## Data Model
 
@@ -232,11 +232,12 @@ The MVP demonstrates adherence to all ten principles:
 
 As Aidos evolves, these principles should remain stable. Future work that might challenge principles and require re-evaluation:
 
-- **Collaboration**: **Explicitly not planned** (D16). Aidos is single-user; Git is the
-  collaboration mechanism. This is stated as a closed question rather than future work,
-  because "future work" is something a contributor can reasonably design toward — carrying
-  identity fields, conflict hooks, a whose-change-is-this notion — and pay for permanently.
-  RFC-0046 reserves identity fields; reserving them is the entire commitment.
+- **Collaboration**: **not planned** (D16). Aidos is single-user and **Git is the collaboration
+  tool**. This is a closed question, not future work — "future work" is something a contributor
+  can reasonably design toward, carrying identity fields, conflict hooks and a
+  whose-change-is-this notion, and paying for them permanently. RFC-0046 reserves identity
+  fields; reserving them is the entire commitment, and nothing should be built on the
+  expectation that more is coming.
 - **Real-time collaborative editing**: incompatible with offline-first, and not a direction
   this project will take. Named here so nobody designs around the possibility.
 - **Distributed compute**: If Aidos adds support for distributed workers across multiple machines, principle 4 (headless) is stressed but not broken.

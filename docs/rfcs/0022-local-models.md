@@ -252,10 +252,16 @@ in the output reveals it. That option is rejected outright rather than deferred.
 Storing vectors per `(blob, model)` would be coherent and multiplies vector storage on the device
 with the least of it. Also rejected, for a capability almost nobody needs.
 
-**The consequence, stated rather than discovered:** a user who wants a better embedding model
-pays a full re-index. On a phone with a large repository that is a foreground-service job
-measured in hours. The app says so before starting, and the job is resumable like any other
-indexing (RFC-0009) — an interrupted re-index resumes, it does not restart.
+**Changing the model invalidates the index, which is a cache.** Nothing is corrupted and
+nothing is lost: the index is derived state, rebuildable from Git and the filesystem at any time
+(RFC-0017). What changes is that every existing vector becomes unusable at once, so the index is
+marked invalid and search falls back to FTS until it is rebuilt.
+
+**The rebuild is offered, not started.** On a phone with a large repository it is a
+foreground-service job measured in hours, so the app states the cost and waits to be told —
+the same rule as never auto-downloading a model. Until then search still works, on FTS alone,
+marked degraded (`IndexStatus.degraded`). The rebuild is resumable like any other indexing
+(RFC-0009): interrupted, it resumes rather than restarting.
 
 This matches the upstream index implementation's locked-model-set behaviour, so the two agree
 rather than needing reconciliation.

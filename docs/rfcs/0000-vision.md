@@ -87,7 +87,7 @@ This choice has several consequences:
 - The version control history becomes a permanent record of the project's evolution and reasoning.
 - Merge conflicts and branching workflows are natural to Aidos rather than foreign.
 - Export and backup are trivial: the entire project is a Git repository.
-- Collaboration (when it exists in future versions) is mediated by Git, not by real-time collaboration APIs.
+- Collaboration is Git. Not a future Aidos feature mediated by Git — Git itself, used normally.
 
 ### Vendor Independence
 
@@ -154,9 +154,9 @@ The MVP demonstrates the core model:
 
 The MVP does not require:
 - Multiple AI providers (one will suffice).
-- Multi-user workflows. **Explicitly not planned**, not merely unscheduled: single-user is a
-  design assumption (D16). Collaboration is mediated by Git, which is already a very good
-  multi-user system, rather than by anything Aidos would build.
+- Multi-user workflows. **Not planned.** Aidos is single-user, and **Git is the collaboration
+  tool** — it is already an excellent one, it works offline, and it is what every developer
+  already uses to work with other people. Aidos will not build a second one alongside it.
 - Advanced knowledge engine features (basic Git parsing is enough).
 - Plugin SDK.
 - Desktop or mobile UIs (headless is acceptable for MVP).
