@@ -747,6 +747,22 @@ system turn as trusted text and answered it with *adoption* — a set does not s
 human has seen it, tracked by hash. Tool descriptions are the same shape of hazard with the same
 available answer, and D17's amendment makes it live on MOBILE, where MCP is now reachable.
 
+**Taint cannot be the mechanism — this is forced, not preferred.** Descriptors enter *every*
+prompt of a Run, from step 0, before any call has been made. If they were classified `UNTRUSTED`
+and counted as `ContextItem`s in RFC-0027's `max()`, then **every Run in a project with any MCP
+server enabled would begin tainted**: out-of-project mutation and secrets denied, egress and
+`git push` needing per-call approval permanently, and — under D26 tier 3 — eyes-free operation
+dead in that project entirely. Approval cannot rescue it either, because approving an escalation
+grants a single-use exercise and never clears taint. There is no terminating version of "it
+taints but you can approve it".
+
+So the control has to act at **admission** rather than propagation, which is precisely the
+distinction RFC-0016 already draws: **taint is for content that arrives during a Run; adoption is
+for content that is there before it starts.** Instruction files sit at high authority, are not
+runtime-authored, and do not taint — what makes them admissible is that a human has seen them,
+tracked by hash. Tool descriptors are the same kind of thing and were never going to fit the
+taint machinery.
+
 **The likely shape of the answer, for whoever settles this:**
 
 1. Render MCP-sourced description prose inside the structural sandbox with attribution
