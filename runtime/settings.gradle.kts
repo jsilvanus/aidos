@@ -12,3 +12,4 @@ rootProject.name = "aidos-runtime"
 include(":kernel")
 include(":storage")
 include(":settings")
+include(":identity")
