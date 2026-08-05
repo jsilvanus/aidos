@@ -17,6 +17,15 @@ CREATE TABLE schema_versions (
     runtime_version TEXT    NOT NULL
 );
 
+-- RFC-0040: "each database versions independently" -- user.db migrates on its own schedule from
+-- project.db, so it needs its own migration history rather than sharing project.sql's.
+CREATE TABLE migration_history (
+    version         INTEGER PRIMARY KEY,
+    applied_at      TEXT    NOT NULL,
+    runtime_version TEXT    NOT NULL,
+    duration_ms     INTEGER NOT NULL
+);
+
 -- Device identity: local, self-assigned, never transmitted (RFC-0046).
 CREATE TABLE device_identity (
     id               INTEGER PRIMARY KEY CHECK (id = 1),
