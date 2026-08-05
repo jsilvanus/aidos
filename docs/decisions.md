@@ -751,6 +751,36 @@ Adoption means the user has seen it, nothing more.
 unseen.
 **RFCs:** 0031, 0025, 0027, 0016, 0008.
 
+### D34 — Five RFCs claimed MVP scope no milestone built; reconciled · `SETTLED`
+
+A mechanical sweep of every RFC's `## MVP` section against every Phase 1–4 milestone found
+fifteen unmatched. Ten were explicable — meta documents, superseded ones, and subsystems that are
+post-MVP by design. **Five were not**, and three of those were already Accepted. The RFCs' MVP
+sections and the roadmap's milestone set had been written independently and never reconciled, so
+each was internally consistent and they disagreed with each other.
+
+| RFC | Resolution |
+|---|---|
+| **0004** Event bus | Already built — M5 publishes, M9 exposes, M10 verifies `sinceSequence` gap replay. It was only missing from the RFC columns. **Bookkeeping, not scope** |
+| **0036** Settings | Plumbing that M14, M16 and M18 all assume and none built. Folded into **M1** (declared settings, `aidos.toml` parsing) and **M2** (nearest-first resolution, `SECURITY`/`SPEND` enforcement) |
+| **0005** Scheduler | Split: **waking from an event is part of the session model; waking on a clock is a feature.** Event-driven wake lands at M5 because a driver must wake when its worker completes, and the `causal_depth` ceiling with self-wake refusal lands at M6 as a runaway bound. Timers, the admission policy, and priorities are post-MVP |
+| **0012** Intent graph | Task list only, at **M32c**, built last (D20) — but with **derived status and the proposal gate**, the two items that cannot be retrofitted |
+| **0047** Project types | **Types in, templates out.** `projects.project_type` and its defaults at M2; the whole template mechanism post-MVP |
+
+**Two of these are non-deferrable for the same structural reason**, and it is worth stating once:
+derived intent status cannot be retrofitted because doing so migrates data that was never
+trustworthy (D10), and the proposal gate cannot be added later because by then the graph is full
+of unreviewed model output and nobody can tell which parts the user wanted (D6). Both are cases
+where the cost of adding a control is not the control — it is the corrupt data accumulated while
+it was missing.
+
+**The general rule this leaves:** an RFC's MVP section is a claim about the roadmap, and a claim
+nobody checked. Ask of any RFC claiming MVP scope: **which milestone builds this?** If the answer
+is none, one of the two documents is wrong.
+
+**Forecloses:** nothing. It reconciles two documents that had drifted.
+**RFCs:** 0004, 0005, 0012, 0036, 0047.
+
 ### D33 — Memory is session-scoped; project scope is a promotion only a user can make · `SETTLED`
 
 Session memory is needed — a project worked on for months should not answer *"I told you last week
@@ -864,5 +894,6 @@ None.
 | 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |
 | 2026-08-04 | D31 opened: an MCP server's tool *description* has no trust classification and lands in a reserved prompt section. Must be settled before M18. |
 | 2026-08-04 | D31 settled: tool descriptors are fenced prose adopted per operation at enable time; taint cannot be the mechanism. |
+| 2026-08-04 | D34 settled: five RFCs claimed MVP scope no milestone built. 0004 was bookkeeping; 0036 folds into M1/M2; 0005 splits event-wake from timers; 0012 becomes M32c; 0047 keeps types, drops templates. |
 | 2026-08-04 | D33 settled: memory is session-scoped; `FACT`/`DECISION` promote to project scope only by user action, and never when `UNTRUSTED`. |
 | 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |

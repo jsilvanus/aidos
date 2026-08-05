@@ -29,11 +29,14 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (51).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (53).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (10).** 0012 Intent Graph · 0033 Shell · 0041 Export/Import · 0047 Project Templates ·
-0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+**Draft (8).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · 0099 Roadmap ·
+and the reviews. Genuinely unsettled or post-MVP.
+
+**0012 and 0047 left Draft on 2026-08-04** as part of D34's reconciliation — both claimed MVP
+scope that no milestone built, and both were narrowed to what the MVP actually exercises.
 
 **0043 Plugin Packaging left Draft on 2026-08-04.** It is post-MVP by design — no plugin host
 ships in v1 — but its *decision* is load-bearing now, because it is what stops the Tool Broker

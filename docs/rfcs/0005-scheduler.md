@@ -142,13 +142,21 @@ run"* and *"why is my battery dead"* have the same answer source.
 
 ## MVP
 
-1. Topic and type matching.
-2. Admission: lock, availability, foreground, budget, least-recently-run.
-3. Deterministic-only wake on MOBILE without a foreground service.
-4. `causal_depth` ceiling and self-wake refusal, both recorded.
+1. **Event-driven wake** — topic and type matching, so a session wakes from a subscribed event.
+   The load-bearing case is a driver waking when its worker completes; without it the
+   driver/worker model does not function (RFC-0011, D15). **M5.**
+2. **Deterministic-only wake on MOBILE without a foreground service** (D24). **M21.**
+3. **`causal_depth` ceiling and self-wake refusal, both recorded.** **M6.** This is a runaway
+   bound in the same class as the step and budget ceilings (RFC-0028), not a scheduling feature:
+   an event loop that can feed itself is the one failure that does not stop on its own.
 
-Not in the MVP: priorities, deadline scheduling, speculative pre-waking, cross-project
-scheduling.
+Not in the MVP: **timers and scheduled triggers**, the full admission policy (lock, availability,
+budget, least-recently-run ordering), priorities, deadline scheduling, speculative pre-waking,
+cross-project scheduling. `scheduled_jobs` exists in the schema and nothing writes it before G4.
+
+The split is deliberate: **waking from an event is part of the session model; waking on a clock is
+a feature.** The first is required for workers to report back at all; the second is what RFC-0044's
+recurring sessions need, and those are post-MVP.
 
 ## Future Work
 

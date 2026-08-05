@@ -1,6 +1,6 @@
 # RFC-0047: Project Templates and Project Types
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -195,17 +195,26 @@ are the most natural place for that to creep in, so:
 
 ## MVP
 
-1. Project types `coding`, `research`, `writing`, `personal`, and `generic`, with defaults.
-2. Built-in templates, one per type.
-3. Instantiation with the fixed substitution set.
-4. Prohibition-list validation, fail-closed.
-5. Type and template recorded in `aidos.toml`.
-6. Requirements evaluation and reporting at creation.
+**Project types are in the MVP. Templates are not.** The two are separable and only the first is
+exercised by the thesis, which is *opening a real repository* rather than creating one from a
+template.
 
-Not in MVP: user template export, third-party templates, type-change flow, and **intent seeding
-of any kind** — the Intent Graph is a leaf built last (D20, RFC-0012), so a template cannot seed
-what does not exist yet. An earlier version of this section reserved "a single root goal", which
-would have made template instantiation depend on the one subsystem the MVP defers furthest.
+1. Project types `coding`, `research`, `writing`, `personal`, and `generic`, with their defaults
+   (**M2**). `personal` defaulting `routing.remote_egress = never` and `coding` defaulting
+   `trust.untrusted_paths` are security defaults worth having on day one — a journal is the
+   clearest case where offline-first *is* the product, and the default should not wait for the
+   user to discover a setting.
+2. `projects.project_type` recorded and changeable; types set defaults, never constraints.
+
+Not in MVP: **built-in templates, instantiation, substitution, and prohibition-list validation** —
+the whole template mechanism. Also out: user template export, third-party templates, requirements
+evaluation at creation, and **intent seeding of any kind**, since the Intent Graph is built last
+(D20, M32c) and a template cannot seed what does not exist yet.
+
+**The prohibition list stays normative even though nothing enforces it yet.** It is the reason
+this RFC exists, and it must be true of the first template ever written rather than discovered
+afterwards — a template that can carry a hook makes creating a project equivalent to running one
+(RFC-0003, Threat 2).
 
 ## Future Work
 

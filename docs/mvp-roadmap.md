@@ -48,7 +48,7 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-04, 51 RFCs are **Accepted** and 10 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
+As of 2026-08-04, 53 RFCs are **Accepted** and 8 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
 blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
 against them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
@@ -56,7 +56,7 @@ against them, not that they are frozen — see
 
 ### Still Draft, and off the MVP path
 
-0012 Intent Graph · 0033 Shell · 0041 Export/Import ·
+0033 Shell · 0041 Export/Import ·
 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0100–0102 reviews.
 
 **0046 Identity** was on this list and should not have been: no milestone names it, but the
@@ -109,12 +109,12 @@ the model.
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
-| **M1** | Storage and migrations | 0040, 0039, 0054 | Fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version; a database written by a *newer* runtime opens read-only with `storage.migration_required` rather than refusing (RFC-0017). `check.py` still green |
-| **M2** | Identity and scopes | 0054, 0010, 0011 | UUIDv7 IDs are monotonic within a process and unique across two concurrent runtimes. A project registered at user scope resolves from a path and from an ID. Opening a project whose directory has moved fails with `ProjectMoved`, not a null |
+| **M1** | Storage and migrations | 0040, 0039, 0054, 0036 | Declared settings carry type, default, range, and scope class; `aidos.toml` parses with per-line error reporting and fails closed on an invalid value. Fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version; a database written by a *newer* runtime opens read-only with `storage.migration_required` rather than refusing (RFC-0017). `check.py` still green |
+| **M2** | Identity and scopes | 0054, 0010, 0011, 0036, 0047 | Settings resolve nearest-first across user and project scope and report their origin; a project attempting a `SECURITY` or `SPEND` setting fails with a visible error and an audit row, so a repository cannot turn off its own egress controls. `projects.project_type` selects defaults — `personal` defaults `routing.remote_egress = never`, `coding` defaults `trust.untrusted_paths` — and types set defaults, never constraints. UUIDv7 IDs are monotonic within a process and unique across two concurrent runtimes. A project registered at user scope resolves from a path and from an ID. Opening a project whose directory has moved fails with `ProjectMoved`, not a null |
 | **M3** | Capability manager | 0018, 0003 | Property test: no input to `RelPath.of` produces a path that escapes its root — including `..` in any segment, absolute forms, drive letters, NUL, and every encoding of those. Revocation by epoch invalidates outstanding handles within one step. `validate()` refuses when Run taint exceeds the grant's ceiling |
 | **M4** | Audit log | 0003, 0037 | Every `validate` and every effect writes one row naming the subject, the capability actually exercised, and the outcome. An effect with no audit row is a test failure, enforced by the broker harness, not by review |
-| **M5** | Execution graph tables and executor | 0019, 0009, 0006 | A Run of hard-coded Tasks executes to `COMPLETED`. `drive()` is re-entrant: calling it on a complete Run is a no-op. At most one *effectful* Task is `RUNNING` per Run (D14); `Read` tasks may overlap |
-| **M6** | Recovery | 0009, 0029 | `recover()` classifies every interrupted attempt by `RecoveryClass`. `UNSAFE` is never retried — it is reported `INDETERMINATE` with what is known. Reservations are released. Budget and step ceilings terminate a runaway Run at the ceiling, every time |
+| **M5** | Execution graph tables and executor | 0019, 0009, 0006, 0004, 0005 | Events publish with a per-project `sequence` that is the ordering key rather than the timestamp, and carry their causality. A session wakes from a subscribed event — including a driver waking when its worker completes, which the driver/worker model requires (RFC-0011, D15). A Run of hard-coded Tasks executes to `COMPLETED`. `drive()` is re-entrant: calling it on a complete Run is a no-op. At most one *effectful* Task is `RUNNING` per Run (D14); `Read` tasks may overlap |
+| **M6** | Recovery and runaway bounds | 0009, 0029, 0005, 0028 | **Wake amplification is bounded**: `events.causal_depth` has a ceiling, a session cannot wake itself, and both refusals are recorded rather than silent — the same class of guard as the step and budget ceilings below, and the one that stops an event loop feeding itself. `recover()` classifies every interrupted attempt by `RecoveryClass`. `UNSAFE` is never retried — it is reported `INDETERMINATE` with what is known. Reservations are released. Budget and step ceilings terminate a runaway Run at the ceiling, every time |
 | **M7** | Project lock and runtime instances | 0055, 0007 | Two runtimes on one project: the second fails to acquire and says so. A stale lock from a killed process is reclaimed, not waited on forever |
 | **M8** | Crash-recovery suite | 0038 | **G1.** A Run is killed with `kill -9` at *every* checkpoint boundary and resumes correctly at every one. 100%, not "mostly" — this is the one metric with no acceptable degradation |
 
@@ -124,8 +124,8 @@ the model.
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
-| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048, D25 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path. **Diffs are returned as structured hunks with stable identity, not as a formatted string** (D25, settled; the shape is specified in RFC-0052 and mirrored in `runtime/kernel/Diff.kt`) — and the reason D25 is a Phase 2 decision rather than a Phase 4 one |
-| **M10** | CLI frontend | 0052 | Create a project, list sessions, send a message, watch the event stream, approve a pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream with a hole in it |
+| **M9** | Runtime API, in-process transport, `MockRuntimeClient` | 0052, 0048, 0004, D25 | Every `RuntimeClient` method is reachable in-process. The mock implements the same interface and is what frontend tests use. No method takes a client-side filesystem path. **Diffs are returned as structured hunks with stable identity, not as a formatted string** (D25, settled; the shape is specified in RFC-0052 and mirrored in `runtime/kernel/Diff.kt`) — and the reason D25 is a Phase 2 decision rather than a Phase 4 one |
+| **M10** | CLI frontend | 0052, 0004 | Create a project, list sessions, send a message, watch the event stream, approve a pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream with a hole in it |
 | **M11** | Effect broker | 0030, 0029, 0028 | Every invocation passes through validation → capability resolution → budget reservation → preview → audit → taint, in that order. A tool registered without a `RecoveryClass` is rejected at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed |
 | **M12** | Filesystem tool | 0034 | Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool |
 | **M13** | Git tool on JGit | 0032, 0053, D4 | Status, diff, add, commit, branch, log, and checkout on a real repository. `push` is `UNSAFE` and declares it. Reconciliation handles the user changing the working tree outside Aidos between two Aidos steps |
@@ -168,6 +168,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 | **M31** | Diff and commit review | 0032, 0053, D25 | Read a diff, stage, write a message, commit — comfortably, on a phone screen, with one hand, on a bus. This is the actual product |
 | **M32** | Notifications | 0044 | Rate-limited. Never silently repeated. A parked Run that needs the user says so once |
 | **M32b** | Run Summary and the benign-approval classifier | 0057, 0019, D26 | One page, no scrolling, computed from Execution Graph rows with no model call. Pending approvals, errors, egress, out-of-project mutation, and `INDETERMINATE` outcomes never collapse. A `RUNNING` Run reads "so far". **Not cuttable** — the classifier is a security boundary the approval card needs regardless |
+| **M32c** | Intent as a task list, with the proposal gate | 0012, 0019, D6, D10, D20 | **Built last, and small** (D20). Flat goals with title, description, and priority — no hierarchy, no dependencies, no acyclicity checker, because a task list has no cycles. **Status is derived**, never stored, so a reverted or partially-failed Run cannot leave a status field lying; a user override is a timestamped claim shown alongside the derived value. **`TARGETED` edges** from Runs, so the list knows what is being worked on. **The proposal gate**: a session may only propose, a user resolves, and there is no `SESSION` variant by construction. Both derived status and the gate are non-deferrable — retrofitting derivation means migrating data that was never trustworthy, and a system that ships with sessions writing intent directly cannot later be told to stop, because by then nobody can tell which parts the user wanted |
 | **M33** | Voice capture → local STT, spoken summaries → local TTS | 0022, 0050, 0057 | *Optional for G4.* Cut first if Phase 4 slips. Voice answers only benign approvals, off by default; spoken approval prompts contain no file content or model output |
 | **M34** | F-Droid distribution | 0050 | Reproducible build, no proprietary dependencies, published |
 | **M35** | The scenario, by a person | — | **G4.** A person — not the author, not a script — performs the G3 scenario in the app and reports it as comfortable. MVP complete |

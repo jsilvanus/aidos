@@ -1,6 +1,6 @@
 # RFC-0012: Intent Graph
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -782,7 +782,8 @@ execution model, the content graph, and the agent loop all work without it, and 
 on it. It is also the hardest of the three graphs to get right. Building it early is how a
 project spends a year on planning machinery before proving the execution loop.
 
-**MVP is a task list, not a DAG.** Concretely:
+**MVP is a task list, not a DAG**, and it is **M32c** — late in Phase 4, after everything that
+does not depend on it. Concretely:
 
 1. Flat or single-level goals with titles, descriptions, and priority.
 2. `TARGETED` edges from Runs, so the list knows what is being worked on.
@@ -794,6 +795,12 @@ project spends a year on planning machinery before proving the execution loop.
    then the graph is full of unreviewed model output and nobody can tell which parts the user
    actually wanted.
 6. Git snapshot of the graph, with conflict detection (RFC-0053).
+
+Items 3 and 5 are the two that cannot be deferred, and the reason differs for each. Derived status
+cannot be retrofitted, because doing so means migrating data that was never trustworthy. The
+proposal gate cannot be added later, because by the time anyone asks for it the graph is already
+full of unreviewed model output and nobody can tell which parts the user actually wanted. The rest
+of this list could slip a release without harm.
 
 The MVP does not include:
 
