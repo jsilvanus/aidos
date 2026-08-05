@@ -3,6 +3,7 @@ package dev.aidos.api
 import dev.aidos.kernel.FileDiff
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.datetime.Clock
@@ -216,24 +217,37 @@ class MockRuntimeClient : RuntimeClient {
          * sinceSequence are replayed before the live stream continues (RFC-0052, RFC-0004).
          */
         override fun subscribe(filter: EventFilter): Flow<RuntimeEvent> {
-            // Replay buffered events + live events merged.
-            // For simplicity in the mock, we return the shared flow filtered by type/project.
-            // The sinceSequence replay is handled by emitting replayed events eagerly.
-            val sinceSeq = filter.sinceSequence
-            if (sinceSeq != null) {
-                // Emit buffered events > sinceSequence into the flow for replay.
-                val buffered = _eventBuffer.filter { it.projectSequence > sinceSeq }
-                buffered.forEach { _eventFlow.tryEmit(it) }
-            }
+            // Use channelFlow so we can replay buffered events before subscribing to the live
+            // shared flow — this avoids the race where tryEmit into a SharedFlow drops events
+            // if no collector is subscribed yet (RFC-0052, RFC-0004).
+            return channelFlow {
+                val sinceSeq = filter.sinceSequence
 
-            return _eventFlow
-                .filter { sequenced ->
-                    val event = sequenced.event
-                    (filter.projectIds.isEmpty() || (event.projectId != null && event.projectId in filter.projectIds)) &&
-                        (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds))
+                // Snapshot and replay buffered events with sequence > sinceSequence.
+                val replayUntilSeq = _eventBuffer.lastOrNull()?.projectSequence ?: 0L
+                for (sequenced in _eventBuffer) {
+                    if (sinceSeq == null || sequenced.projectSequence > sinceSeq) {
+                        if (matchesFilter(sequenced.event, filter)) {
+                            send(sequenced.event)
+                        }
+                    }
                 }
-                .let { filtered -> filtered.map { s -> s.event } }
+
+                // Continue with live events from the shared flow (only those emitted after
+                // the snapshot was taken, identified by sequence > replayUntilSeq).
+                _eventFlow.collect { sequenced ->
+                    if (sequenced.projectSequence > replayUntilSeq &&
+                        matchesFilter(sequenced.event, filter)
+                    ) {
+                        send(sequenced.event)
+                    }
+                }
+            }
         }
+
+        private fun matchesFilter(event: RuntimeEvent, filter: EventFilter): Boolean =
+            (filter.projectIds.isEmpty() || (event.projectId != null && event.projectId in filter.projectIds)) &&
+                (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds))
     }
 
     override val runtime: RuntimeInfo = object : RuntimeInfo {
