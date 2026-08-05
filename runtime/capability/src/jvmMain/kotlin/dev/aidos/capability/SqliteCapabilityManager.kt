@@ -295,6 +295,15 @@ class SqliteCapabilityManager(
 
     override fun currentEpoch(projectId: ProjectId): Long = currentEpochOrZero(projectId)
 
+    /** Returns the project ID associated with a capability, or null if not found. */
+    fun projectIdForCapability(capId: dev.aidos.kernel.CapabilityId): String? =
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id FROM capabilities WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, capId.value) }.value
+
     // ─── Internal helpers ────────────────────────────────────────────────────
 
     private fun currentEpochOrZero(projectId: ProjectId?): Long {
