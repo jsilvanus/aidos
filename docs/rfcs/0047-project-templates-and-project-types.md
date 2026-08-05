@@ -82,7 +82,7 @@ data class ProjectTemplate(
     val files: List<TemplateFile>,          // starter content, verbatim or with substitutions
     val settings: Map<String, JsonElement>, // PROJECT_SAFE / PREFERENCE settings only
     val instructions: List<TemplateFile>,   // AGENTS.md and similar
-    val intentSeed: List<IntentSeedNode>,   // starting goals, if any
+    val intentSeed: List<IntentSeedNode>,   // starting goals; requires RFC-0012, built last
     val gitignore: List<String>,
     val requirements: Requirements          // declared tool needs (RFC-0049)
 )
@@ -173,8 +173,9 @@ template_version = "1.2.0"
 └── instructions/         AGENTS.md and similar
 ```
 
-No SQLite tables: templates are files, and a project's relationship to one is three lines of
-metadata.
+The one database column this RFC owns is `projects.project_type` (`schema/project.sql`,
+defaulting to `'generic'`). Templates themselves have **no SQLite tables**: they are files, and a
+project's relationship to one is three lines of metadata.
 
 ## Security
 
@@ -201,8 +202,10 @@ are the most natural place for that to creep in, so:
 5. Type and template recorded in `aidos.toml`.
 6. Requirements evaluation and reporting at creation.
 
-Not in MVP: user template export, third-party templates, type-change flow, intent seeding beyond
-a single root goal.
+Not in MVP: user template export, third-party templates, type-change flow, and **intent seeding
+of any kind** — the Intent Graph is a leaf built last (D20, RFC-0012), so a template cannot seed
+what does not exist yet. An earlier version of this section reserved "a single root goal", which
+would have made template instantiation depend on the one subsystem the MVP defers furthest.
 
 ## Future Work
 

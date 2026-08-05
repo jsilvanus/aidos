@@ -29,12 +29,17 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (50).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (51).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (11).** 0012 Intent Graph · 0033 Shell · 0041 Export/Import · 0043 Plugin Packaging ·
-0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews.
-Genuinely unsettled or post-MVP.
+**Draft (10).** 0012 Intent Graph · 0033 Shell · 0041 Export/Import · 0047 Project Templates ·
+0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+
+**0043 Plugin Packaging left Draft on 2026-08-04.** It is post-MVP by design — no plugin host
+ships in v1 — but its *decision* is load-bearing now, because it is what stops the Tool Broker
+being built with a native escape hatch. The audit found one defect: it permitted a plugin to raise
+a runtime capability request when interactive, which is exactly what D30 forbids for MCP servers,
+and the argument is stronger for in-process WASM than for an out-of-process server.
 
 **0046 Identity left Draft on 2026-08-04.** No milestone names it, but `ActorRef` in
 `runtime/kernel/` and four columns of canonical DDL cite it — a Draft document governing frozen

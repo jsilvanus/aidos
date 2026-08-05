@@ -48,7 +48,7 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-04, 50 RFCs are **Accepted** and 11 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
+As of 2026-08-04, 51 RFCs are **Accepted** and 10 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
 blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
 against them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
@@ -56,7 +56,7 @@ against them, not that they are frozen — see
 
 ### Still Draft, and off the MVP path
 
-0012 Intent Graph · 0033 Shell · 0041 Export/Import · 0043 Plugin Packaging ·
+0012 Intent Graph · 0033 Shell · 0041 Export/Import ·
 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0100–0102 reviews.
 
 **0046 Identity** was on this list and should not have been: no milestone names it, but the

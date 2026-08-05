@@ -20,8 +20,9 @@ the RFC is amended in a separate commit *before* the code that departs from it.
 
 Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done, and so
 is the RFC backlog.** All three rewrites have landed — 0052, 0031, 0015 — and 0015's rewrite
-closed the last item that was blocking a milestone. **50 Accepted, 11 Draft** — 0046 and 0026 were
-audited on top, after a check showed Draft RFCs were governing frozen Phase-0 artifacts.
+closed the last item that was blocking a milestone. **51 Accepted, 10 Draft** — 0046, 0026 and
+0043 were audited on top, after a check showed Draft RFCs were governing frozen Phase-0
+artifacts.
 `docs/decisions.md` has no open questions: D31 and D32 were found during this work and settled,
 and D17 was amended. **Phase 1 (M1) is the next work, and it waits on the user's go-ahead.**
 Branch: `claude/aidos-rfc-revisions-3ido05`
@@ -46,6 +47,7 @@ Branch: `claude/aidos-rfc-revisions-3ido05`
 - [x] **D31 settled (user decision, 2026-08-04)** — an MCP server's *tool description* is third-party prose that lands in RFC-0025's **reserved** `toolDescriptors` section. Taint cannot govern it (descriptors enter at step 0, so every Run in an MCP project would begin tainted and approval never clears taint), so admission does: prose is **fenced** in the structural sandbox with attribution, and each operation is **adopted by hash** over `(name, description, inputSchema)` at enable time. Unadopted operations are absent from the catalog and never interrupt a Run. New table `mcp_operation_adoptions`
 - [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
 - [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
+- [x] **RFC-0043 audited and Accepted; 0012 and 0047 partly repaired** — 0043 permitted a plugin to raise a runtime capability request when interactive, which is what D30 forbids for MCP servers, and the argument is *stronger* for in-process WASM. Now an absolute prohibition, with the enable-time grant stated as effect classes to match D30. **RFC-0012 carried a second, conflicting data model** — an `IntentGraph { … version: Int  # Git commit count or sequential }` pseudo-structure whose version field is precisely the device-local sequence number **D16 forbids** for intent; deleted, and its seven Open Questions answered. **RFC-0047** now names the one column it owns (`projects.project_type`) and no longer reserves intent seeding, which would have made template instantiation depend on the subsystem the MVP defers furthest
 - [x] **D33 settled (user decision, 2026-08-04) + RFC-0026 Accepted** — memory is **session-scoped; `FACT`/`DECISION` promote to project scope by the user, never by a session.** `TASK_STATE` is session-only always. The gate is not new machinery: intent proposals (D6) and instruction adoption (RFC-0016) already refuse this exact crossing the same way. Three CHECK constraints enforce it in the database rather than in a write path — no promotion without a user, no project-scoped `TASK_STATE`, and **no promotion of `UNTRUSTED` content**, because a promoted entry taints every future Run in the project and one hostile file read once would otherwise degrade every later session permanently. All four behaviours verified by insert tests. Memory gains milestones: **M16b** (write path + scope), **M14** (provider retention), **M30** (review surface, which is where promotion happens — so it stops being optional)
 - [x] **RFC-0026 audit: DDL drift fixed across three copies** — `memory_entries` was written out in `schema/project.sql`, RFC-0011, *and* RFC-0026, and the two RFC copies had drifted from canonical (missing D32's `kind` CHECK and RFC-0046's `created_by_*`). RFC-0011 additionally sketched a **`session_memory_entries`** table that has never existed under that name, with columns that do not match the real one. **`schema/check.py` gained a check for exactly that format** — a fenced block whose first line is a bare table name — which is the same defect its `Table:` check catches in the other format. Verified both ways: green on the corrected corpus, fails when the defect is reinjected
 - [x] **RFC-0046 audited and Accepted** — it was Draft while `runtime/kernel/Ids.kt`'s `ActorRef` and four columns of canonical DDL cited it, which no milestone had caught because no milestone *names* it. Four defects: `runs` had no `device_id` though the RFC reserves it; `memory_entries` had no attribution at all; `capabilities.issued_by TEXT` was the untyped identifier the RFC exists to eliminate; and the RFC put device identity in a JSON file while `schema/` has a `device_identity` table. Three fixed in `schema/`, the fourth in the RFC — the schema was right
@@ -165,6 +167,15 @@ It read as a security posture for months and was really an observation over-appl
 that RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere and nobody
 noticed the corpus disagreeing with the decision. When a decision limits scope, check whether the
 limit follows from the reason given or is broader than it.
+
+**Five RFCs claim MVP scope that no milestone builds.** A mechanical sweep of every `## MVP`
+section against every Phase 1-4 milestone row finds fifteen unmatched; ten are explicable (meta,
+superseded, or post-MVP by design) and **five are not: RFC-0004 (event bus), RFC-0005 (scheduler),
+RFC-0012 (intent graph), RFC-0036 (settings), RFC-0047 (templates)** — three of them Accepted. The
+RFCs' MVP sections and the roadmap's milestone set were written independently and never
+reconciled, so each is internally consistent and they disagree with each other. RFC-0026 was the
+first instance found; it is a pattern, not a coincidence. **Ask of any RFC claiming MVP scope:
+which milestone builds this?**
 
 **"Which RFCs does the MVP depend on" is not the same question as "which RFCs does a milestone
 name".** Every RFC named by an MVP milestone was Accepted — that check passes and is not the one
