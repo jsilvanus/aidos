@@ -1,6 +1,6 @@
 # RFC-0026: Model Memory
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -60,8 +60,16 @@ user as "memory" must state which row it is.
 
 ### What may be written to durable memory
 
-Session memory entries (RFC-0011) are `SUMMARY`, `FACT`, `DECISION`, and `TASK_STATE`. Two rules
-govern what may become one.
+Session memory entries (RFC-0011) are `FACT`, `DECISION`, and `TASK_STATE`. Two rules govern
+what may become one.
+
+**There is no `SUMMARY` kind** (D32). A model-written compaction of a session was removed rather
+than deferred: it is a model reporting on its own work (D6), it launders taint across the Run
+boundary (RFC-0027), it parks without a foreground service (D24), and it is the adaptive-
+compression machinery D22 already declined. Conversation history that does not fit is dropped
+with an omission marker (RFC-0025); "what happened" is answered by the Run Summary, a projection
+over the Execution Graph (RFC-0057). The three kinds that remain are **specific cited claims,
+not free-form prose** — which is what makes them reviewable, invalidatable, and safe to carry.
 
 **Rule 1 — memory is about the work, not the worker.** Permitted: facts about the project,
 decisions and their reasons, task state. Not permitted: inferred preferences, working patterns,
@@ -79,20 +87,26 @@ hallucination that has been promoted to a belief.
 
 ```kotlin
 data class MemoryEntry(
-    val id: UUID,
-    val sessionId: UUID,
-    val kind: MemoryKind,               // SUMMARY | FACT | DECISION | TASK_STATE
+    val id: String,
+    val sessionId: SessionId,
+    val kind: MemoryKind,               // FACT | DECISION | TASK_STATE
     val content: String,
     val sourceRefs: List<SourceRef>,    // Run, Attempt, or ContentNode — never empty
+    val createdBy: ActorRef,            // who recorded it (RFC-0046)
     val confidence: Confidence,
     val trustLevel: TrustLevel,         // RFC-0027; max taint of its sources
     val createdAt: Instant,
     val expiresAt: Instant?,
-    val supersededBy: UUID?
+    val supersededBy: String?
 )
 
 enum class Confidence { OBSERVED, INFERRED, USER_STATED }
 ```
+
+**`createdBy` and `confidence` answer different questions and both are needed.** `confidence` says
+how the claim was arrived at; `createdBy` says which actor recorded it. Without the second, a
+`USER_STATED` entry is distinguishable from a session's inference only by trusting the first —
+which is a field the session itself writes.
 
 `confidence` matters at recall: `INFERRED` entries are presented to the model as inferences
 ("a previous run concluded…"), never as facts. An inference laundered into a fact by being
@@ -100,20 +114,22 @@ written down is the mechanism by which an agent becomes confidently wrong over w
 
 ### Taint propagates into and out of memory
 
-A memory entry carries the maximum trust level of its sources. A `SUMMARY` of a Run that read
-untrusted content is `UNTRUSTED`, and a Run that includes it inherits that taint (RFC-0027).
+A memory entry carries the maximum trust level of its sources. A `FACT` derived from a Run that
+read untrusted content is `UNTRUSTED`, and a Run that includes it inherits that taint (RFC-0027).
 
-Without this, memory is a taint-laundering channel: read a hostile document, summarize it into
-memory, and the summary re-enters future Runs as trusted session state. Closing the channel
-costs one field and one `max()`.
+Without this, memory is a taint-laundering channel: read a hostile document, write it into
+memory, and have it re-enter future Runs as trusted session state. Closing the channel costs one
+field and one `max()`.
+
+The largest version of that channel is closed structurally rather than by the field: **there is
+no model-written `SUMMARY`** (D32). A `max()` at every write site is a rule someone can forget;
+an absent summarizer is not.
 
 ### Expiry and review
 
 - `TASK_STATE` expires when its Run reaches a terminal state.
 - `FACT` carries a default expiry (90 days), refreshed on recall. A fact nobody has needed in
   three months is probably stale.
-- `SUMMARY` is superseded rather than expired; the chain is retained until compaction
-  (RFC-0056).
 - `DECISION` does not expire. These are small, and they are the most valuable thing a long-lived
   session accumulates.
 
@@ -155,54 +171,98 @@ Memory is not a substitute for the knowledge index. A session that "remembers" a
 has copied data RFC-0015 already stores, content-addressed and current. **Memory holds
 conclusions; the index holds content.**
 
-Memory is also not cross-session. A session's memory is its own. Conclusions move between
-sessions through content nodes and the intent graph, which are reviewable — not through an
-ambient store accumulating unattributed beliefs.
+### Scope: session by default, project by promotion
+
+Memory is **session-scoped**, and a `FACT` or `DECISION` may be **promoted to project scope by the
+user — never by a session** (D33).
+
+| Kind | Scope |
+|---|---|
+| `TASK_STATE` | session only, always. It is the session's current work state |
+| `FACT`, `DECISION` | written at session scope; promotable to project scope by the user |
+
+A session reads its own entries plus its project's promoted ones. `session_id` stays populated
+after promotion, recording which session learned the thing.
+
+**Why the gate.** A session writing project-wide facts that other sessions read back as authority
+is D6's failure mode exactly — *it invents goals, reads its own inventions back, and drifts*. The
+corpus already refuses this crossing twice, both times the same way: intent proposals let sessions
+propose and only users resolve, and instruction adoption (RFC-0016) keeps text from steering a
+model until a human has seen it. This is the same crossing and gets the same answer.
+
+**Why not session-only.** Sessions archive when their work finishes. `DECISION` is described above
+as the most valuable thing a long-lived session accumulates, and value that evaporates at archival
+is not value.
+
+**Three constraints, enforced by the database** rather than by a write path that has to remember —
+no promotion without a user, no project-scoped `TASK_STATE`, and **no promotion of `UNTRUSTED`
+content**. The last one matters most: a promoted entry taints every future Run in the project that
+reads it, so promoting untrusted content would let one hostile file, read once in one session,
+permanently degrade every session after it. A user who wants the fact remembered states it
+themselves, which makes it `USER_STATED` and `TRUSTED`.
+
+Memory is otherwise not an ambient cross-session store. Conclusions that have not been promoted
+move between sessions through content nodes and the intent graph, which are reviewable.
 
 ## Data Model
 
+`schema/project.sql` is canonical; this restates it so the RFC can be read on its own.
+
 ```sql
 CREATE TABLE memory_entries (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    project_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content TEXT NOT NULL,
-    source_refs_json TEXT NOT NULL,          -- never '[]'
-    confidence TEXT NOT NULL,
-    trust_level TEXT NOT NULL DEFAULT 'UNTRUSTED',
-    created_at TEXT NOT NULL,
-    expires_at TEXT,
-    superseded_by TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id),
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    project_id       TEXT NOT NULL,
+    -- No SUMMARY kind: no model-written compaction of a session (D32).
+    kind             TEXT NOT NULL
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
+    content          TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,                       -- never '[]'
+    -- Who recorded it, distinct from what justifies it (RFC-0046).
+    created_by_kind  TEXT NOT NULL,                       -- USER|SESSION|WORKER|RUNTIME
+    created_by_id    TEXT NOT NULL,
+    confidence       TEXT NOT NULL,
+    trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
+    created_at       TEXT NOT NULL,
+    expires_at       TEXT,
+    superseded_by    TEXT,
+    FOREIGN KEY (session_id)    REFERENCES sessions(id),
+    FOREIGN KEY (project_id)    REFERENCES projects(id),
     FOREIGN KEY (superseded_by) REFERENCES memory_entries(id)
 );
 
 CREATE INDEX idx_memory_active ON memory_entries(session_id, kind)
     WHERE superseded_by IS NULL;
-
--- Recorded per remote Attempt; see Provider-side retention.
-ALTER TABLE attempts ADD COLUMN provider_retention_json TEXT;
 ```
+
+`attempts.provider_retention_json` holds the per-Attempt retention record described above. It is
+a column of `attempts` in `schema/project.sql`, not an `ALTER` — an earlier version of this RFC
+wrote it as a migration step, which would have been a second, conflicting definition of a column
+the canonical schema already declares inline.
 
 ## Security
 
 1. Entries pass through the redactor (RFC-0035) before storage. A secret that appeared in a tool
    result must not survive as a remembered "fact".
-2. `SECRET` and `SENSITIVE` content (RFC-0024) is never summarized into memory.
+2. `SECRET` and `SENSITIVE` content (RFC-0024) never enters memory.
 3. Memory carries taint and cannot launder it.
-4. No user profiling, per Rule 1. Enforced by constraining the summarization prompt and by a
-   test corpus asserting what it must not produce (RFC-0038).
+4. No user profiling, per Rule 1. Enforced by a test corpus asserting what memory must never
+   contain (RFC-0038), applied to every write path.
 5. Memory is included in project export (RFC-0041) and must therefore be redaction-clean, since
    an export may be shared.
 
 ## MVP
 
-1. `MemoryEntry` with mandatory `source_refs`, `confidence`, and `trust_level`.
-2. `TASK_STATE` and `DECISION` kinds; `SUMMARY` arrives with summarization (RFC-0025).
-3. Taint propagation into and out of memory.
-4. Provider retention recorded per remote Attempt and shown in the egress approval prompt.
-5. A memory review surface: list, inspect source, delete.
+1. `MemoryEntry` with mandatory `source_refs`, `confidence`, `trust_level`, and `created_by`
+   (M16b).
+2. `TASK_STATE` and `DECISION` kinds. There is no `SUMMARY` kind (D32).
+3. Taint propagation into and out of memory (M16b).
+4. Session scope, with the three promotion constraints enforced in the schema (D33, M16b).
+5. Provider retention recorded per remote Attempt and shown in the egress approval prompt
+   (M14, M30).
+6. **A memory review surface: list, inspect source, promote, delete (M30).** Not optional —
+   promotion has to happen somewhere, and D33 requires the user to see what a session is claiming
+   before it becomes project context.
 
 Not in MVP: `FACT` extraction, expiry sweeps, memory search, cross-provider retention reporting.
 

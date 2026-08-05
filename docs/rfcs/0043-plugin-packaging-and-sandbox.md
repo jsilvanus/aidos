@@ -1,6 +1,6 @@
 # RFC-0043: Plugin Packaging and Sandbox
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -112,9 +112,20 @@ the host API, and enforces memory and execution-time limits per call.
 
 Plugin output is `UNTRUSTED` (RFC-0027) and taints the Run that consumed it.
 
-`requested_permissions` are requests presented to the user at install time. A plugin cannot
-escalate at runtime beyond what was granted, and a plugin may not request capabilities during
-headless execution — an unattended Run never grants new authority.
+`requested_permissions` are requests presented to the user at install time, expressed as effect
+classes — the same shape D30 settled for MCP servers, and for the same reason: a list of forty
+operation names is a consent dialog that trains people to click through.
+
+**A plugin may never raise a capability request at runtime.** Not "not while headless" — never.
+An earlier version of this RFC forbade it only during unattended execution, which would have
+permitted, for in-process WASM code, exactly what D30 forbids for an out-of-process MCP server.
+The argument is stronger here, not weaker: a prompt raised by untrusted code is a phishing
+surface whose moment and partial wording the untrusted party chooses, and a plugin runs closer to
+the runtime than an MCP server does. A call needing more than was granted fails, naming what is
+not permitted; the user changes the grant if they want it.
+
+Authority is therefore fixed when the plugin is enabled for a project, and a plugin's maximum
+authority stays knowable by reading one record.
 
 ## MVP
 

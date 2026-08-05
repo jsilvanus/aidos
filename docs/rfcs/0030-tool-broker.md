@@ -29,9 +29,9 @@ Without a unified abstraction, the runtime would need to hardcode knowledge of e
 2. **Enforcing permissions**: Each tool access is checked against capabilities.
 3. **Logging execution**: Every tool invocation is logged.
 4. **Publishing events**: Tool completion triggers events for interested sessions.
-5. **Enabling extensibility**: MCP servers register as tools (RFC-0031, desktop-only in the
-   MVP per D17). A plugin host is **not** in v1 (D18), so RFC-0060 describes a surface nothing
-   implements yet.
+5. **Enabling extensibility**: MCP servers register as tools (RFC-0031 — stdio on desktop,
+   streamable HTTP on every profile, both in the MVP per D17). A plugin host is **not** in v1
+   (D18), so RFC-0060 describes a surface nothing implements yet.
 
 ## Goals
 
@@ -140,6 +140,12 @@ annihilates an hour of typing — which is why conflating them let it into D26's
 operations, a description otherwise — without performing it. It powers dry-run mode, the
 approval dialog, and the audit record. Requiring it for `Mutate` is what makes "show me what
 the agent is about to do" a runtime feature rather than a per-tool courtesy.
+
+**`Preview.Diff` carries a structured `FileDiff` (RFC-0052), not a unified-diff string.** A
+mid-Run approval card and a commit-time hunk card are the same decision at different moments and
+are rendered by the same component (RFC-0050, D25). Handing the component a string in one path
+and structure in the other would put a diff parser in every frontend, which is the outcome D25
+exists to prevent.
 
 ### Idempotency and recovery
 
@@ -356,7 +362,7 @@ MVP includes:
 Not included:
 
 - HTTP tool, notification tool.
-- MCP adapter (RFC-0031 — desktop only when it lands).
+- MCP adapter (RFC-0031 — stdio on desktop, HTTP on every profile).
 - `CHECKABLE` recovery probes.
 - Read caching across steps.
 

@@ -221,7 +221,7 @@ knowledge; pairing gives access to compute.
 device-local sequence numbers, no autoincrement IDs in those two structures.
 **RFCs:** 0099, 0046, 0053.
 
-### D17 — MCP ships in the MVP, desktop only · `SETTLED`
+### D17 — MCP ships in the MVP: stdio on desktop, HTTP on every profile · `SETTLED`
 
 MCP stdio lands with the first vertical slice (Phase 2), not in a later ecosystem phase.
 
@@ -233,7 +233,56 @@ finding worth having in month four rather than month fourteen.
 **Consequence to accept:** the MVP is no longer purely first-party. The MCP trust model becomes
 MVP-critical rather than future hardening.
 **Does not change D18.**
-**RFCs:** 0031, 0099.
+
+**Amended 2026-08-04 — streamable HTTP is in the MVP too, on every profile.** This decision was
+originally titled *"MCP ships in the MVP, desktop only"* and scoped the MVP to stdio. That scope
+limit is lifted: HTTP transport ships in Phase 2 alongside stdio, and MCP is therefore available
+on MOBILE when online.
+
+The reason the limit existed was platform reality — Android cannot spawn arbitrary binaries, so
+*stdio* MCP genuinely does not exist there — and it was over-applied to MCP as a whole. Network
+connectivity is already a used, decided path in the MVP: M23 routes to remote model providers as
+user-owned policy, and Git fetch/push egress on every profile. Withholding HTTP MCP did not keep
+the network boundary closed; it only kept one tool family from crossing a boundary that others
+already cross. RFC-0049 and RFC-0050 had in fact already modelled HTTP MCP as available
+everywhere — `AvailabilityTier.NETWORKED` names it by name — so the corpus was written for this
+and only the MVP phasing said otherwise.
+
+**What it costs, stated rather than discovered:**
+
+- **Every call to an HTTP server is `Egress` by construction.** A stdio server can hold `Read`
+  and no `Egress`; an HTTP server reaches the network to do anything at all. Consequently a
+  tainted Run needs per-call approval, naming the tainting source, for *every* call to an HTTP
+  server under D7 — where it could still call a stdio one for a read with no friction. Egress is
+  attenuated to per-call approval rather than denied; denial is reserved for out-of-project
+  mutation, secrets, and wider-scope workers (RFC-0027). The remembered per-`(server, project)`
+  grant (D30) carries the ergonomics on the untainted path.
+- **Credentials move from the spawn environment to request headers.** There is no child process,
+  so `secret_ref` resolves into an `Authorization` header. The promise that a secret never enters
+  project configuration or the audit log has to hold on that path too.
+- **The endpoint is a new trust surface.** A URL in a user-scope file is somewhere the runtime
+  will POST project content. HTTPS is required, certificates are validated, and redirects to a
+  different host are refused — otherwise the endpoint is one redirect away from an exfiltration
+  target.
+- **No `http://` loopback exemption on MOBILE**, though DESKTOP and HEADLESS_SERVER keep one. A
+  loopback TCP port on Android is an unauthenticated shared namespace — any app holding
+  `INTERNET` can bind or connect to it, and the socket carries no peer identity to check — so an
+  app squatting the port would receive the project content and the credential. RFC-0055 answers
+  the same question for the desktop runtime socket with a `0600` Unix socket and a token;
+  loopback TCP on Android has neither. **Consequently an MCP server running on the phone itself
+  is not reachable in v1.** The safe form is Android's own IPC, where the platform authenticates
+  the calling package; it is future work in RFC-0031 and must not be approximated by relaxing
+  this rule.
+- **The scrubbed-environment defence does not apply, and does not need to.** With no child
+  process there is nothing to hand a runtime token to, and the server cannot reach the local
+  filesystem or the runtime socket at all. The risk moves rather than growing: from *a local
+  process holding your privileges* to *your project content on someone else's machine*.
+
+**The invariant that keeps the thesis testable:** the core mobile use case must not depend on MCP
+at all. An unreachable server is a degraded tool family (RFC-0049), never a failure, and G3 is
+measured with the network off to prove nothing on the thesis path degrades without it.
+
+**RFCs:** 0031, 0099, 0049, 0050.
 
 ### D18 — No plugin host in v1; WASM-only when it lands · `SETTLED`
 
@@ -628,6 +677,202 @@ server requiring that is configured out of band, deliberately, by the user.
 
 ---
 
+### D31 — A tool description is fenced prose, adopted at enable time · `SETTLED`
+
+RFC-0027 classifies an MCP server's **output** as `UNTRUSTED`. Nothing classified the prose a
+server supplies to *describe* each operation — text that reaches the model in every prompt, before
+any call has returned, so no taint has been applied yet. RFC-0025 placed it in the worst available
+spot: `toolDescriptors` is a **reserved** budget section, always included in full, in the same tier
+as safety constraints and system instructions, and outside the structural sandbox. A server needed
+no capability request (D30 forbids those) if it could write text the model read as instruction.
+
+**Taint cannot be the mechanism, and that is forced rather than preferred.** Descriptors enter
+every prompt from step 0. Counting them as `UNTRUSTED` `ContextItem`s in RFC-0027's `max()` would
+make every Run in a project with any MCP server enabled *begin* tainted — out-of-project mutation
+and secrets denied, egress and `git push` needing per-call approval permanently, and eyes-free
+operation dead under D26 tier 3. Approval cannot rescue it, since approving an escalation is a
+single-use exercise that never clears taint. There is no terminating version of *it taints but you
+can approve it*.
+
+So the control acts at **admission**, which is the distinction RFC-0016 already draws:
+
+> **Taint is for content that arrives during a Run. Adoption is for content that is there before
+> it starts.**
+
+Instruction files sit at high authority, are not runtime-authored, and do not taint; what makes
+them admissible is that a human has seen them, tracked by hash. Tool descriptors are the same kind
+of thing. **Two mechanisms, both required:**
+
+**1 · Fenced.** MCP-sourced description prose renders inside RFC-0025's structural sandbox with
+attribution, and the system statement extends to cover it: text in a tool descriptor describes what
+a tool does and is never an instruction. The machine-checked `inputSchema` is unaffected. The
+description cannot simply be dropped — a model that cannot read what a tool does cannot call it.
+
+**2 · Adopted, per operation, at enable time.** An operation is offered to the model only if the
+user has seen its descriptor, keyed by a hash over `(name, description, inputSchema)`. The schema is
+in the hash deliberately: a description that stays constant while a parameter widens is a real
+attack, and hashing prose alone would miss it.
+
+**Adoption is per operation, not per catalog**, so a server adding one tool does not withdraw the
+other thirty-nine. Unadopted operations are simply **not offered**; the adopted subset keeps
+working.
+
+**Timing — three moments, and the separation is load-bearing** because D30 says nothing is spawned
+or connected by opening a project:
+
+| Moment | What happens |
+|---|---|
+| **Enable time** (explicit user action) | Connect once, fetch the catalog, show what it claims, record adoptions. A legitimate spawn: the user is asking for this server, now. The dialog states that enabling will contact the endpoint. |
+| **Project open** | Nothing. D30 unchanged. |
+| **First call in a Run** | Lazy connect; admit only operations whose current descriptor hash is adopted. |
+
+**Nothing about a descriptor ever interrupts a Run.** A changed, new, or never-adopted operation is
+absent from the catalog the model sees, and the user re-adopts from the server's settings screen
+whenever they choose. A Run may be executing unattended or on a phone with the screen off, so a
+design in which third-party text can park it would hand an untrusted party a denial-of-service
+lever. It also inverts the incentive correctly: a server that silently rewrites its descriptions
+**loses** the ability to steer the model rather than gaining a way to halt work.
+
+**An unreachable catalog is a state, not a failure.** Enabling a server that cannot be contacted
+succeeds with an empty adopted set; the server contributes no tools until adoption completes on a
+later successful connection, surfaced in settings. Refusing to enable would conflate *I want this*
+with *it is reachable right now*, and offline is normal on the profile that matters.
+
+**The enable-time connection needs no separate egress approval.** The enable exchange is the
+approval, and the catalog fetch is scoped to it — provided the dialog says the endpoint will be
+contacted before the user confirms. Approving inside the approval adds a prompt without adding
+information.
+
+**Adoption is not trust promotion**, exactly as in RFC-0016: an adopted descriptor is still
+third-party text, still fenced, still describing a tool whose *results* are `UNTRUSTED` forever.
+Adoption means the user has seen it, nothing more.
+
+**Forecloses:** a server that changes what its tools claim to do and has that reach the model
+unseen.
+**RFCs:** 0031, 0025, 0027, 0016, 0008.
+
+### D34 — Five RFCs claimed MVP scope no milestone built; reconciled · `SETTLED`
+
+A mechanical sweep of every RFC's `## MVP` section against every Phase 1–4 milestone found
+fifteen unmatched. Ten were explicable — meta documents, superseded ones, and subsystems that are
+post-MVP by design. **Five were not**, and three of those were already Accepted. The RFCs' MVP
+sections and the roadmap's milestone set had been written independently and never reconciled, so
+each was internally consistent and they disagreed with each other.
+
+| RFC | Resolution |
+|---|---|
+| **0004** Event bus | Already built — M5 publishes, M9 exposes, M10 verifies `sinceSequence` gap replay. It was only missing from the RFC columns. **Bookkeeping, not scope** |
+| **0036** Settings | Plumbing that M14, M16 and M18 all assume and none built. Folded into **M1** (declared settings, `aidos.toml` parsing) and **M2** (nearest-first resolution, `SECURITY`/`SPEND` enforcement) |
+| **0005** Scheduler | Split: **waking from an event is part of the session model; waking on a clock is a feature.** Event-driven wake lands at M5 because a driver must wake when its worker completes, and the `causal_depth` ceiling with self-wake refusal lands at M6 as a runaway bound. Timers, the admission policy, and priorities are post-MVP |
+| **0012** Intent graph | Task list only, at **M32c**, built last (D20) — but with **derived status and the proposal gate**, the two items that cannot be retrofitted |
+| **0047** Project types | **Types in, templates out.** `projects.project_type` and its defaults at M2; the whole template mechanism post-MVP |
+
+**Two of these are non-deferrable for the same structural reason**, and it is worth stating once:
+derived intent status cannot be retrofitted because doing so migrates data that was never
+trustworthy (D10), and the proposal gate cannot be added later because by then the graph is full
+of unreviewed model output and nobody can tell which parts the user wanted (D6). Both are cases
+where the cost of adding a control is not the control — it is the corrupt data accumulated while
+it was missing.
+
+**The general rule this leaves:** an RFC's MVP section is a claim about the roadmap, and a claim
+nobody checked. Ask of any RFC claiming MVP scope: **which milestone builds this?** If the answer
+is none, one of the two documents is wrong.
+
+**Forecloses:** nothing. It reconciles two documents that had drifted.
+**RFCs:** 0004, 0005, 0012, 0036, 0047.
+
+### D33 — Memory is session-scoped; project scope is a promotion only a user can make · `SETTLED`
+
+Session memory is needed — a project worked on for months should not answer *"I told you last week
+the auth module uses JWT"* with a blank. But a session writing project-wide facts that other
+sessions read back as authority is D6's stated failure mode word for word: *it invents goals,
+reads its own inventions back, and drifts — each step locally plausible, none checked.*
+
+**So memory has two scopes and a gate between them.**
+
+| Kind | Scope |
+|---|---|
+| `TASK_STATE` | **session only, always.** It is the session's current work state; project scope is meaningless for it |
+| `FACT`, `DECISION` | written at **session** scope; **promotable to project scope by the user, never by a session** |
+
+A session reads its own entries plus its project's promoted ones. `session_id` stays populated
+after promotion — it records which session learned the thing, which is provenance worth keeping.
+
+**The gate is not new machinery.** The corpus already refuses this exact crossing twice, both
+times the same way: `intent_proposals` (D6, RFC-0012) lets sessions propose and *only* users
+resolve — "no SESSION variant by construction" — and instruction adoption (RFC-0016) keeps text
+from steering a model until a human has seen it. Project-scoped memory is the same crossing, where
+one agent's conclusion becomes context that steers *future* work, so it gets the same answer.
+
+**Three constraints, enforced by the database rather than by a write path that has to remember:**
+
+```sql
+CHECK (scope <> 'PROJECT' OR promoted_by_user_id IS NOT NULL)  -- no unattributed promotion
+CHECK (kind  <> 'TASK_STATE' OR scope = 'SESSION')             -- task state is never project-wide
+CHECK (scope <> 'PROJECT' OR trust_level <> 'UNTRUSTED')       -- taint cannot buy durable authority
+```
+
+**The third is the load-bearing one.** A promoted entry taints *every* future Run in the project
+that reads it, so promoting an `UNTRUSTED` entry would let a hostile file read once, in one
+session, permanently degrade the authority of every session after it — an unbounded version of
+precisely what D7 exists to bound. A user who wants that fact remembered can state it themselves,
+which makes it `USER_STATED` and `TRUSTED`. Refusing it in the schema means no write path can
+get it wrong.
+
+**Why not project-scoped by default:** it is the drift hazard above, and it arrives silently.
+**Why not session-only:** sessions archive when their work finishes, and RFC-0026 calls `DECISION`
+"the most valuable thing a long-lived session accumulates". Value that evaporates at archival is
+not value.
+
+**Consequence:** RFC-0026's memory review surface stops being optional. Promotion needs a place to
+happen, and the user needs to see what a session is claiming before it becomes project context.
+The surface is the same shape as approving an intent proposal, which Phase 4 builds regardless.
+
+**Forecloses:** ambient cross-session memory that accumulates unattributed beliefs.
+**RFCs:** 0026, 0011, 0012, 0016, 0027.
+
+### D32 — Durable memory is deterministic; nothing is summarized by a model · `SETTLED`
+
+**There is no model-written summary anywhere in the memory or context path.** The `SUMMARY`
+memory kind is removed (RFC-0026, RFC-0011). Conversation history that does not fit the budget is
+**dropped with an explicit omission marker**, never compacted by a model call (RFC-0025).
+
+What crosses a Run boundary is structured and cited:
+
+| Carrier | What it is |
+|---|---|
+| `FACT`, `DECISION`, `TASK_STATE` | specific claims with mandatory `source_refs`, still carrying the max taint of their sources |
+| **Run Summary** (RFC-0057) | a SQL projection over `runs`/`tasks`/`attempts` — no model call, offline, auditable |
+| **Taint marker** | `runs.taint_level`, rendered as `⚠` at strip density and named on tap |
+
+Four reasons, each sufficient on its own:
+
+- **D6.** A model summarizing its own session is reporting on its own work, at the point where
+  the summary is consumed *instead of* the detail. D26 already refused exactly this for the Run
+  Summary and D25 for diffs; memory was the remaining place it survived.
+- **It launders taint.** RFC-0026 closed the channel with "one field and one `max()`" — a rule
+  that must be remembered at every write site. Removing the summarizer removes the channel, which
+  cannot be forgotten.
+- **It parks on a phone.** Compaction that reaches a model call has no foreground service in the
+  background case (D24), so a session's own memory write would suspend.
+- **D22 already declined this machinery.** Adaptive compression was ruled out; a summarizer is
+  that machinery under a different name, and it had survived as future work.
+
+**Taint crosses the boundary as a marker, not as prose.** A tainted Run is visibly tainted, with
+its cause nameable, and no untrusted text rides along into the next Run.
+
+**Consequence to accept, stated plainly:** a long session's older turns are *gone*, not
+compressed — the model is told how many turns were omitted so it knows its view is partial. If
+that degrades quality before the budget is reached, the trigger is D22's revisit condition, and
+the answer is a larger context window or a better recency policy — **not** a summarizer
+reintroduced under another name.
+
+**Forecloses:** "the assistant remembers the gist of last week." It remembers cited facts,
+recorded decisions, and what the graph says happened.
+**RFCs:** 0026, 0025, 0027, 0011, 0057.
+
+---
+
 ## Open
 
 None.
@@ -646,3 +891,9 @@ None.
 | 2026-08-03 | D27 settled: native dependencies only where nothing else works and a crash is bounded. D28 settled: GGUF via llama.cpp, format per model kind. |
 | 2026-08-04 | Legacy RFC audit complete: 46 Accepted, 15 Draft, RFC-0099 excepted. |
 | 2026-08-04 | D29 settled: the knowledge engine is a consumed library; no provider SPI; committed content only; queries report coverage. D30 settled: an MCP server's authority is fixed at enable time; no `TRUSTED` promotion; nothing spawns on project open. |
+| 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |
+| 2026-08-04 | D31 opened: an MCP server's tool *description* has no trust classification and lands in a reserved prompt section. Must be settled before M18. |
+| 2026-08-04 | D31 settled: tool descriptors are fenced prose adopted per operation at enable time; taint cannot be the mechanism. |
+| 2026-08-04 | D34 settled: five RFCs claimed MVP scope no milestone built. 0004 was bookkeeping; 0036 folds into M1/M2; 0005 splits event-wake from timers; 0012 becomes M32c; 0047 keeps types, drops templates. |
+| 2026-08-04 | D33 settled: memory is session-scoped; `FACT`/`DECISION` promote to project scope only by user action, and never when `UNTRUSTED`. |
+| 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |

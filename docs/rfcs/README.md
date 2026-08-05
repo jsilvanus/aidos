@@ -29,17 +29,34 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (46).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (54).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (15).** 0012 Intent Graph · 0015 Knowledge Engine · 0026 Model Memory · 0031 MCP ·
-0033 Shell · 0041 Export/Import · 0043 Plugin Packaging · 0046 Identity · 0047 Project Templates ·
-0051 Desktop · 0060 Plugin SDK · 0099 Roadmap · and the reviews. Genuinely unsettled or post-MVP.
+**Draft (7).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · and the
+reviews. Genuinely unsettled or post-MVP — every one is a subsystem the MVP does not build.
 
-Two — **0015** and **0031** — are on the MVP critical path. Their *decisions* are now settled
-(`docs/decisions.md` D29 and D30) but the documents have not been rewritten to match, so both
-carry a warning banner naming what in them is superseded. They must be revised and accepted
-before the milestone that consumes them; see [`docs/mvp-roadmap.md`](../mvp-roadmap.md).
+**0099 Roadmap left Draft on 2026-08-04**, the last document the legacy audit had excepted. It
+defines all six gates, so it was the only file where every gate in the plan was stated by
+something nobody had read end to end.
+
+**0012 and 0047 left Draft on 2026-08-04** as part of D34's reconciliation — both claimed MVP
+scope that no milestone built, and both were narrowed to what the MVP actually exercises.
+
+**0043 Plugin Packaging left Draft on 2026-08-04.** It is post-MVP by design — no plugin host
+ships in v1 — but its *decision* is load-bearing now, because it is what stops the Tool Broker
+being built with a native escape hatch. The audit found one defect: it permitted a plugin to raise
+a runtime capability request when interactive, which is exactly what D30 forbids for MCP servers,
+and the argument is stronger for in-process WASM than for an out-of-process server.
+
+**0046 Identity left Draft on 2026-08-04.** No milestone names it, but `ActorRef` in
+`runtime/kernel/` and four columns of canonical DDL cite it — a Draft document governing frozen
+contracts. The audit found four defects; three were fixed in `schema/`, one in the RFC.
+
+**0015 and 0031 left Draft on 2026-08-04**, rewritten against the decisions that had been
+settled ahead of them (D29 and D30) and accepted. Both carried a banner naming what in them was
+superseded; each banner was deleted by the commit that made the document right, which is the only
+acceptable lifetime for one. RFC-0015 shrank 777 lines → 362 in the process: most of it described
+a knowledge engine Aidos is not building.
 
 ### What the audit found, and why greps were not enough
 

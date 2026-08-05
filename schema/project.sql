@@ -136,7 +136,11 @@ CREATE TABLE capabilities (
     scope_json           TEXT NOT NULL,
     constraints_json     TEXT NOT NULL,                   -- includes budget (RFC-0028)
     issued_at            TEXT NOT NULL,
-    issued_by            TEXT NOT NULL,
+    -- Two columns, never one polymorphic identifier (RFC-0046). A grant may be
+    -- issued by the user or delegated by a holder, so an untyped `issued_by`
+    -- was ambiguous exactly where attribution matters.
+    issued_by_kind       TEXT NOT NULL,                   -- USER|SESSION|WORKER|RUNTIME
+    issued_by_id         TEXT NOT NULL,
     parent_capability_id TEXT,
     allows_delegation    INTEGER NOT NULL DEFAULT 0,
     expires_at           TEXT,
@@ -323,6 +327,7 @@ CREATE TABLE runs (
     taint_level          TEXT NOT NULL DEFAULT 'TRUSTED', -- RFC-0027, monotonic
     taint_source_node_id TEXT,
     platform_profile     TEXT NOT NULL,                   -- RFC-0049
+    device_id            TEXT NOT NULL,                   -- which machine ran this (RFC-0046)
     network_available    INTEGER NOT NULL DEFAULT 0,
     degraded_tools       TEXT NOT NULL DEFAULT '[]',
     instruction_set_hash TEXT,                            -- RFC-0016; NULL = none adopted
@@ -507,6 +512,29 @@ CREATE TABLE instruction_adoptions (
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
+-- MCP operation adoption (RFC-0031, D31)
+--
+-- A server's tool *description* is third-party prose that reaches the model in
+-- every prompt, before any call has returned. Taint cannot govern it: descriptors
+-- enter at step 0, so counting them would leave every Run permanently tainted and
+-- approval never clears taint. Admission governs it instead — the same answer
+-- RFC-0016 gives for instruction files.
+--
+-- Keyed per operation, not per catalog, so a server adding one tool does not
+-- withdraw the rest. descriptor_hash covers (name, description, inputSchema): a
+-- constant description over a widened parameter is a real attack.
+--
+-- No FK to mcp_servers — that table is user scope, a different database (RFC-0054).
+CREATE TABLE mcp_operation_adoptions (
+    project_id      TEXT NOT NULL,
+    server_name     TEXT NOT NULL,
+    operation_name  TEXT NOT NULL,
+    descriptor_hash TEXT NOT NULL,                        -- (name, description, inputSchema)
+    adopted_at      TEXT NOT NULL,
+    PRIMARY KEY (project_id, server_name, operation_name, descriptor_hash),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
 -- ---------------------------------------------------------------------------
 -- Session memory (RFC-0011, RFC-0026)
 -- ---------------------------------------------------------------------------
@@ -515,18 +543,50 @@ CREATE TABLE memory_entries (
     id               TEXT PRIMARY KEY,
     session_id       TEXT NOT NULL,
     project_id       TEXT NOT NULL,
-    kind             TEXT NOT NULL,                       -- SUMMARY|FACT|DECISION|TASK_STATE
+    -- No SUMMARY kind: no model-written compaction of a session (D32).
+    kind             TEXT NOT NULL
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                       -- never '[]' (RFC-0026)
+    -- Who wrote it, distinct from what justifies it (RFC-0046). `confidence`
+    -- says how the claim was arrived at; this says which actor recorded it, so
+    -- a USER_STATED fact and a session's inference are told apart by origin
+    -- rather than by trusting the confidence field alone.
+    created_by_kind  TEXT NOT NULL,                       -- USER|SESSION|WORKER|RUNTIME
+    created_by_id    TEXT NOT NULL,
     confidence       TEXT NOT NULL,                       -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
+    -- Session-scoped by default; PROJECT is a promotion only a user can make (D33).
+    -- session_id stays populated after promotion: it records which session learned it.
+    scope               TEXT NOT NULL DEFAULT 'SESSION'
+                        CHECK (scope IN ('SESSION','PROJECT')),
+    promoted_by_user_id TEXT,
+    promoted_at         TEXT,
     created_at       TEXT NOT NULL,
     expires_at       TEXT,
     superseded_by    TEXT,
     FOREIGN KEY (session_id)    REFERENCES sessions(id),
     FOREIGN KEY (project_id)    REFERENCES projects(id),
-    FOREIGN KEY (superseded_by) REFERENCES memory_entries(id)
+    FOREIGN KEY (superseded_by) REFERENCES memory_entries(id),
+
+    -- A session must not be able to grant its own conclusions project-wide authority
+    -- (D6: sessions propose, only users resolve).
+    CHECK (scope <> 'PROJECT' OR promoted_by_user_id IS NOT NULL),
+
+    -- Task state is one session's current work; project-wide is meaningless for it.
+    CHECK (kind <> 'TASK_STATE' OR scope = 'SESSION'),
+
+    -- A promoted entry taints every future Run in the project that reads it. Promoting
+    -- untrusted content would let one hostile file, read once, permanently degrade every
+    -- later session — an unbounded version of exactly what D7 bounds. A user who wants
+    -- the fact remembered states it themselves, which makes it USER_STATED and TRUSTED.
+    CHECK (scope <> 'PROJECT' OR trust_level <> 'UNTRUSTED')
 );
+
+-- Promoted entries are read by every session in the project, so they are queried by
+-- project rather than by session (D33).
+CREATE INDEX idx_memory_promoted ON memory_entries(project_id)
+    WHERE scope = 'PROJECT' AND superseded_by IS NULL;
 
 CREATE INDEX idx_memory_active ON memory_entries(session_id, kind) WHERE superseded_by IS NULL;
 

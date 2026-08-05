@@ -107,7 +107,23 @@ model-authored and never the thing an approval is given against.
 
 ```
 aidos · paused · 3 files · needs approval
+⚠ aidos · paused · 3 files · needs approval      (tainted Run)
 ```
+
+**Taint is a symbol at strip density and a word where there is room.** `runs.taint_level` is
+already in the projection above, so this costs nothing to render. A tainted Run carries `⚠`
+ahead of its name on the strip, the word `tainted` in the Page headline where `trusted` would
+otherwise appear, and — on tap — the specific content that caused it, which is the same
+provenance the escalation prompt uses (RFC-0027).
+
+The symbol marks the exceptional case rather than the normal one, because a glance surface has
+no room to affirm what is already expected. The Page density still states `trusted` explicitly,
+because at that density silence is ambiguous with "not rendered" and the user is deciding
+something.
+
+This is the **only** thing that carries a Run's taint forward (D32). There is no model-written
+summary that could carry untrusted prose into a later Run — what crosses the boundary is the
+marker and its provenance, both runtime-owned.
 
 **Page** — one screen, no scrolling, thumb-reachable actions:
 

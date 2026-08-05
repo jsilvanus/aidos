@@ -97,8 +97,20 @@ influenced by everything it read at step 3, and pretending otherwise would make 
 trivially bypassable ("read the payload, then read something clean").
 
 Taint does not propagate *between* Runs. A new Run starts clean, because it starts with a fresh
-transcript. Session memory summaries carry the maximum taint of what they summarize, so a
-summary of a tainted Run taints the next Run that includes it.
+transcript.
+
+**There is no model-written summary to carry taint across that boundary** (D32). The channel a
+summarizer would open — read a hostile document, compact it into session state, and have it
+re-enter later Runs as memory — is closed by construction rather than by a `max()` that has to be
+remembered at every write site. What persists is `FACT`, `DECISION`, and `TASK_STATE` memory
+entries (RFC-0026), each a specific cited claim that still carries the maximum trust level of its
+`source_refs`, and the Run Summary (RFC-0057), which is a projection over runtime-owned rows and
+contains no third-party text at all.
+
+**Taint is carried forward as a marker, not as prose.** A Run that was tainted is recorded as such
+and shown as such — `runs.taint_level` is already in the Run Summary projection — so the user sees
+that a Run ran under attenuated authority, and which content caused it, without any untrusted text
+crossing into the next Run.
 
 ### Authority attenuation
 

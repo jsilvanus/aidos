@@ -240,28 +240,32 @@ be rewritten on every artifact creation.
 
 ### Session memory
 
-Memory is bounded and queryable, not an ever-growing list rewritten on each wake.
+Memory is bounded and queryable, not an ever-growing list rewritten on each wake. The table is
+`memory_entries`; its DDL is below and in `schema/project.sql`. An earlier version of this section
+sketched a `session_memory_entries` table here with a different column list — a table that has
+never existed under that name, in a format `schema/check.py` does not catch because it is a fenced
+block rather than the `Table:` prose form the check looks for.
 
-```
-session_memory_entries
-  id, session_id, kind, content, tokens, created_at, superseded_by, taint_level
-```
+Entries are session-scoped; `FACT` and `DECISION` may be promoted to project scope by the user,
+never by a session (D33, RFC-0026).
 
 | Kind | Meaning | Bound |
 |---|---|---|
-| `SUMMARY` | rolled-up summary of prior Runs | one active per session |
 | `FACT` | a durable learned fact | soft cap, LRU eviction |
 | `DECISION` | a choice made and its reason | uncapped; these are small and valuable |
 | `TASK_STATE` | current work state | one active per session |
 
 **Raw conversation turns are not session memory.** They belong to a Run's transcript
-(RFC-0008), which is `AGED` and compacted (RFC-0056). When a Run completes, its transcript is
-summarized into a `SUMMARY` entry and the raw turns age out.
+(RFC-0008), which is `AGED` and compacted (RFC-0056). When a Run completes its raw turns age
+out on that schedule; **nothing summarizes them into memory** (D32). What survives the Run is
+the `FACT`/`DECISION`/`TASK_STATE` entries written during it, each with mandatory `source_refs`,
+and the Run Summary — a projection over the Execution Graph (RFC-0057), not a generated text.
 
 This closes the highest-probability debt identified in review: an unbounded
 `conversation_history: List<Message>` inside the session row would grow without limit, be
 rewritten wholesale on every wake, degrade AI quality as it filled the context window, and be
-unqueryable. The rolling summary keeps context useful and cost bounded, and it is enforced by
+unqueryable. Bounded, cited entries plus a rolling recency window (D22, D32) keep context useful
+and cost bounded, and it is enforced by
 the schema rather than by a note recommending periodic cleanup.
 
 Memory entries carry `taint_level` (RFC-0027): a summary of a tainted Run taints the Run that
@@ -507,9 +511,15 @@ CREATE TABLE memory_entries (
     id               TEXT PRIMARY KEY,
     session_id       TEXT NOT NULL,
     project_id       TEXT NOT NULL,
-    kind             TEXT NOT NULL,                   -- SUMMARY|FACT|DECISION|TASK_STATE
+    kind             TEXT NOT NULL                    -- FACT|DECISION|TASK_STATE
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                   -- never '[]' (RFC-0026)
+    created_by_kind  TEXT NOT NULL,                   -- who recorded it (RFC-0046)
+    created_by_id    TEXT NOT NULL,
+    scope            TEXT NOT NULL DEFAULT 'SESSION',  -- SESSION|PROJECT, promotion is a user act (D33)
+    promoted_by_user_id TEXT,
+    promoted_at      TEXT,
     confidence       TEXT NOT NULL,                   -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
     created_at       TEXT NOT NULL,
@@ -760,9 +770,10 @@ New worker sessions inherit template defaults
 These were open questions. Each is load-bearing semantics rather than a refinement, so each is
 now decided.
 
-**How is session memory summarized as it grows?** Rolling `SUMMARY` entries; raw turns live in
-Run transcripts and are compacted on a retention schedule (see Session memory above,
-RFC-0056).
+**How is session memory summarized as it grows?** It is not (D32). There is no model-written
+summary. Raw turns live in Run transcripts and are compacted on a retention schedule (RFC-0056);
+what persists is the cited `FACT`/`DECISION`/`TASK_STATE` entries, and "what happened" is
+answered by the Run Summary projection (RFC-0057).
 
 **How do workers inherit capabilities?** By explicit attenuated delegation only, never by
 inheritance (RFC-0018). A worker receives a strict subset of its driver's authority, narrower

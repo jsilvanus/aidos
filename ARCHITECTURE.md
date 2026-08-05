@@ -142,7 +142,9 @@ build it late and small.
 **Effects** (RFC-0030): every tool operation is `Read`, `Mutate`, `Egress`, or `Notify`, with a
 mandatory preview for mutations and a declared recovery class for crash handling.
 
-**Knowledge Engine** (RFC-0015): a query broker over pluggable providers, not a monolith.
+**Knowledge Engine** (RFC-0015): a *consumed library* (`gitsema-kotlin`), not an Aidos
+subsystem. Aidos owns the location, the lifecycle, and the resource envelope; the library owns
+its schema. Every query reports coverage.
 
 **Instruction Engine** (RFC-0016): resolves AGENTS.md, CLAUDE.md, and similar into one
 instruction set.

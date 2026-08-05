@@ -1,6 +1,6 @@
 # RFC-0012: Intent Graph
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -631,31 +631,13 @@ CREATE INDEX idx_proposals_pending ON intent_proposals(project_id, expires_at)
 `resolved_by_user_id` has no session variant by construction. A schema that cannot express
 "a session approved this" is a stronger guarantee than a rule saying it must not.
 
-## Data Model (Conceptual)
-
-```
-IntentGraph {
-  id: UUID
-  project_id: UUID
-  
-  nodes: Map<NodeId, IntentNode>
-  edges: List<Edge>                 # Dependencies and relationships
-  
-  root: NodeId                      # Top-level goal (typically)
-  
-  created_at: Timestamp
-  version: Int                      # Git commit count or sequential
-  
-  metadata: Map<String, Any>?
-}
-
-Edge {
-  source: NodeId
-  target: NodeId
-  type: EdgeType                    # dependency, constraint_applies_to, etc.
-  label: String?
-}
-```
+> **A second, conflicting data model was removed here.** This section previously restated the
+> graph as an `IntentGraph { nodes, edges, root, version, metadata }` pseudo-structure that
+> disagreed with the canonical DDL above in three ways that mattered: a `version: Int` described
+> as "Git commit count or sequential", which is precisely the device-local sequence number **D16
+> forbids** for intent (it must stay file-serializable with globally unique IDs); an untyped
+> `metadata: Map<String, Any>?` bag; and a single `root: NodeId`, which contradicts the MVP's flat
+> goal list. The DDL above is the model. There is no second one.
 
 ## Lifecycle
 
@@ -800,7 +782,8 @@ execution model, the content graph, and the agent loop all work without it, and 
 on it. It is also the hardest of the three graphs to get right. Building it early is how a
 project spends a year on planning machinery before proving the execution loop.
 
-**MVP is a task list, not a DAG.** Concretely:
+**MVP is a task list, not a DAG**, and it is **M32c** — late in Phase 4, after everything that
+does not depend on it. Concretely:
 
 1. Flat or single-level goals with titles, descriptions, and priority.
 2. `TARGETED` edges from Runs, so the list knows what is being worked on.
@@ -812,6 +795,12 @@ project spends a year on planning machinery before proving the execution loop.
    then the graph is full of unreviewed model output and nobody can tell which parts the user
    actually wanted.
 6. Git snapshot of the graph, with conflict detection (RFC-0053).
+
+Items 3 and 5 are the two that cannot be deferred, and the reason differs for each. Derived status
+cannot be retrofitted, because doing so means migrating data that was never trustworthy. The
+proposal gate cannot be added later, because by the time anyone asks for it the graph is already
+full of unreviewed model output and nobody can tell which parts the user actually wanted. The rest
+of this list could slip a release without harm.
 
 The MVP does not include:
 
@@ -917,12 +906,28 @@ Replay the Intent Graph as it was at any point in time:
 → Reconstruct graph from Git history at that date
 ```
 
-## Open Questions
+## Resolved questions
 
-- Should constraints have severity levels (must_have vs. should_have)? This would support prioritization when constraints conflict.
-- How should the Intent Graph handle circular dependencies? Should they be prevented or flagged?
-- Should nodes have "owners" (sessions or users)? Would this help with responsibility and assignment?
-- How should the Intent Graph scale to very large projects with thousands of nodes?
-- Should there be a "confidence" score on nodes, reflecting uncertainty?
-- Should acceptance criteria be automatically evaluated (e.g., test coverage must be > 90%)?
-- How should the Intent Graph support A/B testing of alternative paths?
+Every one of these concerned machinery the MVP explicitly excludes — hierarchies, dependencies,
+and the acyclicity checker are all out of scope, because a task list has no cycles. They are
+answered here rather than left open, since an open question on a leaf subsystem reads as unsettled
+design when it is really unscheduled work.
+
+- **Severity levels on constraints?** Not in the MVP; constraints are not a node type there.
+  Revisit with a real case where two constraints conflict and the resolution differs by severity.
+- **Circular dependencies — prevented or flagged?** Neither, in the MVP: a flat task list cannot
+  express a cycle. When dependencies land, **flagged**, consistent with D10's derived status —
+  a cycle makes status `STALE` rather than making the write fail, because refusing the write
+  loses the user's input to protect an invariant they can see.
+- **Node owners?** No. Single-user is a design assumption (D16, RFC-0046), and "which session"
+  is already answered by `TARGETED` edges without a column that would need migrating when it is
+  wrong.
+- **Scale to thousands of nodes?** Not a real case for a personal project graph. The Execution
+  and Resource graphs are the ones that grow; this one is bounded by what a person will type.
+- **Confidence scores?** No. `asserted_status` with provenance already distinguishes a user's
+  claim from a derived value, and a confidence number on a goal is a number nobody can calibrate.
+- **Automatic evaluation of acceptance criteria?** Yes, by design — `check_kind` exists for
+  exactly that, and D6 requires the verifier be a mechanical check or the user, never a session.
+  Not in the MVP, which stops at `NEEDS_REVIEW`.
+- **A/B testing of alternative paths?** No. That is a branching-strategy question, and Git
+  already answers it.

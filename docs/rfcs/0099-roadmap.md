@@ -1,6 +1,6 @@
 # RFC-0099: Roadmap
 
-Status: Draft — body not audited against settled decisions (see docs/decisions.md)
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -15,15 +15,18 @@ implements them, and `PIPELINE.md` is the tracking document an agent works from.
 
 ## Motivation
 
-A roadmap provides clarity:
+A roadmap here does one thing: **it fixes the order in which uncertainty gets resolved.**
 
-1. **Stakeholders**: Understand project direction and timeline.
-2. **Contributors**: Know what to work on and how it fits.
-3. **Users**: Anticipate features and prioritization.
-4. **Investors**: See long-term vision and market opportunity.
-5. **Community**: Support is more informed and engaged.
+The riskiest claim in this project is that useful AI-assisted Git work is possible offline on a
+mid-range phone. Everything else — the UI, the desktop build, the ecosystem — is worth building
+only if that holds. So the plan is arranged to test it as early as it can be tested honestly, and
+each phase exists to make the next one's question answerable.
 
-The roadmap balances ambition (long-term vision) with pragmatism (MVP first).
+That is also why the audiences are narrow. A contributor needs to know what to work on and what
+it depends on; a reader needs to know what is deliberately absent and why. This document is not a
+pitch — Aidos is EUPL-licensed and F-Droid-distributed (RFC-0050), and an earlier version of this
+section listed "Investors: see long-term vision and market opportunity" among its readers, which
+described a project this is not.
 
 ## Goals
 
@@ -86,20 +89,27 @@ No feature work. Three artifacts, each executable or checkable rather than prose
 
 **Exit criteria:** schema green in CI; interfaces published; the MVP RFC set marked Accepted.
 
-Phase 0 closed on 2026-08-03. `schema/` executes in CI as 53 tables across three files;
-`runtime/kernel/` compiles in KMP common with contract tests; 24 decisions are recorded in
-`docs/decisions.md` with none open. Forty-five RFCs moved to Accepted — not the eight originally
-named here, because building the schema and the kernel validated far more of the corpus than
-expected, and the remaining Draft set is now a more useful signal than the Accepted set. See
-[Accepted is not frozen](README.md#accepted-is-not-frozen): the freeze list below is unchanged
-and is the stronger commitment.
+Phase 0 closed on 2026-08-03. As of 2026-08-04 `schema/` executes in CI as **56 tables** across
+three files, `runtime/kernel/` compiles in KMP common with contract tests, and **34 decisions**
+are recorded in `docs/decisions.md` with none open.
+
+**A correction worth keeping.** An earlier version of this paragraph reported that forty-five RFCs
+had moved to Accepted. That number was wrong when it was written: the acceptance pass had marked
+them on the strength of their headers, and sampling four found body-level contradictions in three,
+so eighteen were reverted the same day. The count today is **53 Accepted, 8 Draft**, reached by
+reading each document end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`.
+The lesson is recorded rather than tidied away, because a status line nobody verified is the exact
+defect the audit spent a day removing. See
+[Accepted is not frozen](README.md#accepted-is-not-frozen); the freeze list below is unchanged and
+is the stronger commitment.
 
 ### Phase 1: Execution kernel (2 months) — no AI, no tools
 
 ```
 Identity and scopes (RFC-0054)      Capability manager with handles (RFC-0018)
 State store and migrations           Audit log
-Execution graph tables (RFC-0019)    Checkpointed executor (RFC-0009)
+Settings and `aidos.toml` (RFC-0036) Execution graph tables (RFC-0019)
+Event-driven wake (RFC-0004/0005)    Checkpointed executor (RFC-0009)
 Project lock (RFC-0055)              Error taxonomy (RFC-0029)
 ```
 
@@ -117,7 +127,7 @@ misattributed to the model.
 Agent loop (RFC-0008)                One remote provider adapter
 Prompt construction (RFC-0025)       Filesystem tool + Git tool (JGit)
 Trust and taint (RFC-0027)           CLI frontend over the Runtime API
-MCP stdio, desktop only (RFC-0031)
+MCP: stdio on desktop, HTTP anywhere (RFC-0031)
 ```
 
 MCP is here rather than in a later ecosystem phase because it is the first real test of whether
@@ -136,7 +146,7 @@ beautiful UI over a runtime that cannot work offline is not this product.
 ```
 Model runtime at user scope (RFC-0020, RFC-0054)
 One local LLM small enough for a mid-range phone
-Local embeddings; knowledge index over files and Git history
+Local embeddings; knowledge index — `gitsema-kotlin` consumed as a library (D29)
 Routing policy with explicit degradation states
 Treeless workers against the object database (RFC-0049)
 Retention and compaction (RFC-0056)
@@ -160,8 +170,9 @@ hope. It is scheduled here so that the answer arrives while it is still cheap to
 
 ```
 Compose UI over the stable Runtime API      Foreground service execution (RFC-0009)
-Availability reporting (RFC-0049)           Approval and preview flows
-Diff and commit review                      Voice capture → local STT
+Availability reporting (RFC-0049)           Approval, preview, memory review (RFC-0026)
+Diff and commit review, by hunk (D25)       Voice capture → local STT
+Run Summary as a projection (RFC-0057)      Intent as a task list, last (RFC-0012)
 Notifications (RFC-0044)                    F-Droid distribution
 ```
 
@@ -277,7 +288,7 @@ Once G0 lands, these proceed independently against frozen contracts:
 | Security | `CapabilityManager`, effect taxonomy | |
 | Tools | `ToolBroker`, `EffectKind` | fs and git first |
 | AI providers | `ModelAdapter`, tool-call envelope | needs RFC-0008 |
-| Knowledge | `KnowledgeContextProvider` | genuinely independent; the cleanest parallel stream |
+| Knowledge | `KnowledgeContextProvider` | the cleanest parallel stream, but no longer unblocked: it consumes `gitsema-kotlin` (D29), which has no `androidTarget()` yet |
 | Frontends | `RuntimeClient`, `MockRuntimeClient` | can start at G0 against the mock |
 | Testing | fakes for provider, tool, clock, filesystem | crash-recovery suite is the priority |
 
@@ -290,44 +301,25 @@ tool-call envelope; `RuntimeClient`; the migration contract.
 **Do not freeze:** plugin SDK surface; knowledge provider internals; Intent Graph shape; UI
 view modes; MCP trust policy beyond the basics; anything in Phase 6 and later.
 
-## Risk Mitigation
+## Risks
 
-**Key risks and mitigation:**
+**The MVP's risks live in [`docs/mvp-roadmap.md`](../mvp-roadmap.md)**, as a table of risk, the
+signal that it is happening, and the response — including which decision to reopen. That is the
+operational list and it is not duplicated here.
 
-```
-Risk: Market doesn't adopt offline-first AI
-Mitigation:
-  - Start with power users (developers)
-  - Show clear privacy/control benefits
-  - Demonstrate offline capability early
+What belongs at this level is the small set of risks to the *plan's shape*:
 
-Risk: AI models not good enough locally
-Mitigation:
-  - Cloud fallback option
-  - Integrate best local models
-  - Hybrid pipelines (local + cloud)
+| Risk | Why it is here rather than in the milestone list | Response |
+|---|---|---|
+| **G3 fails** — the thesis does not hold on a real phone | It invalidates Phases 4–6, not one milestone | Change the product. This is why G3 is scheduled before the UI, and a negative result is a successful outcome for that milestone |
+| **The corpus drifts from the code** | It is how the last three architecture reviews each found items marked "addressed" that were not | Extend `schema/check.py`. Two rules already exist; a milestone-to-RFC check does not |
+| **Phase 2 starts with G1 amber** | Every AI-layer bug found afterwards is misattributed to the model | Do not. This is the one gate with no acceptable degradation |
+| **A dependency stalls a phase** | The knowledge engine is now an external library (D29) | Degrade the milestone rather than the gate: search works FTS-only without embeddings, and G3 is measured on what exists |
 
-Risk: Complexity too high for users
-Mitigation:
-  - Start simple (MVP)
-  - Gradually add features
-  - Focus on workflows, not features
-  - Strong documentation and tutorials
-
-Risk: Competition from commercial AI IDEs
-Mitigation:
-  - Open-source (can't be killed)
-  - Community-driven (vs. corporate)
-  - Modularity (adapt to new capabilities)
-  - Privacy focus (compliance)
-
-Risk: Insufficient resources/funding
-Mitigation:
-  - Open-source model (volunteers)
-  - Modular (features can be added gradually)
-  - Phase-based (stop at any point)
-  - Sustainability focus (not expensive)
-```
+An earlier version of this section listed market adoption, competition from commercial AI IDEs,
+and insufficient funding, with mitigations like "start with power users" and "open-source (can't
+be killed)". Those are not risks this document can act on, and mixing them with engineering risk
+made the section unreadable as either.
 
 ## Success Metrics
 
@@ -352,16 +344,26 @@ decision if missed.
 Deliberately not tracked: uptime percentages (meaningless for a local single-user application),
 download counts as a primary goal, and star counts.
 
-## Open Questions
+## Resolved questions
 
-- Should Aidos target specific domains first (e.g., Python developers)?
-- How aggressive should the roadmap be (1 year vs. 3 year for full vision)?
-- Should paid/commercial features be considered in Phase 3 or later?
-- How should community feedback influence the roadmap?
-- Should we fork/differentiate for enterprise vs. community versions?
-- What's the maximum market Aidos can address (10M developers? 100M?)?
-- Should Aidos eventually be ported to every platform (iOS, wearables, VR)?
-- What's the success condition for declaring Aidos "complete"?
+These were open. Six of them were business-strategy questions that this RFC's own Non-goals
+already exclude — pricing and business model are explicitly out of scope — so leaving them here
+made a roadmap look unsettled when what was unsettled was a different document that does not
+exist. The two that are answerable from settled decisions are answered.
+
+- **Target a specific domain first (e.g. Python developers)?** No. Project *types* (RFC-0047) set
+  defaults per domain without the roadmap committing to one, and the thesis is language-agnostic
+  because it is about Git and attention, not syntax.
+- **Port to every platform — iOS, wearables, VR?** Not a roadmap question. RFC-0049's platform
+  profiles are the mechanism by which a new platform is *possible*; whether one is worth building
+  is decided when someone wants to build it. Note that iOS in particular would fail D27's second
+  test differently from Android, and that analysis has not been done.
+- **Success condition for declaring Aidos "complete"?** There is none, and the gates are the
+  substitute: G4 delivers Android-first, G5 delivers the pairing payoff. A project with a
+  completion condition is a project that stops being maintained.
+- **Roadmap aggressiveness, paid features, community influence, enterprise forks, addressable
+  market.** Out of scope by this RFC's Non-goals. If a business model is ever needed it belongs
+  in its own document, and this one should not pre-commit the engineering order to it.
 
 ## Appendix: RFC Index
 
@@ -395,7 +397,8 @@ RFC-0046 Identity · RFC-0047 Project Templates · RFC-0048 Dependency Injection
 **Platforms and API**
 RFC-0050 Android · RFC-0051 Desktop · RFC-0052 Runtime API ·
 **RFC-0053 Git Backend and Reconciliation** · **RFC-0054 Scope Model** ·
-**RFC-0055 Runtime Instances** · **RFC-0056 Retention and Lifecycle** · RFC-0060 Plugin SDK
+**RFC-0055 Runtime Instances** · **RFC-0056 Retention and Lifecycle** ·
+**RFC-0057 Glanceable and Hands-Free Operation** · RFC-0060 Plugin SDK
 
 **Roadmap and reviews**
 RFC-0099 Roadmap (this document) · RFC-0100, RFC-0101, RFC-0102 Architecture reviews ·
