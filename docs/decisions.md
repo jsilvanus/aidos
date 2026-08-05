@@ -751,6 +751,56 @@ Adoption means the user has seen it, nothing more.
 unseen.
 **RFCs:** 0031, 0025, 0027, 0016, 0008.
 
+### D33 — Memory is session-scoped; project scope is a promotion only a user can make · `SETTLED`
+
+Session memory is needed — a project worked on for months should not answer *"I told you last week
+the auth module uses JWT"* with a blank. But a session writing project-wide facts that other
+sessions read back as authority is D6's stated failure mode word for word: *it invents goals,
+reads its own inventions back, and drifts — each step locally plausible, none checked.*
+
+**So memory has two scopes and a gate between them.**
+
+| Kind | Scope |
+|---|---|
+| `TASK_STATE` | **session only, always.** It is the session's current work state; project scope is meaningless for it |
+| `FACT`, `DECISION` | written at **session** scope; **promotable to project scope by the user, never by a session** |
+
+A session reads its own entries plus its project's promoted ones. `session_id` stays populated
+after promotion — it records which session learned the thing, which is provenance worth keeping.
+
+**The gate is not new machinery.** The corpus already refuses this exact crossing twice, both
+times the same way: `intent_proposals` (D6, RFC-0012) lets sessions propose and *only* users
+resolve — "no SESSION variant by construction" — and instruction adoption (RFC-0016) keeps text
+from steering a model until a human has seen it. Project-scoped memory is the same crossing, where
+one agent's conclusion becomes context that steers *future* work, so it gets the same answer.
+
+**Three constraints, enforced by the database rather than by a write path that has to remember:**
+
+```sql
+CHECK (scope <> 'PROJECT' OR promoted_by_user_id IS NOT NULL)  -- no unattributed promotion
+CHECK (kind  <> 'TASK_STATE' OR scope = 'SESSION')             -- task state is never project-wide
+CHECK (scope <> 'PROJECT' OR trust_level <> 'UNTRUSTED')       -- taint cannot buy durable authority
+```
+
+**The third is the load-bearing one.** A promoted entry taints *every* future Run in the project
+that reads it, so promoting an `UNTRUSTED` entry would let a hostile file read once, in one
+session, permanently degrade the authority of every session after it — an unbounded version of
+precisely what D7 exists to bound. A user who wants that fact remembered can state it themselves,
+which makes it `USER_STATED` and `TRUSTED`. Refusing it in the schema means no write path can
+get it wrong.
+
+**Why not project-scoped by default:** it is the drift hazard above, and it arrives silently.
+**Why not session-only:** sessions archive when their work finishes, and RFC-0026 calls `DECISION`
+"the most valuable thing a long-lived session accumulates". Value that evaporates at archival is
+not value.
+
+**Consequence:** RFC-0026's memory review surface stops being optional. Promotion needs a place to
+happen, and the user needs to see what a session is claiming before it becomes project context.
+The surface is the same shape as approving an intent proposal, which Phase 4 builds regardless.
+
+**Forecloses:** ambient cross-session memory that accumulates unattributed beliefs.
+**RFCs:** 0026, 0011, 0012, 0016, 0027.
+
 ### D32 — Durable memory is deterministic; nothing is summarized by a model · `SETTLED`
 
 **There is no model-written summary anywhere in the memory or context path.** The `SUMMARY`
@@ -814,4 +864,5 @@ None.
 | 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |
 | 2026-08-04 | D31 opened: an MCP server's tool *description* has no trust classification and lands in a reserved prompt section. Must be settled before M18. |
 | 2026-08-04 | D31 settled: tool descriptors are fenced prose adopted per operation at enable time; taint cannot be the mechanism. |
+| 2026-08-04 | D33 settled: memory is session-scoped; `FACT`/`DECISION` promote to project scope only by user action, and never when `UNTRUSTED`. |
 | 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |

@@ -1,6 +1,6 @@
 # RFC-0026: Model Memory
 
-Status: Draft
+Status: Accepted 2026-08-04
 
 ## Abstract
 
@@ -171,9 +171,38 @@ Memory is not a substitute for the knowledge index. A session that "remembers" a
 has copied data RFC-0015 already stores, content-addressed and current. **Memory holds
 conclusions; the index holds content.**
 
-Memory is also not cross-session. A session's memory is its own. Conclusions move between
-sessions through content nodes and the intent graph, which are reviewable — not through an
-ambient store accumulating unattributed beliefs.
+### Scope: session by default, project by promotion
+
+Memory is **session-scoped**, and a `FACT` or `DECISION` may be **promoted to project scope by the
+user — never by a session** (D33).
+
+| Kind | Scope |
+|---|---|
+| `TASK_STATE` | session only, always. It is the session's current work state |
+| `FACT`, `DECISION` | written at session scope; promotable to project scope by the user |
+
+A session reads its own entries plus its project's promoted ones. `session_id` stays populated
+after promotion, recording which session learned the thing.
+
+**Why the gate.** A session writing project-wide facts that other sessions read back as authority
+is D6's failure mode exactly — *it invents goals, reads its own inventions back, and drifts*. The
+corpus already refuses this crossing twice, both times the same way: intent proposals let sessions
+propose and only users resolve, and instruction adoption (RFC-0016) keeps text from steering a
+model until a human has seen it. This is the same crossing and gets the same answer.
+
+**Why not session-only.** Sessions archive when their work finishes. `DECISION` is described above
+as the most valuable thing a long-lived session accumulates, and value that evaporates at archival
+is not value.
+
+**Three constraints, enforced by the database** rather than by a write path that has to remember —
+no promotion without a user, no project-scoped `TASK_STATE`, and **no promotion of `UNTRUSTED`
+content**. The last one matters most: a promoted entry taints every future Run in the project that
+reads it, so promoting untrusted content would let one hostile file, read once in one session,
+permanently degrade every session after it. A user who wants the fact remembered states it
+themselves, which makes it `USER_STATED` and `TRUSTED`.
+
+Memory is otherwise not an ambient cross-session store. Conclusions that have not been promoted
+move between sessions through content nodes and the intent graph, which are reviewable.
 
 ## Data Model
 
@@ -224,11 +253,16 @@ the canonical schema already declares inline.
 
 ## MVP
 
-1. `MemoryEntry` with mandatory `source_refs`, `confidence`, and `trust_level`.
+1. `MemoryEntry` with mandatory `source_refs`, `confidence`, `trust_level`, and `created_by`
+   (M16b).
 2. `TASK_STATE` and `DECISION` kinds. There is no `SUMMARY` kind (D32).
-3. Taint propagation into and out of memory.
-4. Provider retention recorded per remote Attempt and shown in the egress approval prompt.
-5. A memory review surface: list, inspect source, delete.
+3. Taint propagation into and out of memory (M16b).
+4. Session scope, with the three promotion constraints enforced in the schema (D33, M16b).
+5. Provider retention recorded per remote Attempt and shown in the egress approval prompt
+   (M14, M30).
+6. **A memory review surface: list, inspect source, promote, delete (M30).** Not optional —
+   promotion has to happen somewhere, and D33 requires the user to see what a session is claiming
+   before it becomes project context.
 
 Not in MVP: `FACT` extraction, expiry sweeps, memory search, cross-provider retention reporting.
 

@@ -48,7 +48,7 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-04, 49 RFCs are **Accepted** and 12 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
+As of 2026-08-04, 50 RFCs are **Accepted** and 11 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
 blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
 against them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
@@ -56,7 +56,7 @@ against them, not that they are frozen — see
 
 ### Still Draft, and off the MVP path
 
-0012 Intent Graph · 0026 Model Memory · 0033 Shell · 0041 Export/Import · 0043 Plugin Packaging ·
+0012 Intent Graph · 0033 Shell · 0041 Export/Import · 0043 Plugin Packaging ·
 0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0100–0102 reviews.
 
 **0046 Identity** was on this list and should not have been: no milestone names it, but the
@@ -129,9 +129,10 @@ the model.
 | **M11** | Effect broker | 0030, 0029, 0028 | Every invocation passes through validation → capability resolution → budget reservation → preview → audit → taint, in that order. A tool registered without a `RecoveryClass` is rejected at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed |
 | **M12** | Filesystem tool | 0034 | Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool |
 | **M13** | Git tool on JGit | 0032, 0053, D4 | Status, diff, add, commit, branch, log, and checkout on a real repository. `push` is `UNSAFE` and declares it. Reconciliation handles the user changing the working tree outside Aidos between two Aidos steps |
-| **M14** | Secrets vault and one remote provider | 0035, 0021, 0023, 0042 | An API key round-trips through `vault.db` and never appears in a log, an event, an audit row, or a prompt. One provider adapter implements `ModelAdapter` and normalizes its tool-call format into the neutral envelope |
+| **M14** | Secrets vault and one remote provider | 0035, 0021, 0023, 0042, 0026 | An API key round-trips through `vault.db` and never appears in a log, an event, an audit row, or a prompt. One provider adapter implements `ModelAdapter` and normalizes its tool-call format into the neutral envelope. Every remote Attempt records the provider's stated retention in `attempts.provider_retention_json`; a provider that states no policy records `UNKNOWN`, never an assumed-benign default |
 | **M15** | Prompt construction and instructions | 0025, 0016, D22 | Token budget derives from the selected model's context window. Assembly that cannot fit returns to routing once for a larger candidate — a bounded two-phase negotiation, not a loop. An unadopted instruction file does not reach the system turn; `runs.instruction_set_hash` records which set governed the Run |
 | **M16** | Agent loop with trust and taint | 0008, 0027, D6, D7 | The full cycle runs: resolve model → assemble → checkpoint → invoke → validate schema → resolve capability → apply taint → execute → checkpoint. Taint is monotonic within a Run. A tainted Run is denied egress and escalates naming the specific untrusted content. The model never confirms its own success |
+| **M16b** | Session memory | 0026, 0011, 0046, D32, D33 | `FACT`/`DECISION`/`TASK_STATE` entries write with mandatory `source_refs`, `created_by`, and a `trust_level` that is the max taint of their sources. Nothing summarizes a session into memory (D32). Entries are session-scoped; the three D33 promotion constraints are enforced by the schema, so a write path cannot create a project-scoped entry without a user, a project-scoped `TASK_STATE`, or a promoted `UNTRUSTED` entry — verified by insert tests, not by review |
 | **M17** | Injection suite | 0027, 0038 | A corpus of hostile repository content — README, source comments, commit messages, tool output, MCP responses — none of which escalates authority. New attacks are added to the corpus, not fixed in a special case |
 | **M18** | MCP, both transports | 0031, D17, D23 | An off-the-shelf MCP server's tools appear in the broker with `EffectKind` and `RecoveryClass` assigned, run under a capability, and taint the Run as `UNTRUSTED`. An MCP server cannot raise a capability request at all (D30). **stdio** on desktop with a scrubbed child environment; **streamable HTTP** on every profile — HTTPS enforced, certificates validated, cross-host redirects refused, every call `Egress`, and a tainted Run approving each one with the taint source named. Nothing spawns or connects on project open |
 | **M19** | End-to-end | — | **G2.** Create project → task → model → tool → commit → artifact → audit, from the CLI, in one command sequence, with the audit trail reconstructing it afterwards |
@@ -163,7 +164,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 | **M27** | Foreground service and runtime hosting | 0050, 0044, 0009, D24 | The runtime is in-process behind the same `RuntimeClient` the CLI uses. Eviction mid-Run loses no committed step. The foreground notification says what is actually running |
 | **M28** | Compose UI over the Runtime API | 0050, 0052 | Projects, sessions, Runs, and the event stream. Built against `MockRuntimeClient` first, so the seam cannot erode into shared mutable state |
 | **M29** | Availability reporting | 0049 | Degraded and unavailable tools are shown at project open. Never discovered mid-Run, never offered and then failed |
-| **M30** | Approval and preview flows | 0018, 0027, 0030 | Every mutation shows its `Preview` before it happens. An escalation names the untrusted source that caused it. Approval requires a `user_interactive` connection |
+| **M30** | Approval, preview, and memory review | 0018, 0027, 0030, 0026 | Every mutation shows its `Preview` before it happens. An escalation names the untrusted source that caused it. Approval requires a `user_interactive` connection. The **memory review surface** lists entries with their source and confidence, and is where a `FACT` or `DECISION` is **promoted to project scope** — the only path by which one exists (D33). The egress approval prompt states what the target provider retains (RFC-0026) |
 | **M31** | Diff and commit review | 0032, 0053, D25 | Read a diff, stage, write a message, commit — comfortably, on a phone screen, with one hand, on a bus. This is the actual product |
 | **M32** | Notifications | 0044 | Rate-limited. Never silently repeated. A parked Run that needs the user says so once |
 | **M32b** | Run Summary and the benign-approval classifier | 0057, 0019, D26 | One page, no scrolling, computed from Execution Graph rows with no model call. Pending approvals, errors, egress, out-of-project mutation, and `INDETERMINATE` outcomes never collapse. A `RUNNING` Run reads "so far". **Not cuttable** — the classifier is a security boundary the approval card needs regardless |

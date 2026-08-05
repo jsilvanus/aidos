@@ -246,6 +246,9 @@ sketched a `session_memory_entries` table here with a different column list — 
 never existed under that name, in a format `schema/check.py` does not catch because it is a fenced
 block rather than the `Table:` prose form the check looks for.
 
+Entries are session-scoped; `FACT` and `DECISION` may be promoted to project scope by the user,
+never by a session (D33, RFC-0026).
+
 | Kind | Meaning | Bound |
 |---|---|---|
 | `FACT` | a durable learned fact | soft cap, LRU eviction |
@@ -514,6 +517,9 @@ CREATE TABLE memory_entries (
     source_refs_json TEXT NOT NULL,                   -- never '[]' (RFC-0026)
     created_by_kind  TEXT NOT NULL,                   -- who recorded it (RFC-0046)
     created_by_id    TEXT NOT NULL,
+    scope            TEXT NOT NULL DEFAULT 'SESSION',  -- SESSION|PROJECT, promotion is a user act (D33)
+    promoted_by_user_id TEXT,
+    promoted_at      TEXT,
     confidence       TEXT NOT NULL,                   -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
     created_at       TEXT NOT NULL,

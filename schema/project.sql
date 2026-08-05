@@ -556,13 +556,37 @@ CREATE TABLE memory_entries (
     created_by_id    TEXT NOT NULL,
     confidence       TEXT NOT NULL,                       -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
+    -- Session-scoped by default; PROJECT is a promotion only a user can make (D33).
+    -- session_id stays populated after promotion: it records which session learned it.
+    scope               TEXT NOT NULL DEFAULT 'SESSION'
+                        CHECK (scope IN ('SESSION','PROJECT')),
+    promoted_by_user_id TEXT,
+    promoted_at         TEXT,
     created_at       TEXT NOT NULL,
     expires_at       TEXT,
     superseded_by    TEXT,
     FOREIGN KEY (session_id)    REFERENCES sessions(id),
     FOREIGN KEY (project_id)    REFERENCES projects(id),
-    FOREIGN KEY (superseded_by) REFERENCES memory_entries(id)
+    FOREIGN KEY (superseded_by) REFERENCES memory_entries(id),
+
+    -- A session must not be able to grant its own conclusions project-wide authority
+    -- (D6: sessions propose, only users resolve).
+    CHECK (scope <> 'PROJECT' OR promoted_by_user_id IS NOT NULL),
+
+    -- Task state is one session's current work; project-wide is meaningless for it.
+    CHECK (kind <> 'TASK_STATE' OR scope = 'SESSION'),
+
+    -- A promoted entry taints every future Run in the project that reads it. Promoting
+    -- untrusted content would let one hostile file, read once, permanently degrade every
+    -- later session — an unbounded version of exactly what D7 bounds. A user who wants
+    -- the fact remembered states it themselves, which makes it USER_STATED and TRUSTED.
+    CHECK (scope <> 'PROJECT' OR trust_level <> 'UNTRUSTED')
 );
+
+-- Promoted entries are read by every session in the project, so they are queried by
+-- project rather than by session (D33).
+CREATE INDEX idx_memory_promoted ON memory_entries(project_id)
+    WHERE scope = 'PROJECT' AND superseded_by IS NULL;
 
 CREATE INDEX idx_memory_active ON memory_entries(session_id, kind) WHERE superseded_by IS NULL;
 
