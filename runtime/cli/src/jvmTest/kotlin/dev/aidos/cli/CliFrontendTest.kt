@@ -136,4 +136,54 @@ class CliFrontendTest {
         val v = cli.version()
         assertTrue(v.contains("MOCK"))
     }
+
+    /**
+     * G2: Create project → session → model capability → tool capability → send message
+     * (= task + model call + tool execution) → list artifacts → audit trail (M19).
+     *
+     * The audit trail must be able to reconstruct the full sequence afterwards.
+     * Uses MockRuntimeClient; the sequence of operations and their ordering are what matter.
+     */
+    @Test
+    fun `G2 - create project to audit trail in one command sequence`() = runTest {
+        val (cli, _) = cli()
+
+        // 1. Create project.
+        val projectId = cli.createProject("my-codebase", "An AI coding project")
+        assertTrue(projectId.isNotBlank(), "project must have an ID")
+
+        // 2. Create session (task).
+        val sessionId = cli.createSession(projectId, "refactor-session")
+        val sessions = cli.listSessions(projectId)
+        assertTrue(sessions.any { it.contains("refactor-session") })
+
+        // 3. Grant model capability.
+        val modelCapId = cli.grantCapability(sessionId, "MODEL_QUERY", null)
+        assertTrue(modelCapId.isNotBlank())
+
+        // 4. Grant tool capability.
+        val toolCapId = cli.grantCapability(sessionId, "FS_READ", projectId)
+        assertTrue(toolCapId.isNotBlank())
+
+        // 5. Send message (triggers model call → tool use → commit).
+        val runId = cli.sendMessage(sessionId, "Refactor the parse function to use a sealed class")
+        assertTrue(runId.isNotBlank(), "run must be accepted and return an ID")
+
+        // 6. Diff shows changes (tool execution wrote files).
+        val diff = cli.diffChanges(projectId)
+        assertNotNull(diff)  // may be empty in mock, but must not throw
+
+        // 7. List artifacts (commit = artifact in the model).
+        val artifacts = cli.listArtifacts(projectId)
+        // Mock returns empty list; the important thing is the call does not throw.
+        assertNotNull(artifacts)
+
+        // 8. Audit trail (MockRuntimeClient returns empty; verifying the call chain is complete).
+        // In a real runtime the audit trail would name every Run step that produced the artifact.
+        val trail = cli.auditTrail(runId)
+        assertNotNull(trail)
+
+        // The sequence verifies: every step in the G2 scenario executes without error.
+        // The mock does not simulate real tool calls; G3 and beyond verify real execution.
+    }
 }

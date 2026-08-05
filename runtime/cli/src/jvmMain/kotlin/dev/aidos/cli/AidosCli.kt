@@ -118,6 +118,20 @@ class AidosCli(private val client: RuntimeClient) {
         return "${summary.filesChanged} file(s) changed, +${summary.linesAdded} -${summary.linesRemoved}"
     }
 
+    // ── Artifacts ──────────────────────────────────────────────────────────────
+
+    suspend fun listArtifacts(projectId: String): List<String> =
+        client.artifacts.list(projectId).map { "${it.id}\t${it.contentType}\t${it.label}" }
+
+    /**
+     * Returns the audit trail for an artifact: a sequence of cause-and-effect entries that
+     * reconstructs how the artifact was produced (M19, G2).
+     */
+    suspend fun auditTrail(artifactId: String): List<String> =
+        client.artifacts.getAuditTrail(artifactId).map { entry ->
+            "${entry.occurredAt}\t${entry.kind}\t${entry.actorKind}:${entry.actorId}"
+        }
+
     // ── Runtime info ───────────────────────────────────────────────────────────
 
     suspend fun ping(): Boolean = client.runtime.ping()
