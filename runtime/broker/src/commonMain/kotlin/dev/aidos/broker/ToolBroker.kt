@@ -54,7 +54,10 @@ class ToolBroker(
         subjectId: String,
         profile: PlatformProfile,
         networkAvailable: Boolean,
-    ): List<ToolDescriptor> = tools.values.flatMap { it.operations() }
+    ): List<ToolDescriptor> = tools.values.flatMap { tool ->
+        // M11: unavailable tools are absent, never offered and then failed (RFC-0030).
+        tool.operations().filter { it.availability.availableOn(profile, networkAvailable) }
+    }
 
     override suspend fun invoke(
         subjectId: String,
