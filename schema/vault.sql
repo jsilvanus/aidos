@@ -15,6 +15,15 @@ CREATE TABLE schema_versions (
     runtime_version TEXT    NOT NULL
 );
 
+-- RFC-0040: "each database versions independently" -- vault.db migrates on its own schedule, so
+-- it needs its own migration history rather than sharing project.sql's.
+CREATE TABLE migration_history (
+    version         INTEGER PRIMARY KEY,
+    applied_at      TEXT    NOT NULL,
+    runtime_version TEXT    NOT NULL,
+    duration_ms     INTEGER NOT NULL
+);
+
 CREATE TABLE secrets (
     id                     TEXT PRIMARY KEY,
     name                   TEXT NOT NULL UNIQUE,

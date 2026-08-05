@@ -49,7 +49,7 @@ for name in FILES:
 seen = {}
 for fname, tables in tables_by_file.items():
     for t in tables:
-        if t in seen and t not in ("schema_versions", "settings", "resource_budgets"):
+        if t in seen and t not in ("schema_versions", "migration_history", "settings", "resource_budgets"):
             failures.append(f"table '{t}' defined in both {seen[t]} and {fname}")
         seen[t] = fname
 

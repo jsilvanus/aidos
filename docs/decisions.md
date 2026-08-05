@@ -871,6 +871,51 @@ reintroduced under another name.
 recorded decisions, and what the graph says happened.
 **RFCs:** 0026, 0025, 0027, 0011, 0057.
 
+### D35 — SQLite binding: SQLDelight's drivers, not its schema codegen · `SETTLED`
+
+Phase 1 needs a concrete way to open SQLite from common KMP code on two targets, JVM (desktop)
+and Android. `gitsema-kotlin` solved the identical problem — same two targets, same requirement
+to run inside one phone process as Aidos — by adopting **SQLDelight** wholesale: `.sq` files
+declare the schema and named queries, the Gradle plugin generates a typed `Database`/`Queries`
+API, and a platform `SqlDriver` (`sqlite-driver`'s `JdbcSqliteDriver` on JVM, `android-driver`'s
+`AndroidSqliteDriver` on Android, itself a thin wrapper over `androidx.sqlite:sqlite-framework`)
+executes it.
+
+**Aidos takes the driver half and declines the schema half.**
+
+**What is shared with gitsema, and why it matters on a phone.** Both libraries load in the same
+process on Android. Taking the same `android-driver` artifact means both go through
+`androidx.sqlite:sqlite-framework` to the platform's own `android.database.sqlite`, i.e. the
+*same* SQLite build the OS already ships — not a second, independently-bundled native SQLite
+competing for the page cache and holding its own locks. On desktop, both take
+`sqlite-driver`'s `JdbcSqliteDriver`, so upgrading the JDBC driver once upgrades the SQLite
+version for every consumer in the process rather than two drifting copies. This is exactly the
+concern RFC-0015's dependency survey flagged for the knowledge engine, and matching gitsema's
+driver choice is how Aidos avoids being the second copy.
+
+**What is not adopted: `.sq`-file schema ownership and query codegen.** RFC-0040 already settled
+that `schema/` is the canonical DDL, executed and checked by `schema/check.py`, and that "the
+real portability boundary is `schema/` plus typed repository functions" — not a generated API
+owned by a third-party plugin. SQLDelight's codegen wants the `CREATE TABLE` statements inside
+its own `.sq` files, in its own dialect (`AS Long`-style Kotlin type annotations are not
+executable SQL). Adopting it would mean either a second schema representation to keep in sync by
+hand — the exact drift `check.py` exists to prevent — or teaching `check.py` to parse SQLDelight's
+dialect instead of plain SQLite DDL, which makes the canonical schema less portable, not more.
+Hand-written repository functions executing `schema/`'s own SQL through `SqlDriver.execute` /
+`executeQuery` keep one schema, one checker, and one place a second engine would ever need to
+reimplement.
+
+**Consequence:** `runtime/storage` depends on `app.cash.sqldelight:runtime`,
+`:sqlite-driver` (JVM), and (when `androidTarget()` lands with the app, Phase 4)
+`:android-driver` plus `androidx.sqlite:sqlite-framework` — pinned to the versions
+`gitsema-kotlin` already validated (SQLDelight 2.0.2, androidx-sqlite 2.3.1) so the two libraries
+in one process are never running against two different pins of the same driver. No `.sq` file, no
+SQLDelight Gradle plugin, no generated `Database` class.
+
+**Forecloses:** a second, generated-from-`.sq` schema representation; SQLDelight-dialect DDL
+anywhere `check.py` cannot see it.
+**RFCs:** 0040, 0039, 0015.
+
 ---
 
 ## Open
@@ -897,3 +942,4 @@ None.
 | 2026-08-04 | D34 settled: five RFCs claimed MVP scope no milestone built. 0004 was bookkeeping; 0036 folds into M1/M2; 0005 splits event-wake from timers; 0012 becomes M32c; 0047 keeps types, drops templates. |
 | 2026-08-04 | D33 settled: memory is session-scoped; `FACT`/`DECISION` promote to project scope only by user action, and never when `UNTRUSTED`. |
 | 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |
+| 2026-08-05 | D35 settled: SQLite binding is SQLDelight's `SqlDriver` + platform drivers (matching `gitsema-kotlin`, one SQLite build per process), not its `.sq` schema codegen — `schema/` stays the only canonical DDL. |

@@ -17,17 +17,21 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-04 · Phase 0 complete. Phase 1 not started. The architecture phase is over.**
+**2026-08-05 · Phase 1 started. M1 half-done: storage bootstrap and migrations land; settings and
+the mapping test do not.**
 
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
-| Decisions | **34 settled, none open** (`docs/decisions.md`) |
-| Schema | **56 tables**, `schema/check.py` green with 7 rules, running in CI |
+| Decisions | **35 settled, none open** (`docs/decisions.md`) — D35 adds the SQLite binding |
+| Schema | **58 tables**, `schema/check.py` green with 7 rules, running in CI |
 | Kernel | `runtime/kernel/` compiles under `allWarningsAsErrors`, contract tests green |
+| Storage | `runtime/storage/` — new module. Opens all three databases from `schema/`, migration
+  runner (bootstrap / no-op / read-only-newer), durability pragmas baked per-connection. 8 tests
+  green, JVM only |
 | Milestones | **38** across Phases 1–4; every RFC they name is Accepted |
 
-**Next work: M1 — storage and migrations.** Nothing blocks it.
+**Next work: finish M1 — settings and the mapping test.** See below.
 
 ---
 
@@ -128,23 +132,32 @@ Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 ## Next
 
-- [ ] **M1 — Storage and migrations** · RFCs 0040, 0039, 0054, 0036
-      **Done when:** a fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and
-      `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version; a
-      database written by a *newer* runtime opens read-only with `storage.migration_required`
-      rather than refusing (RFC-0017). Declared settings carry type, default, range, and scope
-      class; `aidos.toml` parses with per-line error reporting and fails closed on an invalid
-      value. `check.py` still green.
-
-      **Start here:** pick the SQLite binding for KMP. That choice constrains M2–M8 and is the
-      first real implementation decision of the project.
+- [x] **Pick the SQLite binding for KMP** — D35: SQLDelight's `SqlDriver` + platform drivers
+      (matching `gitsema-kotlin`'s choice for the same two targets, so one process on the phone
+      loads one SQLite build), *not* its `.sq` schema codegen (`schema/` stays the one canonical
+      DDL, per RFC-0040). See `docs/decisions.md` D35.
+- [x] **Storage bootstrap and migrations** (RFC-0040, RFC-0039) — `runtime/storage/`: all three
+      databases open from `schema/`; `MigrationRunner` implements `open(db)` (bootstrap /
+      already-current / newer-than-supported → read-only `storage.migration_required`); WAL +
+      `synchronous=NORMAL` + `foreign_keys=ON` + 5s `busy_timeout` baked into every connection via
+      `SQLiteConfig` (a `PRAGMA` after construction only reaches one of `JdbcSqliteDriver`'s
+      per-call connections — see the doc comment on `createJvmDriver`). 8 tests, all green.
+      Added `migration_history` to `user.sql` and `vault.sql` (RFC-0040: "each database versions
+      independently" — only `project.sql` had it).
+- [ ] **M1 remainder — Settings** (RFC-0036) · **the next thing to build.**
+      **Done when:** declared settings carry type, default, range, and scope class;
+      `SECURITY`/`SPEND` settings are enforced user-scope-only with a visible error and audit row
+      on a project attempt; resolution is nearest-first with origin reporting; invalid input fails
+      closed (to the most restrictive valid value for `SECURITY`, to the default otherwise);
+      `aidos.toml` parses with per-line error reporting. This is what D34 folded RFC-0036 into M1
+      for — build it as part of this milestone, not a separate one.
+- [ ] **The mapping test owed at M1**: every non-derived kernel field has a schema column,
+      asserted by a test. Still not built — there was nothing to map to before storage landed;
+      now there is. Third leg of the CI that keeps design and code together, alongside
+      `schema/check.py` and `runtime/kernel`'s contract tests.
 
 Then M2 (identity and scopes), M3 (capability manager, with the path-escape property test), and
 on through [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md).
-
-**A mapping test is owed at M1**: every non-derived kernel field should have a schema column,
-asserted by a test. It was noted when the kernel was written and deferred because there was
-nothing to map to yet. It is the third leg of the CI that keeps design and code together.
 
 ---
 
@@ -170,6 +183,62 @@ an architecture pass read the whole corpus against them. The durable output:
 ---
 
 ## Notes for the next link
+
+**M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** Do not
+start M2 (identity and scopes) with M1 incomplete — the roadmap lists M1 and M2 as parallel-safe
+only with respect to each other, not as a license to skip M1's own done-when.
+
+**`JdbcSqliteDriver` opens a new JDBC connection per call — session PRAGMAs don't survive a
+`PRAGMA` issued after construction.** The first version of `createJvmDriver` set
+`foreign_keys`/`journal_mode`/`synchronous`/`busy_timeout` with `driver.execute("PRAGMA ...")`
+right after building the driver, and one test caught it: `synchronous` read back as SQLite's
+compiled default (`FULL`, not the `NORMAL` we'd just "set"), because the read happened on a
+different underlying connection than the write. The fix is `org.sqlite.SQLiteConfig` → `Properties`
+passed into `JdbcSqliteDriver(url, properties)`, which `sqlite-jdbc` applies to every connection it
+opens for that URL. `journal_mode=WAL` happened to work either way, because WAL is persisted in the
+database file itself rather than being connection-session state — that's what made the bug easy to
+miss with a less specific test. **When wiring any per-connection setting through a pooling/per-call
+driver, verify by reading the setting back through the same driver object, not by trusting that the
+"set" call didn't throw.**
+
+**`org.sqlite.SQLiteConfig` needs an explicit direct dependency on `org.xerial:sqlite-jdbc`.**
+`app.cash.sqldelight:sqlite-driver` depends on it, but only at runtime — it wasn't on `storage`'s
+compile classpath until added directly. Pinned to `3.45.2.0`, the version SQLDelight 2.0.2 already
+resolves, so there is one copy, not two.
+
+**A Kotlin block comment containing a literal `schema/*.sql`-shaped path opens a nested comment
+and fails with "Unclosed comment" at a location nowhere near the real cause.** Kotlin's `/* */`
+nests. `SqlScriptTest`'s original KDoc read "Executes every schema/*.sql file..." — the `/*` inside
+that path silently started a second comment. Say "schema SQL file" or similar in prose near code;
+don't write a glob containing `/*` inside a `/** ... */` block.
+
+**`schema/`'s DDL had `migration_history` in `project.sql` only.** RFC-0040 says each of the three
+databases "versions independently," which only holds if each has somewhere to record its own
+migrations. Writing the migration runner surfaced the gap — added identical `migration_history`
+tables to `user.sql` and `vault.sql`, and added `"migration_history"` to `check.py`'s
+same-table-in-multiple-files exception list (joining `schema_versions`, `settings`,
+`resource_budgets`, which are exempt for the identical reason).
+
+**Durability pragmas are storage-*engine* behavior, not schema DDL** — deliberately not added as
+`PRAGMA` lines inside `schema/*.sql` (only `user.sql` and `project.sql` happen to have
+`journal_mode=WAL` there; `vault.sql` doesn't, and that's fine, left alone). `check.py` runs schema
+files through Python's `sqlite3.executescript`, which doesn't care either way; the actual
+WAL/synchronous/foreign_keys/busy_timeout behavior a real runtime gets comes entirely from
+`createJvmDriver`'s `SQLiteConfig`, uniformly across all three databases, regardless of what a given
+schema file's own PRAGMA lines say. Don't try to reconcile the two — they're not the same
+mechanism.
+
+**`resources.srcDir` pointing outside the Gradle module's own directory (`../schema`) works fine**
+for reading `schema/`'s `.sql` files as classpath resources without a copy step. `resources.include("*.sql")`
+keeps `check.py` and `README.md` out of the jar. This is the "one canonical file" approach RFC-0040
+asks for — a build-time inclusion, never a duplicated source file.
+
+**No `RecoveryClass`/`UNSAFE`-effect fsync path is built yet in `storage`** — RFC-0040's
+`synchronous = FULL` before an `UNSAFE` effect's attempt row is an M5/M6-era concern (`attempts`
+table, effect broker) and out of scope for M1, which only opens databases and runs migrations.
+Don't be surprised it's absent; it isn't forgotten, it's not reachable yet.
+
+---
 
 **Phase 0 artifacts are real, not aspirational.** `schema/check.py` and the `runtime/` build
 both run in CI (`.github/workflows/schema.yml`, `.github/workflows/runtime.yml`). If either goes

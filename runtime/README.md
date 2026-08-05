@@ -1,14 +1,16 @@
 # Aidos runtime
 
-Kotlin Multiplatform. Currently **contracts only** — interfaces and types, no implementations.
+Kotlin Multiplatform. `kernel` is contracts only — interfaces and types, no implementations.
+Phase 1 implementations land in sibling modules, starting with `storage`.
 
 ```
 runtime/
-└── kernel/          the contracts every service depends on
+├── kernel/          the contracts every service depends on
+└── storage/         SQLite: schema/ bootstrap, migration runner (Phase 1, M1)
 ```
 
 ```bash
-cd runtime && gradle :kernel:jvmTest
+cd runtime && gradle build
 ```
 
 ## What this module is for
@@ -46,17 +48,27 @@ monotonicity, budget division, and that a permissive retry policy still cannot r
 interrupted `git push`. They are not tests of behaviour, because there is no behaviour. They
 exist so a later refactor cannot quietly remove a property.
 
-## What is deliberately absent
+## What is deliberately absent from `kernel`
 
-- **Implementations.** Any class here would be a guess about a subsystem not yet designed.
+- **Implementations.** Any class here would be a guess about a subsystem not yet designed. They
+  go in sibling modules -- `storage` is the first -- which is what keeps `kernel` safe to build
+  the frontend streams against via `MockRuntimeClient` at G0.
 - **`androidTarget()`.** It needs the Android SDK and does not change whether common code
-  compiles, which is what this module exists to prove. It arrives with the app (Phase 4).
-- **Storage and serialization.** `schema/` is the data contract; wiring it is Phase 1.
+  compiles, which is what this module exists to prove. It arrives with the app (Phase 4). Same is
+  true of `storage` for now (D35 already specifies its Android driver; wiring it waits for the SDK).
 - **The Intent Graph.** A leaf (D20). It gets types when it gets built.
+
+## `storage`
+
+M1 (RFC-0040, RFC-0039). Opens the three databases RFC-0040 defines from `schema/` -- the one
+canonical DDL, read directly rather than duplicated -- and runs RFC-0040/0039's `open(db)` state
+machine: bootstrap on first open, no-op when already current, read-only with
+`storage.migration_required` when the database is newer than this runtime understands. The SQLite
+binding is D35. JVM (desktop) only for now, same reasoning as `kernel`'s `androidTarget()`.
 
 ## Relationship to the schema
 
-`schema/` and this module describe the same objects from two directions: `Run`, `Task`,
-`Attempt`, `Capability`, and `ContentNode` appear in both. They are kept aligned by hand today.
-When persistence lands in Phase 1, a mapping test should assert that every non-derived field on a
-kernel type has a column — the same reasoning that put `schema/check.py` in CI.
+`schema/` and `kernel` describe the same objects from two directions: `Run`, `Task`, `Attempt`,
+`Capability`, and `ContentNode` appear in both. They are kept aligned by hand today. **A mapping
+test asserting every non-derived kernel field has a schema column is still owed** -- noted when
+the kernel was written, not yet built, tracked in `PIPELINE.md`.
