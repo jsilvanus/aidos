@@ -87,20 +87,26 @@ hallucination that has been promoted to a belief.
 
 ```kotlin
 data class MemoryEntry(
-    val id: UUID,
-    val sessionId: UUID,
+    val id: String,
+    val sessionId: SessionId,
     val kind: MemoryKind,               // FACT | DECISION | TASK_STATE
     val content: String,
     val sourceRefs: List<SourceRef>,    // Run, Attempt, or ContentNode — never empty
+    val createdBy: ActorRef,            // who recorded it (RFC-0046)
     val confidence: Confidence,
     val trustLevel: TrustLevel,         // RFC-0027; max taint of its sources
     val createdAt: Instant,
     val expiresAt: Instant?,
-    val supersededBy: UUID?
+    val supersededBy: String?
 )
 
 enum class Confidence { OBSERVED, INFERRED, USER_STATED }
 ```
+
+**`createdBy` and `confidence` answer different questions and both are needed.** `confidence` says
+how the claim was arrived at; `createdBy` says which actor recorded it. Without the second, a
+`USER_STATED` entry is distinguishable from a session's inference only by trusting the first —
+which is a field the session itself writes.
 
 `confidence` matters at recall: `INFERRED` entries are presented to the model as inferences
 ("a previous run concluded…"), never as facts. An inference laundered into a fact by being
@@ -171,29 +177,39 @@ ambient store accumulating unattributed beliefs.
 
 ## Data Model
 
+`schema/project.sql` is canonical; this restates it so the RFC can be read on its own.
+
 ```sql
 CREATE TABLE memory_entries (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    project_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content TEXT NOT NULL,
-    source_refs_json TEXT NOT NULL,          -- never '[]'
-    confidence TEXT NOT NULL,
-    trust_level TEXT NOT NULL DEFAULT 'UNTRUSTED',
-    created_at TEXT NOT NULL,
-    expires_at TEXT,
-    superseded_by TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id),
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    project_id       TEXT NOT NULL,
+    -- No SUMMARY kind: no model-written compaction of a session (D32).
+    kind             TEXT NOT NULL
+                     CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
+    content          TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,                       -- never '[]'
+    -- Who recorded it, distinct from what justifies it (RFC-0046).
+    created_by_kind  TEXT NOT NULL,                       -- USER|SESSION|WORKER|RUNTIME
+    created_by_id    TEXT NOT NULL,
+    confidence       TEXT NOT NULL,
+    trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
+    created_at       TEXT NOT NULL,
+    expires_at       TEXT,
+    superseded_by    TEXT,
+    FOREIGN KEY (session_id)    REFERENCES sessions(id),
+    FOREIGN KEY (project_id)    REFERENCES projects(id),
     FOREIGN KEY (superseded_by) REFERENCES memory_entries(id)
 );
 
 CREATE INDEX idx_memory_active ON memory_entries(session_id, kind)
     WHERE superseded_by IS NULL;
-
--- Recorded per remote Attempt; see Provider-side retention.
-ALTER TABLE attempts ADD COLUMN provider_retention_json TEXT;
 ```
+
+`attempts.provider_retention_json` holds the per-Attempt retention record described above. It is
+a column of `attempts` in `schema/project.sql`, not an `ALTER` — an earlier version of this RFC
+wrote it as a migration step, which would have been a second, conflicting definition of a column
+the canonical schema already declares inline.
 
 ## Security
 

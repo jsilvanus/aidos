@@ -80,6 +80,34 @@ if rfc_dir.is_dir():
     if not prose:
         print("  RFC prose-DDL check: none")
 
+    # 7. The same defect in the other format check 6 misses: a fenced block whose
+    #    first line is a bare table name, followed by a comma-separated field list.
+    #    RFC-0011 sketched `session_memory_entries` this way — a table that has never
+    #    existed under that name, with columns that do not match the real one, and
+    #    invisible to both the CREATE TABLE grep and the `Table:` check.
+    #    Reviews (0100+) are historical records, not implementable design, and name
+    #    columns this way legitimately.
+    sketched = []
+    for md in sorted(rfc_dir.glob("*.md")):
+        if md.name[:2] >= "01":            # skip 0100-0102 reviews
+            continue
+        in_block = False
+        for i, ln in enumerate(md.read_text().splitlines(), 1):
+            if ln.strip().startswith("```"):
+                in_block = not in_block
+                continue
+            if not in_block:
+                continue
+            m = re.match(r"^([a-z][a-z0-9]*(?:_[a-z0-9]+){1,})\s*$", ln)
+            if m and m.group(1) not in all_tables:
+                sketched.append((m.group(1), md.name, i))
+    for t, src, line in sketched:
+        failures.append(
+            f"{src}:{line}: sketched table '{t}' is not in the schema — "
+            f"use real DDL, or name the real table")
+    if not sketched:
+        print("  RFC sketched-table check: none")
+
 if failures:
     print("\nFAIL")
     for f in failures:

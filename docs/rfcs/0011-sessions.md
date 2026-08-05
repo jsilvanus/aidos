@@ -240,12 +240,11 @@ be rewritten on every artifact creation.
 
 ### Session memory
 
-Memory is bounded and queryable, not an ever-growing list rewritten on each wake.
-
-```
-session_memory_entries
-  id, session_id, kind, content, tokens, created_at, superseded_by, taint_level
-```
+Memory is bounded and queryable, not an ever-growing list rewritten on each wake. The table is
+`memory_entries`; its DDL is below and in `schema/project.sql`. An earlier version of this section
+sketched a `session_memory_entries` table here with a different column list — a table that has
+never existed under that name, in a format `schema/check.py` does not catch because it is a fenced
+block rather than the `Table:` prose form the check looks for.
 
 | Kind | Meaning | Bound |
 |---|---|---|
@@ -262,7 +261,8 @@ and the Run Summary — a projection over the Execution Graph (RFC-0057), not a 
 This closes the highest-probability debt identified in review: an unbounded
 `conversation_history: List<Message>` inside the session row would grow without limit, be
 rewritten wholesale on every wake, degrade AI quality as it filled the context window, and be
-unqueryable. The rolling summary keeps context useful and cost bounded, and it is enforced by
+unqueryable. Bounded, cited entries plus a rolling recency window (D22, D32) keep context useful
+and cost bounded, and it is enforced by
 the schema rather than by a note recommending periodic cleanup.
 
 Memory entries carry `taint_level` (RFC-0027): a summary of a tainted Run taints the Run that
@@ -512,6 +512,8 @@ CREATE TABLE memory_entries (
                      CHECK (kind IN ('FACT','DECISION','TASK_STATE')),
     content          TEXT NOT NULL,
     source_refs_json TEXT NOT NULL,                   -- never '[]' (RFC-0026)
+    created_by_kind  TEXT NOT NULL,                   -- who recorded it (RFC-0046)
+    created_by_id    TEXT NOT NULL,
     confidence       TEXT NOT NULL,                   -- OBSERVED|INFERRED|USER_STATED
     trust_level      TEXT NOT NULL DEFAULT 'UNTRUSTED',
     created_at       TEXT NOT NULL,
