@@ -108,10 +108,21 @@ M18 MCP (as a deferral, not a deletion; and cut stdio before HTTP) → M34 F-Dro
 
 ### Known external dependency
 
-**M22 is blocked on `gitsema-kotlin` gaining `androidTarget()`.** The knowledge engine is a
-consumed library (D29); its Tier 1 core is merged and tested on JVM, but the Android target is
-blocked on environment access rather than scheduled work. Pin a commit rather than tracking a
-branch — the library has no CI. Full risk list in RFC-0015, "Known dependency risks".
+**M22 consumes `gitsema-kotlin` as a library (D29), and it is no longer blocked.** `androidTarget()`
+is wired and building, the library has CI on both targets, `search()` returns coverage directly,
+and both git walks stream in bounded windows.
+
+**What remains is unverified rather than missing: it compiles for Android and has never run on
+one.** No instrumented tests; a JGit JMX guard whose necessity is established and whose
+sufficiency is not; `FS_POSIX` and `FileStoreAttributes` hazards unaddressed; the SQLite driver's
+absolute-path handling asserted rather than observed; and nothing measured about memory-mapped
+page-cache behaviour under Android pressure. **That is precisely what G3 measures**, which is why
+G3 is scheduled before the UI.
+
+Cheapest available de-risking, and it can happen any time: the library ships a desktop CLI that
+drives the same core, so "run against a real repository at scale" no longer waits for Aidos.
+
+Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 ---
 

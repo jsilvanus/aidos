@@ -83,10 +83,13 @@ Three methods. The whole surface:
 ```kotlin
 interface SemanticIndex {
     suspend fun index(ref: String, onProgress: (IndexProgress) -> Unit = {}): IndexResult
-    suspend fun search(query: Query): List<Match>
+    suspend fun search(query: Query): SearchResult
     suspend fun status(): IndexStatus
 }
 ```
+
+A `SearchResult` carries the matches, an `IndexCoverage`, and a search-level `degraded` flag.
+`IndexStatus` carries the same `IndexCoverage` plus the resume point and the embedding model.
 
 A `Match` carries a blob hash, the paths that blob has been seen at, a line span, a score, and
 its provenance (`VECTOR` / `FTS` / `HYBRID`) — never an Aidos domain type. The adapter maps it
@@ -102,8 +105,11 @@ to add against a real second case.
 
 ### What Aidos guarantees the library
 
-1. **A background dispatcher.** Indexing never runs on a foreground/UI dispatcher, and never
-   inside a Run's step (RFC-0009). It is a scheduled job (RFC-0044).
+1. **A background dispatcher**, passed explicitly. Every store and the Git layer take an
+   `ioContext: CoroutineContext` at construction, so the host owns the dispatcher rather than the
+   library assuming one — Aidos can keep this work off its own IO pool or confine it to a single
+   thread. Indexing never runs on a foreground/UI dispatcher and never inside a Run's step
+   (RFC-0009); it is a scheduled job (RFC-0044).
 2. **Cancellation, and that cancellation is honoured.** Aidos cancels indexing on app
    backgrounding, foreground-service loss (D24), and project close. See the reciprocal guarantee
    below.
@@ -129,7 +135,12 @@ to add against a real second case.
    run resumes from the last known-good point.
 4. **Search never blocks on indexing.** Before any vectors exist for the active model, `search()`
    returns FTS-only results marked `degraded`. It does not wait, and it does not return empty.
-5. **Bounded search memory.** Vectors are int8-quantized in a memory-mapped flat file, scored
+5. **Bounded ingestion memory.** Both the commit walk and the blob walk are consumed as `Flow`s
+   in bounded windows, so peak memory is one window regardless of history length and the
+   embedding pass backpressures the walk rather than the walk racing ahead. This was a documented
+   gap when RFC-0015 was written — the indexer drained each walk into a list first — and it is
+   closed.
+6. **Bounded search memory.** Vectors are int8-quantized in a memory-mapped flat file, scored
    through a bounded top-K min-heap: **O(topK), not O(stored vectors)**. This matters more than it
    sounds — the original TypeScript implementation materialised the whole vector table per query,
    roughly 150 MB for a 50k-blob repository, which is incompatible with a loaded LLM competing for
@@ -206,15 +217,24 @@ codebase"* when the truth is *"I have not read most of it yet"* — and the answ
 indistinguishable from a confident, complete one. It also makes G3's measurement meaningless,
 because an answer at minute two and an answer at minute forty look identical.
 
-Coverage is composed **in Aidos's adapter**, by calling `status()` alongside `search()` — this is
-the intended division, confirmed with the library's maintainer, not a stopgap. Coverage is
-index-level state that does not vary per query, so attaching it to every `Match` would mean a
-metadata round trip per search for a number identical across all results in that moment.
+**The library provides it, on the `SearchResult`.** Aidos's adapter consumes coverage; it does
+not compose it.
 
-`degraded` on a `Match` is a *different* claim and both are needed: it means "this specific model
-has no vectors yet, so this result is FTS-only", which coverage cannot express, and coverage means
-"12% of this repository is indexed", which `degraded` cannot express. **Ten confident,
-non-degraded matches from a 12%-indexed repository would otherwise look complete.**
+An earlier version of this RFC said the opposite — that the adapter would compose coverage by
+calling `status()` alongside `search()`, which was the division the library's maintainer confirmed
+at the time. It changed, and the shape it changed to is better than the one this RFC proposed.
+The objection recorded here was that coverage is index-level state which does not vary per query,
+so putting it on every `Match` would mean a metadata round trip per search for a number identical
+across all results. That objection was right and is answered by putting it one level up: on the
+**result**, once per search, rather than on each match or in a second call the adapter has to
+remember to make. A promise the library keeps is worth more than the same promise kept by every
+consumer separately.
+
+`degraded` is a *different* claim and both are needed: it means "this specific model has no
+vectors yet, so this is FTS-only", which coverage cannot express, while coverage means "12% of
+this repository is indexed", which `degraded` cannot express. **Ten confident, non-degraded
+matches from a 12%-indexed repository would otherwise look complete.** Both now arrive on the
+same `SearchResult`, which is the right place for two facts a caller must weigh together.
 
 Both reach the model as part of the context item's provenance (RFC-0025) and the user through
 `IndexStatus` on the Runtime API (RFC-0052).
@@ -318,7 +338,7 @@ The MVP implements:
 2. Storage at `.aidos/index/`, injected, outside `state.db`.
 3. Indexing as a cancellable background job under the resource budget.
 4. A local embedding provider (D28); no network path.
-5. Coverage composition — `status()` alongside `search()` — surfaced to both the model and the UI.
+5. Coverage surfaced to both the model and the UI, read from `SearchResult` and `IndexStatus`.
 6. FTS-first degraded search from the first rows written.
 
 The MVP does not implement:
@@ -331,21 +351,40 @@ The MVP does not implement:
 
 ## Known dependency risks
 
-Recorded because they are real and dated, not to be discovered at M16:
+Recorded because they are real and dated, not to be discovered at M22. Refreshed 2026-08-05
+against `gitsema-kotlin` `main`; two earlier risks are retired and the one that matters moved
+rather than vanished.
 
-- **`androidTarget()` is not yet wired in `gitsema-kotlin`.** The library builds and tests on the
-  JVM target only. This is **blocked on environment access** — an Android SDK and a network path
-  to Google's Maven — rather than scheduled work, and no shared-source changes are expected when
-  it lands. Aidos is Android-first, so this is the gap that matters most, and M16 cannot complete
-  without it.
-- **Not yet run against a real repository at scale.** Testing to date is against throwaway
-  repositories. Aidos's G3 measurement is where index build time, battery cost, and query latency
-  on a real repository on real hardware get discovered.
-- **The library has no CI.** Its test suite is green locally and re-run by hand; nothing enforces
-  that on push. Aidos should pin a version rather than track a branch.
+- **It compiles for Android and has never run on one.** `androidTarget()` is wired and building
+  (`compileSdk` 34, `minSdk` 26, a `release` publication), with 50 Android unit tests alongside
+  117 on JVM — but those are JVM-hosted unit tests of pure-Kotlin suites. **There are no
+  instrumented tests**, and the library's own README is explicit that the gap between "compiles"
+  and "works" is where its Android risk lives. Named hazards, all established statically:
+  - JGit's `WindowCache` registers a JMX MBean on first packfile read through classes Android
+    does not have, and catches only checked exceptions — not the resulting `NoClassDefFoundError`.
+    A guard exists and **must be called before any repository is constructed**; that it is
+    necessary is established, that it is sufficient is not.
+  - `FS_POSIX` probes for a system `git` executable, which Android has none of, and
+    `FileStoreAttributes` measures filesystem timestamp resolution. Both are known hazards and
+    neither is addressed.
+  - The SQLite driver passes an absolute path as the database *name*, relying on
+    `Context.getDatabasePath` resolving it to that exact file — AOSP's documented behaviour,
+    asserted rather than observed.
+- **Nothing about resource behaviour is measured.** The memory-mapped vector store's page-cache
+  behaviour under Android memory pressure, indexing throughput inside Android's execution
+  windows, and whether the brute-force scan is fast enough before any ANN work — all deferred to
+  a real device. **This is what G3 measures**, and it is the reason G3 is scheduled before the UI.
+- **Not yet run against a real repository at scale.** Still true, but now testable without Aidos:
+  the library ships a desktop CLI (`gitsema-cli`) that drives the same core. Running it against a
+  large repository is the cheapest available de-risking of M22 and can happen at any time.
 - **FTS5 uses a Porter/ASCII tokenizer**, which fits English source and comments better than it
   fits anything else. Flagged in the port specification as a matter for Aidos's adapter to
   consider; not addressed in the MVP.
+
+**Retired 2026-08-05.** `androidTarget()` was "blocked on environment access"; it is wired. The
+library "has no CI"; it now builds and tests both targets on every push to `main` and every pull
+request. Pin a commit rather than a branch regardless — the version Aidos builds against should
+be a decision, not whatever `main` happens to be.
 
 ## Future Work
 
