@@ -1,100 +1,162 @@
-# PIPELINE — Aidos MVP
+# PIPELINE — building the Aidos MVP
 
-The live tracking document for MVP implementation. An agent working through
-[`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) reads this first and updates it in the same commit
-as the work. Everything not written down here is lost between links.
+**Read this first.** It is the working document: what the MVP is, how to build it, the rules that
+are not negotiable, and what to do next. An agent picks up here, works one coherent piece, and
+updates this file in the same commit as the work. Everything not written down here is lost
+between sessions.
 
 ---
 
 ## Goal
 
-Build the Aidos MVP: a person opens a real Git repository on a mid-range Android phone, in
-airplane mode, asks a question about the code, gets a useful answer, makes an edit, reviews the
-diff, and commits. That is RFC-0099 Phases 0–4, ending at gate G4. The work is
-RFC-driven — `docs/rfcs/` is the design, `schema/` is the canonical DDL, `runtime/kernel/` is
-the contract surface, and `docs/decisions.md` says why the architecture is this and not
-something else. Implementation follows the RFCs; where implementation reveals a design problem,
-the RFC is amended in a separate commit *before* the code that departs from it.
+A person opens a real Git repository on a mid-range Android phone, in airplane mode, asks a
+question about the code, gets a useful answer, makes an edit, reviews the diff, and commits.
+
+That sentence is the whole product. It is RFC-0099 Phases 0–4, ending at gate **G4**. Every
+milestone either serves it or is cuttable.
 
 ## Status
 
-Link 10 · 2026-08-04 · Phase 0 complete, Phase 1 not started. **Architecture work is done, and so
-is the RFC backlog.** All three rewrites have landed — 0052, 0031, 0015 — and 0015's rewrite
-closed the last item that was blocking a milestone. **54 Accepted, 7 Draft** — six more RFCs were
-audited on top (0046, 0026, 0043, 0012, 0047, 0099), after checks showed Draft RFCs governing
-frozen Phase-0 artifacts and five RFCs claiming MVP scope no milestone built (D34). **Every
-remaining Draft is a subsystem the MVP does not build.**
-`docs/decisions.md` has no open questions: D31 and D32 were found during this work and settled,
-and D17 was amended. **Phase 1 (M1) is the next work, and it waits on the user's go-ahead.**
-Branch: `claude/aidos-rfc-revisions-3ido05`
+**2026-08-04 · Phase 0 complete. Phase 1 not started. The architecture phase is over.**
 
-## Done
+| | |
+|---|---|
+| RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
+| Decisions | **34 settled, none open** (`docs/decisions.md`) |
+| Schema | **56 tables**, `schema/check.py` green with 7 rules, running in CI |
+| Kernel | `runtime/kernel/` compiles under `allWarningsAsErrors`, contract tests green |
+| Milestones | **38** across Phases 1–4; every RFC they name is Accepted |
 
-- [x] **M0.1** `schema/` — 54 tables in three files, `check.py` green in CI
-- [x] **M0.2** `runtime/kernel/` — KMP common interfaces, compiling under `allWarningsAsErrors`, contract tests green
-- [x] **M0.3** `docs/decisions.md` — 26 settled decisions, none open
-- [x] **M0.4** Acceptance pass — corrected: 29 Accepted, 18 reverted to Draft pending a body audit
-- [x] **G0 met**
-- [x] **RFC-0016 revised and Accepted** — 657 lines → ~230. Cut normalization, categories, priorities, conflict resolution, provider SPI. Added instruction-set identity by blob hash and **adoption** (unseen instruction files do not reach the system turn)
-- [x] **D25 settled** — diff review moves earlier, hunk card stack, structured hunks in the API
-- [x] **D26 settled + RFC-0057 written** — glanceable and hands-free operation. The Run Summary is a *projection* of the Execution Graph, not a model call
-- [x] **Branch switching specified** (RFC-0053) — enabled; uncommitted changes are discarded after a warning naming what is lost, with "commit first" as the primary action. No per-branch WIP. `EffectKind.Mutate` gains `reversible`, and D26's benign class now requires it
-- [x] **Instruction adoption settled** — per project for the decision, per user for recognition (`known_instruction_sets`). No open questions remain anywhere in the corpus
-- [x] **Ten of eleven open questions settled** — hunk revert is a user-subject edit through the broker; reviewed/unreviewed does not survive a rebase; sessions are told when instructions were excluded; root-only discovery reports what it is not reading; the glance shows three; session summaries compose from Run summaries; the gesture grammar is horizontal-peer / vertical-list / tap-deeper; voice approvals are audited by channel; tier 2 is not motion-gated; the editor stays project-scoped
-- [x] **D26 amended + RFC-0057 extended** — the full eyes-free loop: spoken notification ducks the music, headset-button push-to-talk, a fixed question vocabulary answered by template, then a voice approval in three tiers. Home is inbox and projects as swiped panes
-- [x] **Legacy RFC audit complete** — every document except RFC-0099 read end to end against `docs/decisions.md`, `schema/`, and `runtime/kernel/`. Six rewritten (0016, 0050, 0040, 0022, 0021, 0005), the rest patched or accepted as-is. **46 Accepted, 15 Draft.** The dominant finding was five documents still promising deterministic replay against D1; the second was RFC-0011 asserting sessions run sequentially, which contradicts D15 and would make worker fan-out impossible
-- [x] **D29 settled** — the knowledge engine is a *consumed library*. `gitsema-kotlin` owns its schema; Aidos owns the location, the lifecycle, and the resource envelope. No provider SPI. MVP indexes committed content only. Queries report coverage. The secret-redaction promise is withdrawn
-- [x] **D30 settled** — an MCP server's authority is fixed when it is enabled: it may never raise a capability request, the grant is by effect class at enable time, the `TRUSTED` promotion is removed, and nothing spawns on project open. MCP resources do not feed the knowledge engine; Aidos does not expose itself as an MCP server in v1
-- [x] **D31 settled (user decision, 2026-08-04)** — an MCP server's *tool description* is third-party prose that lands in RFC-0025's **reserved** `toolDescriptors` section. Taint cannot govern it (descriptors enter at step 0, so every Run in an MCP project would begin tainted and approval never clears taint), so admission does: prose is **fenced** in the structural sandbox with attribution, and each operation is **adopted by hash** over `(name, description, inputSchema)` at enable time. Unadopted operations are absent from the catalog and never interrupt a Run. New table `mcp_operation_adoptions`
-- [x] **D32 settled (user decision, 2026-08-04)** — **no model-written summary anywhere.** The `SUMMARY` memory kind is removed; conversation history that does not fit is dropped with an omission marker, never compacted by a model call. What crosses a Run boundary is cited (`FACT`/`DECISION`/`TASK_STATE`), projected (the Run Summary), or a marker (`runs.taint_level`, rendered `⚠`). This closes the taint-laundering channel *structurally* instead of with a `max()` at every write site
-- [x] **D17 amended (user decision, 2026-08-04)** — streamable HTTP MCP is in the MVP **on every profile**, not stdio-on-desktop only. The old limit was a platform fact about Android over-applied to MCP as a whole, while the network is already a used path (M23 remote providers, Git fetch/push). RFC-0049 and RFC-0050 had already modelled HTTP MCP as available everywhere, so only the phasing documents moved
-- [x] **RFC-0099 audited and Accepted** — the last document the legacy audit had excepted, and the only place all six gates are defined. Its Phase 0 closure paragraph reported "45 RFCs Accepted" — **a number that was already wrong when written** (eighteen were reverted the same day when sampling found body-level contradictions) — plus stale table and decision counts. Its eight Open Questions were business-strategy questions this RFC's own Non-goals exclude; six closed as out of scope, two answered. Its Risk section listed market adoption and funding with mitigations like "open-source (can't be killed)"; replaced with the four risks to the *plan's shape*, pointing at `mvp-roadmap.md` for the operational table. **RFC-0057 was missing from the RFC index entirely.** Phase blocks updated for D29, D34, D25, and M32c
-- [x] **D34 settled (user decisions, 2026-08-04) — five RFCs claimed MVP scope no milestone built** — the RFCs' `## MVP` sections and the roadmap's milestone set were written independently and never reconciled. **0004** was bookkeeping (the event bus *is* built at M5/M9/M10, just uncited). **0036** was plumbing M14/M16/M18 all assume and none built → folded into M1 and M2. **0005** split on a real line: *waking from an event is part of the session model; waking on a clock is a feature* → event wake at M5, `causal_depth` ceiling + self-wake refusal at M6, timers post-MVP. **0012** → task list at new **M32c**, built last, but with derived status and the proposal gate, the two items that cannot be retrofitted. **0047** → types in at M2, templates out. 0012 and 0047 Accepted
-- [x] **RFC-0043 audited and Accepted; 0012 and 0047 repaired** — 0043 permitted a plugin to raise a runtime capability request when interactive, which is what D30 forbids for MCP servers, and the argument is *stronger* for in-process WASM. Now an absolute prohibition, with the enable-time grant stated as effect classes to match D30. **RFC-0012 carried a second, conflicting data model** — an `IntentGraph { … version: Int  # Git commit count or sequential }` pseudo-structure whose version field is precisely the device-local sequence number **D16 forbids** for intent; deleted, and its seven Open Questions answered. **RFC-0047** now names the one column it owns (`projects.project_type`) and no longer reserves intent seeding, which would have made template instantiation depend on the subsystem the MVP defers furthest
-- [x] **D33 settled (user decision, 2026-08-04) + RFC-0026 Accepted** — memory is **session-scoped; `FACT`/`DECISION` promote to project scope by the user, never by a session.** `TASK_STATE` is session-only always. The gate is not new machinery: intent proposals (D6) and instruction adoption (RFC-0016) already refuse this exact crossing the same way. Three CHECK constraints enforce it in the database rather than in a write path — no promotion without a user, no project-scoped `TASK_STATE`, and **no promotion of `UNTRUSTED` content**, because a promoted entry taints every future Run in the project and one hostile file read once would otherwise degrade every later session permanently. All four behaviours verified by insert tests. Memory gains milestones: **M16b** (write path + scope), **M14** (provider retention), **M30** (review surface, which is where promotion happens — so it stops being optional)
-- [x] **RFC-0026 audit: DDL drift fixed across three copies** — `memory_entries` was written out in `schema/project.sql`, RFC-0011, *and* RFC-0026, and the two RFC copies had drifted from canonical (missing D32's `kind` CHECK and RFC-0046's `created_by_*`). RFC-0011 additionally sketched a **`session_memory_entries`** table that has never existed under that name, with columns that do not match the real one. **`schema/check.py` gained a check for exactly that format** — a fenced block whose first line is a bare table name — which is the same defect its `Table:` check catches in the other format. Verified both ways: green on the corrected corpus, fails when the defect is reinjected
-- [x] **RFC-0046 audited and Accepted** — it was Draft while `runtime/kernel/Ids.kt`'s `ActorRef` and four columns of canonical DDL cited it, which no milestone had caught because no milestone *names* it. Four defects: `runs` had no `device_id` though the RFC reserves it; `memory_entries` had no attribution at all; `capabilities.issued_by TEXT` was the untyped identifier the RFC exists to eliminate; and the RFC put device identity in a JSON file while `schema/` has a `device_identity` table. Three fixed in `schema/`, the fourth in the RFC — the schema was right
-- [x] **RFC-0015 rewritten and Accepted** (D29) — 777 lines → 362. The knowledge engine is a consumed library, and the consumption contract is now concrete because `gitsema-kotlin`'s constructor *is* the ownership split: git access, embedding provider, and all three stores are injected, so "Aidos owns the location, the lifecycle, and the resource envelope" holds by construction rather than by convention. Every query reports coverage, composed in Aidos's adapter. **The ~150 MB vector-materialisation constraint is retired** — the port scores through a memory-mapped int8 file with a bounded top-K heap, O(topK) not O(stored vectors)
-- [x] **RFC-0052 carries the structured-hunk shape** (D25) — a `DiffQueries` domain returning `FileChange`/`FileDiff`/`DiffHunk` keyed by `HunkId(path, baseBlobHash, index)`, in the RFC and in `runtime/kernel/`. The same pass found `Preview.Diff(path, unified: String)` still holding a formatted string, which RFC-0050 says is the *same component* as a hunk card — so it now carries a `FileDiff` (RFC-0030 amended in the same commit)
+**Next work: M1 — storage and migrations.** Nothing blocks it.
+
+---
+
+## How to work
+
+The loop, once per milestone:
+
+1. **Read the milestone** in [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) — its RFCs and its
+   **done-when**. The done-when is the definition of finished; it is written to be *observable*
+   rather than asserted.
+2. **Read the RFCs it names**, and any decision (`D<n>`) it cites in `docs/decisions.md`.
+3. **Implement.** Minimal — what the RFC says, no more.
+4. **Test against the done-when.** If the done-when cannot be observed by a test, the milestone
+   is not finished.
+5. **Verify** (both must pass, every time):
+   ```bash
+   python3 schema/check.py          # canonical DDL: executes, FKs resolve, RFC↔schema agree
+   cd runtime && gradle build       # kernel + implementations, allWarningsAsErrors
+   ```
+6. **Commit** per `CLAUDE.md`: reference the RFC, explain the *why*, one logical change.
+7. **Update this file in the same commit** — Status, Next, and Notes.
+8. **Push** to the working branch. Do **not** open a pull request unless asked.
+
+### Rules that are not negotiable
+
+- **`docs/decisions.md` is settled.** If a decision looks wrong, say so in your final message.
+  Do not quietly implement something else.
+- **`schema/` is canonical DDL.** Where an RFC's DDL and the schema disagree, **the schema is
+  right and the RFC is the bug**. Fix both in the same commit. `check.py` runs in CI and must
+  stay green.
+- **A banner marking a document known-wrong is deleted by the commit that makes it right.** A
+  banner that outlives its fix is worse than no banner.
+- **`runtime/kernel/` is contracts only.** No implementations. They go in a sibling module —
+  that is what lets frontend work start against `MockRuntimeClient`.
+- **Amend the RFC before departing from it**, in its own commit, not alongside the code.
+- **G1 blocks all AI work.** Do not start Phase 2 with M8 amber. Crash recovery is the one
+  metric with no acceptable degradation: 100% of `kill -9` points resume correctly, not "mostly".
+
+### Where everything lives
+
+| Document | What it is | Authority |
+|---|---|---|
+| **`PIPELINE.md`** | this file — status, next, accumulated lessons | the working state |
+| [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) | 38 milestones with RFCs and done-when conditions | the work breakdown |
+| [`docs/decisions.md`](docs/decisions.md) | 34 decisions — *why* the architecture is this | **settled**; cite `D<n>` |
+| [`docs/rfcs/`](docs/rfcs/) | 61 RFCs — *what* the system does | Accepted ⇒ implement against it |
+| [`schema/`](schema/) | canonical DDL, 3 files, `check.py` | **governs**; RFC DDL defers to it |
+| [`runtime/kernel/`](runtime/kernel/) | KMP contract surface, no implementations | frozen at G0 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | the map, one paragraph per subsystem | orientation only |
+
+**Accepted is not frozen, and Accepted is a claim someone checked.** The first acceptance pass
+marked 45 RFCs Accepted on the strength of their headers; sampling four found body-level
+contradictions in three, and 18 were reverted the same day. Every current Accepted status was
+reached by reading the document end to end. Keep it that way.
+
+---
+
+## The plan
+
+| Phase | Goal | Gate | Milestones |
+|---|---|---|---|
+| **0 · Contracts** | freeze the seams | **G0** ✅ | M0.1–M0.4 — complete 2026-08-03 |
+| **1 · Execution kernel** | durable execution with no AI and no tools | **G1** | M1–M8 |
+| **2 · First vertical slice** | the agent loop and its authority boundary, CLI only | **G2** | M9–M19 |
+| **3 · Offline proof** | prove the thesis on real hardware, before any UI | **G3** | M20–M26 |
+| **4 · Android application** | the app | **G4** | M27–M35 |
+
+Gates are defined in RFC-0099 and carried by a specific milestone: **G1 at M8**, **G2 at M19**,
+**G3 at M26**, **G4 at M35**.
+
+**Phase 3 sits before the UI deliberately.** A beautiful UI over a runtime that cannot work
+offline is not this product, and G3 is scheduled early so a negative answer arrives while it is
+still cheap to act on. A negative result at G3 is a *successful* outcome for that milestone.
+
+**If it slips**, cut in this order and stop when the thesis sentence is still true: M33 voice →
+M18 MCP (as a deferral, not a deletion; and cut stdio before HTTP) → M34 F-Droid → M25 retention.
+**Never cut** M8 (crash recovery), M17 (injection suite), or M26 (the measurement).
+
+### Known external dependency
+
+**M22 is blocked on `gitsema-kotlin` gaining `androidTarget()`.** The knowledge engine is a
+consumed library (D29); its Tier 1 core is merged and tested on JVM, but the Android target is
+blocked on environment access rather than scheduled work. Pin a commit rather than tracking a
+branch — the library has no CI. Full risk list in RFC-0015, "Known dependency risks".
+
+---
 
 ## Next
 
-**The three RFC rewrites are done.** What follows is Phase 1, which the user has asked not to
-start without an explicit go-ahead.
+- [ ] **M1 — Storage and migrations** · RFCs 0040, 0039, 0054, 0036
+      **Done when:** a fresh install creates `~/.aidos/user.db`, `~/.aidos/secrets/vault.db`, and
+      `<project>/.aidos/state.db` from `schema/`. The migration runner applies a version; a
+      database written by a *newer* runtime opens read-only with `storage.migration_required`
+      rather than refusing (RFC-0017). Declared settings carry type, default, range, and scope
+      class; `aidos.toml` parses with per-line error reporting and fails closed on an invalid
+      value. `check.py` still green.
 
-- [x] **RFC-0052 — structured hunks.** Done. `DiffQueries` on `RuntimeClient`; `changes()` lists
-      files with hunk counts and `hunks()` fetches one file, because a card stack shows one hunk
-      at a time and a phone should not receive a large fetch's every line to display eleven of
-      them. `unified()` is the fallback view. `stage()` is the expensive half and is the first
-      thing to cut (D25). Mirrored into `runtime/kernel/Diff.kt`, and `Preview.Diff` converted to
-      the same shape. **RFC-0052 stays Accepted; RFC-0030 amended alongside it.**
+      **Start here:** pick the SQLite binding for KMP. That choice constrains M2–M8 and is the
+      first real implementation decision of the project.
 
-- [x] **RFC-0031 — apply D30.** Done and Accepted. The `TRUSTED` promotion is gone, replaced by a
-      remembered per-`(server, project)` egress grant that is an ordinary capability row; the
-      enable-time grant is a set of effect classes; a new "What a server may never do" section
-      states the five prohibitions; lifecycle is lazy start and idle stop; the Abstract agrees
-      with the MVP scope. Both Open Questions closed. `mcp_servers.trust` dropped from
-      `schema/user.sql` in the same commit — it existed only to hold the removed promotion.
-      **Then D17 amended** in a second commit at the user's direction: both transports ship, HTTP
-      everywhere, with the egress/TLS/redirect/credential-path consequences written out.
+Then M2 (identity and scopes), M3 (capability manager, with the path-escape property test), and
+on through [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md).
 
-- [x] **RFC-0015 — rewritten against D29 and the port spec, and Accepted.** 777 lines → 362.
-      Written from `docs/design/kotlin-port.md` and from `gitsema-kotlin` PR #1, which implements
-      it. Everything on the cut list is gone; the keep list survives, reframed as a description of
-      the library's model rather than Aidos's design. The consumption contract is now concrete
-      rather than aspirational, because the library's constructor *is* the D29 ownership split —
-      everything Aidos must own is injected. Adds a **Known dependency risks** section: the
-      library has no `androidTarget()` yet, has never run against a real repository at scale, and
-      has no CI.
+**A mapping test is owed at M1**: every non-derived kernel field should have a schema column,
+asserted by a test. It was noted when the kernel was written and deferred because there was
+nothing to map to yet. It is the third leg of the CI that keeps design and code together.
 
-**Phase 1**, from [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) — **do not start without the
-user's go-ahead**:
+---
 
-- [ ] **M1** Storage and migrations — pick the SQLite binding for KMP, build the migration runner over `schema/`
-- [ ] **M2** Identity and scopes
-- [ ] **M3** Capability manager, with the path-escape property test
+## What has been settled
 
-Full breakdown with done-when conditions: [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md).
+Phase 0 produced three artifacts — `schema/`, `runtime/kernel/`, `docs/decisions.md` — and then
+an architecture pass read the whole corpus against them. The durable output:
+
+- **34 decisions**, D1–D34, none open. The load-bearing ones for implementation: **D3**
+  (step-machine execution — anything that must survive a step boundary is a column), **D6** (the
+  model may propose and report, never confirm its own success), **D7** (taint attenuates
+  authority), **D14/D15** (concurrency is across Runs; the worktree is the lock), **D21**
+  (embeddings outside `state.db`), **D24** (local inference requires a foreground service),
+  **D25** (structured diff hunks), **D26** (glance and voice may approve only the benign class).
+- **Six RFCs rewritten** — 0016, 0050, 0040, 0022, 0021, 0005 — and six audited and accepted in a
+  second pass: 0052, 0031, 0015, 0046, 0026, 0043, 0012, 0047, 0099.
+- **Four new decisions from that second pass**: D31 (MCP tool descriptions are fenced prose,
+  adopted per operation), D32 (no model-written summary anywhere), D33 (memory is session-scoped;
+  project scope is a user promotion), D34 (five RFCs claimed MVP scope no milestone built).
+  D17 amended: HTTP MCP ships on every profile.
+- **`schema/check.py` gained two rules** during that pass, both from defects it had missed.
+
+---
 
 ## Notes for the next link
 
@@ -296,34 +358,38 @@ per commit, tests pass before committing.
 
 ## Working across sessions
 
-This plan is long. Use the `session-pipeline` skill (`.claude/skills/session-pipeline/`) to work
-it across session limits: on wake, schedule the next wakeup **first**, then re-orient, then work
-one coherent piece, then commit, push, and update this document.
+Phases 1–4 will not fit one session. Use the `session-pipeline` skill
+(`.claude/skills/session-pipeline/`): on wake, **schedule the next wakeup first**, then
+re-orient, then work one coherent piece, then commit, push, and update this document.
 
-Wakeup message to carry forward verbatim:
+Wakeup message to carry forward verbatim, with `N` incremented each time:
 
 ```
 SESSION PIPELINE — link N.
 
 FIRST ACTION: schedule the next wakeup.
   send_later(delay_minutes = 305, message = <this message, with N incremented>)
-Do this before reading files, before git status, before anything.
+Do this before reading files, before git status, before anything. If the tool is
+unavailable, say so in your final message — the chain is broken and the user must restart it.
 
-Repo:    /home/user/aidos  (github.com/jsilvanus/aidos)
-Branch:  claude/aidos-architecture-review-miqn7p
-Plan:    PIPELINE.md  (breakdown in docs/mvp-roadmap.md)
+Repo:   /home/user/aidos  (github.com/jsilvanus/aidos)
+Branch: claude/aidos-phase1-<suffix>, from main. Create it if it does not exist.
+Plan:   PIPELINE.md — read it first. It has the goal, the working loop, the
+        non-negotiable rules, and what is next. docs/mvp-roadmap.md has the milestones.
 
-Goal: Build the Aidos MVP — offline Git work on an Android phone. RFC-0099 Phases 0-4,
-gate G4. Work is RFC-driven: docs/rfcs/ is the design, schema/ is canonical DDL,
-runtime/kernel/ is the contract surface, docs/decisions.md says why. Implementation
-follows the RFCs; if implementation reveals a design problem, amend the RFC in a
-separate commit first.
+Then: re-orient (git status, git log -5, read PIPELINE.md), take the item under
+"Next", make real progress on it, verify (python3 schema/check.py AND
+cd runtime && gradle build), commit, push, and update PIPELINE.md — Status, Next, and
+"Notes for the next link" — in the same commit. End the turn.
 
-Then: re-orient (git status, git log, read PIPELINE.md), take the item under "Next",
-make real progress on it, commit, push, and update PIPELINE.md — including "Notes for
-the next link" — in the same commit. End the turn.
+Do not open a pull request unless the user asks.
 
-Stop the chain — schedule nothing further — if the goal is met, the user says stop, or
-you are blocked on something only the user can resolve. Say which, explicitly, in both
-the final message and PIPELINE.md.
+Stop the chain — schedule nothing further — if the milestone set is complete, the user
+says stop, or you are blocked on something only the user can resolve. Say which,
+explicitly, in both the final message and PIPELINE.md.
 ```
+
+**What "real progress" means here.** One milestone is a good unit; half of one is acceptable if
+it ends at a commit that builds and whose tests pass. What is not acceptable is ending a link
+with uncommitted work, a red `check.py`, or a PIPELINE.md that does not describe the current
+state — the next link starts from this file and nothing else.
