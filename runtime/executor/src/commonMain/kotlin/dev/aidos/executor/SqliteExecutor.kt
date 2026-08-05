@@ -60,8 +60,8 @@ class SqliteExecutor(
         // Re-entrancy: already terminal → no-op.
         if (run.state.isTerminal) return
 
-        // Advance PENDING → RUNNING.
-        if (run.state == RunState.PENDING) {
+        // Advance PENDING or INTERRUPTED → RUNNING.
+        if (run.state == RunState.PENDING || run.state == RunState.INTERRUPTED) {
             updateRunState(runId, RunState.RUNNING)
         }
 
@@ -141,8 +141,64 @@ class SqliteExecutor(
     }
 
     override suspend fun recover(projectId: ProjectId): RecoveryReport {
-        // Stub — full recovery is M6.
-        return RecoveryReport(0, 0, 0, emptyList(), 0)
+        // Find all RUNNING attempts for this project.
+        val runningAttempts = runningAttemptsForProject(projectId.value)
+
+        var runsResumed = 0
+        var runsFailed = 0
+        val indeterminateEffects = mutableListOf<dev.aidos.kernel.AttemptId>()
+        var reservationsReleased = 0
+
+        for (attempt in runningAttempts) {
+            when (attempt.recoveryClass) {
+                "UNSAFE" -> {
+                    // Never retried. Reported as INDETERMINATE. (RFC-0009, RFC-0029)
+                    markAttemptFailed(
+                        attemptId = attempt.id,
+                        errorCode = "effect.indeterminate",
+                        errorClass = ErrorClass.INDETERMINATE.name,
+                        errorDetail = "{\"recovery_class\":\"UNSAFE\"}",
+                    )
+                    indeterminateEffects.add(dev.aidos.kernel.AttemptId(attempt.id))
+                }
+                "CHECKABLE" -> {
+                    // Probe then re-execute — for MVP, mark failed so the run can be retried.
+                    markAttemptFailed(
+                        attemptId = attempt.id,
+                        errorCode = "effect.checkable_unresolved",
+                        errorClass = ErrorClass.INDETERMINATE.name,
+                        errorDetail = "{\"recovery_class\":\"CHECKABLE\"}",
+                    )
+                }
+                else -> {
+                    // PURE or IDEMPOTENT — safe to re-execute. Reset task to PENDING.
+                    markAttemptFailed(
+                        attemptId = attempt.id,
+                        errorCode = "effect.interrupted",
+                        errorClass = ErrorClass.TRANSIENT.name,
+                        errorDetail = "{\"recovery_class\":\"${attempt.recoveryClass}\"}",
+                    )
+                    resetTaskToPending(attempt.taskId)
+                    runsResumed++
+                }
+            }
+        }
+
+        // Mark all RUNNING runs as INTERRUPTED.
+        val interruptedRuns = interruptRunningRuns(projectId.value)
+        runsFailed = interruptedRuns
+
+        // Reset any tasks that are RUNNING but have no RUNNING attempt (crashed between
+        // task state update and attempt insert). These are PURE by default — re-execute.
+        resetOrphanRunningTasks(projectId.value)
+
+        return RecoveryReport(
+            runsExamined = runningAttempts.size,
+            runsResumed = runsResumed,
+            runsFailed = runsFailed,
+            indeterminateEffects = indeterminateEffects,
+            reservationsReleased = reservationsReleased,
+        )
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────
@@ -288,6 +344,97 @@ class SqliteExecutor(
             nowIso = nowIso(),
         )
     }
+
+    // ─── Recovery helpers (M6) ────────────────────────────────────────────────
+
+    private data class AttemptSnapshot(
+        val id: String,
+        val taskId: String,
+        val recoveryClass: String,
+    )
+
+    private fun runningAttemptsForProject(projectId: String): List<AttemptSnapshot> {
+        val rows = mutableListOf<AttemptSnapshot>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT a.id, a.task_id, a.recovery_class FROM attempts a " +
+                "JOIN tasks t ON t.id = a.task_id " +
+                "JOIN runs r ON r.id = t.run_id " +
+                "WHERE a.state = 'RUNNING' AND r.project_id = ?",
+            mapper = { c ->
+                while (c.next().value) {
+                    rows.add(AttemptSnapshot(c.getString(0)!!, c.getString(1)!!, c.getString(2)!!))
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, projectId) }
+        return rows
+    }
+
+    private fun markAttemptFailed(
+        attemptId: String,
+        errorCode: String,
+        errorClass: String,
+        errorDetail: String,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET state = 'FAILED', ended_at = ?, error_code = ?, " +
+                "error_class = ?, error_detail_json = ? WHERE id = ?",
+            parameters = 5,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, errorCode)
+            bindString(2, errorClass)
+            bindString(3, errorDetail)
+            bindString(4, attemptId)
+        }
+    }
+
+    private fun resetTaskToPending(taskId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE tasks SET state = 'PENDING', started_at = NULL WHERE id = ?",
+            parameters = 1,
+        ) { bindString(0, taskId) }
+    }
+
+    /** Sets all RUNNING runs for a project to INTERRUPTED. Returns count affected. */
+    private fun interruptRunningRuns(projectId: String): Int {
+        // Count before updating
+        val count = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM runs WHERE project_id = ? AND state = 'RUNNING'",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0)?.toInt() ?: 0 else 0) },
+            parameters = 1,
+        ) { bindString(0, projectId) }.value
+
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE runs SET state = 'INTERRUPTED', ended_at = ? WHERE project_id = ? AND state = 'RUNNING'",
+            parameters = 2,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, projectId)
+        }
+        return count
+    }
+
+    /**
+     * Resets tasks that are stuck in RUNNING with no corresponding RUNNING attempt.
+     * This occurs when a crash happens between `updateTaskState(RUNNING)` and the attempt insert.
+     * Such tasks are safe to re-run (no external effect was recorded), so reset to PENDING.
+     */
+    private fun resetOrphanRunningTasks(projectId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE tasks SET state = 'PENDING', started_at = NULL " +
+                "WHERE state = 'RUNNING' AND project_id = ? " +
+                "AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.task_id = tasks.id AND a.state = 'RUNNING')",
+            parameters = 1,
+        ) { bindString(0, projectId) }
+    }
 }
 
 private data class RunSnapshot(
@@ -295,7 +442,7 @@ private data class RunSnapshot(
     val stepIndex: Int,
     val maxSteps: Int,
     val projectId: ProjectId,
-    val triggerEventId: dev.aidos.kernel.EventId,
+    val triggerEventId: EventId,
 )
 
 /** Result of running a single task. */

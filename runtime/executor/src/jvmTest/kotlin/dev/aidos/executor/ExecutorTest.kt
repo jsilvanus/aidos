@@ -67,8 +67,8 @@ class ExecutorTest {
     ) {
         // sessions table
         driver.execute(null,
-            "INSERT OR IGNORE INTO sessions (id, project_id, state, context_kind, " +
-                "created_at, updated_at, state_updated_at) VALUES (?, ?, 'ACTIVE', 'INTERACTIVE', ?, ?, ?)", 5
+            "INSERT OR IGNORE INTO sessions (id, project_id, name, role, state, " +
+                "created_at, last_active_at, state_updated_at) VALUES (?, ?, 'test', 'DRIVER', 'RUNNING', ?, ?, ?)", 5
         ) {
             bindString(0, sessionId)
             bindString(1, projectId)
@@ -113,18 +113,20 @@ class ExecutorTest {
         taskId: String,
         runId: String,
         sessionId: String,
+        projectId: String,
         ordinal: Int,
         kind: String = "TOOL_CALL",
     ) {
         driver.execute(null,
-            "INSERT INTO tasks (id, run_id, session_id, ordinal, kind, description, state, retry_policy_json) " +
-                "VALUES (?, ?, ?, ?, ?, 'test task', 'PENDING', '{}')", 6
+            "INSERT INTO tasks (id, run_id, session_id, project_id, ordinal, kind, description, state, retry_policy_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, 'test task', 'PENDING', '{}')", 7
         ) {
             bindString(0, taskId)
             bindString(1, runId)
             bindString(2, sessionId)
-            bindLong(3, ordinal.toLong())
-            bindString(4, kind)
+            bindString(3, projectId)
+            bindLong(4, ordinal.toLong())
+            bindString(5, kind)
         }
     }
 
@@ -177,8 +179,8 @@ class ExecutorTest {
         val t1 = nextId(); val t2 = nextId()
         insertRun(driver, runId, pid, sid, eid)
         // t1 is effectful TOOL_CALL, t2 is MODEL_CALL (read — D14 allows overlap)
-        insertTask(driver, t1, runId, sid, ordinal = 0, kind = "TOOL_CALL")
-        insertTask(driver, t2, runId, sid, ordinal = 1, kind = "MODEL_CALL")
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0, kind = "TOOL_CALL")
+        insertTask(driver, t2, runId, sid, pid, ordinal = 1, kind = "MODEL_CALL")
 
         val executor = buildExecutor(driver)
         executor.drive(RunId(runId))
@@ -198,7 +200,7 @@ class ExecutorTest {
         val runId = nextId()
         val t1 = nextId()
         insertRun(driver, runId, pid, sid, eid)
-        insertTask(driver, t1, runId, sid, ordinal = 0)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
 
         val invocations = AtomicInteger(0)
         val executor = buildExecutor(driver, CountingRunner(invocations))
@@ -221,8 +223,8 @@ class ExecutorTest {
         val runId = nextId()
         val t1 = nextId(); val t2 = nextId()
         insertRun(driver, runId, pid, sid, eid)
-        insertTask(driver, t1, runId, sid, ordinal = 0)
-        insertTask(driver, t2, runId, sid, ordinal = 1)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
+        insertTask(driver, t2, runId, sid, pid, ordinal = 1)
 
         val eventStore = EventStore(driver)
         val executor = buildExecutor(driver)
@@ -247,13 +249,117 @@ class ExecutorTest {
         val runId = nextId()
         val t1 = nextId()
         insertRun(driver, runId, pid, sid, eid)
-        insertTask(driver, t1, runId, sid, ordinal = 0)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
 
         val executor = buildExecutor(driver, AlwaysFailRunner())
         executor.drive(RunId(runId))
 
         assertEquals("FAILED", runState(driver, runId))
         assertEquals("FAILED", taskState(driver, t1))
+    }
+
+    // ─── M6: Recovery ────────────────────────────────────────────────────────
+
+    @Test
+    fun `recover marks UNSAFE attempt as INDETERMINATE and does not retry`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProject(driver, pid)
+        seedRunContext(driver, pid, sid, eid)
+
+        val runId = nextId(); val t1 = nextId()
+        insertRun(driver, runId, pid, sid, eid)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
+
+        // Seed a RUNNING attempt with UNSAFE recovery class
+        val auditId = nextId(); val attemptId = nextId()
+        driver.execute(null,
+            "INSERT INTO audit_log (id, project_id, sequence, occurred_at, kind, actor_kind, actor_id, device_id, detail_json) " +
+                "VALUES (?, ?, 1, ?, 'ToolInvoked', 'SESSION', ?, 'device-1', '{}')", 5
+        ) {
+            bindString(0, auditId); bindString(1, pid); bindString(2, nowIso)
+            bindString(3, sid)
+        }
+        driver.execute(null,
+            "INSERT INTO attempts (id, task_id, attempt_number, started_at, state, recovery_class, audit_ref) " +
+                "VALUES (?, ?, 1, ?, 'RUNNING', 'UNSAFE', ?)", 4
+        ) {
+            bindString(0, attemptId); bindString(1, t1); bindString(2, nowIso); bindString(3, auditId)
+        }
+
+        val executor = buildExecutor(driver)
+        val report = executor.recover(dev.aidos.kernel.ProjectId(pid))
+
+        assertEquals(listOf(dev.aidos.kernel.AttemptId(attemptId)), report.indeterminateEffects,
+            "UNSAFE attempt should be in indeterminateEffects")
+
+        // Attempt should be FAILED, not RUNNING
+        val attemptState = driver.executeQuery(null, "SELECT state FROM attempts WHERE id = ?",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1
+        ) { bindString(0, attemptId) }.value
+        assertEquals("FAILED", attemptState)
+
+        // Task should still be PENDING (UNSAFE is never re-queued)
+        assertEquals("PENDING", taskState(driver, t1))
+    }
+
+    @Test
+    fun `recover re-queues PURE interrupted attempt`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProject(driver, pid)
+        seedRunContext(driver, pid, sid, eid)
+
+        val runId = nextId(); val t1 = nextId()
+        insertRun(driver, runId, pid, sid, eid)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
+        // Simulate task RUNNING at crash time
+        driver.execute(null, "UPDATE tasks SET state = 'RUNNING' WHERE id = ?", 1) { bindString(0, t1) }
+
+        val auditId = nextId(); val attemptId = nextId()
+        driver.execute(null,
+            "INSERT INTO audit_log (id, project_id, sequence, occurred_at, kind, actor_kind, actor_id, device_id, detail_json) " +
+                "VALUES (?, ?, 1, ?, 'ToolInvoked', 'SESSION', ?, 'device-1', '{}')", 5
+        ) {
+            bindString(0, auditId); bindString(1, pid); bindString(2, nowIso); bindString(3, sid)
+        }
+        driver.execute(null,
+            "INSERT INTO attempts (id, task_id, attempt_number, started_at, state, recovery_class, audit_ref) " +
+                "VALUES (?, ?, 1, ?, 'RUNNING', 'PURE', ?)", 4
+        ) {
+            bindString(0, attemptId); bindString(1, t1); bindString(2, nowIso); bindString(3, auditId)
+        }
+
+        val executor = buildExecutor(driver)
+        executor.recover(dev.aidos.kernel.ProjectId(pid))
+
+        // Task should be reset to PENDING for re-execution
+        assertEquals("PENDING", taskState(driver, t1), "PURE task should be reset to PENDING")
+    }
+
+    @Test
+    fun `EventStore refuses events exceeding MAX_CAUSAL_DEPTH`() {
+        val driver = openDriver()
+        val pid = nextId()
+        seedProject(driver, pid)
+
+        val store = EventStore(driver)
+        // Seed trigger event first (sequence 0, causal_depth 0)
+        driver.execute(null,
+            "INSERT INTO events (id, project_id, sequence, type, schema_version, category, visibility, " +
+                "timestamp, source, payload, causal_depth) VALUES (?, ?, 0, 'UserMessage', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)", 4
+        ) { bindString(0, nextId()); bindString(1, pid); bindString(2, nowIso) }
+
+        val overLimit = EventStore.MAX_CAUSAL_DEPTH + 1
+        val result = store.publish(
+            id = nextId(), projectId = pid, type = "SessionWake", source = "executor",
+            causalDepth = overLimit, nowIso = nowIso,
+        )
+        assertEquals(null, result, "Event with causal_depth > MAX_CAUSAL_DEPTH should be refused")
+
+        // Events count should still be 1 (just the seeded trigger)
+        val seeded = store.eventsForProject(pid)
+        assertEquals(1, seeded.size, "No new event should have been inserted")
     }
 
     // ─── TaskRunner stubs ─────────────────────────────────────────────────────

@@ -17,21 +17,24 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-05 · Phase 1 started. M1 half-done: storage bootstrap and migrations land; settings and
-the mapping test do not.**
+**2026-08-05 · Phase 1 complete (G1 gate passed). Phase 2 in progress.**
 
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
-| Decisions | **35 settled, none open** (`docs/decisions.md`) — D35 adds the SQLite binding |
+| Decisions | **35 settled, none open** (`docs/decisions.md`) |
 | Schema | **58 tables**, `schema/check.py` green with 7 rules, running in CI |
 | Kernel | `runtime/kernel/` compiles under `allWarningsAsErrors`, contract tests green |
-| Storage | `runtime/storage/` — new module. Opens all three databases from `schema/`, migration
-  runner (bootstrap / no-op / read-only-newer), durability pragmas baked per-connection. 8 tests
-  green, JVM only |
-| Milestones | **38** across Phases 1–4; every RFC they name is Accepted |
+| Storage | `runtime/storage/` — bootstrap / migration runner / durability pragmas. 8 tests green |
+| Identity | `runtime/identity/` — UUIDv7 generator (expect/actual KMP), ProjectRegistry. M2 ✅ |
+| Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅ |
+| Broker | `runtime/broker/` — `AuditLog` + `ToolBroker` 8-step invocation sequence (RFC-0030); every invocation writes an audit row naming subject, capability, and outcome. M4 ✅ |
+| Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
+| Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
+| Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
+| Milestones | **M1–M8 complete** (Phase 1). Phase 2 starts at M9 |
 
-**Next work: finish M1 — settings and the mapping test.** See below.
+**Next: M9 — Runtime API, in-process transport, `MockRuntimeClient`.** See below.
 
 ---
 
@@ -132,32 +135,55 @@ Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 ## Next
 
-- [x] **Pick the SQLite binding for KMP** — D35: SQLDelight's `SqlDriver` + platform drivers
-      (matching `gitsema-kotlin`'s choice for the same two targets, so one process on the phone
-      loads one SQLite build), *not* its `.sq` schema codegen (`schema/` stays the one canonical
-      DDL, per RFC-0040). See `docs/decisions.md` D35.
-- [x] **Storage bootstrap and migrations** (RFC-0040, RFC-0039) — `runtime/storage/`: all three
-      databases open from `schema/`; `MigrationRunner` implements `open(db)` (bootstrap /
-      already-current / newer-than-supported → read-only `storage.migration_required`); WAL +
-      `synchronous=NORMAL` + `foreign_keys=ON` + 5s `busy_timeout` baked into every connection via
-      `SQLiteConfig` (a `PRAGMA` after construction only reaches one of `JdbcSqliteDriver`'s
-      per-call connections — see the doc comment on `createJvmDriver`). 8 tests, all green.
-      Added `migration_history` to `user.sql` and `vault.sql` (RFC-0040: "each database versions
-      independently" — only `project.sql` had it).
-- [ ] **M1 remainder — Settings** (RFC-0036) · **the next thing to build.**
-      **Done when:** declared settings carry type, default, range, and scope class;
-      `SECURITY`/`SPEND` settings are enforced user-scope-only with a visible error and audit row
-      on a project attempt; resolution is nearest-first with origin reporting; invalid input fails
-      closed (to the most restrictive valid value for `SECURITY`, to the default otherwise);
-      `aidos.toml` parses with per-line error reporting. This is what D34 folded RFC-0036 into M1
-      for — build it as part of this milestone, not a separate one.
-- [ ] **The mapping test owed at M1**: every non-derived kernel field has a schema column,
-      asserted by a test. Still not built — there was nothing to map to before storage landed;
-      now there is. Third leg of the CI that keeps design and code together, alongside
-      `schema/check.py` and `runtime/kernel`'s contract tests.
+### Phase 2 — First vertical slice (M9–M19)
 
-Then M2 (identity and scopes), M3 (capability manager, with the path-escape property test), and
-on through [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md).
+Phase 1 (G1) is complete. Phase 2 builds the agent loop and authority boundary, CLI only.
+
+- [ ] **M9** — Runtime API, in-process transport, `MockRuntimeClient` (RFC-0052, RFC-0048, RFC-0004, D25)
+  **Done when:** Every `RuntimeClient` method is reachable in-process. The mock implements the same
+  interface and is what frontend tests use. No method takes a client-side filesystem path. Diffs
+  are returned as structured hunks with stable identity, not as a formatted string (D25).
+
+- [ ] **M10** — CLI frontend (RFC-0052, RFC-0004)
+  **Done when:** Create a project, list sessions, send a message, watch the event stream, approve a
+  pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream.
+
+- [ ] **M11** — Effect broker (RFC-0030, RFC-0029, RFC-0028)
+  **Done when:** Every invocation passes through validation → capability resolution → budget
+  reservation → preview → audit → taint, in that order. A tool without `RecoveryClass` is rejected
+  at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed.
+
+- [ ] **M12** — Filesystem tool (RFC-0034)
+  **Done when:** Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns
+  a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool.
+
+- [ ] **M13** — Git tool on JGit (RFC-0032, RFC-0053, D4)
+  **Done when:** Status, diff, add, commit, branch, log, and checkout on a real repository. `push` is
+  `UNSAFE` and declares it. Reconciliation handles the user changing the working tree outside Aidos.
+
+- [ ] **M14** — Secrets vault and one remote provider (RFC-0035, RFC-0021, RFC-0023, RFC-0042, RFC-0026)
+  **Done when:** An API key round-trips through `vault.db` and never appears in a log, an event, an
+  audit row, or a prompt. One provider adapter implements `ModelAdapter`. Every remote Attempt records
+  provider's stated retention; a provider that states no policy records `UNKNOWN`.
+
+- [ ] **M15** — Prompt construction and instructions (RFC-0025, RFC-0016, D22)
+  **Done when:** Token budget derives from the selected model's context window. Assembly that cannot fit
+  returns to routing once for a larger candidate — bounded two-phase negotiation, not a loop. An
+  unadopted instruction file does not reach the system turn.
+
+- [ ] **M16** — Agent loop with trust and taint (RFC-0008, RFC-0027, D6, D7)
+  **Done when:** Full cycle: resolve model → assemble → checkpoint → invoke → validate schema →
+  resolve capability → apply taint → execute → checkpoint. Taint is monotonic. Tainted Run is denied
+  egress and escalates. The model never confirms its own success.
+
+- [ ] **M16b** — Session memory (RFC-0026, RFC-0011, RFC-0046, D32, D33)
+
+- [ ] **M17** — Injection suite (RFC-0027, RFC-0038)
+  **Done when:** A corpus of hostile repository content — none escalates authority.
+
+- [ ] **M18** — MCP, both transports (RFC-0031, D17, D23)
+
+- [ ] **M19** — End-to-end **G2** (create project → task → model → tool → commit → artifact → audit)
 
 ---
 
