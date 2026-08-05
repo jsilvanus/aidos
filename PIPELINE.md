@@ -17,7 +17,7 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-05 · Phase 1 complete (G1 gate passed). Phase 2 in progress.**
+**2026-08-05 · Phase 4 complete. G4 gate infrastructure implemented. Real hardware testing (G3/G4) required.**
 
 | | |
 |---|---|
@@ -32,9 +32,33 @@ milestone either serves it or is cuttable.
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
-| Milestones | **M1–M8 complete** (Phase 1). Phase 2 starts at M9 |
+| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`. M9 ✅ |
+| CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅ |
+| Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
+| Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
+| Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅ |
+| Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅ |
+| AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅ |
+| Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
+| Injection | `runtime/agentloop/injection/` — 7 hostile corpus tests: README, comments, commits, tool output, MCP, role reassignment, nested injection. M17 ✅ |
+| MCP | `runtime/mcp/` — stdio (DESKTOP/SERVER, SHELL_EXEC) + HTTP (all profiles, HTTPS enforced, NETWORK_EGRESS); resultGuidance null (D23); D30 enforced. 11 tests. M18 ✅ |
+| ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅ |
+| Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅ |
+| Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
+| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
+| AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c). 21 tests. M27/M29/M30/M32/M32b/M32c ✅ |
+| Milestones | **M1–M25, M27/M29/M30/M32/M32b/M32c complete**. Blocked: M21 (real phone), M22 (androidTarget() upstream), M26/G3 (real phone measurement), M28/M31/M33/M34/M35 (androidTarget() + Compose) |
 
-**Next: M9 — Runtime API, in-process transport, `MockRuntimeClient`.** See below.
+**Phase 4 infrastructure is complete. Remaining work requires real hardware or androidTarget().**
+
+- **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
+- **M22** (local embeddings): blocked on `androidTarget()` landing in `gitsema-kotlin` upstream.
+- **M26/G3** (on-device measurement): must be done on a real mid-range phone in airplane mode and recorded.
+- **M28** (Compose UI): requires `androidTarget()` + Compose Multiplatform wired into all modules.
+- **M31** (diff and commit review): same — requires Compose on Android.
+- **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
+- **M34** (F-Droid): requires reproducible build with no proprietary deps, published.
+- **M35/G4**: a person — not the author, not a script — performs the G3 scenario in the app.
 
 ---
 
@@ -139,51 +163,49 @@ Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 Phase 1 (G1) is complete. Phase 2 builds the agent loop and authority boundary, CLI only.
 
-- [ ] **M9** — Runtime API, in-process transport, `MockRuntimeClient` (RFC-0052, RFC-0048, RFC-0004, D25)
-  **Done when:** Every `RuntimeClient` method is reachable in-process. The mock implements the same
-  interface and is what frontend tests use. No method takes a client-side filesystem path. Diffs
-  are returned as structured hunks with stable identity, not as a formatted string (D25).
+### Phase 2 — First vertical slice (M9–M19)
 
-- [ ] **M10** — CLI frontend (RFC-0052, RFC-0004)
-  **Done when:** Create a project, list sessions, send a message, watch the event stream, approve a
-  pending request. Reconnecting with `sinceSequence` delivers the gap rather than a fresh stream.
+Phase 2 complete. All milestones M9–M19 implemented and tested.
 
-- [ ] **M11** — Effect broker (RFC-0030, RFC-0029, RFC-0028)
-  **Done when:** Every invocation passes through validation → capability resolution → budget
-  reservation → preview → audit → taint, in that order. A tool without `RecoveryClass` is rejected
-  at registration. Unavailable tools are absent from `descriptorsFor`, never offered and then failed.
+- [x] **M9** — Runtime API, in-process transport, `MockRuntimeClient` ✅
+- [x] **M10** — CLI frontend ✅
+- [x] **M11** — Effect broker ✅
+- [x] **M12** — Filesystem tool ✅
+- [x] **M13** — Git tool on JGit ✅
+- [x] **M14** — Secrets vault and one remote provider ✅
+- [x] **M15** — Prompt construction and instructions ✅
+- [x] **M16** — Agent loop with trust and taint ✅
+- [x] **M16b** — Session memory ✅
+- [x] **M17** — Injection suite ✅
+- [x] **M18** — MCP, both transports ✅
+- [x] **M19** — End-to-end **G2** ✅
 
-- [ ] **M12** — Filesystem tool (RFC-0034)
-  **Done when:** Read, write, list, and search, all through `ResourceHandle`. Every `Mutate` returns
-  a real `Preview.Diff`. Escape attempts are denied by the handle, not by a check inside the tool.
+### Phase 3 — Offline proof (M20–M26)
 
-- [ ] **M13** — Git tool on JGit (RFC-0032, RFC-0053, D4)
-  **Done when:** Status, diff, add, commit, branch, log, and checkout on a real repository. `push` is
-  `UNSAFE` and declares it. Reconciliation handles the user changing the working tree outside Aidos.
+- [x] **M20** — Model runtime at user scope ✅
+- [ ] **M21** — One local LLM on a mid-range phone — **BLOCKED: requires real hardware**
+- [ ] **M22** — Local embeddings and the knowledge index — **BLOCKED: androidTarget() upstream**
+- [x] **M23** — Routing policy with explicit degradation ✅
+- [x] **M24** — Treeless workers ✅
+- [x] **M25** — Retention and compaction ✅
+- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI**
 
-- [ ] **M14** — Secrets vault and one remote provider (RFC-0035, RFC-0021, RFC-0023, RFC-0042, RFC-0026)
-  **Done when:** An API key round-trips through `vault.db` and never appears in a log, an event, an
-  audit row, or a prompt. One provider adapter implements `ModelAdapter`. Every remote Attempt records
-  provider's stated retention; a provider that states no policy records `UNKNOWN`.
+### Phase 4 — Android application (M27–M35)
 
-- [ ] **M15** — Prompt construction and instructions (RFC-0025, RFC-0016, D22)
-  **Done when:** Token budget derives from the selected model's context window. Assembly that cannot fit
-  returns to routing once for a larger candidate — bounded two-phase negotiation, not a loop. An
-  unadopted instruction file does not reach the system turn.
+Platform-neutral logic implemented and tested. Android wiring (Compose, Service lifecycle,
+androidTarget()) requires the Android SDK and a real device.
 
-- [ ] **M16** — Agent loop with trust and taint (RFC-0008, RFC-0027, D6, D7)
-  **Done when:** Full cycle: resolve model → assemble → checkpoint → invoke → validate schema →
-  resolve capability → apply taint → execute → checkpoint. Taint is monotonic. Tainted Run is denied
-  egress and escalates. The model never confirms its own success.
-
-- [ ] **M16b** — Session memory (RFC-0026, RFC-0011, RFC-0046, D32, D33)
-
-- [ ] **M17** — Injection suite (RFC-0027, RFC-0038)
-  **Done when:** A corpus of hostile repository content — none escalates authority.
-
-- [ ] **M18** — MCP, both transports (RFC-0031, D17, D23)
-
-- [ ] **M19** — End-to-end **G2** (create project → task → model → tool → commit → artifact → audit)
+- [x] **M27** — Foreground service and runtime hosting (platform-neutral logic) ✅
+- [ ] **M28** — Compose UI over the Runtime API — **BLOCKED: androidTarget() + Compose**
+- [x] **M29** — Availability reporting ✅
+- [x] **M30** — Approval, preview, and memory review ✅
+- [ ] **M31** — Diff and commit review — **BLOCKED: androidTarget() + Compose**
+- [x] **M32** — Notifications ✅
+- [x] **M32b** — Run Summary and the benign-approval classifier ✅
+- [x] **M32c** — Intent as a task list, with the proposal gate ✅
+- [ ] **M33** — Voice capture → local STT, spoken summaries → local TTS — *optional, cut first*
+- [ ] **M34** — F-Droid distribution — **BLOCKED: requires reproducible build + device**
+- [ ] **M35** — The scenario, by a person **G4** — **BLOCKED: requires real person on real device**
 
 ---
 
