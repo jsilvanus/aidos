@@ -34,6 +34,8 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.FileTreeIterator
 import org.eclipse.jgit.treewalk.filter.PathFilter
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -129,7 +131,19 @@ class GitTool(private val repoDir: File) : Tool {
             val out = ByteArrayOutputStream()
             DiffFormatter(out).use { formatter ->
                 formatter.setRepository(g.repository)
-                val diffs = g.diff().call()
+                formatter.isDetectRenames = true
+                // Scan working tree for changes vs HEAD (unstaged).
+                // Use the working-tree-to-HEAD scan directly through the formatter.
+                val headId = g.repository.resolve("HEAD")
+                val diffs: List<DiffEntry> = if (headId != null) {
+                    val reader = g.repository.newObjectReader()
+                    val headTree = CanonicalTreeParser()
+                    headTree.reset(reader, g.repository.resolve("HEAD^{tree}"))
+                    val workTree = FileTreeIterator(g.repository)
+                    formatter.scan(headTree, workTree)
+                } else {
+                    emptyList()
+                }
                 for (entry in diffs) formatter.format(entry)
             }
             val text = out.toString(Charsets.UTF_8.name())

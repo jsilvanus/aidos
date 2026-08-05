@@ -124,7 +124,7 @@ class GitToolTest {
     }
 
     @Test
-    fun `reconciliation: user edit outside Aidos is reflected in status`() = runTest {
+    fun `reconciliation - user edit outside Aidos is reflected in status`() = runTest {
         val (dir, tool) = tempRepo()
         // User edits a file outside Aidos
         File(dir, "README.md").writeText("# Modified by user\n")
