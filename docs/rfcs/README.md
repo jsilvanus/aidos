@@ -29,11 +29,15 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (53).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
+**Accepted (54).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
 `runtime/kernel/`. Implementation may begin.
 
-**Draft (8).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · 0099 Roadmap ·
-and the reviews. Genuinely unsettled or post-MVP.
+**Draft (7).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · and the
+reviews. Genuinely unsettled or post-MVP — every one is a subsystem the MVP does not build.
+
+**0099 Roadmap left Draft on 2026-08-04**, the last document the legacy audit had excepted. It
+defines all six gates, so it was the only file where every gate in the plan was stated by
+something nobody had read end to end.
 
 **0012 and 0047 left Draft on 2026-08-04** as part of D34's reconciliation — both claimed MVP
 scope that no milestone built, and both were narrowed to what the MVP actually exercises.

@@ -48,7 +48,7 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-04, 53 RFCs are **Accepted** and 8 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
+As of 2026-08-04, 54 RFCs are **Accepted** and 7 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
 blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
 against them, not that they are frozen — see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
