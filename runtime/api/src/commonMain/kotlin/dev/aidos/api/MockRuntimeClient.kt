@@ -49,6 +49,11 @@ class MockRuntimeClient : RuntimeClient {
         _eventFlow.tryEmit(sequenced)
     }
 
+    /** Injects a pending capability request for testing the approval flow. */
+    fun injectPendingCapability(request: PendingCapabilityRequest) {
+        _pendingCapabilities.add(request)
+    }
+
     // ── RuntimeClient ──────────────────────────────────────────────────────────
 
     override val projects: ProjectCommands = object : ProjectCommands {
