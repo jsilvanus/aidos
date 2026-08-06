@@ -1,10 +1,12 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    // id("com.android.library") — uncomment when AGP is resolvable (needs dl.google.com).
 }
 
 kotlin {
     jvm()
+    // androidTarget() — uncomment together with the plugin above.
 
     sourceSets {
         commonMain.dependencies {
@@ -30,3 +32,5 @@ kotlin {
         allWarningsAsErrors.set(true)
     }
 }
+
+// android { ... } — uncomment when androidTarget() is wired.

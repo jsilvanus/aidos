@@ -203,6 +203,11 @@ class MockRuntimeClient : RuntimeClient {
 
         override suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit> =
             Result.success(Unit)
+
+        override suspend fun commit(projectId: String, message: String): CommitResult {
+            if (message.isBlank()) return CommitResult.Error("commit.empty_message", "Commit message must not be empty")
+            return CommitResult.Success(commitHash = "mock-sha-${message.take(8).replace(" ", "-")}", shortMessage = message.lines().first().take(72))
+        }
     }
 
     override val artifacts: ArtifactQueries = object : ArtifactQueries {

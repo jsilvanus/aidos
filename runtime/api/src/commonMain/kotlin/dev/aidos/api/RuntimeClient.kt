@@ -237,6 +237,21 @@ interface DiffQueries {
 
     /** Revert a subset of hunks in the working tree (user-subject mutation — no approval). */
     suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit>
+
+    /**
+     * Commit everything in the index with [message] (M31, RFC-0032).
+     *
+     * The staged index is the commit boundary: [stage] controls what goes in.
+     * Committing with an empty index returns [CommitResult.NothingStaged] — never
+     * creates an empty commit, which would mislead later history inspection.
+     */
+    suspend fun commit(projectId: String, message: String): CommitResult
+}
+
+sealed interface CommitResult {
+    data class Success(val commitHash: String, val shortMessage: String) : CommitResult
+    data object NothingStaged : CommitResult
+    data class Error(val code: String, val message: String) : CommitResult
 }
 
 sealed interface DiffRange {
