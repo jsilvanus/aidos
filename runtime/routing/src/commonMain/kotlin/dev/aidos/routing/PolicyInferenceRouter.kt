@@ -54,12 +54,12 @@ class PolicyInferenceRouter(
             return RoutingDecision.ForegroundRequired
         }
 
-        // 1. Local candidates — filter by kind and minimumContextWindow.
-        val localCandidates = localAdapters.filter { adapter ->
-            adapter.modelId in (policy.preferredLocal.values.toSet()) ||
-                    policy.preferredLocal[kind] == adapter.modelId ||
-                    (policy.preferredLocal[kind] == null)
-        }.filter { context.minimumContextWindow == null || it.contextWindow >= context.minimumContextWindow!! }
+        // 1. Local candidates — filter by kind (via context window) only.
+        // preferredLocal is applied below when choosing among candidates; filtering by all
+        // preferredLocal values here would incorrectly allow a preferred model ID for a
+        // different kind to match the current request.
+        val localCandidates = localAdapters
+            .filter { context.minimumContextWindow == null || it.contextWindow >= context.minimumContextWindow!! }
 
         if (localCandidates.isNotEmpty()) {
             // Prefer the user's preferred model for this kind if loaded.

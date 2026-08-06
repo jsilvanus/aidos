@@ -5,7 +5,20 @@ pluginManagement {
     }
 }
 dependencyResolutionManagement {
-    repositories { mavenCentral() }
+    repositories {
+        mavenCentral()
+        // gitsema-kotlin is published to GitHub Packages (M22 dependency).
+        // Reads require a GITHUB_TOKEN with `read:packages` scope.
+        // In GitHub Actions the default GITHUB_TOKEN already has this.
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/jsilvanus/gitsema-kotlin")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: "token"
+                password = System.getenv("GITHUB_TOKEN") ?: ""
+            }
+        }
+    }
 }
 
 rootProject.name = "aidos-runtime"
@@ -31,3 +44,4 @@ include(":routing")
 include(":worker")
 include(":retention")
 include(":androidapp")
+include(":knowledge")

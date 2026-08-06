@@ -29,7 +29,10 @@ class GlobalModelRuntime(
 
     // Single global lock — no per-model lock, because loading saturates RAM (RFC-0022).
     private val admissionQueue = Mutex()
-    private val loadedModels = mutableMapOf<String, ModelAdapter>()
+    // Immutable snapshot: written only inside admissionQueue, read without the lock.
+    // @Volatile guarantees the latest snapshot is visible to any thread, including the
+    // non-suspending `loaded()` accessor which cannot acquire the mutex.
+    @Volatile private var loadedModels: Map<String, ModelAdapter> = emptyMap()
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
@@ -71,14 +74,14 @@ class GlobalModelRuntime(
             val adapter = backend.load(modelId).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
-            loadedModels[modelId] = adapter
+            loadedModels = loadedModels + (modelId to adapter)
             Result.success(adapter)
         }
     }
 
     override suspend fun unload(modelId: String) {
         admissionQueue.withLock {
-            loadedModels.remove(modelId)
+            loadedModels = loadedModels - modelId
             backend.unload(modelId)
         }
     }

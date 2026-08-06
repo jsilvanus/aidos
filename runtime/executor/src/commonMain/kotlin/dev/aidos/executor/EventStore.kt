@@ -41,18 +41,22 @@ class EventStore(private val driver: SqlDriver) {
     ): Long? {
         if (causalDepth > MAX_CAUSAL_DEPTH) return null
 
-        val seq = nextSequence(projectId)
+        // Sequence is allocated atomically by inlining the MAX()+1 subquery into the INSERT.
+        // This collapses read + write into a single SQLite statement, eliminating the race
+        // where two concurrent callers observe the same MAX and collide on the UNIQUE index.
         driver.execute(
             identifier = null,
             sql = "INSERT INTO events " +
                 "(id, project_id, sequence, type, schema_version, category, visibility, " +
                 "timestamp, source, topic, payload, causality, causal_depth) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, " +
+                "(SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE project_id = ?), " +
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             parameters = 13,
         ) {
             bindString(0, id)
             bindString(1, projectId)
-            bindLong(2, seq)
+            bindString(2, projectId)   // for the sequence subquery
             bindString(3, type)
             bindLong(4, schemaVersion.toLong())
             bindString(5, category)
@@ -64,7 +68,13 @@ class EventStore(private val driver: SqlDriver) {
             bindString(11, causedBy)
             bindLong(12, causalDepth.toLong())
         }
-        return seq
+        // Read back the sequence that was assigned for the just-inserted row.
+        return driver.executeQuery(
+            identifier = null,
+            sql = "SELECT sequence FROM events WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0) else null) },
+            parameters = 1,
+        ) { bindString(0, id) }.value
     }
 
     /** Returns events in sequence order for a project, optionally filtered by type. */
@@ -104,14 +114,6 @@ class EventStore(private val driver: SqlDriver) {
         }
         return rows
     }
-
-    private fun nextSequence(projectId: String): Long =
-        driver.executeQuery(
-            identifier = null,
-            sql = "SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE project_id = ?",
-            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0) ?: 1L else 1L) },
-            parameters = 1,
-        ) { bindString(0, projectId) }.value
 }
 
 data class EventRow(

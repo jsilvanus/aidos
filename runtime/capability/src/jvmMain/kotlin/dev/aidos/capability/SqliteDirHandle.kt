@@ -5,6 +5,7 @@ import dev.aidos.kernel.DirEntry
 import dev.aidos.kernel.DirHandle
 import dev.aidos.kernel.RelPath
 import java.io.File
+import java.nio.file.Path
 
 /**
  * JVM/Desktop DirHandle implementation (RFC-0018, RFC-0034).
@@ -25,7 +26,10 @@ class SqliteDirHandle(
     private fun resolve(relative: RelPath): File {
         val target = File(rootAbsolutePath, relative.value).canonicalFile
         val root = File(rootAbsolutePath).canonicalFile
-        require(target.path.startsWith(root.path)) {
+        // Use Path.startsWith for component-based comparison, not string prefix matching.
+        // String prefix matching is vulnerable to prefix confusion: root `/tmp/proj` would
+        // incorrectly accept `/tmp/proj-evil` as a child path.
+        require(target.toPath().startsWith(root.toPath())) {
             "path escape detected: $relative resolves outside root $rootAbsolutePath"
         }
         return target

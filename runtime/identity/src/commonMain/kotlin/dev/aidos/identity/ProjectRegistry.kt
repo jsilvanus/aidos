@@ -72,14 +72,18 @@ class ProjectRegistry(
      * location, the registry is updated.
      */
     fun register(projectId: ProjectId, path: String, workspaceId: String? = null, nowIso: String) {
-        val wsParam = if (workspaceId != null) "'$workspaceId'" else "NULL"
         userDriver.execute(
             identifier = null,
             sql = "INSERT INTO project_registry (project_id, path, workspace_id, last_opened_at) " +
-                "VALUES ('${projectId.value}', ?, $wsParam, '$nowIso') " +
+                "VALUES (?, ?, ?, ?) " +
                 "ON CONFLICT(project_id) DO UPDATE SET path = excluded.path, last_opened_at = excluded.last_opened_at",
-            parameters = 1,
-        ) { bindString(0, path) }
+            parameters = 4,
+        ) {
+            bindString(0, projectId.value)
+            bindString(1, path)
+            bindString(2, workspaceId)
+            bindString(3, nowIso)
+        }
     }
 
     /**
@@ -89,10 +93,10 @@ class ProjectRegistry(
     fun resolveById(projectId: ProjectId): Result<String> {
         val path = userDriver.executeQuery(
             identifier = null,
-            sql = "SELECT path FROM project_registry WHERE project_id = '${projectId.value}'",
+            sql = "SELECT path FROM project_registry WHERE project_id = ?",
             mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
-            parameters = 0,
-        ).value ?: return Result.failure(
+            parameters = 1,
+        ) { bindString(0, projectId.value) }.value ?: return Result.failure(
             AidosError(
                 code = "project.not_found",
                 errorClass = ErrorClass.DENIED,

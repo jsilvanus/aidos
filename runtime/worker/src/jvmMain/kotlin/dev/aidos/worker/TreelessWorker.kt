@@ -71,6 +71,11 @@ class TreelessWorker(private val repository: Repository) {
             val dirCache = DirCache.newInCore()
             val builder: DirCacheBuilder = dirCache.builder()
 
+            // Collect all entries (existing + updated/new) and sort them by path
+            // before adding to the builder. DirCacheBuilder requires canonical path order;
+            // mixing tree entries with write entries out of order causes an IllegalStateException.
+            val allEntries = mutableListOf<DirCacheEntry>()
+
             // Load the existing tree entries from the parent.
             val treeWalk = org.eclipse.jgit.treewalk.TreeWalk(repository)
             treeWalk.addTree(parentTree)
@@ -85,7 +90,7 @@ class TreelessWorker(private val repository: Repository) {
                 val entry = DirCacheEntry(path)
                 entry.fileMode = treeWalk.getFileMode(0)
                 entry.setObjectId(treeWalk.getObjectId(0))
-                builder.add(entry)
+                allEntries.add(entry)
             }
             treeWalk.close()
 
@@ -95,6 +100,12 @@ class TreelessWorker(private val repository: Repository) {
                 val entry = DirCacheEntry(change.path)
                 entry.fileMode = FileMode.REGULAR_FILE
                 entry.setObjectId(blobId)
+                allEntries.add(entry)
+            }
+
+            // Sort by path in canonical order before adding to builder (DirCacheBuilder requirement).
+            allEntries.sortBy { it.pathString }
+            for (entry in allEntries) {
                 builder.add(entry)
             }
 

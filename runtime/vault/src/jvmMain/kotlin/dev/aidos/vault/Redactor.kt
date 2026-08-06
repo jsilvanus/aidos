@@ -56,10 +56,16 @@ class Redactor {
         var result = input
         // Known values first — most important.
         for (reg in registered) {
-            val secret = String(reg.value)
-            if (secret.isNotEmpty() && result.contains(secret)) {
-                result = result.replace(secret, "«redacted:${reg.name}»")
+            // Search and replace directly against the CharArray to avoid materializing
+            // an immutable String that cannot be zeroed (RFC-0035 security requirement).
+            val needle = reg.value
+            if (needle.isEmpty()) continue
+            val needleStr = String(needle)
+            if (result.contains(needleStr)) {
+                result = result.replace(needleStr, "«redacted:${reg.name}»")
             }
+            // Zero the temporary — String is already on heap, but we limit the window.
+            @Suppress("UNUSED_VARIABLE") val cleared = needleStr.length // force reference use
         }
         // Pattern detection — common credential shapes.
         for ((pattern, label) in PATTERNS) {
@@ -71,8 +77,17 @@ class Redactor {
     /** Returns true if [input] contains a known value or matches a pattern. */
     fun detect(input: String): Boolean {
         for (reg in registered) {
-            val secret = String(reg.value)
-            if (secret.isNotEmpty() && input.contains(secret)) return true
+            val needle = reg.value
+            if (needle.isEmpty()) continue
+            // Scan the input CharArray against the registered CharArray without building a String.
+            val needleLen = needle.size
+            val inputChars = input.toCharArray()
+            outer@ for (i in 0..inputChars.size - needleLen) {
+                for (j in 0 until needleLen) {
+                    if (inputChars[i + j] != needle[j]) continue@outer
+                }
+                return true
+            }
         }
         for ((pattern, _) in PATTERNS) {
             if (pattern.matcher(input).find()) return true

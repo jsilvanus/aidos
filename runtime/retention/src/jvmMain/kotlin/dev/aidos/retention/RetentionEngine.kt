@@ -123,11 +123,13 @@ class RetentionEngine(
     }
 
     private fun totalStorageBytes(conn: Connection): Long {
-        val stmt = conn.prepareStatement(
+        return conn.prepareStatement(
             "SELECT COALESCE(SUM(size_bytes), 0) FROM content_nodes WHERE state NOT IN ('DELETED')"
-        )
-        val rs = stmt.executeQuery()
-        return if (rs.next()) rs.getLong(1) else 0L
+        ).use { stmt ->
+            stmt.executeQuery().use { rs ->
+                if (rs.next()) rs.getLong(1) else 0L
+            }
+        }
     }
 
     /** Marks the node as DELETED (soft delete) to preserve FK integrity. */

@@ -174,10 +174,10 @@ class SqliteSecretsVault(
     }
 
     private fun charArrayToBytes(chars: CharArray): ByteArray =
-        ByteArray(chars.size) { chars[it].code.toByte() }
+        String(chars).toByteArray(Charsets.UTF_8)
 
     private fun bytesToCharArray(bytes: ByteArray): CharArray =
-        CharArray(bytes.size) { bytes[it].toInt().toChar() }
+        String(bytes, Charsets.UTF_8).toCharArray()
 
     private fun rowToEntry(rs: java.sql.ResultSet): SecretEntry {
         val id = rs.getString(1)
