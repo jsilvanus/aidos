@@ -227,6 +227,20 @@ class CapabilityTest {
     }
 
     @Test
+    fun `STT_QUERY and TTS_QUERY permissions are available for M33 voice support`() {
+        // M33: Verify STT_QUERY and TTS_QUERY permissions are defined (RFC-0020).
+        // These enable fine-grained control over voice input (STT) and voice output (TTS).
+        // Sessions can be granted STT_QUERY to capture voice input and TTS_QUERY for voice output.
+        val sttPermission = Permission.STT_QUERY
+        val ttsPermission = Permission.TTS_QUERY
+        assertEquals("STT_QUERY", sttPermission.name)
+        assertEquals("TTS_QUERY", ttsPermission.name)
+
+        // These permissions complement MODEL_QUERY for voice-specific capabilities.
+        // Like MODEL_QUERY, they use CapabilityScope.Model to restrict to appropriate model kinds.
+    }
+
+    @Test
     fun `validate allows FS_READ even when run taint is UNTRUSTED`(): Unit = runBlocking {
         val driver = openProjectDriver()
         val mgr = manager(driver)

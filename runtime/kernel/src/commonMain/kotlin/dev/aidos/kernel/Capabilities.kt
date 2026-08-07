@@ -51,6 +51,13 @@ enum class Permission {
     SHELL_EXEC,
 
     MODEL_QUERY,
+    
+    /** Speech-to-text query (voice capture). M33, RFC-0020. */
+    STT_QUERY,
+    
+    /** Text-to-speech query (voice generation). M33, RFC-0020. */
+    TTS_QUERY,
+    
     NETWORK_EGRESS,
     SECRETS_READ,
     WORKER_CREATE,

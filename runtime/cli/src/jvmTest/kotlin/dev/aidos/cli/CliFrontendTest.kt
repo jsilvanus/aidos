@@ -186,4 +186,31 @@ class CliFrontendTest {
         // The sequence verifies: every step in the G2 scenario executes without error.
         // The mock does not simulate real tool calls; G3 and beyond verify real execution.
     }
+
+    /**
+     * M33: Voice capabilities (STT/TTS) can be granted and used.
+     *
+     * Grant STT_QUERY (voice-to-text) and TTS_QUERY (text-to-speech) permissions
+     * to enable voice-based interaction (RFC-0020, M33).
+     */
+    @Test
+    fun `M33 - grant STT and TTS voice capabilities`() = runTest {
+        val (cli, _) = cli()
+
+        // 1. Create project and session.
+        val projectId = cli.createProject("voice-app", "App with voice support")
+        val sessionId = cli.createSession(projectId, "voice-session")
+
+        // 2. Grant STT_QUERY capability for voice-to-text.
+        val sttCapId = cli.grantCapability(sessionId, "STT_QUERY", null)
+        assertTrue(sttCapId.isNotBlank(), "STT capability must be granted")
+
+        // 3. Grant TTS_QUERY capability for text-to-speech.
+        val ttsCapId = cli.grantCapability(sessionId, "TTS_QUERY", null)
+        assertTrue(ttsCapId.isNotBlank(), "TTS capability must be granted")
+
+        // 4. Session can now use voice input/output in models.
+        // In a real scenario, this would enable voice capture → STT → understanding → TTS → voice output.
+        // The mock accepts the grants; real runtime would route voice queries to appropriate models.
+    }
 }
