@@ -77,6 +77,9 @@ object RunSummaryComputer {
      * - `isEgress == true`
      * - `isOutOfProjectMutation == true`
      * - `outcome == INDETERMINATE`
+     *
+     * Additionally, if ANY step is INDETERMINATE, ALL steps are shown (no collapsing),
+     * because INDETERMINATE indicates an uncertain state that requires full visibility.
      */
     fun compute(rows: List<ExecutionGraphRow>, status: RunStatus): RunSummaryReport {
         val pending = rows.filter { it.pendingApproval }
@@ -85,11 +88,22 @@ object RunSummaryComputer {
         val outOfProject = rows.filter { it.isOutOfProjectMutation }
         val indeterminate = rows.filter { it.outcome == StepOutcome.INDETERMINATE }
 
+        // If ANY step is INDETERMINATE, show everything (no collapsing).
+        // INDETERMINATE means the result is unknown, so the Run's state is uncertain.
+        val hasIndeterminate = indeterminate.isNotEmpty()
+        
         // The non-collapsible set is the union of all the above.
         val nonCollapsible = (pending + errors + egress + outOfProject + indeterminate)
             .map { it.stepIndex }.toSet()
 
-        val collapsedCount = rows.count { it.stepIndex !in nonCollapsible }
+        // If INDETERMINATE present, all steps are non-collapsible.
+        val effectiveNonCollapsible = if (hasIndeterminate) {
+            rows.map { it.stepIndex }.toSet()
+        } else {
+            nonCollapsible
+        }
+
+        val collapsedCount = rows.count { it.stepIndex !in effectiveNonCollapsible }
 
         return RunSummaryReport(
             status = status,

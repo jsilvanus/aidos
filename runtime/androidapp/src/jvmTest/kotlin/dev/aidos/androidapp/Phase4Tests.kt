@@ -220,7 +220,7 @@ class Phase4Tests {
         val summary = RunSummaryComputer.compute(rows, RunStatus.COMPLETED)
 
         assertEquals(1, summary.indeterminateSteps.size)
-        assertEquals(1, summary.collapsedStepCount, "Only success step should collapse")
+        assertEquals(0, summary.collapsedStepCount, "No steps should collapse when INDETERMINATE is present")
     }
 
     @Test
@@ -338,5 +338,10 @@ class Phase4Tests {
         isEgress = isEgress,
         isOutOfProjectMutation = isOutOfProject,
         pendingApproval = pendingApproval,
+        // For M32b benign classifier test, provide default values for benign-capable rows
+        // unless they are explicitly non-benign (egress or out-of-project)
+        recoveryClass = if (isEgress || isOutOfProject) "UNSAFE" else "PURE",
+        runTaintIsTrusted = true,
+        capabilityAlreadyGranted = true,
     )
 }

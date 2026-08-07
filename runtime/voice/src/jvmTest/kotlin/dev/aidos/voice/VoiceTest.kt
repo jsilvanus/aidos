@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
+import kotlinx.coroutines.runBlocking
 
 /**
  * Tests for M33 voice support (RFC-0057).
@@ -278,7 +279,9 @@ class VoiceTest {
         val stt = NoOpSttProvider()
         val tts = NoOpTtsProvider()
         
-        assertFalse(stt.isAvailable(), "No-op STT provider should report not available")
-        assertFalse(tts.isAvailable(), "No-op TTS provider should report not available")
+        runBlocking {
+            assertFalse(stt.isAvailable(), "No-op STT provider should report not available")
+            assertFalse(tts.isAvailable(), "No-op TTS provider should report not available")
+        }
     }
 }
