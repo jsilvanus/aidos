@@ -1,12 +1,18 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    // ---------------------------------------------------------------------------
+    // androidTarget() is ready to wire now that gitsema-kotlin ships it.
+    // The com.android.library plugin (AGP 8.5.2) must be added here, and
+    // dl.google.com must be reachable from the build environment.
+    // See build.gradle.kts at root; uncomment to activate.
+    // ---------------------------------------------------------------------------
+    // id("com.android.library")
 }
 
 kotlin {
     jvm()
-    // androidTarget() is added with the Android app (RFC-0099 Phase 4).
-    // Common code compiling is what this module exists to prove.
+    // androidTarget() — uncomment together with the plugin above.
 
     sourceSets {
         commonTest.dependencies {
@@ -25,3 +31,5 @@ kotlin {
         allWarningsAsErrors.set(true)
     }
 }
+
+// android { ... } — uncomment when androidTarget() is wired above.
