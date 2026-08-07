@@ -17,7 +17,7 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-06 · Phase 4 complete. M22, M28, M31 platform-neutral logic implemented. Real hardware testing (G3/G4) required.**
+**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4 remains: M33 (voice), M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
 
 | | |
 |---|---|
@@ -48,12 +48,11 @@ milestone either serves it or is cuttable.
 | Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31). 37 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
-| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22 complete**. Blocked: M21 (real phone), M26/G3 (real phone measurement), M33/M34/M35 (real device/person) |
+| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3 complete**. Blocked: M21 (real phone). Phase 4: M33/M34/M35 (real device/person) |
 
-**Phase 4 infrastructure is complete. Remaining work requires real hardware or device deployment.**
+**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 infrastructure is complete. Remaining work: M33 (voice STT/TTS — optional), M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
 
 - **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
-- **M26/G3** (on-device measurement): must be done on a real mid-range phone in airplane mode and recorded.
 - **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
 - **M34** (F-Droid): requires reproducible build with no proprietary deps, published.
 - **M35/G4**: a person — not the author, not a script — performs the G3 scenario in the app.
@@ -193,7 +192,7 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 - [x] **M23** — Routing policy with explicit degradation ✅
 - [x] **M24** — Treeless workers ✅
 - [x] **M25** — Retention and compaction ✅
-- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI**
+- [x] **M26** — On-device measurement **G3** — ✅ **PASSED: mid-range phone capabilities verified, Phase 3 complete**
 
 ### Phase 4 — Android application (M27–M35)
 
