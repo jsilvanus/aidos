@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Core permissions for Git repository access and offline operation -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    
+    <!-- Required for foreground service (M27: RuntimeServiceHost) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    
+    <!-- Optional for voice features (M33) -->
+    <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
+
+    <application
+        android:usesCleartextTraffic="false">
+
+        <!-- Main activity for Aidos UI (M28, RFC-0050) -->
+        <activity
+            android:name="fi.italeino.aidos.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service for runtime (M27, RFC-0050, D24) -->
+        <!-- RuntimeServiceHost will be defined once fully wired -->
+        <!-- <service
+            android:name="fi.italeino.aidos.service.RuntimeServiceHost"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="shortService" /> -->
+
+    </application>
+
+</manifest>
