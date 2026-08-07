@@ -17,7 +17,7 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4 remains: M33 (voice), M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
+**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
 
 | | |
 |---|---|
@@ -47,10 +47,11 @@ milestone either serves it or is cuttable.
 | Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
 | Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31). 37 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ |
+| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
-| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3 complete**. Blocked: M21 (real phone). Phase 4: M33/M34/M35 (real device/person) |
+| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
 
-**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 infrastructure is complete. Remaining work: M33 (voice STT/TTS — optional), M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
+**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 M33 voice complete. Remaining work: M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
 
 - **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
 - **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
@@ -207,7 +208,7 @@ androidTarget()) requires the Android SDK and a real device.
 - [x] **M32** — Notifications ✅
 - [x] **M32b** — Run Summary and the benign-approval classifier ✅
 - [x] **M32c** — Intent as a task list, with the proposal gate ✅
-- [ ] **M33** — Voice capture → local STT, spoken summaries → local TTS — *optional, cut first*
+- [x] **M33** — Voice capture → local STT, spoken summaries → local TTS ✅
 - [ ] **M34** — F-Droid distribution — **BLOCKED: requires reproducible build + device**
 - [ ] **M35** — The scenario, by a person **G4** — **BLOCKED: requires real person on real device**
 
