@@ -197,6 +197,23 @@ class Phase4Tests {
         assertTrue(nm.shouldFire(key, t0 + 61_000L))
     }
 
+    @Test
+    fun `M32 approval notifications bypass quiet hours`() {
+        val nm = NotificationManager(
+            throttleWindowMs = 60_000L,
+            quietHoursStart = kotlinx.datetime.LocalTime(22, 0),
+            quietHoursEnd = kotlinx.datetime.LocalTime(8, 0)
+        )
+        val content = nm.approvalContent("run-1", "fs_write", "Write to src/main.kt")
+
+        // Simulate nighttime (would normally be suppressed by quiet hours)
+        val nighttimeMs = 1_000L
+        
+        // Approval bypasses quiet hours
+        assertTrue(nm.shouldFire(content.key, nighttimeMs, isApproval = true),
+            "Approval notifications must bypass quiet hours")
+    }
+
     // ─── M32b: Run Summary and benign-approval classifier ────────────────────
 
     @Test

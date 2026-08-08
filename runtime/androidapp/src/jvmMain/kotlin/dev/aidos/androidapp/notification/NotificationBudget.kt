@@ -2,7 +2,6 @@ package dev.aidos.androidapp.notification
 
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import kotlin.math.min
 import kotlin.time.Duration.Companion.hours
 
 /**
@@ -13,6 +12,7 @@ import kotlin.time.Duration.Companion.hours
  * - APPROVAL category and USER_INITIATED completions bypass the budget.
  * - When budget exhausted, notifications coalesce instead of firing individually.
  * - Once-shot notifications (parked Runs) still respect budget; they must fire but do not consume budget.
+ * - Quiet hours are respected by the NotificationManager; the budget does not override them.
  */
 class NotificationBudget(
     private val projectId: String,
@@ -33,14 +33,14 @@ class NotificationBudget(
      * - Resets window on hour boundary
      */
     fun tryConsume(
-        category: NotificationCategory,
+        content: NotificationContent,
         isInitiatedByUser: Boolean,
         nowIso: () -> String = { Clock.System.now().toString() },
     ): Boolean {
         val now = Instant.parse(nowIso())
 
         // APPROVAL and USER_INITIATED bypass budget entirely.
-        if (category == NotificationCategory.APPROVAL || isInitiatedByUser) {
+        if (content.isApproval || isInitiatedByUser) {
             return true
         }
 
@@ -65,14 +65,26 @@ class NotificationBudget(
         }
     }
 
+    /**
+     * Gets the current budget remaining in this hour.
+     */
+    fun getRemainingBudget(nowIso: () -> String = { Clock.System.now().toString() }): Int {
+        val now = Instant.parse(nowIso())
+        val window = currentWindow
+        val hourAgo = now.minus(1.hours)
+
+        val activeWindow = when {
+            window == null -> BudgetWindow(now, 0)
+            window.hourStart < hourAgo -> BudgetWindow(now, 0)
+            else -> window
+        }
+
+        currentWindow = activeWindow
+        return maxOf(0, defaultBudget - activeWindow.count)
+    }
+
     /** Reset budget for testing or manual intervention. */
     fun reset() {
         currentWindow = null
     }
-}
-
-enum class NotificationCategory {
-    APPROVAL,        // Run awaiting capability grant; blocks work until answered
-    COMPLETION,      // Session completed; may be coalesced
-    INFORMATIONAL,   // Status update; always coalesced
 }
