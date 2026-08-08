@@ -1,5 +1,9 @@
 package dev.aidos.kernel
 
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.time.Duration
+
 /** Model classes. Not "capabilities" — that word means a security grant (RFC-0018). */
 enum class ModelKind { LLM, EMBEDDING, STT, TTS, VISION, OCR, RERANKER, TRANSLATION }
 
@@ -153,16 +157,16 @@ data class ModelDescriptor(
  */
 sealed class Trigger {
     /** Fire once at a specific instant (MVP). */
-    data class At(val instant: kotlinx.datetime.Instant) : Trigger()
+    data class At(val instant: Instant) : Trigger()
 
     /** Fire repeatedly at regular intervals (MVP). */
-    data class Every(val interval: kotlinx.time.Duration, val anchor: kotlinx.datetime.Instant? = null) : Trigger()
+    data class Every(val interval: Duration, val anchor: Instant? = null) : Trigger()
 
     /** Fire when an event matching the filter occurs (MVP). */
     data class OnEvent(val filter: EventFilter) : Trigger()
 
     /** Cron-like scheduling (not in MVP). */
-    data class Cron(val expression: String, val zone: kotlinx.datetime.TimeZone) : Trigger()
+    data class Cron(val expression: String, val zone: TimeZone) : Trigger()
 
     /** Fire when a condition becomes true (not in MVP). */
     data class OnCondition(val predicate: ConditionRef) : Trigger()
@@ -206,19 +210,19 @@ enum class WorkClass { INTERACTIVE, DEFERRED, SCHEDULED, OPPORTUNISTIC }
  * - OPPORTUNISTIC + WorkManager constraints → charging + idle + unmetered
  */
 data class ScheduledJob(
-    val id: String,                               // unique job ID
-    val projectId: String,                        // project that owns this job
-    val sessionId: String?,                       // session to invoke (null for future extension)
-    val name: String,                             // human-readable name
-    val trigger: Trigger,                         // when to fire
-    val guaranteeClass: GuaranteeClass,           // latency contract
-    val workClass: WorkClass,                     // platform mechanism
-    val constraintsJson: String = "{}",           // mobile constraints: charging, unmetered, idle (as JSON)
-    val enabled: Boolean = true,                  // whether this job should run
-    val nextRunAt: kotlinx.datetime.Instant?,    // when to run next (computed from trigger)
-    val lastRunAt: kotlinx.datetime.Instant?,    // when it last ran
-    val lastOutcome: String?,                     // outcome: "completed", "failed", "cancelled"
-    val consecutiveFailures: Int = 0,             // three failures disable the job
-    val missedOccurrences: Int = 0,               // coalesced occurrences never replayed
-    val createdAt: kotlinx.datetime.Instant,     // creation timestamp
+    val id: ScheduledJobId,                         // unique job ID
+    val projectId: String,                          // project that owns this job
+    val sessionId: String?,                         // session to invoke (null for future extension)
+    val name: String,                               // human-readable name
+    val trigger: Trigger,                           // when to fire
+    val guaranteeClass: GuaranteeClass,             // latency contract
+    val workClass: WorkClass,                       // platform mechanism
+    val constraintsJson: String = "{}",             // mobile constraints: charging, unmetered, idle (as JSON)
+    val enabled: Boolean = true,                    // whether this job should run
+    val nextRunAt: Instant?,                        // when to run next (computed from trigger)
+    val lastRunAt: Instant?,                        // when it last ran
+    val lastOutcome: String?,                       // outcome: "completed", "failed", "cancelled"
+    val consecutiveFailures: Int = 0,               // three failures disable the job
+    val missedOccurrences: Int = 0,                 // coalesced occurrences never replayed
+    val createdAt: Instant,                         // creation timestamp
 )
