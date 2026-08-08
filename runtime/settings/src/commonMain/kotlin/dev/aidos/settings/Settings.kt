@@ -114,6 +114,60 @@ object Settings {
         codec(StringCodec)
     }
 
+    // ─── SPEECH/VOICE class — preference (M33, RFC-0057) ────────────────────
+
+    /**
+     * Which local TTS (text-to-speech) voice to use, if any (RFC-0057, RFC-0049).
+     *
+     * PREFERENCE because TTS model selection is a user preference, not a security boundary.
+     * Empty string means no TTS model is installed or selected. Set to model ID (e.g. UUID) to enable.
+     */
+    val speechTtsModelId: SettingDescriptor<String> = setting("speech.tts_model_id") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("")
+        description("Local TTS model ID for spoken summaries. Empty string if no TTS model installed.")
+        codec(StringCodec)
+    }
+
+    /**
+     * Whether to automatically speak a terminal summary when a Run finishes (RFC-0057).
+     *
+     * PREFERENCE because it controls user experience, not security. Defaults to false.
+     */
+    val speechSummaryOnFinish: SettingDescriptor<Boolean> = setting("speech.summary_on_finish") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(false)
+        description("Automatically speak a summary when a Run completes or fails.")
+        codec(BooleanCodec)
+    }
+
+    /**
+     * Whether and how voice may be used to approve requests (RFC-0057, D26).
+     *
+     * PREFERENCE because voice approval is opt-in. OFF by default (most restrictive);
+     * TIER1 allows benign approvals (read-only, in-project). TIER2 currently shares the
+     * same benign gate as TIER1; readback verification is reserved for future work.
+     */
+    val speechVoiceApprovals: SettingDescriptor<VoiceApprovalsLevel> = setting("speech.voice_approvals") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(VoiceApprovalsLevel.OFF)
+        description("Voice approval level: OFF (disabled), TIER1 (benign only), TIER2 (same benign gate as TIER1).")
+        codec(EnumCodec(VoiceApprovalsLevel.entries.toTypedArray()))
+    }
+
+    /**
+     * Whether to duck audio during voice notifications and pause during Q&A (RFC-0057).
+     *
+     * PREFERENCE because it controls audio focus behavior. Enabled by default for better
+     * user experience while listening to voice summaries and answers.
+     */
+    val speechDuckOtherAudio: SettingDescriptor<Boolean> = setting("speech.duck_other_audio") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(true)
+        description("Duck background audio during notifications, pause during voice Q&A.")
+        codec(BooleanCodec)
+    }
+
     // ─── Registry ───────────────────────────────────────────────────────────
 
     /** Every declared setting, for enumeration and CLI diagnostics. */
@@ -126,6 +180,10 @@ object Settings {
         trustUntrustedPaths,
         retentionAgedDays,
         modelDefaultKind,
+        speechTtsModelId,
+        speechSummaryOnFinish,
+        speechVoiceApprovals,
+        speechDuckOtherAudio,
     )
 
     fun forKey(key: String): SettingDescriptor<*>? = all.firstOrNull { it.key == key }
@@ -146,4 +204,22 @@ enum class EgressPolicy {
 
     /** Remote calls are permitted without per-Run approval. */
     ALLOW,
+}
+
+/**
+ * Voice approval levels for `speech.voice_approvals` (RFC-0057, D26).
+ *
+ * OFF is most restrictive (no voice approvals at all); TIER2 currently shares the same
+ * benign gate as TIER1 and is reserved for future readback-verification enforcement.
+ * Tier 3 (egress, tainted, new grants) never approves by voice, regardless of this setting.
+ */
+enum class VoiceApprovalsLevel {
+    /** Voice approvals are disabled. Only tap/UI approval is allowed. */
+    OFF,
+
+    /** Benign approvals only: Read or Mutate(IN_PROJECT), not UNSAFE, TRUSTED, already granted. */
+    TIER1,
+
+    /** Currently equivalent to TIER1; reserved for future readback-verification enforcement. */
+    TIER2,
 }

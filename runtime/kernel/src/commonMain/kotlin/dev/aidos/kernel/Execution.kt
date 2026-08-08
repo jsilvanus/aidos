@@ -67,6 +67,12 @@ data class Task(
     /** Set when parked on a child session's Run — worker fan-out (RFC-0006). */
     val awaitingRunId: RunId?,
     val retryPolicy: RetryPolicy,
+
+    /** How this approval was given, if at all: tap | voice_tier1 | voice_tier2 (RFC-0057, D26). */
+    val approvalChannel: String?,
+
+    /** For tier 2 approvals: the recognized phrase naming the action (RFC-0057). */
+    val approvalPhrase: String?,
 )
 
 enum class TaskKind { MODEL_CALL, TOOL_CALL, CAPABILITY_REQUEST, USER_PROMPT, COMPOSITE }

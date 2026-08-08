@@ -312,6 +312,8 @@ class SqliteExecutor(
                                 retryOn = emptySet(),
                                 backoff = BackoffStrategy.None,
                             ),
+                            approvalChannel = null,
+                            approvalPhrase = null,
                         )
                     )
                 }

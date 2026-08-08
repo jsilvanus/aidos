@@ -247,4 +247,40 @@ class SettingsTest {
         assertTrue(r.errors.isEmpty())
         assertEquals("false", r.values["allow_plaintext_http"]?.toString())
     }
+
+    @Test
+    fun `speech settings are declared with proper defaults`() {
+        assertNotNull(Settings.speechTtsModelId)
+        assertEquals("", Settings.speechTtsModelId.default)
+        assertNotNull(Settings.speechSummaryOnFinish)
+        assertEquals(false, Settings.speechSummaryOnFinish.default)
+        assertNotNull(Settings.speechVoiceApprovals)
+        assertEquals(VoiceApprovalsLevel.OFF, Settings.speechVoiceApprovals.default)
+        assertNotNull(Settings.speechDuckOtherAudio)
+        assertEquals(true, Settings.speechDuckOtherAudio.default)
+    }
+
+    @Test
+    fun `speech settings can be found by key`() {
+        assertNotNull(Settings.forKey("speech.tts_model_id"))
+        assertNotNull(Settings.forKey("speech.summary_on_finish"))
+        assertNotNull(Settings.forKey("speech.voice_approvals"))
+        assertNotNull(Settings.forKey("speech.duck_other_audio"))
+    }
+
+    @Test
+    fun `voice approvals enum encodes and decodes`() {
+        val codec = Settings.speechVoiceApprovals.codec as EnumCodec<VoiceApprovalsLevel>
+        val offEncoded = codec.encode(VoiceApprovalsLevel.OFF)
+        val tier1Encoded = codec.encode(VoiceApprovalsLevel.TIER1)
+        val tier2Encoded = codec.encode(VoiceApprovalsLevel.TIER2)
+
+        assertEquals("OFF", offEncoded.toString().trim('"'))
+        assertEquals("TIER1", tier1Encoded.toString().trim('"'))
+        assertEquals("TIER2", tier2Encoded.toString().trim('"'))
+
+        val offDecoded = codec.decode(offEncoded)
+        assertTrue(offDecoded.isSuccess)
+        assertEquals(VoiceApprovalsLevel.OFF, offDecoded.getOrNull())
+    }
 }

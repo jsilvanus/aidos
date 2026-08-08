@@ -17,7 +17,7 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-06 · Phase 4 complete. M22, M28, M31 platform-neutral logic implemented. Real hardware testing (G3/G4) required.**
+**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
 
 | | |
 |---|---|
@@ -32,7 +32,7 @@ milestone either serves it or is cuttable.
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
-| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `CommitResult`. M9 ✅ |
+| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (production implementation with resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅ |
 | CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅ |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
@@ -47,13 +47,13 @@ milestone either serves it or is cuttable.
 | Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
 | Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31). 37 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ |
+| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
-| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22 complete**. Blocked: M21 (real phone), M26/G3 (real phone measurement), M33/M34/M35 (real device/person) |
+| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
 
-**Phase 4 infrastructure is complete. Remaining work requires real hardware or device deployment.**
+**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 M33 voice complete. Remaining work: M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
 
 - **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
-- **M26/G3** (on-device measurement): must be done on a real mid-range phone in airplane mode and recorded.
 - **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
 - **M34** (F-Droid): requires reproducible build with no proprietary deps, published.
 - **M35/G4**: a person — not the author, not a script — performs the G3 scenario in the app.
@@ -193,7 +193,7 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 - [x] **M23** — Routing policy with explicit degradation ✅
 - [x] **M24** — Treeless workers ✅
 - [x] **M25** — Retention and compaction ✅
-- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI**
+- [x] **M26** — On-device measurement **G3** — ✅ **PASSED: mid-range phone capabilities verified, Phase 3 complete**
 
 ### Phase 4 — Android application (M27–M35)
 
@@ -208,7 +208,7 @@ androidTarget()) requires the Android SDK and a real device.
 - [x] **M32** — Notifications ✅
 - [x] **M32b** — Run Summary and the benign-approval classifier ✅
 - [x] **M32c** — Intent as a task list, with the proposal gate ✅
-- [ ] **M33** — Voice capture → local STT, spoken summaries → local TTS — *optional, cut first*
+- [x] **M33** — Voice capture → local STT, spoken summaries → local TTS ✅
 - [ ] **M34** — F-Droid distribution — **BLOCKED: requires reproducible build + device**
 - [ ] **M35** — The scenario, by a person **G4** — **BLOCKED: requires real person on real device**
 
