@@ -35,6 +35,9 @@ class RuntimeServiceHost(
     private val _state = MutableStateFlow<ServiceState>(ServiceState.Idle)
     val state: StateFlow<ServiceState> = _state.asStateFlow()
 
+    /** Execution window derived from the foreground service state (D24). */
+    val executionWindow: ExecutionWindow = ForegroundServiceExecutionWindow(_state.asStateFlow())
+
     /** Human-readable text for the foreground service notification (D24). */
     val currentNotificationText: String
         get() = when (val s = _state.value) {
