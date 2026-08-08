@@ -168,6 +168,62 @@ object Settings {
         codec(BooleanCodec)
     }
 
+    // ─── MODELS class — user-scope (M21, RFC-0022, RFC-0020) ───────────────────
+
+    /**
+     * Default LLM model ID to use for new sessions (RFC-0022, RFC-0020).
+     *
+     * PREFERENCE because model selection is a user choice, not a security boundary.
+     * Empty string means use automatic routing. Set to a specific model ID to pin.
+     */
+    val modelDefaultLlm: SettingDescriptor<String> = setting("model.default_llm") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("")
+        description("Default LLM model ID. Empty string = automatic routing (RFC-0020).")
+        codec(StringCodec)
+    }
+
+    /**
+     * Default embedding model ID for knowledge indexing (RFC-0022).
+     *
+     * PREFERENCE. Empty string means local embeddings are disabled.
+     * Set to a model ID (e.g., "nomic-embed-v1.5") to enable local search.
+     */
+    val modelDefaultEmbedding: SettingDescriptor<String> = setting("model.default_embedding") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("")
+        description("Default embedding model for knowledge indexing. Empty = local embeddings disabled.")
+        codec(StringCodec)
+    }
+
+    /**
+     * Simulated device profile for cookbook testing (RFC-0022).
+     *
+     * PREFERENCE. JSON object with device profile overrides for testing cookbook
+     * on different device tiers without changing actual device. Example:
+     * {"available_ram_mb": 2048, "cpu_cores": 4}
+     */
+    val modelDeviceProfileOverride: SettingDescriptor<String> = setting("model.device_profile_override") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("{}")
+        description("JSON device profile override for cookbook testing. Empty {} = use actual device profile.")
+        codec(StringCodec)
+    }
+
+    /**
+     * Whether to skip digest verification when downloading models (RFC-0022).
+     *
+     * SECURITY (not PREFERENCE) because skipping verification is a trust boundary.
+     * Default false (always verify). Set to true only for testing or trusted sources.
+     */
+    val modelSkipDigestVerification: SettingDescriptor<Boolean> = setting("model.skip_digest_verification") {
+        scopeClass(ScopeClass.SECURITY)
+        default(false)
+        mostRestrictive(false)
+        description("Skip SHA-256 verification when downloading models. Default false (always verify).")
+        codec(BooleanCodec)
+    }
+
     // ─── Registry ───────────────────────────────────────────────────────────
 
     /** Every declared setting, for enumeration and CLI diagnostics. */
@@ -184,6 +240,10 @@ object Settings {
         speechSummaryOnFinish,
         speechVoiceApprovals,
         speechDuckOtherAudio,
+        modelDefaultLlm,
+        modelDefaultEmbedding,
+        modelDeviceProfileOverride,
+        modelSkipDigestVerification,
     )
 
     fun forKey(key: String): SettingDescriptor<*>? = all.firstOrNull { it.key == key }

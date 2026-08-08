@@ -4,7 +4,8 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
+    // androidTarget() — requires AGP (D5); see PIPELINE.md
+
 
     sourceSets {
         val jvmMain by getting {
@@ -29,13 +30,13 @@ kotlin {
             }
         }
 
-        val androidMain by getting {
-            dependencies {
-                implementation(project(":kernel"))
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-                implementation("io.github.jsilvanus:gitsema-core-androidRelease:0.1.0-SNAPSHOT")
-            }
-        }
+        // val androidMain by getting {
+        //     dependencies {
+        //         implementation(project(":kernel"))
+        //         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+        //         implementation("io.github.jsilvanus:gitsema-core-androidRelease:0.1.0-SNAPSHOT")
+        //     }
+        // }
     }
 
     compilerOptions {
