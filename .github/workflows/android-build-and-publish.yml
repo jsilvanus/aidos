@@ -2,10 +2,10 @@ name: Build and Publish Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths: ['runtime/**', '.github/workflows/android-build-and-publish.yml']
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths: ['runtime/**', '.github/workflows/android-build-and-publish.yml']
   workflow_dispatch:
 
@@ -29,28 +29,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       
-      - name: Create or use keystore
+      - name: Set up keystore from secrets (optional)
         working-directory: runtime
         env:
-          KEYSTORE_FILE: ${{ github.workspace }}/aidos-keystore.jks
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # Check if secrets are configured
-          if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "⚠️  Keystore secrets not configured. Building with debug signing."
-            # For debug builds without signing, we'll skip the signing config
-            echo "keystore.skip=true" >> gradle.properties
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "⚠️  KEYSTORE_BASE64 secret not configured. Building unsigned APK."
           else
-            # If you have a base64-encoded keystore secret, decode it
-            if [ ! -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-              echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE_FILE"
-              echo "Keystore decoded and placed at $KEYSTORE_FILE"
-            else
-              echo "⚠️  KEYSTORE_BASE64 secret not found. Skipping keystore setup."
-              echo "keystore.skip=true" >> gradle.properties
-            fi
+            echo "$KEYSTORE_BASE64" | base64 -d > "${{ github.workspace }}/aidos-keystore.jks"
+            echo "✓ Keystore file restored from secret"
+            export KEYSTORE_FILE="${{ github.workspace }}/aidos-keystore.jks"
           fi
       
       - name: Build release APK
@@ -61,65 +53,93 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          gradle :androidapp:assembleRelease --no-daemon
+          gradle :androidapp:assembleRelease --no-daemon -i
       
-      - name: Find APK
+      - name: Find and inspect APK
         id: find-apk
         run: |
+          # Find release APK
           APK_PATH=$(find ./runtime -name "*release*.apk" -type f | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "Error: APK not found"
+            echo "❌ Error: APK not found after build"
+            find ./runtime -name "*.apk" -type f
             exit 1
           fi
+          
+          echo "✓ Found APK: $APK_PATH"
           echo "apk-path=$APK_PATH" >> $GITHUB_OUTPUT
-          echo "Found APK at: $APK_PATH"
+          
+          # Get APK size
+          SIZE=$(ls -lh "$APK_PATH" | awk '{print $5}')
+          echo "APK size: $SIZE"
+          echo "apk-size=$SIZE" >> $GITHUB_OUTPUT
       
-      - name: Publish APK to GitHub Packages
+      - name: Upload APK to GitHub Packages via Maven
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: maven.pkg.github.com
+          GITHUB_ACTOR: ${{ github.actor }}
+          REGISTRY_URL: https://maven.pkg.github.com/${{ github.repository_owner }}/aidos
         run: |
-          # Set up Maven publishing configuration
+          # Extract version info
+          MANIFEST_PATH="./runtime/androidapp/src/androidMain/AndroidManifest.xml"
+          BUILD_NUMBER=${{ github.run_number }}
+          COMMIT_SHA=${{ github.sha }}
+          
+          # Use build number and commit as version
+          VERSION="0.1.0-build.$BUILD_NUMBER+${COMMIT_SHA:0:8}"
+          APK_FILE="${{ steps.find-apk.outputs.apk-path }}"
+          
+          echo "Publishing APK:"
+          echo "  Version: $VERSION"
+          echo "  File: $APK_FILE"
+          echo "  Registry: $REGISTRY_URL"
+          
+          # Create settings.xml for Maven authentication
           mkdir -p $HOME/.m2
-          cat > $HOME/.m2/settings.xml <<EOF
-          <settings>
+          cat > $HOME/.m2/settings.xml << 'EOF'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+            http://maven.apache.org/xsd/settings-1.0.0.xsd">
             <servers>
               <server>
-                <id>github</id>
-                <username>\${{ github.actor }}</username>
-                <password>\${env.GITHUB_TOKEN}</password>
+                <id>github-packages</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
               </server>
             </servers>
-            <mirrors>
-              <mirror>
-                <id>github</id>
-                <mirrorOf>*</mirrorOf>
-                <url>https://${REGISTRY}/${{ github.repository_owner }}/aidos-android</url>
-              </mirror>
-            </mirrors>
           </settings>
           EOF
           
-          # Extract version from AndroidManifest
-          MANIFEST_PATH="./runtime/androidapp/src/androidMain/AndroidManifest.xml"
-          VERSION=$(grep -oP 'android:versionName="\K[^"]*' "$MANIFEST_PATH" 2>/dev/null || echo "0.1.0")
-          BUILD_NUMBER=${{ github.run_number }}
-          RELEASE_VERSION="${VERSION}-build.${BUILD_NUMBER}"
-          
-          # Publish using Maven
+          # Publish APK using Maven deploy
           mvn deploy:deploy-file \
             -DgroupId=fi.italeino \
             -DartifactId=aidos-android \
-            -Dversion="${RELEASE_VERSION}" \
+            -Dversion="${VERSION}" \
             -Dpackaging=apk \
-            -Dfile="${{ steps.find-apk.outputs.apk-path }}" \
-            -DrepositoryId=github \
-            -Durl="https://${REGISTRY}/${{ github.repository_owner }}/aidos-android" \
-            -s $HOME/.m2/settings.xml || true
+            -Dfile="$APK_FILE" \
+            -DrepositoryId=github-packages \
+            -Durl="${REGISTRY_URL}" \
+            -s $HOME/.m2/settings.xml \
+            --no-transfer-progress || echo "Note: Maven publish step may require manual setup"
       
-      - name: Upload APK as artifact
+      - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: aidos-release-apk
+          name: aidos-android-release-apk
           path: ${{ steps.find-apk.outputs.apk-path }}
           retention-days: 30
+          compression-level: 0
+      
+      - name: Create Release Summary
+        if: success()
+        run: |
+          echo "## ✅ APK Build Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Information:**" >> $GITHUB_STEP_SUMMARY
+          echo "- APK: $(basename '${{ steps.find-apk.outputs.apk-path }}')" >> $GITHUB_STEP_SUMMARY
+          echo "- Size: ${{ steps.find-apk.outputs.apk-size }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Build: #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
