@@ -1,0 +1,30 @@
+Aidos is an offline-first, open-source AI Operating Environment. Make progress on Git projects directly from your phone—read code, ask questions, make edits, review diffs, and commit—all in airplane mode with complete privacy.
+
+**Core Features:**
+- **Offline-first**: Full capability without internet. Cloud is optional.
+- **Privacy-by-default**: Your code stays on your device. No analytics, no telemetry, no accounts.
+- **Git-native**: Work with real repositories, branches, and commits using JGit.
+- **Local AI**: Run language models and embeddings locally on your phone.
+- **Structured reasoning**: Ask questions about code, get useful answers backed by semantic search.
+- **Powerful editor**: Review diffs, edit files, and commit from a phone screen, one-handed.
+
+**Thesis:**
+A person opens a real Git repository on a mid-range Android phone, in airplane mode, asks a question about the code, gets a useful answer, makes an edit, reviews the diff, and commits.
+
+**Not included (yet):**
+- Cloud sync (Git is your source of truth)
+- Collaboration features (single-user design)
+- Pre-built indexes (your phone builds its own)
+
+**Platform:**
+- Requires Android 8.0+ (API 26)
+- Designed for mid-range phones (Snapdragon 600-700 series)
+- Storage: ~512MB for index and state
+
+**License:**
+EUPL-1.2 (European Union Public Licence) — a strong copyleft license compatible with GPL, ensuring Aidos and all derivative works remain open source.
+
+**Code:**
+https://github.com/jsilvanus/aidos
+
+Made with Kotlin Multiplatform and Jetpack Compose.
