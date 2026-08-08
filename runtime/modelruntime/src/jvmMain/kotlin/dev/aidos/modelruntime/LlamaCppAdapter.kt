@@ -197,39 +197,41 @@ class LlamaCppAdapter(
     }
 
     /**
-     * Compile tool definitions to GBNF grammar for constrained decoding (RFC-0021).
+     * Compile tool definitions to GBNF grammar for constrained decoding (RFC-0021, M22).
      *
      * GBNF (GGML BNF) is llama.cpp's grammar format for enforcing structured output.
      * This creates a grammar that validates tool calls match the schema.
      *
-     * For now, returns null (grammar support in future). Tools will still work
-     * via text parsing, just without constraint enforcement.
+     * The compiled grammar constrains the model to generate valid JSON tool calls
+     * with the structure: {"tool": "toolName", "args": {...}}
+     *
+     * See GbnfGrammarCompiler for the implementation.
      */
     private fun compileToolGrammar(tools: List<dev.aidos.kernel.ToolDescriptor>): String? {
-        // TODO: M22 — Implement GBNF grammar compilation for tools
-        // Grammars would be compiled from tool JSON schema
-        // Example:
-        // root   ::= "{" ws "\"name\":" ws ("\"toolname\"" | "\"other\"") ..."
-        // See: https://github.com/ggerganov/llama.cpp/blob/master/grammars/json.gbnf
-        return null
+        return GbnfGrammarCompiler.compile(tools)
     }
 
     /**
-     * Extract tool calls from model output.
+     * Extract tool calls from model output (RFC-0021, M22).
      *
-     * Parses the output text to find tool calls (name and arguments).
-     * Used when constrained decoding is not available (M21 MVP).
+     * Parses the output text to find tool calls with the expected format:
+     * {"tool": "toolName", "args": {...}}
      *
-     * TODO: M22 — Enhance with structured parsing when GBNF grammar is enforced.
+     * When constrained decoding is used, the output is guaranteed to be well-formed
+     * and parsing is straightforward. When not constrained, rawText is retained
+     * to preserve the original output for audit purposes (security-relevant when
+     * parsing was heuristic — RFC-0021).
+     *
+     * See ToolCallParser for the implementation.
      */
     private fun extractToolCalls(
         output: String,
         tools: List<dev.aidos.kernel.ToolDescriptor>,
     ): List<ToolCall> {
-        // TODO: M22 — Parse tool calls from output
-        // Look for patterns like: <tool name="function_name" args="...">
-        // Validate against tool definitions
-        return emptyList()
+        // For M22, assume output was not constrained by GBNF grammar yet
+        // (grammar compilation happens above, but llama.cpp integration is future work).
+        // Mark parsing as heuristic so rawText is retained for audit trail.
+        return ToolCallParser.parse(output, tools, isConstrained = false)
     }
 
     /**
