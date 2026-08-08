@@ -1,6 +1,6 @@
 package dev.aidos.androidapp.scheduling
 
-import dev.aidos.kernel.EventFilter
+import dev.aidos.kernel.EventTriggerFilter
 import dev.aidos.kernel.Trigger
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -55,9 +55,15 @@ object TriggerCalculator {
                 null
             }
 
-            // Not in MVP; return null as placeholder.
-            is Trigger.Cron -> null
-            is Trigger.OnCondition -> null
+            is Trigger.Cron -> {
+                // Cron triggers use the cron expression to compute next run.
+                CronCalculator.nextRunAt(trigger.expression, trigger.zone, nowIso)
+            }
+
+            is Trigger.OnCondition -> {
+                // Condition triggers are not in MVP; return null as placeholder.
+                null
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 package dev.aidos.kernel
 
 import kotlin.jvm.JvmInline
+import kotlinx.serialization.Serializable
 
 /**
  * Typed identifiers.
@@ -13,26 +14,44 @@ import kotlin.jvm.JvmInline
  * [SessionId] where a [RunId] is expected does not compile. In a system where almost every
  * function takes three or four IDs, that is worth the boilerplate.
  */
+@Serializable
 @JvmInline value class ProjectId(val value: String)
+@Serializable
 @JvmInline value class SessionId(val value: String)
+@Serializable
 @JvmInline value class RunId(val value: String)
+@Serializable
 @JvmInline value class TaskId(val value: String)
+@Serializable
 @JvmInline value class AttemptId(val value: String)
+@Serializable
 @JvmInline value class PlanId(val value: String)
+@Serializable
 @JvmInline value class CapabilityId(val value: String)
+@Serializable
 @JvmInline value class ContentNodeId(val value: String)
+@Serializable
 @JvmInline value class IntentNodeId(val value: String)
+@Serializable
 @JvmInline value class EventId(val value: String)
+@Serializable
 @JvmInline value class AuditId(val value: String)
+@Serializable
 @JvmInline value class SecretId(val value: String)
+@Serializable
 @JvmInline value class DeviceId(val value: String)
+@Serializable
 @JvmInline value class UserId(val value: String)
+@Serializable
 @JvmInline value class WorkspaceId(val value: String)
+@Serializable
 @JvmInline value class ScheduledJobId(val value: String)
 
 /** Who took an action. Two fields, never one polymorphic identifier (RFC-0046). */
+@Serializable
 data class ActorRef(val kind: ActorKind, val id: String)
 
+@Serializable
 enum class ActorKind {
     USER,
     SESSION,

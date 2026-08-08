@@ -2,7 +2,8 @@ package dev.aidos.kernel
 
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
-import kotlinx.time.Duration
+import kotlinx.serialization.Serializable
+import kotlin.time.Duration
 
 /** Model classes. Not "capabilities" — that word means a security grant (RFC-0018). */
 enum class ModelKind { LLM, EMBEDDING, STT, TTS, VISION, OCR, RERANKER, TRANSLATION }
@@ -155,27 +156,35 @@ data class ModelDescriptor(
  * the latency contract on the target platform. On MOBILE, background triggers are EVENTUAL
  * at best — coalesced, never replayed.
  */
+@Serializable
 sealed class Trigger {
     /** Fire once at a specific instant (MVP). */
+    @Serializable
     data class At(val instant: Instant) : Trigger()
 
     /** Fire repeatedly at regular intervals (MVP). */
+    @Serializable
     data class Every(val interval: Duration, val anchor: Instant? = null) : Trigger()
 
     /** Fire when an event matching the filter occurs (MVP). */
-    data class OnEvent(val filter: EventFilter) : Trigger()
+    @Serializable
+    data class OnEvent(val filter: EventTriggerFilter) : Trigger()
 
     /** Cron-like scheduling (not in MVP). */
+    @Serializable
     data class Cron(val expression: String, val zone: TimeZone) : Trigger()
 
     /** Fire when a condition becomes true (not in MVP). */
+    @Serializable
     data class OnCondition(val predicate: ConditionRef) : Trigger()
 }
 
 /** Event filter for OnEvent triggers. Serializable form (MVP: filtering spec TBD). */
-data class EventFilter(val eventType: String, val metadata: Map<String, String> = emptyMap())
+@Serializable
+data class EventTriggerFilter(val eventType: String, val metadata: Map<String, String> = emptyMap())
 
 /** Condition reference for OnCondition triggers (not in MVP). */
+@Serializable
 data class ConditionRef(val sessionId: String, val predicateName: String)
 
 /**
@@ -185,6 +194,7 @@ data class ConditionRef(val sessionId: String, val predicateName: String)
  * - EVENTUAL: fires within window, possibly much later (all profiles)
  * - OPPORTUNISTIC: fires when conditions allow (MOBILE background only, may not fire today)
  */
+@Serializable
 enum class GuaranteeClass { PROMPT, EVENTUAL, OPPORTUNISTIC }
 
 /**
@@ -195,6 +205,7 @@ enum class GuaranteeClass { PROMPT, EVENTUAL, OPPORTUNISTIC }
  * - SCHEDULED: recurring work, runs under WorkManager periodic (timers, recurring sessions)
  * - OPPORTUNISTIC: runs when device is idle+charging+unmetered (model downloads, embeddings backfill)
  */
+@Serializable
 enum class WorkClass { INTERACTIVE, DEFERRED, SCHEDULED, OPPORTUNISTIC }
 
 /**
@@ -209,6 +220,7 @@ enum class WorkClass { INTERACTIVE, DEFERRED, SCHEDULED, OPPORTUNISTIC }
  * - SCHEDULED + WorkManager periodic → timer
  * - OPPORTUNISTIC + WorkManager constraints → charging + idle + unmetered
  */
+@Serializable
 data class ScheduledJob(
     val id: ScheduledJobId,                         // unique job ID
     val projectId: String,                          // project that owns this job

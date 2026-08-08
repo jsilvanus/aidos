@@ -1,11 +1,14 @@
 package dev.aidos.kernel
 
+import kotlinx.serialization.Serializable
+
 /**
  * Bounds on consumption (RFC-0028).
  *
  * A capability constraint, not an accounting figure: exceeding a budget is a *denial*, enforced
  * at the point of spend, not a warning observed afterwards.
  */
+@Serializable
 data class Budget(
     val modelCalls: Int? = null,
     val inputTokens: Long? = null,
@@ -43,6 +46,7 @@ data class Budget(
     }
 }
 
+@Serializable
 enum class BudgetScope { RUN, SESSION, PROJECT, USER, CAPABILITY }
 
 /**
@@ -57,5 +61,6 @@ interface BudgetLedger {
     suspend fun remaining(scope: BudgetScope, scopeId: String): Budget?
 }
 
+@Serializable
 @kotlin.jvm.JvmInline
 value class ReservationId(val value: String)
