@@ -1,11 +1,11 @@
 plugins {
     kotlin("multiplatform")
-    // id("com.android.library") — uncomment when AGP is resolvable (needs dl.google.com).
+    id("com.android.application")
 }
 
 kotlin {
     jvm()
-    // androidTarget() — uncomment together with the plugin above.
+    androidTarget()
 
     sourceSets {
         // M28/M31 platform-neutral logic lives in commonMain so that when androidTarget()
@@ -35,52 +35,79 @@ kotlin {
         }
 
         // androidMain sourceSet — uncomment when androidTarget() is wired.
-        // val androidMain by getting {
-        //     dependencies {
-        //         implementation(project(":kernel"))
-        //         implementation(project(":api"))
-        //         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-        //         implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-        //         
-        //         // Compose and Material Design 3
-        //         implementation("androidx.compose.ui:ui:1.6.0")
-        //         implementation("androidx.compose.material3:material3:1.1.0")
-        //         implementation("androidx.compose.foundation:foundation:1.6.0")
-        //         implementation("androidx.activity:activity-compose:1.8.0")
-        //         implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
-        //         implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.1")
-        //         
-        //         // Navigation
-        //         implementation("androidx.navigation:navigation-compose:2.7.0")
-        //         
-        //         // Android core
-        //         implementation("androidx.core:core-ktx:1.10.1")
-        //         implementation("androidx.appcompat:appcompat:1.6.1")
-        //         implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
-        //         
-        //         // For scoped storage and file access
-        //         implementation("androidx.documentfile:documentfile:1.0.1")
-        //     }
-        // }
+        val androidMain by getting {
+            dependencies {
+                implementation(project(":kernel"))
+                implementation(project(":api"))
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                
+                // Compose and Material Design 3
+                implementation("androidx.compose.ui:ui:1.6.0")
+                implementation("androidx.compose.material3:material3:1.1.0")
+                implementation("androidx.compose.foundation:foundation:1.6.0")
+                implementation("androidx.activity:activity-compose:1.8.0")
+                implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
+                implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.1")
+                
+                // Navigation
+                implementation("androidx.navigation:navigation-compose:2.7.0")
+                
+                // Android core
+                implementation("androidx.core:core-ktx:1.10.1")
+                implementation("androidx.appcompat:appcompat:1.6.1")
+                implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
+                
+                // For scoped storage and file access
+                implementation("androidx.documentfile:documentfile:1.0.1")
+            }
+        }
     }
 }
 
 // android { } — uncomment when androidTarget() is wired.
-// android {
-//     namespace = "fi.italeino.aidos"
-//     compileSdk = 34
-//     
-//     defaultConfig {
-//         minSdk = 26
-//         targetSdk = 34
-//     }
-//     
-//     compileOptions {
-//         sourceCompatibility = JavaVersion.VERSION_11
-//         targetCompatibility = JavaVersion.VERSION_11
-//     }
-//     
-//     kotlinOptions {
-//         jvmTarget = "11"
-//     }
-// }
+android {
+    namespace = "fi.italeino.aidos"
+    compileSdk = 34
+    
+    defaultConfig {
+        applicationId = "fi.italeino.aidos"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+    
+    signingConfigs {
+        create("release") {
+            val keystore = System.getenv("KEYSTORE_FILE") ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
+            val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            val keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
+            val keyPassword = System.getenv("KEY_PASSWORD") ?: keystorePassword
+            
+            if (keystore != null && keystore.isNotEmpty()) {
+                storeFile = File(keystore)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+    
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
