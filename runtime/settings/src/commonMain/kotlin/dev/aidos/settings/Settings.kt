@@ -145,13 +145,13 @@ object Settings {
      * Whether and how voice may be used to approve requests (RFC-0057, D26).
      *
      * PREFERENCE because voice approval is opt-in. OFF by default (most restrictive);
-     * TIER1 allows benign approvals (read-only, in-project); TIER2 adds readback for
-     * out-of-project mutations (requires spoken phrase, not just "yes").
+     * TIER1 allows benign approvals (read-only, in-project). TIER2 currently shares the
+     * same benign gate as TIER1; readback verification is reserved for future work.
      */
     val speechVoiceApprovals: SettingDescriptor<VoiceApprovalsLevel> = setting("speech.voice_approvals") {
         scopeClass(ScopeClass.PREFERENCE)
         default(VoiceApprovalsLevel.OFF)
-        description("Voice approval level: OFF (disabled), TIER1 (benign only), TIER2 (benign + readback).")
+        description("Voice approval level: OFF (disabled), TIER1 (benign only), TIER2 (same benign gate as TIER1).")
         codec(EnumCodec(VoiceApprovalsLevel.entries.toTypedArray()))
     }
 
@@ -209,9 +209,9 @@ enum class EgressPolicy {
 /**
  * Voice approval levels for `speech.voice_approvals` (RFC-0057, D26).
  *
- * OFF is most restrictive (no voice approvals at all); TIER2 is least restrictive but still
- * requires a distinct phrase naming the action. Tier 3 (egress, tainted, new grants) never
- * approves by voice, regardless of this setting.
+ * OFF is most restrictive (no voice approvals at all); TIER2 currently shares the same
+ * benign gate as TIER1 and is reserved for future readback-verification enforcement.
+ * Tier 3 (egress, tainted, new grants) never approves by voice, regardless of this setting.
  */
 enum class VoiceApprovalsLevel {
     /** Voice approvals are disabled. Only tap/UI approval is allowed. */
@@ -220,6 +220,6 @@ enum class VoiceApprovalsLevel {
     /** Benign approvals only: Read or Mutate(IN_PROJECT), not UNSAFE, TRUSTED, already granted. */
     TIER1,
 
-    /** Benign + readback approvals: requires distinct phrase for out-of-project mutations and UNSAFE effects. */
+    /** Currently equivalent to TIER1; reserved for future readback-verification enforcement. */
     TIER2,
 }

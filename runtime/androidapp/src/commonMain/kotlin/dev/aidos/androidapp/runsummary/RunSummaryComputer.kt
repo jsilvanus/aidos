@@ -41,8 +41,8 @@ data class ExecutionGraphRow(
      */
     val runTaintIsTrusted: Boolean? = null,
     /**
-     * Whether this Task's capability_id is set (true = already granted) or null (false = new grant).
-     * Null means unknown.
+     * Whether this Task's capability_id is set (true = already granted, false = new grant,
+     * null = unknown).
      */
     val capabilityAlreadyGranted: Boolean? = null,
 )
@@ -132,6 +132,7 @@ object RunSummaryComputer {
     fun isBenign(row: ExecutionGraphRow): Boolean {
         // Condition 1: Effect is Read or Mutate(IN_PROJECT)
         // Only known read-only tools are benign. Mutations are only benign if in-project.
+        if (row.outcome == StepOutcome.INDETERMINATE) return false
         if (row.isEgress) return false  // egress is tier3, never benign
         if (row.isOutOfProjectMutation) return false  // out-of-project is tier2 at best
 
@@ -144,8 +145,11 @@ object RunSummaryComputer {
 
         // Condition 2: Recovery is not UNSAFE
         // Benign approvals must be reversible/retryable. UNSAFE effects can have unknown outcomes.
-        val unsafeRecoveryClasses = setOf("UNSAFE", null)  // null = unknown, be conservative
-        if (row.recoveryClass in unsafeRecoveryClasses) return false
+        val condition2Passes = when (row.recoveryClass) {
+            "PURE", "IDEMPOTENT", "CHECKABLE" -> true
+            else -> false
+        }
+        if (!condition2Passes) return false
 
         // Condition 3: Run.taint is TRUSTED
         if (row.runTaintIsTrusted != true) return false  // null or false = not trusted

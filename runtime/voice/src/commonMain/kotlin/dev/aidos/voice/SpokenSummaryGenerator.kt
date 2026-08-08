@@ -1,5 +1,6 @@
 package dev.aidos.voice
 
+import dev.aidos.androidapp.runsummary.ExecutionGraphRow
 import dev.aidos.androidapp.runsummary.RunSummaryReport
 import dev.aidos.androidapp.runsummary.RunStatus
 
@@ -51,7 +52,7 @@ object SpokenSummaryGenerator {
             RunStatus.COMPLETED -> "done"
             RunStatus.FAILED -> "failed"
         }
-        parts.add("Aidos is $statusWord on the $projectName project")
+        parts.add("Aidos is $statusWord on the $projectName project for session $sessionName")
         
         if (summary.status != RunStatus.COMPLETED || summary.totalSteps > 0) {
             parts.add("${summarizeNumber(summary.totalSteps)} steps")
@@ -116,7 +117,7 @@ object SpokenSummaryGenerator {
         else -> count.toString()
     }
 
-    private fun summarizePendingApprovals(pending: List<Any>): String {
+    private fun summarizePendingApprovals(pending: List<ExecutionGraphRow>): String {
         return when {
             pending.isEmpty() -> ""
             pending.size == 1 -> "One thing needs you"
@@ -124,7 +125,7 @@ object SpokenSummaryGenerator {
         }
     }
 
-    private fun summarizeErrors(errors: List<Any>): String {
+    private fun summarizeErrors(errors: List<ExecutionGraphRow>): String {
         return when {
             errors.isEmpty() -> ""
             errors.size == 1 -> "One step failed"
@@ -132,7 +133,7 @@ object SpokenSummaryGenerator {
         }
     }
 
-    private fun summarizeEgress(egress: List<Any>): String {
+    private fun summarizeEgress(egress: List<ExecutionGraphRow>): String {
         return when {
             egress.isEmpty() -> ""
             egress.size == 1 -> "One request left the device"
@@ -140,7 +141,7 @@ object SpokenSummaryGenerator {
         }
     }
 
-    private fun summarizeOutOfProject(outOfProject: List<Any>): String {
+    private fun summarizeOutOfProject(outOfProject: List<ExecutionGraphRow>): String {
         return when {
             outOfProject.isEmpty() -> ""
             outOfProject.size == 1 -> "One change is outside the project"
@@ -148,7 +149,7 @@ object SpokenSummaryGenerator {
         }
     }
 
-    private fun summarizeIndeterminate(indeterminate: List<Any>): String {
+    private fun summarizeIndeterminate(indeterminate: List<ExecutionGraphRow>): String {
         return when {
             indeterminate.isEmpty() -> ""
             indeterminate.size == 1 -> "One result is unknown"

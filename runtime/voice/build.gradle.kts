@@ -9,6 +9,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":settings"))
+            implementation(project(":androidapp"))
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
         }

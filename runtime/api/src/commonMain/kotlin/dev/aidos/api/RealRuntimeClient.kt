@@ -4,10 +4,8 @@ import dev.aidos.kernel.FileDiff
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.collect
 import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
 
 /**
  * Real RuntimeClient implementation (RFC-0052, M9+).

@@ -1,8 +1,6 @@
 package dev.aidos.daemon
 
-import dev.aidos.cli.AidosCli
 import kotlinx.coroutines.runBlocking
-import java.nio.file.Files
 import java.nio.file.Path
 
 /**

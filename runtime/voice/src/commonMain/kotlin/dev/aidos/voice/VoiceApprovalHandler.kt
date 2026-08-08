@@ -2,15 +2,14 @@ package dev.aidos.voice
 
 import dev.aidos.androidapp.runsummary.RunSummaryComputer
 import dev.aidos.androidapp.runsummary.ExecutionGraphRow
-import dev.aidos.settings.Settings
 import dev.aidos.settings.VoiceApprovalsLevel
 
 /**
  * Handles voice-based approval responses (M33, RFC-0057, D26).
  *
  * Voice may only approve the benign class: Read or Mutate(IN_PROJECT), not UNSAFE,
- * run is TRUSTED, and capability already granted. TIER2 adds readback, which itself
- * requires the user to verify the spoken summary (RFC-0057 "Verification, not modality, gates authority").
+ * run is TRUSTED, and capability already granted. TIER2 currently uses the same benign-gate
+ * as TIER1; a readback-verification hook is reserved for future work.
  *
  * TIER3 (egress, tainted Runs, new grants) NEVER approves by voice, regardless of setting.
  */
@@ -29,12 +28,16 @@ object VoiceApprovalHandler {
         UNKNOWN;    // no match
 
         companion object {
+            private val approvePattern = Regex("\\b(approve|yes)\\b")
+            private val skipPattern = Regex("\\b(skip|defer)\\b")
+            private val detailsPattern = Regex("\\b(details?|more)\\b")
+
             fun parse(spoken: String): VoiceResponse {
                 val normalized = spoken.lowercase().trim()
                 return when {
-                    "approve" in normalized || "yes" in normalized -> APPROVE
-                    "skip" in normalized || "defer" in normalized -> SKIP
-                    "detail" in normalized || "more" in normalized -> DETAILS
+                    approvePattern.containsMatchIn(normalized) -> APPROVE
+                    skipPattern.containsMatchIn(normalized) -> SKIP
+                    detailsPattern.containsMatchIn(normalized) -> DETAILS
                     else -> UNKNOWN
                 }
             }
@@ -62,7 +65,8 @@ object VoiceApprovalHandler {
         // TIER1: benign only
         if (voiceLevel == VoiceApprovalsLevel.TIER1) return true
 
-        // TIER2: benign + readback (user must have heard the summary and verified)
+        // TIER2 currently uses the same benign gate as TIER1.
+        // Readback verification is not implemented yet and is reserved for future work.
         if (voiceLevel == VoiceApprovalsLevel.TIER2) return true
 
         return false
@@ -115,10 +119,10 @@ object VoiceApprovalHandler {
     fun generateVoiceApprovalPrompt(row: ExecutionGraphRow): String {
         // Describe the action in runtime-owned terms only
         val action = when {
+            row.isEgress -> "send data over the network"
+            row.isOutOfProjectMutation -> "write outside the project directory"
             row.toolName == "fs_read" -> "read a file"
             row.toolName == "fs_write" -> "write to the filesystem"
-            row.isOutOfProjectMutation -> "write outside the project directory"
-            row.isEgress -> "send data over the network"
             else -> "perform an operation"
         }
 

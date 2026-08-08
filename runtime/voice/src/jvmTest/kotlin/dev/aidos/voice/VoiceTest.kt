@@ -2,7 +2,6 @@ package dev.aidos.voice
 
 import dev.aidos.androidapp.runsummary.ExecutionGraphRow
 import dev.aidos.androidapp.runsummary.RunSummaryComputer
-import dev.aidos.androidapp.runsummary.RunSummaryReport
 import dev.aidos.androidapp.runsummary.RunStatus
 import dev.aidos.androidapp.runsummary.StepOutcome
 import dev.aidos.settings.VoiceApprovalsLevel
@@ -81,6 +80,16 @@ class VoiceTest {
             VoiceApprovalHandler.VoiceResponse.DETAILS,
             VoiceApprovalHandler.VoiceResponse.parse("details"),
             "Should parse 'details'"
+        )
+        assertEquals(
+            VoiceApprovalHandler.VoiceResponse.UNKNOWN,
+            VoiceApprovalHandler.VoiceResponse.parse("yesterday"),
+            "Should not misclassify unrelated words"
+        )
+        assertEquals(
+            VoiceApprovalHandler.VoiceResponse.UNKNOWN,
+            VoiceApprovalHandler.VoiceResponse.parse("disapprove"),
+            "Should not match substrings inside other words"
         )
     }
 

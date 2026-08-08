@@ -3,7 +3,6 @@ package dev.aidos.daemon
 import dev.aidos.api.RuntimeClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -51,7 +50,7 @@ class RuntimeSocketServer(
         //
         // See RFC-0052 for transport architecture.
         println("Socket server would listen on $socketPath")
-        println("Using MockRuntimeClient for now; real implementation deferred to Phase 4.5")
+        println("Using ${client::class.simpleName ?: "runtime client"} for now; real implementation deferred to Phase 4.5")
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
