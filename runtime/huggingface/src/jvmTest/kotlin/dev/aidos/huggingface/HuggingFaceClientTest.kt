@@ -6,13 +6,14 @@ import dev.aidos.kernel.ModelKind
 
 class HuggingFaceClientTest {
 
-    private val client = HuggingFaceClient()
-
     @Test
     fun testInferModelKindFromTags() {
+        // Create a dummy client just for testing inferModelKind which is a pure function
+        // The function doesn't depend on broker, so we can test the logic directly
+        
         assertEquals(
             ModelKind.LLM,
-            client.inferModelKind(
+            HuggingFaceClient.inferModelKind(
                 tags = listOf("text-generation", "llm", "instruct"),
                 pipeline = null,
             )
@@ -20,7 +21,7 @@ class HuggingFaceClientTest {
 
         assertEquals(
             ModelKind.EMBEDDING,
-            client.inferModelKind(
+            HuggingFaceClient.inferModelKind(
                 tags = listOf("embedding", "sentence-transformers"),
                 pipeline = null,
             )
@@ -28,7 +29,7 @@ class HuggingFaceClientTest {
 
         assertEquals(
             ModelKind.STT,
-            client.inferModelKind(
+            HuggingFaceClient.inferModelKind(
                 tags = listOf("speech-recognition"),
                 pipeline = "automatic-speech-recognition",
             )
@@ -36,7 +37,7 @@ class HuggingFaceClientTest {
 
         assertEquals(
             ModelKind.VISION,
-            client.inferModelKind(
+            HuggingFaceClient.inferModelKind(
                 tags = listOf("image-to-text", "multimodal"),
                 pipeline = null,
             )
@@ -47,7 +48,7 @@ class HuggingFaceClientTest {
     fun testDefaultsToLLMWhenKindUnclear() {
         assertEquals(
             ModelKind.LLM,
-            client.inferModelKind(
+            HuggingFaceClient.inferModelKind(
                 tags = listOf("unknown", "tags"),
                 pipeline = null,
             )

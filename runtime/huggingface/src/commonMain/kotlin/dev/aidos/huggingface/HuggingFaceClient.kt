@@ -1,6 +1,20 @@
 package dev.aidos.huggingface
 
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ResourceHandle
+import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolOutcome
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * Hugging Face model metadata from the API (RFC-0022).
@@ -45,6 +59,9 @@ data class HuggingFaceSearchResult(
  * Implements model discovery and metadata fetching.
  */
 class HuggingFaceClient(
+    private val broker: EffectBroker,
+    private val resourceHandle: ResourceHandle,
+    private val capabilityId: CapabilityId? = null,
     private val apiBaseUrl: String = "https://huggingface.co/api/models",
 ) {
 
@@ -64,14 +81,52 @@ class HuggingFaceClient(
         limit: Int = 10,
     ): Result<HuggingFaceSearchResult> {
         return try {
-            // In a real implementation, this would call an HTTP client via the broker.
-            // For now, return a placeholder result structure.
-            Result.success(
-                HuggingFaceSearchResult(
-                    total = 0,
-                    models = emptyList(),
-                )
+            // Build query parameters
+            val params = mutableListOf("search=$query", "sort=$sort", "limit=$limit")
+            if (filter != null) {
+                params.add("filter=$filter")
+            }
+            val queryString = params.joinToString("&")
+            val url = "$apiBaseUrl?$queryString"
+
+            // Call HTTP tool via broker
+            val result = broker.invoke(
+                subjectId = "",
+                call = ToolCall(
+                    callId = "",
+                    toolName = "http:get",
+                    arguments = buildJsonObject {
+                        put("url", url)
+                    },
+                    capabilityId = capabilityId,
+                ),
+                runTaint = dev.aidos.kernel.TrustLevel.UNTRUSTED,
             )
+
+            // Check if successful
+            if (result.outcome != ToolOutcome.Ok) {
+                return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
+            }
+
+            // Parse response
+            val responseBody = result.content.filterIsInstance<ContentBlock.Text>()
+                .firstOrNull()?.text ?: ""
+
+            // Extract JSON from HTTP response (format: "HTTP 200\n\n{json}")
+            val jsonPart = responseBody.substringAfter("\n\n").trim()
+            if (jsonPart.isEmpty()) {
+                return Result.success(HuggingFaceSearchResult(total = 0, models = emptyList()))
+            }
+
+            val jsonElement = Json.parseToJsonElement(jsonPart)
+            val jsonObj = jsonElement.jsonObject
+
+            val total = jsonObj["total"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            val models = jsonObj[if ("results" in jsonObj) "results" else ""]?.jsonArray?.mapNotNull { item ->
+                parseModel(item.jsonObject)
+            } ?: emptyList()
+
+            Result.success(HuggingFaceSearchResult(total = total, models = models))
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -85,14 +140,53 @@ class HuggingFaceClient(
      */
     suspend fun getModel(modelId: String): Result<HuggingFaceModel> {
         return try {
-            // Real implementation would fetch from /repos/{modelId}
-            Result.success(
-                HuggingFaceModel(
-                    modelId = modelId,
-                    author = "unknown",
-                    displayName = modelId,
-                )
+            val url = "$apiBaseUrl/$modelId"
+
+            // Call HTTP tool via broker
+            val result = broker.invoke(
+                subjectId = "",
+                call = ToolCall(
+                    callId = "",
+                    toolName = "http:get",
+                    arguments = buildJsonObject {
+                        put("url", url)
+                    },
+                    capabilityId = capabilityId,
+                ),
+                runTaint = dev.aidos.kernel.TrustLevel.UNTRUSTED,
             )
+
+            // Check if successful
+            if (result.outcome != ToolOutcome.Ok) {
+                return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
+            }
+
+            // Parse response
+            val responseBody = result.content.filterIsInstance<ContentBlock.Text>()
+                .firstOrNull()?.text ?: ""
+
+            // Extract JSON from HTTP response
+            val jsonPart = responseBody.substringAfter("\n\n").trim()
+            if (jsonPart.isEmpty()) {
+                return Result.success(
+                    HuggingFaceModel(
+                        modelId = modelId,
+                        author = "unknown",
+                        displayName = modelId,
+                    )
+                )
+            }
+
+            val jsonElement = Json.parseToJsonElement(jsonPart)
+            val jsonObj = jsonElement.jsonObject
+
+            val model = parseModel(jsonObj) ?: HuggingFaceModel(
+                modelId = modelId,
+                author = "unknown",
+                displayName = modelId,
+            )
+
+            Result.success(model)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -106,8 +200,47 @@ class HuggingFaceClient(
      */
     suspend fun listQuantizations(modelId: String): Result<List<Quantization>> {
         return try {
-            // Real implementation would parse repo structure
-            Result.success(emptyList())
+            val url = "$apiBaseUrl/$modelId"
+
+            // Call HTTP tool via broker
+            val result = broker.invoke(
+                subjectId = "",
+                call = ToolCall(
+                    callId = "",
+                    toolName = "http:get",
+                    arguments = buildJsonObject {
+                        put("url", url)
+                    },
+                    capabilityId = capabilityId,
+                ),
+                runTaint = dev.aidos.kernel.TrustLevel.UNTRUSTED,
+            )
+
+            // Check if successful
+            if (result.outcome != ToolOutcome.Ok) {
+                return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
+            }
+
+            // Parse response
+            val responseBody = result.content.filterIsInstance<ContentBlock.Text>()
+                .firstOrNull()?.text ?: ""
+
+            // Extract JSON from HTTP response
+            val jsonPart = responseBody.substringAfter("\n\n").trim()
+            if (jsonPart.isEmpty()) {
+                return Result.success(emptyList())
+            }
+
+            val jsonElement = Json.parseToJsonElement(jsonPart)
+            val jsonObj = jsonElement.jsonObject
+
+            // Parse sibling files as quantizations
+            val siblings = jsonObj["siblings"]?.jsonArray
+                ?.mapNotNull { item ->
+                    parseQuantization(item.jsonObject)
+                } ?: emptyList()
+
+            Result.success(siblings)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -116,32 +249,86 @@ class HuggingFaceClient(
     /**
      * Map HuggingFace model tags to ModelKind.
      */
-    fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind {
-        val tagString = tags.joinToString(" ").lowercase()
-        val pipelineStr = pipeline?.lowercase() ?: ""
+    fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind =
+        Companion.inferModelKind(tags, pipeline)
 
-        return when {
-            "text-generation" in tagString || "causal-lm" in tagString ||
-                    "text-generation" in pipelineStr -> ModelKind.LLM
+    companion object {
+        fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind {
+            val tagString = tags.joinToString(" ").lowercase()
+            val pipelineStr = pipeline?.lowercase() ?: ""
 
-            "embedding" in tagString || "sentence-transformers" in tagString ||
-                    "feature-extraction" in pipelineStr -> ModelKind.EMBEDDING
+            return when {
+                "text-generation" in tagString || "causal-lm" in tagString ||
+                        "text-generation" in pipelineStr -> ModelKind.LLM
 
-            "speech-recognition" in tagString || "automatic-speech-recognition" in tagString ||
-                    "speech-recognition" in pipelineStr -> ModelKind.STT
+                "embedding" in tagString || "sentence-transformers" in tagString ||
+                        "feature-extraction" in pipelineStr -> ModelKind.EMBEDDING
 
-            "text-to-speech" in tagString || "text-to-speech" in pipelineStr -> ModelKind.TTS
+                "speech-recognition" in tagString || "automatic-speech-recognition" in tagString ||
+                        "speech-recognition" in pipelineStr -> ModelKind.STT
 
-            "image-to-text" in tagString || "visual-question-answering" in tagString ||
-                    "image-classification" in tagString -> ModelKind.VISION
+                "text-to-speech" in tagString || "text-to-speech" in pipelineStr -> ModelKind.TTS
 
-            "ocr" in tagString || "object-detection" in tagString -> ModelKind.OCR
+                "image-to-text" in tagString || "visual-question-answering" in tagString ||
+                        "image-classification" in tagString -> ModelKind.VISION
 
-            "reranker" in tagString || "cross-encoder" in tagString -> ModelKind.RERANKER
+                "ocr" in tagString || "object-detection" in tagString -> ModelKind.OCR
 
-            "translation" in tagString || "machine-translation" in tagString -> ModelKind.TRANSLATION
+                "reranker" in tagString || "cross-encoder" in tagString -> ModelKind.RERANKER
 
-            else -> ModelKind.LLM // default to LLM
+                "translation" in tagString || "machine-translation" in tagString -> ModelKind.TRANSLATION
+
+                else -> ModelKind.LLM // default to LLM
+            }
+        }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private fun parseModel(json: JsonObject): HuggingFaceModel? {
+        return try {
+            val modelId = json["id"]?.jsonPrimitive?.content ?: return null
+            val author = json["author"]?.jsonPrimitive?.content ?: "unknown"
+            val displayName = json["modelId"]?.jsonPrimitive?.content ?: modelId
+            val description = json["description"]?.jsonPrimitive?.content
+            val tags = json["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.content } ?: emptyList()
+            val downloads = json["downloads"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val likes = json["likes"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val pipeline = json["pipeline_tag"]?.jsonPrimitive?.content
+
+            HuggingFaceModel(
+                modelId = modelId,
+                author = author,
+                displayName = displayName,
+                description = description,
+                tags = tags,
+                downloads = downloads,
+                likes = likes,
+                pipeline = pipeline,
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun parseQuantization(json: JsonObject): Quantization? {
+        return try {
+            val filename = json["filename"]?.jsonPrimitive?.content ?: return null
+            // Only include GGUF quantizations
+            if (!filename.endsWith(".gguf")) return null
+
+            val size = json["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val blob = json["blob"]?.jsonPrimitive?.content ?: return null
+            val sha256 = json["lfs"]?.jsonObject?.get("sha256")?.jsonPrimitive?.content
+
+            Quantization(
+                name = filename.removeSuffix(".gguf"),
+                sizeBytes = size,
+                downloadUrl = "https://huggingface.co/$blob",
+                sha256Digest = sha256,
+            )
+        } catch (e: Exception) {
+            null
         }
     }
 }
