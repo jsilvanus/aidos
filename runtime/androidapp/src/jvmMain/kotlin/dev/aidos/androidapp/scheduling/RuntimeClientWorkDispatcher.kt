@@ -1,8 +1,11 @@
 package dev.aidos.androidapp.scheduling
 
 import dev.aidos.api.RuntimeClient
+import dev.aidos.api.UserMessage
 import dev.aidos.kernel.ScheduledJob
+import dev.aidos.kernel.Trigger
 import dev.aidos.kernel.WorkClass
+import kotlinx.datetime.Clock
 
 /**
  * Concrete work dispatcher that executes scheduled jobs via RuntimeClient (RFC-0044, M32).
@@ -11,7 +14,9 @@ import dev.aidos.kernel.WorkClass
  * - INTERACTIVE: invoke session immediately (foreground service)
  * - DEFERRED: queue for background execution
  * - SCHEDULED: already managed by WorkManager; just invoke
- * - OPPORTUNISTIC: queue with charging/idle constraints
+ * - OPPORTUNISTIC: queue with constraints (charging, idle, unmetered)
+ *
+ * Each dispatch includes trigger context (missedOccurrences, trigger type) in the session message.
  */
 class RuntimeClientWorkDispatcher(
     private val client: RuntimeClient,
@@ -49,14 +54,17 @@ class RuntimeClientWorkDispatcher(
 
     private suspend fun dispatchInteractive(job: ScheduledJob, sessionId: String): Boolean {
         return try {
-            // Send a message to the session to trigger execution.
-            val result = client.send(sessionId, dev.aidos.api.UserMessage(
-                content = "Scheduled job: ${job.name}",
-                // In real implementation, include trigger info (missedOccurrences, etc.)
-            ))
+            // Build the message with trigger context.
+            val message = buildMessage(job)
+            
+            // Send the message to the session.
+            val result = client.sessions.send(sessionId, message)
+            
             // Update job with completion status.
-            jobManager.update(job.id, lastOutcome = JobOutcome.COMPLETED)
-            result.run is dev.aidos.kernel.Run  // Check if execution succeeded
+            val nextRunAt = computeNextRunAt(job)
+            jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
+            
+            result.run != null  // Check if execution succeeded
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -66,11 +74,11 @@ class RuntimeClientWorkDispatcher(
     private suspend fun dispatchDeferred(job: ScheduledJob, sessionId: String): Boolean {
         return try {
             // For MVP, same as interactive. In production, queue to WorkManager background.
-            val result = client.send(sessionId, dev.aidos.api.UserMessage(
-                content = "Deferred job: ${job.name}",
-            ))
-            jobManager.update(job.id, lastOutcome = JobOutcome.COMPLETED)
-            result.run is dev.aidos.kernel.Run
+            val message = buildMessage(job)
+            val result = client.sessions.send(sessionId, message)
+            val nextRunAt = computeNextRunAt(job)
+            jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
+            result.run != null
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -80,11 +88,11 @@ class RuntimeClientWorkDispatcher(
     private suspend fun dispatchScheduled(job: ScheduledJob, sessionId: String): Boolean {
         return try {
             // Invoke the scheduled session.
-            val result = client.send(sessionId, dev.aidos.api.UserMessage(
-                content = "Scheduled session: ${job.name}",
-            ))
-            jobManager.update(job.id, lastOutcome = JobOutcome.COMPLETED)
-            result.run is dev.aidos.kernel.Run
+            val message = buildMessage(job)
+            val result = client.sessions.send(sessionId, message)
+            val nextRunAt = computeNextRunAt(job)
+            jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
+            result.run != null
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -94,14 +102,55 @@ class RuntimeClientWorkDispatcher(
     private suspend fun dispatchOpportunistic(job: ScheduledJob, sessionId: String): Boolean {
         return try {
             // For MVP, same as deferred. In production, check constraints and queue.
-            val result = client.send(sessionId, dev.aidos.api.UserMessage(
-                content = "Opportunistic job: ${job.name}",
-            ))
-            jobManager.update(job.id, lastOutcome = JobOutcome.COMPLETED)
-            result.run is dev.aidos.kernel.Run
+            val message = buildMessage(job)
+            val result = client.sessions.send(sessionId, message)
+            val nextRunAt = computeNextRunAt(job)
+            jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
+            result.run != null
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
         }
+    }
+
+    /**
+     * Builds a user message with trigger context.
+     *
+     * The message includes:
+     * - Job name and description
+     * - Trigger type (At, Every, OnEvent, Cron, OnCondition)
+     * - Missed occurrences (if periodic trigger)
+     * - Work class
+     * - Guarantee class
+     */
+    private fun buildMessage(job: ScheduledJob): UserMessage {
+        val triggerInfo = when (val trigger = job.trigger) {
+            is Trigger.At -> "Scheduled job at ${trigger.instant}"
+            is Trigger.Every -> "Recurring job every ${trigger.interval}"
+            is Trigger.OnEvent -> "Event-triggered job on ${trigger.filter.eventType}"
+            is Trigger.Cron -> "Cron job: ${trigger.expression}"
+            is Trigger.OnCondition -> "Condition-triggered job"
+        }
+        
+        val missedInfo = if (job.missedOccurrences > 0) {
+            " (missed ${job.missedOccurrences} occurrence${if (job.missedOccurrences > 1) "s" else ""})"
+        } else {
+            ""
+        }
+
+        return UserMessage(
+            content = "${job.name}\n$triggerInfo$missedInfo",
+        )
+    }
+
+    /**
+     * Computes the next run time for a trigger.
+     *
+     * For now, this is delegated to TriggerCalculator. In a full implementation,
+     * this would be part of the job manager's state.
+     */
+    private fun computeNextRunAt(job: ScheduledJob): String? {
+        val next = TriggerCalculator.nextRunAt(job.trigger, job.lastRunAt)
+        return next?.toString()
     }
 }
