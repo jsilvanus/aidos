@@ -33,6 +33,7 @@ class RealRuntimeClient : RuntimeClient {
     // For MVP, these are in-memory. Persistent storage arrives with Phase 4.
 
     private val _projects = mutableMapOf<String, ProjectSummary>()
+    private val _projectPaths = mutableMapOf<String, String>()  // projectId → filesystem path
     private val _sessions = mutableMapOf<String, SessionSummary>()
     private val _runs = mutableMapOf<String, RunSummary>()
     private val _capabilities = mutableMapOf<String, CapabilitySummary>()
@@ -44,6 +45,24 @@ class RealRuntimeClient : RuntimeClient {
     private var _nextSequence = 1L
 
     private var _idCounter = 1
+
+    /**
+     * Optional knowledge service backend (Phase 2 integration).
+     * Wired by external infrastructure (e.g., AppComponent in androidapp).
+     */
+    var knowledgeService: KnowledgeService? = null
+
+    // ── Path resolution ────────────────────────────────────────────────────────
+
+    /**
+     * Resolve a filesystem path from a ProjectLocation (RFC-0010, RFC-0052).
+     * LocalPath is used as-is; RuntimeManaged creates a standard directory.
+     */
+    private fun resolveProjectPath(location: ProjectLocation): String = when (location) {
+        is ProjectLocation.LocalPath -> location.path
+        is ProjectLocation.RuntimeManaged -> "/projects/${location.slug}"
+        is ProjectLocation.CloneOf -> "/projects/${location.slug}"
+    }
 
     // ── Id generation ──────────────────────────────────────────────────────────
 
@@ -63,17 +82,25 @@ class RealRuntimeClient : RuntimeClient {
         _pendingCapabilities.add(request)
     }
 
+    /**
+     * Resolve a projectId to its filesystem path (Phase 1: projectId-to-projectPath mapping).
+     */
+    fun resolveProjectPath(projectId: String): String? = _projectPaths[projectId]
+
     // ── RuntimeClient ──────────────────────────────────────────────────────────
 
     override val projects: ProjectCommands = object : ProjectCommands {
         override suspend fun create(request: CreateProjectRequest): ProjectResult {
             val id = nextId()
             val now = Clock.System.now()
+            val projectPath = resolveProjectPath(request.location)
             val summary = ProjectSummary(
                 id = id, name = request.name, description = request.description,
+                projectPath = projectPath,
                 createdAt = now, lastActiveAt = now, sessionCount = 0,
             )
             _projects[id] = summary
+            _projectPaths[id] = projectPath
             emit(RuntimeEvent.SessionCreated(
                 eventId = nextId(), timestamp = now, projectId = id, sessionId = id,
                 name = request.name, role = SessionRole.DRIVER,
@@ -93,11 +120,14 @@ class RealRuntimeClient : RuntimeClient {
 
         override suspend fun get(projectId: String): ProjectDetail? {
             val p = _projects[projectId] ?: return null
-            return ProjectDetail(p, "/projects/$projectId", "generic")
+            return ProjectDetail(p, p.projectPath, "generic")
         }
 
         override suspend fun delete(projectId: String, confirm: Boolean) {
-            if (confirm) _projects.remove(projectId)
+            if (confirm) {
+                _projects.remove(projectId)
+                _projectPaths.remove(projectId)
+            }
         }
     }
 
@@ -190,11 +220,19 @@ class RealRuntimeClient : RuntimeClient {
     }
 
     override val knowledge: KnowledgeQueries = object : KnowledgeQueries {
-        override suspend fun search(projectId: String, query: KnowledgeQuery): KnowledgeResult =
-            KnowledgeResult(emptyList(), 0, null)
+        override suspend fun search(projectId: String, query: KnowledgeQuery): KnowledgeResult {
+            val projectPath = resolveProjectPath(projectId)
+                ?: return KnowledgeResult(emptyList(), 0, null)
+            return knowledgeService?.search(projectPath, query)
+                ?: KnowledgeResult(emptyList(), 0, null)
+        }
 
-        override suspend fun indexStatus(projectId: String): IndexStatus =
-            IndexStatus(projectId, null, 0, false)
+        override suspend fun indexStatus(projectId: String): IndexStatus {
+            val projectPath = resolveProjectPath(projectId)
+                ?: return IndexStatus(projectId, null, 0, false)
+            return knowledgeService?.indexStatus(projectPath)
+                ?: IndexStatus(projectId, null, 0, false)
+        }
     }
 
     override val diff: DiffQueries = object : DiffQueries {

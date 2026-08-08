@@ -55,6 +55,7 @@ data class ProjectSummary(
     val id: String,
     val name: String,
     val description: String,
+    val projectPath: String,
     val createdAt: Instant,
     val lastActiveAt: Instant,
     val sessionCount: Int,
@@ -469,4 +470,41 @@ data class RuntimeVersion(
     val version: String,
     val apiVersion: Int,
     val profile: String,
+)
+
+// ─── Knowledge Service ────────────────────────────────────────────────────────
+
+/**
+ * Backend service for knowledge indexing and search (Phase 1-4 integration).
+ * 
+ * Wired by external infrastructure and injected into RealRuntimeClient.
+ * Handles filesystem paths directly; the RuntimeClient maps projectId→projectPath.
+ */
+interface KnowledgeService {
+    /**
+     * Search for [query] in the project at [projectPath].
+     * Returns results suitable for prompt context injection.
+     */
+    suspend fun search(projectPath: String, query: KnowledgeQuery): KnowledgeResult
+
+    /**
+     * Get indexing status for the project at [projectPath].
+     */
+    suspend fun indexStatus(projectPath: String): IndexStatus
+
+    /**
+     * Start/resume indexing for the project at [projectPath].
+     * Reports progress via [onProgress] callback.
+     */
+    suspend fun startIndexing(projectPath: String, onProgress: (IndexingProgress) -> Unit = {})
+}
+
+/**
+ * Indexing progress report (Phase 4 integration).
+ */
+data class IndexingProgress(
+    val commitsProcessed: Int,
+    val blobsSeen: Int,
+    val blobsIndexed: Int,
+    val blobsFailed: Int,
 )
