@@ -1,6 +1,5 @@
 package dev.aidos.androidapp.service
 
-import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.androidapp.scheduling.InMemoryScheduledJobManager
 import dev.aidos.androidapp.scheduling.JobScheduler
 import dev.aidos.androidapp.scheduling.RuntimeClientWorkDispatcher
@@ -38,7 +37,8 @@ import java.util.concurrent.atomic.AtomicReference
 class RuntimeServiceHost(
     private val client: RuntimeClient,
     private val scope: CoroutineScope,
-    sqlDriver: SqlDriver? = null,
+    // TODO: useSqlite parameter would accept SqlDriver when SQLDelight is ready
+    useSqlite: Boolean = false,
 ) {
     private val _state = MutableStateFlow<ServiceState>(ServiceState.Idle)
     val state: StateFlow<ServiceState> = _state.asStateFlow()
@@ -46,9 +46,9 @@ class RuntimeServiceHost(
     /** Execution window derived from the foreground service state (D24). */
     val executionWindow: ExecutionWindow = ForegroundServiceExecutionWindow(_state.asStateFlow())
 
-    /** Scheduled job manager (RFC-0044). Uses SqliteScheduledJobManager if SqlDriver is provided, else in-memory. */
-    val jobManager: ScheduledJobManager = if (sqlDriver != null) {
-        SqliteScheduledJobManager(sqlDriver)
+    /** Scheduled job manager (RFC-0044). Uses SqliteScheduledJobManager if useSqlite is true, else in-memory. */
+    val jobManager: ScheduledJobManager = if (useSqlite) {
+        SqliteScheduledJobManager()
     } else {
         InMemoryScheduledJobManager()
     }

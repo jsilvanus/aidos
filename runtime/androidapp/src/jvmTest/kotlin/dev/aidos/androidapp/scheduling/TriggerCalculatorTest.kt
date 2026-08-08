@@ -1,6 +1,6 @@
 package dev.aidos.androidapp.scheduling
 
-import dev.aidos.kernel.EventFilter
+import dev.aidos.kernel.EventTriggerFilter
 import dev.aidos.kernel.Trigger
 import kotlinx.datetime.Instant
 import kotlin.test.Test
@@ -61,7 +61,7 @@ class TriggerCalculatorTest {
     // OnEvent triggers are event-driven; nextRunAt is null.
     @Test
     fun testOnEventTriggerReturnsNull() {
-        val filter = EventFilter("file_changed")
+        val filter = EventTriggerFilter(eventType = "file_changed")
         val trigger = Trigger.OnEvent(filter)
         val now = "2026-08-09T10:00:00Z"
 
@@ -109,7 +109,7 @@ class TriggerCalculatorTest {
     // OnEvent triggers don't track missed occurrences.
     @Test
     fun testOnEventTriggerNoMissedOccurrences() {
-        val trigger = Trigger.OnEvent(EventFilter("file_changed"))
+        val trigger = Trigger.OnEvent(EventTriggerFilter(eventType = "file_changed"))
         val lastRunAt = Instant.parse("2026-08-09T12:00:00Z")
         val now = "2026-08-09T13:00:00Z"
 

@@ -27,6 +27,7 @@ class InMemoryScheduledJobManagerTest {
         consecutiveFailures: Int = 0,
         nextRunAt: Instant? = Instant.parse("2026-08-09T12:00:00Z"),
         missedOccurrences: Int = 0,
+        createdAt: Instant = Instant.parse("2026-08-08T00:00:00Z"),
     ) = ScheduledJob(
         id = ScheduledJobId(id),
         projectId = projectId,
@@ -42,7 +43,7 @@ class InMemoryScheduledJobManagerTest {
         lastOutcome = null,
         consecutiveFailures = consecutiveFailures,
         missedOccurrences = missedOccurrences,
-        createdAt = Instant.parse("2026-08-08T00:00:00Z"),
+        createdAt = createdAt,
     )
 
     @Test
@@ -181,8 +182,8 @@ class InMemoryScheduledJobManagerTest {
     @Test
     fun testDeleteDisabledBefore() = runTest {
         val manager = InMemoryScheduledJobManager()
-        val oldJob = createTestJob("job-1", enabled = false)
-        val newJob = createTestJob("job-2", enabled = false)
+        val oldJob = createTestJob("job-1", enabled = false, createdAt = Instant.parse("2026-08-08T00:00:00Z"))
+        val newJob = createTestJob("job-2", enabled = false, createdAt = Instant.parse("2026-08-09T00:00:00Z"))
 
         manager.create(oldJob)
         manager.create(newJob)
@@ -202,6 +203,8 @@ class JobSchedulerTest {
         id: String = "job-1",
         workClass: WorkClass = WorkClass.INTERACTIVE,
         enabled: Boolean = true,
+        createdAt: Instant = Instant.parse("2026-08-08T00:00:00Z"),
+        nextRunAt: Instant? = Instant.parse("2026-08-09T12:00:00Z"),
     ) = ScheduledJob(
         id = ScheduledJobId(id),
         projectId = "project-1",
@@ -212,12 +215,12 @@ class JobSchedulerTest {
         workClass = workClass,
         constraintsJson = "{}",
         enabled = enabled,
-        nextRunAt = Instant.parse("2026-08-09T12:00:00Z"),
+        nextRunAt = nextRunAt,
         lastRunAt = null,
         lastOutcome = null,
         consecutiveFailures = 0,
         missedOccurrences = 0,
-        createdAt = Instant.parse("2026-08-08T00:00:00Z"),
+        createdAt = createdAt,
     )
 
     @Test

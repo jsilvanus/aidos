@@ -5,8 +5,6 @@ import dev.aidos.kernel.ScheduledJobId
 import dev.aidos.kernel.WorkClass
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import kotlin.math.max
 
 /**
@@ -40,7 +38,9 @@ class InMemoryScheduledJobManager : ScheduledJobManager {
 
         val newFailures = when (lastOutcome) {
             JobOutcome.FAILED -> existing.consecutiveFailures + 1
-            _ -> 0  // Reset on success, cancellation, or skip
+            JobOutcome.COMPLETED,
+            JobOutcome.CANCELLED,
+            JobOutcome.SKIPPED -> 0  // Reset on success, cancellation, or skip
         }
 
         val shouldDisable = newFailures >= 3
@@ -79,7 +79,7 @@ class InMemoryScheduledJobManager : ScheduledJobManager {
     override suspend fun listDue(nowIso: String): Result<List<ScheduledJob>> = synchronized(jobs) {
         val now = Instant.parse(nowIso)
         val due = jobs.values
-            .filter { it.enabled && it.nextRunAt != null && it.nextRunAt <= now }
+            .filter { it.enabled && it.nextRunAt != null && (it.nextRunAt as Instant) <= now }
             .sortedBy { it.nextRunAt }
         Result.success(due)
     }

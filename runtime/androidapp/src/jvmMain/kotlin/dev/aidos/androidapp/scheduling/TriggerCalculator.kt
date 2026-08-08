@@ -46,7 +46,7 @@ object TriggerCalculator {
 
                 // Next occurrence is at anchor + (intervalsElapsed + 1) * interval
                 // If lastRunAt is set and is very recent, we just computed it, so next is (intervalsElapsed + 2)
-                val nextOccurrenceIndex = intervalsElapsed + 1
+                val nextOccurrenceIndex = (intervalsElapsed + 1).toInt()
                 anchor + (interval * nextOccurrenceIndex)
             }
 
