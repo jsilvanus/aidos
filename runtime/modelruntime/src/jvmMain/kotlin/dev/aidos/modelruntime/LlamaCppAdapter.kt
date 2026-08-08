@@ -13,11 +13,44 @@ import dev.aidos.kernel.Turn
 import java.io.File
 
 /**
- * Real llama.cpp-based inference adapter (RFC-0022, M21).
+ * Real llama.cpp-based inference adapter (RFC-0022, M21/M22).
  *
  * Uses llama-cpp-java JNI bindings to load and run GGUF models locally.
  * Supports constrained decoding via GBNF grammars for tool-calling
- * (RFC-0021 constrained decoding).
+ * (RFC-0021 constrained decoding, RFC-0008 agent loop).
+ *
+ * ## Tool Calling Protocol (RFC-0021, M22)
+ *
+ * Local GGUF models without native function-calling are supported through:
+ *
+ * 1. **GBNF Grammar Compilation**: Tool descriptors are compiled to GBNF (GGML BNF)
+ *    grammars by GbnfGrammarCompiler. This constrains the model output to valid
+ *    JSON tool calls during sampling.
+ *
+ * 2. **Tool Call Format**: Model output is constrained to:
+ *    ```
+ *    {"tool": "toolName", "args": {...}}
+ *    ```
+ *    Multiple calls can appear in a single output, each on independent lines.
+ *
+ * 3. **Tool Call Parsing**: Model output is parsed by ToolCallParser to extract
+ *    structured ToolCall objects with:
+ *    - callId: Unique identifier (UUID-based)
+ *    - toolName: Tool to invoke (validated against available tools)
+ *    - arguments: JSON arguments for the tool
+ *    - capabilityId: null (resolved by agent loop per RFC-0008)
+ *    - rawText: Original text (retained for heuristic parsing, security audit)
+ *
+ * ## Design Rationale
+ *
+ * The constraint-based approach (vs. freeform parsing) ensures:
+ * - Guaranteed well-formed JSON from the model (GBNF enforces syntax)
+ * - No post-hoc schema validation needed
+ * - Clear audit trail: rawText shows what the model emitted vs. what was parsed
+ *
+ * For M22 MVP, grammar is compiled but not yet passed to llama.cpp sampling.
+ * Parsing uses heuristic pattern matching with audit trail (rawText retained).
+ * Future work: Integrate compiled grammar into llama.cpp's constrained_sampling.
  *
  * Resource management:
  * - One model at a time (admission queue, RFC-0022)
