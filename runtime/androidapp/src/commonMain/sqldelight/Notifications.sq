@@ -1,0 +1,57 @@
+-- Notifications queries (RFC-0044, M32)
+
+CREATE TABLE notifications (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    body            TEXT NOT NULL,
+    coalesced_count INTEGER NOT NULL DEFAULT 1,
+    delivered_at    TEXT,
+    acted_on_at     TEXT
+);
+
+CREATE INDEX idx_notifications_project ON notifications(project_id);
+
+-- Insert a new notification
+insertNotification:
+INSERT INTO notifications (id, project_id, category, title, body, coalesced_count, delivered_at, acted_on_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Get a notification by ID
+getNotification:
+SELECT * FROM notifications WHERE id = ?;
+
+-- List notifications for a project
+listByProject:
+SELECT * FROM notifications WHERE project_id = ? ORDER BY delivered_at DESC;
+
+-- Update delivery timestamp
+updateDelivered:
+UPDATE notifications
+SET delivered_at = ?
+WHERE id = ?;
+
+-- Update acted_on timestamp
+updateActedOn:
+UPDATE notifications
+SET acted_on_at = ?
+WHERE id = ?;
+
+-- Increment coalesced count
+incrementCoalesced:
+UPDATE notifications
+SET coalesced_count = coalesced_count + 1
+WHERE id = ?;
+
+-- Get recent undelivered notifications for a project (for budget calculation)
+listUndeliveredByProject:
+SELECT * FROM notifications
+WHERE project_id = ? AND delivered_at IS NULL
+ORDER BY id DESC;
+
+-- Get notifications delivered in the last hour for a project (for budget calculation)
+listRecentByProject:
+SELECT * FROM notifications
+WHERE project_id = ? AND delivered_at IS NOT NULL AND delivered_at > ?
+ORDER BY delivered_at DESC;

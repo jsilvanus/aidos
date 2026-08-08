@@ -1,0 +1,73 @@
+-- Scheduled jobs queries (RFC-0044, M32)
+
+CREATE TABLE scheduled_jobs (
+    id                   TEXT PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    session_id           TEXT,
+    name                 TEXT NOT NULL,
+    trigger_json         TEXT NOT NULL,
+    guarantee_class      TEXT NOT NULL,
+    work_class           TEXT NOT NULL,
+    constraints_json     TEXT NOT NULL DEFAULT '{}',
+    enabled              INTEGER NOT NULL DEFAULT 1,
+    next_run_at          TEXT,
+    last_run_at          TEXT,
+    last_outcome         TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    missed_occurrences   INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL
+);
+
+CREATE INDEX idx_jobs_due ON scheduled_jobs(next_run_at) WHERE enabled = 1;
+
+-- Insert a new scheduled job
+insertScheduledJob:
+INSERT INTO scheduled_jobs (
+    id, project_id, session_id, name, trigger_json, guarantee_class,
+    work_class, constraints_json, enabled, next_run_at, last_run_at,
+    last_outcome, consecutive_failures, missed_occurrences, created_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+);
+
+-- Get a scheduled job by ID
+getScheduledJob:
+SELECT * FROM scheduled_jobs WHERE id = ?;
+
+-- List all jobs for a project
+listByProject:
+SELECT * FROM scheduled_jobs WHERE project_id = ? ORDER BY created_at;
+
+-- List jobs due to run (enabled only, next_run_at <= now)
+listDue:
+SELECT * FROM scheduled_jobs 
+WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+ORDER BY next_run_at;
+
+-- Update job outcome and compute next run
+updateJobOutcome:
+UPDATE scheduled_jobs 
+SET last_run_at = ?, last_outcome = ?, next_run_at = ?, consecutive_failures = ?, enabled = ?
+WHERE id = ?;
+
+-- Record a missed occurrence
+recordMissedOccurrence:
+UPDATE scheduled_jobs
+SET missed_occurrences = missed_occurrences + 1
+WHERE id = ?;
+
+-- Cancel a job
+cancelJob:
+UPDATE scheduled_jobs
+SET enabled = 0
+WHERE id = ?;
+
+-- Delete disabled jobs older than specified instant
+deleteDisabledBefore:
+DELETE FROM scheduled_jobs
+WHERE enabled = 0 AND created_at < ?;
+
+-- Count deleted jobs for return value
+countDeletedBefore:
+SELECT COUNT(*) as count FROM scheduled_jobs
+WHERE enabled = 0 AND created_at < ?;
