@@ -28,6 +28,7 @@ import kotlin.jvm.JvmInline
 @JvmInline value class DeviceId(val value: String)
 @JvmInline value class UserId(val value: String)
 @JvmInline value class WorkspaceId(val value: String)
+@JvmInline value class ScheduledJobId(val value: String)
 
 /** Who took an action. Two fields, never one polymorphic identifier (RFC-0046). */
 data class ActorRef(val kind: ActorKind, val id: String)
