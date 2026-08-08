@@ -1,0 +1,3 @@
+Initial release. MVP complete with full offline capability, local AI models, Git integration, and interactive code review on phone.
+
+See https://github.com/jsilvanus/aidos for changelog and roadmap.

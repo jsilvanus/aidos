@@ -1,0 +1,26 @@
+Categories:
+  - Development
+License: EUPL-1.2
+WebSite: https://github.com/jsilvanus/aidos
+SourceCode: https://github.com/jsilvanus/aidos
+IssueTracker: https://github.com/jsilvanus/aidos/issues
+Changelog: https://github.com/jsilvanus/aidos/releases
+
+# Builds: uncomment once AGP (Android Gradle Plugin) is available
+# and androidTarget() is wired in build.gradle.kts files.
+# Expected Gradle invocation: ./gradlew assembleRelease
+#
+# Builds:
+#   - versionCode: 1
+#     versionName: "0.1.0"
+#     commit: "v0.1.0"
+#     gradle: ["yes"]
+#     srclibs: []  # All dependencies from Maven Central; no source overlays needed
+#     prebuild: []
+#     
+# F-Droid will sign the APK with their key for distribution.
+# The build must be reproducible: two builds with identical source produce
+# byte-for-byte identical APKs (verified via SOURCE_DATE_EPOCH).
+#
+# AllowedAPKSigningKeys:
+#   - AAAAAABBBBBBCCCCCCDDDDDDEEEEEEFFFFFFFF0011223344556677889900AABB
