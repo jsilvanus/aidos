@@ -11,6 +11,12 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
         }
 
+        val jvmMain by getting {
+            dependencies {
+                implementation(project(":cookbook"))
+            }
+        }
+
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
