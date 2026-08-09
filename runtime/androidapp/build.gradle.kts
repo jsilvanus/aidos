@@ -25,6 +25,7 @@ kotlin {
             dependencies {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
+                implementation(project(":storage"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
                 implementation("app.cash.sqldelight:runtime:2.0.2")

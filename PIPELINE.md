@@ -184,7 +184,9 @@ they're the ones that matter for deciding what to build next.
 - **RFC-0012 (Intent Graph), credited under M32c.** `androidapp/intent/IntentList.kt` is a 105-line
   pure in-memory file — flat items, a derived-status function, no persistence to the
   `intent_nodes`/`intent_edges`/`intent_proposals` schema tables, **and zero test files**. The 37
-  AndroidApp tests belong to the other M27-M32 presenters, none to this one.
+  AndroidApp tests belong to the other M27-M32 presenters, none to this one. **Update (2026-08-09,
+  outstanding-work item below): `intent_nodes` persistence and tests done. `intent_proposals` and
+  `intent_edges` deliberately still not — see the outstanding-work item for why.**
 - **RFC-0004 (Event Bus) and RFC-0005 (Scheduler).** Confirms D34's own flag, more specifically:
   `executor/EventStore.kt` is an append-only log with sequence ordering and the causal-depth
   guard — there is no topic-subscription or replay-by-topic layer anywhere. Scheduler has no code
@@ -251,10 +253,23 @@ milestone with no record either way is exactly how the corpus drifted from this 
 
 **Group 1 — RFCs credited as built (or Accepted) with little or no code:**
 
-- [ ] **RFC-0012 (Intent Graph).** Wire `androidapp/intent/IntentList.kt` to the
-  `intent_nodes`/`intent_edges`/`intent_proposals` schema tables (it's pure in-memory today, no
-  persistence). Add a test suite — zero tests currently exist for this file. Only then does M32c's
-  ✅ actually hold.
+- [x] **RFC-0012 (Intent Graph), partial — `intent_nodes` persistence done, `intent_proposals`
+  and `intent_edges` deliberately not.** Done 2026-08-09: `SqliteIntentStore`
+  (`androidapp/src/jvmMain/.../intent/`) persists `IntentItem` (create/list/archive/user-override)
+  to `intent_nodes`, with 6 new tests. Re-reading D20 first (`docs/decisions.md`) confirmed
+  `IntentList.kt`'s own doc comment is the decided scope, not an in-progress cut corner: "task
+  list only... built last and small... flat, no hierarchy, no dependencies." The schema's
+  hierarchy columns (`parent_id`) and acceptance-criteria columns are nullable and left unset by
+  design, matching that decision — not a gap. **What's still not wired, on purpose:**
+  `intent_proposals` has `proposed_by_run_id` and `audit_ref` as foreign keys into `runs` and
+  `audit_log`; `IntentProposal` (the pure data class) doesn't carry a real run ID, taint, or an
+  audit row to point at, and inventing placeholder values for those FKs would be worse than not
+  persisting proposals at all — fabricating an audit trail entry is exactly the kind of thing
+  RFC-0003 exists to prevent. `intent_edges` (dependencies) stays unused — D20 decided against
+  that scope outright. Also unwired: `targetedByRunId`, which is meant to come from
+  `execution_edges` (`edge_kind = 'TARGETED'`) — nothing currently writes that edge, so
+  `listActive()` always returns it `null`. Whoever wires proposal persistence needs a real
+  run/audit integration point first, not just a repository class.
 - [ ] **RFC-0004 (Event Bus).** Build the topic-subscription/replay-by-topic layer on top of
   `executor/EventStore.kt` (today just an append-only log with sequence ordering and the
   causal-depth guard). If it's actually post-MVP, say so via a D34-style decision instead of
