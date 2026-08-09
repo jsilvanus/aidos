@@ -1,8 +1,15 @@
 package dev.aidos.identity
 
 import dev.aidos.kernel.ProjectId
+import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.SettingOrigin
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingSetByKind
+import dev.aidos.settings.SettingsStore
+import dev.aidos.settings.SettingsWriter
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
+import kotlinx.serialization.json.JsonPrimitive
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -121,5 +128,33 @@ class IdentityTest {
         assertEquals(2, list.size)
         assertTrue(list.any { it.first == p1 })
         assertTrue(list.any { it.first == p2 })
+    }
+
+    // ─── applyTypeDefaults (RFC-0047) ──────────────────────────────────────
+
+    @Test
+    fun `personal type default sets remote egress to never at user scope`() {
+        val driver = openUserDriver()
+        val writer = SettingsWriter(driver)
+
+        applyTypeDefaults(ProjectType.PERSONAL, "proj-1", writer, "2026-08-05T00:00:00Z")
+
+        val store = SettingsStore(driver, null)
+        val r = store.resolve(Settings.routingRemoteEgress)
+        assertEquals(EgressPolicy.NEVER, r.value)
+        assertEquals(SettingOrigin.USER, r.origin)
+    }
+
+    @Test
+    fun `coding and generic types write no settings`() {
+        val driver = openUserDriver()
+        val writer = SettingsWriter(driver)
+
+        applyTypeDefaults(ProjectType.CODING, "proj-1", writer, "2026-08-05T00:00:00Z")
+        applyTypeDefaults(ProjectType.GENERIC, "proj-2", writer, "2026-08-05T00:00:00Z")
+
+        val store = SettingsStore(driver, null)
+        val r = store.resolve(Settings.routingRemoteEgress)
+        assertEquals(SettingOrigin.DEFAULT, r.origin)
     }
 }

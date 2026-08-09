@@ -201,7 +201,11 @@ they're the ones that matter for deciding what to build next.
   class; the RFC number appears only in doc-comments citing it, not in an implementation.
 - **RFC-0047 (Project Templates and Types).** Only 2 of 6 `ProjectType` values
   (`PERSONAL`, `CODING`) have real defaults in `applyTypeDefaults`; the rest are no-ops. No
-  scaffolding/template-loading system exists. Confirms D34; still true after this review.
+  scaffolding/template-loading system exists. **Correction (2026-08-09, outstanding-work item
+  below): the "2 of 6" framing overstates this — RFC-0047's own MVP section says only PERSONAL and
+  CODING get overrides, so that part was never a gap.** What *was* a real gap: PERSONAL's override
+  silently never worked (wrong settings scope) and had no test — now fixed. See the outstanding
+  work item for what's still open.
 
 **Credited as unbuilt, actually implemented — fix the record the other way:**
 - **RFC-0036 (Settings and Configuration).** This file's own D34 list and the "Notes for the next
@@ -265,9 +269,31 @@ milestone with no record either way is exactly how the corpus drifted from this 
   Accepted-with-nothing-built is exactly the gap D34 exists to catch, and this one wasn't caught.
 - [ ] **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder`/budget
   enforcement exists; the RFC number appears only in doc-comments citing it.
-- [ ] **RFC-0047 (Project Templates and Types).** `applyTypeDefaults` only has real defaults for 2
-  of 6 `ProjectType` values (`PERSONAL`, `CODING`); the other 4 are no-ops, and no
-  scaffolding/template loader exists at all.
+- [x] **RFC-0047 (Project Templates and Types), partial — the `applyTypeDefaults` bug is fixed,
+  the RFC's larger MVP scope isn't.** Done 2026-08-09: re-reading RFC-0047's own MVP section shows
+  only `PERSONAL` and `CODING` are supposed to have type-specific overrides — `RESEARCH`/`WRITING`/
+  `GENERIC` being no-ops is correct, documented MVP scope, not a gap (the original review's "2 of
+  6" framing overstated this). But `PERSONAL`'s override was a genuine bug: it wrote
+  `routing.remote_egress` at **project** scope, and that setting is `ScopeClass.SECURITY` —
+  `SettingsWriter.writeProject()` rejects SECURITY/SPEND keys outright, so the write always failed
+  and RFC-0047's headline MVP requirement ("personal defaulting `routing.remote_egress = never`...
+  worth having on day one") silently never took effect, with zero test coverage to catch it.
+  Fixed by writing to user scope instead (`identity/src/commonMain/.../ProjectRegistry.kt`), which
+  is literally what the RFC's own MVP section describes. Added
+  `identity/src/jvmTest/.../IdentityTest.kt` coverage for both the `PERSONAL` write and the
+  `CODING`/`GENERIC` no-op case. **Two things this does NOT fix, left for whoever wires project
+  creation into `RealRuntimeClient`:** (1) `applyTypeDefaults` still has zero call sites anywhere
+  in the codebase — nothing invokes it at project-creation time yet, so the correct behavior only
+  exists as a correct, tested, *unused* function until that wiring lands; (2) writing to user scope
+  means this now affects every project for the user, not just the one being created, and
+  re-applies (silently overwriting any explicit prior choice) every time a `PERSONAL` project is
+  created — the original code comment called this "a one-time suggestion, not a project scope
+  write," which implies something more like "set only if still at `SettingOrigin.DEFAULT`," not an
+  unconditional upsert. That's a real product decision (how insistent should a privacy default be
+  against a user's own prior choice?), not an implementation bug, and it doesn't belong to whoever
+  just wires the call site — flag it for the user rather than guessing.
+  No scaffolding/template loader — RFC-0047 explicitly puts templates out of MVP scope
+  ("Not in MVP: built-in templates, instantiation..."), so that part was never a gap to begin with.
 
 **Group 2 — Phase 4: making the Android app real, not just its platform-neutral logic:**
 
@@ -294,16 +320,33 @@ milestone with no record either way is exactly how the corpus drifted from this 
   CI to find real things a from-scratch sandbox verification cannot, and budget for a few
   iteration rounds rather than treating local green as done.**
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
-  to `storage`/`executor`/`capability`. This blocks the next two items.
+  to `storage`/`executor`/`capability`. This blocks the next two items. **Scoped 2026-08-09, not
+  yet started: this is bigger than it looks.** None of `storage`, `executor`, `capability`, or
+  `identity` have `androidTarget()` wired — only `kernel`/`api`/`androidapp`/`knowledge` do. Wiring
+  `RealRuntimeClient` to them for real means repeating the `androidTarget()` pattern across four
+  more modules first, and per the androidTarget item above, expect each one to surface its own
+  latent bugs once a real Android SDK actually compiles it (six turned up for three modules; budget
+  similarly here). Treat this as its own multi-link piece of work, not a single commit.
 - [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
   platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
   `androidMain` extends `Service` yet.
 - [ ] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
   `MockRuntimeClient`.** The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
-  `AidosTheme.kt`) is real; it's driving the mock.
-- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — replace the
-  `// TODO(M33 Phase 4.5): Implement project locking per RFC-0055` with the real call.
-  `ProjectLock` itself is already built and tested in isolation.
+  `AidosTheme.kt`) is real; it's driving the mock. Doesn't strictly need `RealRuntimeClient` to be
+  *durable* first (M9's original framing was an in-process transport, in-memory is a legitimate
+  intermediate step) — wiring the UI to the existing in-memory `RealRuntimeClient` is itself real
+  progress and doesn't have to wait on the item above.
+- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — **checked
+  2026-08-09, this item as written is wrong and would build the wrong thing.** RFC-0055's own
+  "Project locking" section says a project is locked when it is *opened*, not when the daemon
+  starts — the daemon manages multiple projects over its lifetime and has no single "the project"
+  to lock at startup (it doesn't even take a project-path argument today). The real integration
+  point is `RealRuntimeClient.projects.open()`/`.create()`, which is `commonMain` (KMP) — but
+  `ProjectLock` (`runtime/lock/`) is `jvmMain`-only (`java.io.File`, `FileChannel`), so wiring it in
+  needs a small `expect`/`actual` port, not a direct call. This is entangled with "Finish
+  `RealRuntimeClient`" above, not independent of it — do them together, and update `daemon/main.kt`
+  only to remove the now-inaccurate TODO comment, not to add a lock call that doesn't match what
+  the daemon actually is.
 
 None of this is new design — every RFC and decision referenced above already exists. This is
 implementation catching up to documents that were, in several cases, marked complete before the
