@@ -19,6 +19,12 @@ milestone either serves it or is cuttable.
 
 **2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
 
+**2026-08-09 · PR #18 merged** (RFC-0044 M32: trigger types, workclass dispatch, job scheduler;
+also landed the local llama.cpp inference backend and tool-calling protocol from M21/M22).
+**An independent codebase review ran the same day — see "Independent codebase review" below the
+table.** It confirms the bulk of Phases 0-3 as claimed, but found several specific status-table
+cells overstated or understated. Read the review section before trusting a row at face value.
+
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
@@ -32,7 +38,7 @@ milestone either serves it or is cuttable.
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
-| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (production implementation with resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅ |
+| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
 | CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅ |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
@@ -46,8 +52,8 @@ milestone either serves it or is cuttable.
 | Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅ |
 | Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
 | Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
-| AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31). 37 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ |
-| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ |
+| AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31); PR #18 added `ScheduledJobManager`/`JobScheduler`/`TriggerCalculator` (RFC-0044 M32, 89 tests). 37+89 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ (platform-neutral logic). **Caveat (2026-08-09 review): the Android-target half is thinner than the checkmarks suggest — see "Independent codebase review" below.** |
+| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ (logic layer only — **no real STT/TTS backend exists, only the `NoOp` providers**; hands-free is untestable end-to-end until one is wired in) |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
 | Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
 
@@ -162,6 +168,79 @@ Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 ---
 
+## Independent codebase review — 2026-08-09
+
+Three parallel reviews read every RFC in `docs/rfcs/` against the actual code in `runtime/`,
+grepping for the types and classes each RFC names rather than trusting this file's own table. This
+is the same audit discipline the "Accepted is not frozen" note above already asks for, run against
+the whole corpus instead of a sample. Most of the corpus held up: the execution kernel (M1-M9),
+capability/security (RFC-0003/0018), tool broker and audit (RFC-0030), crash recovery (RFC-0009),
+git/filesystem/vault/prompt/agent-loop/injection-suite/MCP (RFC-0016/0025/0030-0035), model runtime
+and routing (RFC-0020/0021/0049), worker and retention (RFC-0024→0056 successors) are real, tested,
+and match their milestone claims. The discrepancies below are the exceptions, not the rule — but
+they're the ones that matter for deciding what to build next.
+
+**Credited as done, actually a stub or unbuilt:**
+- **RFC-0012 (Intent Graph), credited under M32c.** `androidapp/intent/IntentList.kt` is a 105-line
+  pure in-memory file — flat items, a derived-status function, no persistence to the
+  `intent_nodes`/`intent_edges`/`intent_proposals` schema tables, **and zero test files**. The 37
+  AndroidApp tests belong to the other M27-M32 presenters, none to this one.
+- **RFC-0004 (Event Bus) and RFC-0005 (Scheduler).** Confirms D34's own flag, more specifically:
+  `executor/EventStore.kt` is an append-only log with sequence ordering and the causal-depth
+  guard — there is no topic-subscription or replay-by-topic layer anywhere. Scheduler has no code
+  at all: `SessionState.SLEEPING` is declared in the kernel and never transitioned to or from, and
+  `scheduled_jobs` in `schema/project.sql` is never read or written. (Distinct from the RFC-0044
+  background-*job* scheduler PR #18 just added under `androidapp/scheduling/` — that's a different
+  subsystem, notification/work-class dispatch, not session wake/sleep.)
+- **RFC-0024 (Resource Graph).** Only `ContentNodeId` and references exist in the kernel; no
+  `ContentNode` data class, no promotion/demotion logic, no dedicated store.
+- **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin, manifest, or sandbox code
+  anywhere in `runtime/`. Unlike the Draft RFCs this file already excludes from MVP scope, this one
+  is Accepted with nothing built — a real gap, not a documented deferral.
+- **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder` or budget-ladder
+  class; the RFC number appears only in doc-comments citing it, not in an implementation.
+- **RFC-0047 (Project Templates and Types).** Only 2 of 6 `ProjectType` values
+  (`PERSONAL`, `CODING`) have real defaults in `applyTypeDefaults`; the rest are no-ops. No
+  scaffolding/template-loading system exists. Confirms D34; still true after this review.
+
+**Credited as unbuilt, actually implemented — fix the record the other way:**
+- **RFC-0036 (Settings and Configuration).** This file's own D34 list and the "Notes for the next
+  link" section both call Settings unbuilt ("M1 is half done... Settings... is what's left").
+  That's stale: `runtime/settings/` has an 848-line `SettingsStore`/`SettingDescriptor`/`TomlParser`
+  implementation with 18 tests, landed in a dedicated commit ("Implement RFC-0036: Settings and M1
+  mapping test"). Drop RFC-0036 from any future D34-style "unbuilt" list.
+
+**The Android application layer (Phase 4) is thinner than its milestone checkmarks suggest.** This
+is the one that matters most, because G4 — the actual product thesis — depends on the app running
+the real runtime on a real phone:
+- **`androidTarget()` is wired in `runtime/androidapp/` and `runtime/knowledge/`'s own
+  `build.gradle.kts`, but `runtime/kernel/` and `runtime/api/` — the two modules `androidapp`
+  depends on — still have `androidTarget()`/`id("com.android.library")` commented out on `main`.**
+  This file's "androidTarget() unblocked upstream" note (above) is only true for the leaf module;
+  as configured, `:androidapp`'s Android compilation cannot resolve `project(":kernel")` or
+  `project(":api")` for that target. The "one `google()` repo add and three uncomments" framing
+  undercounts what's left — `androidapp`'s own uncomment is done, kernel's and api's are not.
+- **No `android.app.Service` subclass exists anywhere in `androidMain`.** `RuntimeServiceHost.kt`
+  (jvmMain) is the platform-neutral logic RFC-0050 asks for; the Service subclass its own
+  doc-comment says wires it into `onStartCommand`/`onDestroy` has not been written.
+- **`MainActivity.kt` wires `MockRuntimeClient`, not `RealRuntimeClient`/`RuntimeServiceHost`.** The
+  Compose screens are real (`MainActivity.kt`, `Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`, ~550 lines, plus a working `AndroidManifest.xml`) but they're driving the mock,
+  not the runtime — consistent with `RealRuntimeClient` itself still being in-memory (see the API
+  row's caveat above).
+- **`daemon/main.kt` has a literal `// TODO(M33 Phase 4.5): Implement project locking per
+  RFC-0055`** — `ProjectLock` (`runtime/lock/`) is solid and tested on its own, but the daemon
+  startup path doesn't call it yet.
+
+**Net effect:** the milestone table's Phase 0-3 checkmarks (M1-M26) are trustworthy. Phase 4's
+platform-neutral logic (M27-M33) is real and tested in isolation, but the wiring that makes it into
+a working Android app — full multiplatform target coverage, a real foreground Service, the UI
+talking to the real runtime instead of the mock, the daemon actually taking the project lock — is
+the next work, not finished work. Treat M27-M33's "✅" as "logic done, integration open" until
+someone closes these four gaps and updates this table to say so with evidence, not a checkmark.
+
+---
+
 ## Next
 
 ### Phase 2 — First vertical slice (M9–M19)
@@ -199,6 +278,11 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 
 Platform-neutral logic implemented and tested. Android wiring (Compose, Service lifecycle,
 androidTarget()) requires the Android SDK and a real device.
+
+**See "Independent codebase review — 2026-08-09" above before treating M27-M33 below as finished:**
+`kernel`/`api` still lack `androidTarget()`, no `Service` subclass exists, and the Compose UI wires
+`MockRuntimeClient`, not the real runtime. The ✅ marks below are for the platform-neutral logic
+each milestone specified, not for a working Android app end to end.
 
 - [x] **M27** — Foreground service and runtime hosting (platform-neutral logic) ✅
 - [x] **M28** — Compose UI over the Runtime API — ✅ (platform-neutral presenters: Projects, Sessions, Runs, EventStream)
