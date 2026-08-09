@@ -1,6 +1,6 @@
 plugins {
     kotlin("multiplatform")
-    kotlin("plugin.serialization") version "1.9.25"
+    kotlin("plugin.serialization")
     id("app.cash.sqldelight") version "2.0.2"
     id("com.android.application")
 }
@@ -100,11 +100,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-    
+
     signingConfigs {
         create("release") {
             val keystore = System.getenv("KEYSTORE_FILE") ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }

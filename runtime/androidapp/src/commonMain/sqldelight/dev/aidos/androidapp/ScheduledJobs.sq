@@ -69,5 +69,5 @@ WHERE enabled = 0 AND created_at < ?;
 
 -- Count deleted jobs for return value
 countDeletedBefore:
-SELECT COUNT(*) as count FROM scheduled_jobs
+SELECT COUNT(*) AS "count" FROM scheduled_jobs
 WHERE enabled = 0 AND created_at < ?;

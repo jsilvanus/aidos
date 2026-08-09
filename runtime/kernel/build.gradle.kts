@@ -1,18 +1,12 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
-    // ---------------------------------------------------------------------------
-    // androidTarget() is ready to wire now that gitsema-kotlin ships it.
-    // The com.android.library plugin (AGP 8.5.2) must be added here, and
-    // dl.google.com must be reachable from the build environment.
-    // See build.gradle.kts at root; uncomment to activate.
-    // ---------------------------------------------------------------------------
-    // id("com.android.library")
+    id("com.android.library")
 }
 
 kotlin {
     jvm()
-    // androidTarget() — uncomment together with the plugin above.
+    androidTarget()
 
     sourceSets {
         commonTest.dependencies {
@@ -32,4 +26,16 @@ kotlin {
     }
 }
 
-// android { ... } — uncomment when androidTarget() is wired above.
+android {
+    namespace = "dev.aidos.kernel"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+}

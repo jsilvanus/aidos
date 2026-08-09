@@ -271,13 +271,18 @@ milestone with no record either way is exactly how the corpus drifted from this 
 
 **Group 2 — Phase 4: making the Android app real, not just its platform-neutral logic:**
 
-- [ ] **Wire `androidTarget()` in `runtime/kernel/build.gradle.kts` and
-  `runtime/api/build.gradle.kts`** — both still have `androidTarget()`/`id("com.android.library")`
-  commented out on `main`, even though `runtime/androidapp/` and `runtime/knowledge/` already
-  uncommented theirs. Until both of `androidapp`'s dependencies publish an Android variant,
-  `:androidapp`'s Android compilation cannot resolve `project(":kernel")`/`project(":api")` as
-  configured. This is the actual remaining blocker behind "androidTarget() unblocked upstream" —
-  that note was true for the leaf module only.
+- [x] **Wire `androidTarget()` in `runtime/kernel/build.gradle.kts` and
+  `runtime/api/build.gradle.kts`** — done 2026-08-09. Both now apply `id("com.android.library")`
+  and call `androidTarget()`, with an `android { namespace = "dev.aidos.kernel" / "dev.aidos.api";
+  compileSdk = 34; ... }` block matching `androidapp`'s existing pattern. `dl.google.com` **is**
+  reachable from this environment (confirmed with a live request) — the root `build.gradle.kts`
+  comment calling it "blocked in this sandbox" no longer holds here, though it may still be true
+  elsewhere; don't assume it as fact next time, check it. `gradle :kernel:compileKotlinJvm
+  :api:compileKotlinJvm` passes. Actually compiling the *Android* variant
+  (`:kernel:compileDebugKotlinAndroid`) still fails with "SDK location not found" — there is no
+  Android SDK in this environment (no `ANDROID_HOME`, no `local.properties`), so the Android
+  compile itself is genuinely unverifiable here, same class of gap as M21/M34/M35. What's
+  verified: the module graph resolves and the JVM targets are unaffected.
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
   to `storage`/`executor`/`capability`. This blocks the next two items.
 - [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
@@ -376,8 +381,68 @@ an architecture pass read the whole corpus against them. The durable output:
 
 ## Notes for the next link
 
-**M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** Do not
-start M2 (identity and scopes) with M1 incomplete — the roadmap lists M1 and M2 as parallel-safe
+**2026-08-09 — the PR #18 merge left several build scripts and two source files broken; fixing
+them to verify the androidTarget() wiring surfaced more than the wiring itself.** Working the
+first Group 2 item ("wire androidTarget() in kernel and api") required getting `gradle build` to
+evaluate and pass at all, which it did not on `main` immediately after the PR #18 merge. In order,
+what was actually broken and not caused by the androidTarget() change itself:
+- `androidapp/build.gradle.kts` pinned `kotlin("plugin.serialization") version "1.9.25"` while
+  root pins `2.1.0` — Gradle evaluates every subproject's build script even for a
+  single-module task, so this alone blocked *any* Gradle command project-wide. Fixed by dropping
+  the redundant version (every other module already does this).
+- Same file's `android { kotlinOptions { jvmTarget = "11" } }` doesn't resolve against this
+  AGP/Kotlin combo — that DSL moved. Removed it; `compileOptions` already sets Java 11, and
+  `androidTarget()` needs no separate jvmTarget override here.
+- `modelruntime/build.gradle.kts` had **two** `val jvmMain by getting { ... }` blocks — an
+  unresolved-conflict artifact from the PR #18 merge (the haiku subagent that resolved PR #18's
+  Gradle conflicts only saw 2 conflicting files at merge time; this wasn't one of them, so it
+  merged "clean" into a duplicate declaration). Merged into one.
+- `prompt/build.gradle.kts` was missing `implementation(project(":api"))` even though
+  `PromptAssembler.kt`'s Phase 2 knowledge-integration code (added by PR #18) imports
+  `dev.aidos.api.KnowledgeQuery`/`KnowledgeQueries` — both types genuinely exist in `:api` with
+  exactly the signature the code expects; it was a missing module dependency, not a missing type.
+- `androidapp/src/commonMain/sqldelight/*.sq` files were directly in `sqldelight/`, not in a
+  package-matching subdirectory — SQLDelight requires `sqldelight/dev/aidos/androidapp/*.sq` to
+  match `packageName.set("dev.aidos.androidapp")`. Moved both files.
+- `ScheduledJobs.sq`'s `SELECT COUNT(*) as count` doesn't parse — `count` collides with
+  SQLDelight's grammar as a bare alias. Quoted it: `AS "count"`.
+- `SqliteScheduledJobManager.kt` (PR #18, RFC-0044) had several mismatches against what SQLDelight
+  actually generates: missing `import dev.aidos.androidapp.ScheduledJobsDb`; the row type is
+  `Scheduled_jobs` (SQLDelight capitalizes-and-keeps-underscores from `scheduled_jobs`), not
+  `ScheduledJobs`; `listDue`'s `WHERE next_run_at IS NOT NULL` narrows SQLDelight's inferred
+  nullability enough that it generates a *separate* `ListDue` row type from the same "SELECT *",
+  needing its own `deserializeScheduledJobRow` overload; `countDeletedBefore` is a single-column
+  query, so SQLDelight returns the `Long` directly rather than wrapping it in a row with a
+  `.count` field; two `create`/`update` functions used `return` inside a `= try { }` expression
+  body, which Kotlin forbids — restructured as if/else expressions instead.
+- `RuntimeServiceHost.kt` had a `useSqlite: Boolean` parameter with a TODO literally saying
+  "would accept SqlDriver when SQLDelight is ready" and then called
+  `SqliteScheduledJobManager()` with **no** driver argument — SQLDelight is ready now, so this
+  became `sqlDriver: SqlDriver? = null`, wired through properly instead of left half-finished.
+- Two tests never actually ran before now (the module didn't compile): `SqliteScheduledJobManagerTest`
+  never called `ScheduledJobsDb.Schema.create(driver)`, so every test hit a missing table —
+  added the schema-create call. `NotificationManagerTest`'s "bypasses quiet hours" test had a
+  hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
+  actually 2023-08-02 — computed and substituted the correct value.
+
+**Three failures remain and are environment artifacts, not code bugs — don't spend time on them
+without checking the environment first:** `:knowledge` and `:modelruntime` fail to resolve
+`gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized — this sandbox has no
+`GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already documents this
+requirement; CI's default token has it, this environment's doesn't). `:git` and `:worker`'s JGit
+tests fail with `UnsupportedSigningFormatException` because this **session's own** global
+`~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key for Claude Code's own
+commit signing, and JGit inherits that ambient config when it opens a repo — nothing in the test
+or in Aidos is wrong, JGit just doesn't support that signing format. `cookbook`'s
+`testExceedsContextAtLongWindow` fails and predates PR #18 entirely (`git diff` across the merge
+shows zero changes to `cookbook/`) — a genuine pre-existing bug, but out of scope for Group 2's
+androidTarget work; flag it for whoever picks up `cookbook` next.
+
+**M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
+note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,
+tested `SettingsStore` implementation. Left in place rather than deleted, per this file's own rule
+that a correction supersedes rather than erases, but do not act on it as current. Do
+not start M2 (identity and scopes) with M1 incomplete — the roadmap lists M1 and M2 as parallel-safe
 only with respect to each other, not as a license to skip M1's own done-when.
 
 **`JdbcSqliteDriver` opens a new JDBC connection per call — session PRAGMAs don't survive a
