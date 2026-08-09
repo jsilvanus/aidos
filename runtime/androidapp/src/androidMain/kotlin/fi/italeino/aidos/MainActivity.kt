@@ -8,7 +8,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.rememberNavController
-import dev.aidos.api.MockRuntimeClient
+import dev.aidos.api.RealRuntimeClient
 import dev.aidos.androidapp.ui.projects.ProjectsPresenter
 import dev.aidos.androidapp.ui.runs.RunListPresenter
 import dev.aidos.androidapp.ui.sessions.SessionListPresenter
@@ -32,8 +32,10 @@ class MainActivity : ComponentActivity() {
     
     private val applicationScope = CoroutineScope(SupervisorJob())
     
-    // In a real app, these would come from the RuntimeServiceHost via dependency injection.
-    // For now, using MockRuntimeClient for testing.
+    // RFC-0050 MVP item 2 puts the runtime in-process in a foreground service; binding this
+    // activity to that service (RuntimeServiceHost) and injecting its client is the next step.
+    // Until that binding exists, each activity instance owns its own RealRuntimeClient — real
+    // command/event semantics, but state doesn't yet survive the activity being destroyed.
     private lateinit var projectsPresenter: ProjectsPresenter
     private lateinit var sessionListPresenter: SessionListPresenter
     private lateinit var runListPresenter: RunListPresenter
@@ -42,9 +44,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize presenters with MockRuntimeClient.
-        // In a real app, inject the RuntimeClient from the service.
-        val runtimeClient = MockRuntimeClient()
+        // TODO(RFC-0050 MVP item 2): replace with the RuntimeClient bound from the foreground
+        // service (RuntimeServiceHost) once the Service subclass exists.
+        val runtimeClient = RealRuntimeClient()
         
         projectsPresenter = ProjectsPresenter(runtimeClient, applicationScope)
         sessionListPresenter = SessionListPresenter(runtimeClient, applicationScope)

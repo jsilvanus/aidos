@@ -129,6 +129,21 @@ class ProjectRegistry(
         )
     }
 
+    /**
+     * Removes a project from the registry. The project's own directory and `state.db` are
+     * untouched — this is a cache eviction (per this class's own doc comment), not destruction
+     * of the project's storage. RFC-0010's MVP scope is "archive", not delete; this exists so a
+     * caller that does stop tracking a project (a `RuntimeClient.projects.delete()` call) doesn't
+     * have it resurface on the next `listAll()`.
+     */
+    fun unregister(projectId: ProjectId) {
+        userDriver.execute(
+            identifier = null,
+            sql = "DELETE FROM project_registry WHERE project_id = ?",
+            parameters = 1,
+        ) { bindString(0, projectId.value) }
+    }
+
     fun listAll(): List<Pair<ProjectId, String>> {
         val results = mutableListOf<Pair<ProjectId, String>>()
         val driver = userDriver

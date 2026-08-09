@@ -2,7 +2,9 @@ package dev.aidos.daemon
 
 import dev.aidos.cli.AidosCli
 import kotlinx.coroutines.test.runTest
+import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.AfterTest
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -20,10 +22,19 @@ import kotlin.test.assertTrue
  */
 class DaemonCliIntegrationTest {
 
+    // RuntimeClientFactory now opens real storage under `home` (RFC-0010/RFC-0040) -- a temp
+    // directory keeps this test from reading or writing ~/.aidos on whatever machine runs it.
+    private val tempHome = Files.createTempDirectory("daemon-cli-test").toFile()
+
+    @AfterTest
+    fun cleanup() {
+        tempHome.deleteRecursively()
+    }
+
     @Test
     fun `daemon provides RuntimeClient that CLI can use`() = runTest {
         // Create daemon's runtime client
-        val runtimeClient = RuntimeClientFactory.createRuntimeClient()
+        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path)
 
         // CLI connects to daemon (in this test, directly to the in-process client)
         val cli = AidosCli(runtimeClient)
@@ -47,7 +58,7 @@ class DaemonCliIntegrationTest {
 
     @Test
     fun `daemon can grant voice capabilities via CLI`() = runTest {
-        val runtimeClient = RuntimeClientFactory.createRuntimeClient()
+        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path)
         val cli = AidosCli(runtimeClient)
 
         // Create project and session

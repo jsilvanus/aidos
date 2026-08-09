@@ -35,6 +35,9 @@ class GitToolTest {
             git.repository.config.apply {
                 setString("user", null, "name", "Test")
                 setString("user", null, "email", "test@test.com")
+                // Ambient global gitconfig (e.g. commit.gpgsign=true) must not leak into test
+                // repos — JGit has no signing backend and throws UnsupportedSigningFormatException.
+                setBoolean("commit", null, "gpgsign", false)
                 save()
             }
             // Initial commit so HEAD exists
@@ -191,6 +194,7 @@ class GitToolTest {
                 git.repository.config.apply {
                     setString("user", null, "name", "Test")
                     setString("user", null, "email", "test@test.com")
+                    setBoolean("commit", null, "gpgsign", false)
                     save()
                 }
                 val readme = File(dir, "README.md")
@@ -223,6 +227,7 @@ class GitToolTest {
             git.repository.config.apply {
                 setString("user", null, "name", "Test")
                 setString("user", null, "email", "test@test.com")
+                setBoolean("commit", null, "gpgsign", false)
                 save()
             }
         }

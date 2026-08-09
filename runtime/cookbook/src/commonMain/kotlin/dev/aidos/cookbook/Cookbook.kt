@@ -115,6 +115,12 @@ class CookbookEngine {
      * The KV cache grows linearly with context window and can exceed weights themselves
      * at longer contexts. This is the part that catches naive implementations.
      *
+     * [KV_CACHE_BYTES_PER_TOKEN] and [OVERHEAD_FRACTION] are calibrated against RFC-0022's own
+     * worked example (Qwen2.5 3B Q4_K_M, 2.0GB weights): 4k context -> 2.4GB resident (runs
+     * well), 16k -> 3.3GB, 32k -> 4.6GB (will not fit on a device with 3.9GB available). RFC-0022
+     * does not mandate exact constants beyond that table, so these reproduce it directly rather
+     * than being independently invented.
+     *
      * @param requirements model metadata
      * @param device device profile (memory, accelerators, etc.)
      * @param contextWindow context length in tokens (may differ from model's default)
@@ -125,16 +131,9 @@ class CookbookEngine {
         device: DeviceProfile,
         contextWindow: Int,
     ): Long {
-        // Weights on disk. Compressed; in-memory it's slightly larger.
-        val weightsInRam = (requirements.weightsBytesOnDisk * 1.1).toLong()
-
-        // KV cache: 2 * (context_tokens * hidden_dims * bytes_per_param * 2 layers/token)
-        // For a 7B model: ~4096 hidden dims, 2 bytes/param (fp16), 2*context tokens
-        // Simplified: ~64 bytes per token for attention KV
-        val kvCacheBytes = contextWindow.toLong() * 64L
-
-        // Runtime overhead: model structure, state, buffers (~10-15% of weights)
-        val overheadBytes = (weightsInRam * 0.15).toLong()
+        val weightsInRam = requirements.weightsBytesOnDisk
+        val kvCacheBytes = contextWindow.toLong() * KV_CACHE_BYTES_PER_TOKEN
+        val overheadBytes = (weightsInRam * OVERHEAD_FRACTION).toLong()
 
         return weightsInRam + kvCacheBytes + overheadBytes
     }
@@ -171,8 +170,8 @@ class CookbookEngine {
         // Case 2: Full resident doesn't fit
         if (resident > device.availableRamBytes) {
             // Does it fit at a shorter context?
-            val contextThatFits = (device.availableRamBytes - sizeBytes - (sizeBytes * 0.15))
-                .toLong() / 64
+            val contextThatFits = (device.availableRamBytes - sizeBytes - (sizeBytes * OVERHEAD_FRACTION))
+                .toLong() / KV_CACHE_BYTES_PER_TOKEN
             return if (contextThatFits > 256) {
                 CookbookVerdict.EXCEEDS_CONTEXT
             } else {
@@ -200,5 +199,13 @@ class CookbookEngine {
         // Very rough: 7B is typically 4-5GB (quantized), so ~1.4-1.7 bytes per param
         // Use 1.5 as average
         return (model.sizeBytes ?: 1_000_000_000) / 1_500
+    }
+
+    private companion object {
+        /** Bytes of KV cache per context token — see [computeResidentMemory] for calibration. */
+        const val KV_CACHE_BYTES_PER_TOKEN = 76_800L
+
+        /** Runtime overhead (model structure, state, buffers) as a fraction of weights. */
+        const val OVERHEAD_FRACTION = 0.05
     }
 }

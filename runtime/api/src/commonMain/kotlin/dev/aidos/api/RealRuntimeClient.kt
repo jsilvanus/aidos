@@ -1,11 +1,17 @@
 package dev.aidos.api
 
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.identity.ProjectRegistry
+import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.FileDiff
+import dev.aidos.kernel.ProjectId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
 /**
  * Real RuntimeClient implementation (RFC-0052, M9+).
@@ -52,16 +58,97 @@ class RealRuntimeClient : RuntimeClient {
      */
     var knowledgeService: KnowledgeService? = null
 
+    // ── Persistent storage (RFC-0010, RFC-0040) ───────────────────────────────
+    // All three are unset by default, preserving the pre-Phase-4 in-memory-only behavior.
+    // Wired by external infrastructure once available (JVM: daemon's RuntimeClientFactory;
+    // Android's own driver/locker wiring is follow-up work, same status as capability's
+    // SqliteDirHandle -- not guessed at here).
+
+    /** user.db driver, for the project registry (project_id -> path cache). */
+    var userDriver: SqlDriver? = null
+
+    /** Opens (creating and migrating if needed) a project's own `.aidos/state.db`. */
+    var projectDbFactory: ((projectRootPath: String) -> SqlDriver)? = null
+
+    /** RFC-0055 per-project advisory locking. */
+    var projectLocker: ProjectLocker? = null
+
+    /**
+     * Base directory for [ProjectLocation.RuntimeManaged]/[ProjectLocation.CloneOf] projects --
+     * "the runtime picks the directory from its storage root" (that sealed interface's own doc
+     * comment). Unset keeps the pre-persistence placeholder (`/projects/<slug>`, never real I/O
+     * against it); once [projectDbFactory] is wired for real, this must be too, or project
+     * creation fails opening a `state.db` under a path nothing owns.
+     */
+    var runtimeManagedProjectsRoot: String? = null
+
+    private val instanceId: String by lazy { UuidV7Generator().next() }
+
+    // Project ids are persisted (once userDriver/projectDbFactory are wired) and must survive
+    // process restarts without colliding -- nextId()'s counter resets to 1 every construction,
+    // which is safe for the still-in-memory-only entity types below but not for this one.
+    private val projectIdGen = UuidV7Generator()
+
+    private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
+
+    private fun projectRegistry(): ProjectRegistry? =
+        userDriver?.let { ProjectRegistry(it, projectIdGen) }
+
+    /** Opens (or reuses an already-open) driver for a project's own state.db. */
+    private fun ensureProjectDriverOpen(id: String, path: String): SqlDriver? {
+        val dbFactory = projectDbFactory ?: return null
+        return _openProjectDrivers.getOrPut(id) { dbFactory(path) }
+    }
+
+    /** Reads a project's own `projects` row and populates the in-memory cache from it. */
+    private fun hydrateProjectSummary(id: String, path: String): ProjectSummary? {
+        val driver = ensureProjectDriverOpen(id, path) ?: return null
+        val row = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT name, description, created_at FROM projects WHERE id = ?",
+            mapper = { cursor ->
+                QueryResult.Value(
+                    if (cursor.next().value) {
+                        Triple(cursor.getString(0)!!, cursor.getString(1), cursor.getString(2)!!)
+                    } else {
+                        null
+                    }
+                )
+            },
+            parameters = 1,
+        ) { bindString(0, id) }.value ?: return null
+
+        val (name, description, createdAtIso) = row
+        val createdAt = Instant.parse(createdAtIso)
+        val summary = ProjectSummary(
+            id = id, name = name, description = description ?: "",
+            projectPath = path, createdAt = createdAt, lastActiveAt = createdAt,
+            sessionCount = _sessions.values.count { it.projectId == id },
+        )
+        _projects[id] = summary
+        _projectPaths[id] = path
+        return summary
+    }
+
+    private fun lockedByOtherError(outcome: ProjectLockOutcome.HeldByOther): ProjectResult.Error =
+        ProjectResult.Error(
+            "runtime.locked_by_other_instance",
+            "Project path is locked by another Aidos instance (${outcome.instanceId}, since ${outcome.acquiredAt})",
+        )
+
     // ── Path resolution ────────────────────────────────────────────────────────
 
     /**
      * Resolve a filesystem path from a ProjectLocation (RFC-0010, RFC-0052).
      * LocalPath is used as-is; RuntimeManaged creates a standard directory.
      */
-    private fun resolveProjectPath(location: ProjectLocation): String = when (location) {
-        is ProjectLocation.LocalPath -> location.path
-        is ProjectLocation.RuntimeManaged -> "/projects/${location.slug}"
-        is ProjectLocation.CloneOf -> "/projects/${location.slug}"
+    private fun resolveProjectPath(location: ProjectLocation): String {
+        val managedRoot = runtimeManagedProjectsRoot ?: "/projects"
+        return when (location) {
+            is ProjectLocation.LocalPath -> location.path
+            is ProjectLocation.RuntimeManaged -> "$managedRoot/${location.slug}"
+            is ProjectLocation.CloneOf -> "$managedRoot/${location.slug}"
+        }
     }
 
     // ── Id generation ──────────────────────────────────────────────────────────
@@ -91,9 +178,44 @@ class RealRuntimeClient : RuntimeClient {
 
     override val projects: ProjectCommands = object : ProjectCommands {
         override suspend fun create(request: CreateProjectRequest): ProjectResult {
-            val id = nextId()
+            val id = projectIdGen.next()
             val now = Clock.System.now()
+            val nowIso = now.toString()
             val projectPath = resolveProjectPath(request.location)
+
+            val locker = projectLocker
+            if (locker != null) {
+                when (val outcome = locker.tryAcquire(id, projectPath, instanceId)) {
+                    is ProjectLockOutcome.HeldByOther -> return lockedByOtherError(outcome)
+                    is ProjectLockOutcome.AcquiredAfterBreakingStale,
+                    ProjectLockOutcome.Acquired -> Unit
+                    // RFC-0055: "locks are never broken silently" -- AcquiredAfterBreakingStale
+                    // should surface to the user and be recorded (LockBreakRecord). No audit-log
+                    // write path exists yet from this class; not invented here, flagged in
+                    // PIPELINE.md instead of silently swallowing it.
+                }
+            }
+
+            val driver = ensureProjectDriverOpen(id, projectPath)
+            if (driver != null) {
+                driver.execute(
+                    identifier = null,
+                    sql = "INSERT INTO projects " +
+                        "(id, name, description, root_path, project_type, state, created_at, updated_at, state_updated_at) " +
+                        "VALUES (?, ?, ?, ?, 'generic', 'OPEN', ?, ?, ?)",
+                    parameters = 7,
+                ) {
+                    bindString(0, id)
+                    bindString(1, request.name)
+                    bindString(2, request.description)
+                    bindString(3, projectPath)
+                    bindString(4, nowIso)
+                    bindString(5, nowIso)
+                    bindString(6, nowIso)
+                }
+                projectRegistry()?.register(ProjectId(id), projectPath, nowIso = nowIso)
+            }
+
             val summary = ProjectSummary(
                 id = id, name = request.name, description = request.description,
                 projectPath = projectPath,
@@ -109,24 +231,62 @@ class RealRuntimeClient : RuntimeClient {
         }
 
         override suspend fun open(projectId: String): ProjectResult {
-            val p = _projects[projectId]
+            val cached = _projects[projectId]
+            if (cached != null && projectId in _openProjectDrivers) {
+                return ProjectResult.Success(cached)
+            }
+
+            val path = cached?.projectPath
+                ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
                 ?: return ProjectResult.Error("project.not_found", "Project $projectId not found")
-            return ProjectResult.Success(p)
+
+            val locker = projectLocker
+            if (locker != null) {
+                when (val outcome = locker.tryAcquire(projectId, path, instanceId)) {
+                    is ProjectLockOutcome.HeldByOther -> return lockedByOtherError(outcome)
+                    is ProjectLockOutcome.AcquiredAfterBreakingStale,
+                    ProjectLockOutcome.Acquired -> Unit
+                }
+            }
+
+            val summary = cached ?: hydrateProjectSummary(projectId, path)
+            if (summary == null) {
+                locker?.release(projectId)
+                return ProjectResult.Error("project.not_found", "Project $projectId has no recorded state")
+            }
+            if (cached != null) ensureProjectDriverOpen(projectId, path)
+            return ProjectResult.Success(summary)
         }
 
-        override suspend fun close(projectId: String) { /* no-op for MVP */ }
+        override suspend fun close(projectId: String) {
+            projectLocker?.release(projectId)
+            _openProjectDrivers.remove(projectId)?.close()
+        }
 
-        override suspend fun list(): List<ProjectSummary> = _projects.values.toList()
+        override suspend fun list(): List<ProjectSummary> {
+            projectRegistry()?.listAll()?.forEach { (id, path) ->
+                if (id.value !in _projects) hydrateProjectSummary(id.value, path)
+            }
+            return _projects.values.toList()
+        }
 
         override suspend fun get(projectId: String): ProjectDetail? {
-            val p = _projects[projectId] ?: return null
+            val p = _projects[projectId]
+                ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
+                    ?.let { path -> hydrateProjectSummary(projectId, path) }
+                ?: return null
             return ProjectDetail(p, p.projectPath, "generic")
         }
 
         override suspend fun delete(projectId: String, confirm: Boolean) {
             if (confirm) {
+                projectLocker?.release(projectId)
+                _openProjectDrivers.remove(projectId)?.close()
+                projectRegistry()?.unregister(ProjectId(projectId))
                 _projects.remove(projectId)
                 _projectPaths.remove(projectId)
+                // Deliberately does not touch the project's own directory or state.db -- RFC-0010's
+                // MVP is archive, not destroy. This only stops the runtime tracking the project.
             }
         }
     }

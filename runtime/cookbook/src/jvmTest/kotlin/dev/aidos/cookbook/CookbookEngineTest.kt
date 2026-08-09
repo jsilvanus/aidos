@@ -122,8 +122,8 @@ class CookbookEngineTest {
 
         val resident = engine.computeResidentMemory(requirements, device, 4096)
 
-        // 2GB * 1.1 (in-RAM) + 4096 * 64 (KV) + 2GB * 0.15 (overhead)
-        // = 2.2GB + 0.26MB + 0.3GB ≈ 2.5GB
+        // 2GB (weights) + 4096 * 76,800 (KV) + 2GB * 0.05 (overhead)
+        // = 2GB + 0.31GB + 0.1GB ≈ 2.41GB
         assert(resident in 2_300_000_000..2_700_000_000) {
             "Resident estimate should be ~2.5GB, got ${resident / 1_000_000_000}GB"
         }
