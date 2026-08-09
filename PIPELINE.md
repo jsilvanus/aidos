@@ -201,7 +201,13 @@ they're the ones that matter for deciding what to build next.
   VERSION_OF provenance with acyclicity) is now built and tested.**
 - **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin, manifest, or sandbox code
   anywhere in `runtime/`. Unlike the Draft RFCs this file already excludes from MVP scope, this one
-  is Accepted with nothing built — a real gap, not a documented deferral.
+  is Accepted with nothing built — a real gap, not a documented deferral. **Correction (2026-08-09,
+  outstanding-work item below): not a gap after all.** RFC-0043's own MVP section: *"No plugin
+  host ships in v1. The MVP of this RFC is the decision"* — and D18 (`docs/decisions.md`) already
+  records exactly that decision (WASM-only when built, user-scope install, no native loading).
+  There was never code to write here; "Accepted with nothing built" described the RFC correctly
+  for once. Same overstated-gap pattern as RFC-0047/0024/0045, just with no build item on the
+  other side of the correction.
 - **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder` or budget-ladder
   class; the RFC number appears only in doc-comments citing it, not in an implementation. **Update
   (2026-08-09, outstanding-work item below): the decision logic (rungs 1/2/4/5) and
@@ -304,9 +310,13 @@ milestone with no record either way is exactly how the corpus drifted from this 
   already wired), even though `ContentNode` is used by other subsystems too (`PromptAssembler`'s
   `ContextItem.contentNodeId`, `execution_edges`' `CONTENT_NODE` kind) and arguably deserves its
   own module long-term. Revisit if `androidapp` starts feeling like a dumping ground.
-- [ ] **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin/manifest/sandbox code
-  anywhere. Either build a minimal version or move it out of MVP scope with a recorded decision —
-  Accepted-with-nothing-built is exactly the gap D34 exists to catch, and this one wasn't caught.
+- [x] **RFC-0043 (Plugin Packaging and Sandbox) — checked 2026-08-09, nothing to build.**
+  RFC-0043's own MVP section: *"No plugin host ships in v1. The MVP of this RFC is the
+  decision."* D18 (`docs/decisions.md`) already records that decision (WASM-only when built,
+  user-scope installation, no project-local plugins, no in-process native loading). The original
+  review's "Accepted with nothing built = uncaught D34 gap" framing was wrong here — there was
+  never anything to build. Writing plugin/sandbox code now would directly contradict the RFC's
+  own instruction not to. Nothing left to do until the decision changes.
 - [x] **RFC-0045 (Performance and Resource Budgets), partial — the pure decision logic is done,
   the real-device half is a genuine, still-open hardware gap.** Done 2026-08-09: read RFC-0045's
   own "MVP" section first (by now the standing discipline after RFC-0047/0012/0024 all turned out
