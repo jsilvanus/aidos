@@ -263,6 +263,15 @@ Two groups. Neither is in `docs/mvp-roadmap.md` yet — before picking an item u
 milestone there or record in `docs/decisions.md` that it's out of MVP scope. Building ahead of a
 milestone with no record either way is exactly how the corpus drifted from this file before.
 
+**2026-08-09 — split into two parallel session-pipeline branches, both from the same `main`
+(`3a3c396`) after PR #19 merged the RFC-0047/0012/0024/0045/0043 work below:**
+- **RFC-0004 (Event Bus) + RFC-0005 (Scheduler)** — branch `claude/group1-event-bus-scheduler`.
+- **Group 2 (Android integration)** — branch `claude/group2-android-integration`, this branch.
+
+Working the same two schema tables or the same source file from both branches at once is exactly
+the merge-conflict risk splitting them was meant to buy down — if a change on one branch looks
+like it needs to touch a file the other branch owns, stop and reconcile before pushing, not after.
+
 **Group 1 — RFCs credited as built (or Accepted) with little or no code:**
 
 - [x] **RFC-0012 (Intent Graph), partial — `intent_nodes` persistence done, `intent_proposals`
