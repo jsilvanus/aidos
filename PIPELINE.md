@@ -352,9 +352,9 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   out:** wiring emission points across subsystems (filesystem watcher, git, timers, tool
   completions) so these types actually get published somewhere, and the handful of MVP types this
   slice's constants object doesn't yet have callers for.
-- [ ] **RFC-0005 (Scheduler) — matching layer built and tested 2026-08-09; wiring into
-  `SessionState`/`drive()` deliberately not attempted yet.** Checklist framing corrected first
-  (see below), then progress made on the corrected scope:
+- [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
+  wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
+  Checklist framing corrected first (see below), then progress made on the corrected scope:
   - **`scheduled_jobs` wiring is explicitly *not* MVP.** RFC-0005's own MVP section: *"Not in the
     MVP: timers and scheduled triggers... `scheduled_jobs` exists in the schema and nothing writes
     it before G4."* D34 confirms: *"Timers, the admission policy, and priorities are post-MVP."*
@@ -440,6 +440,19 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   matching layer (`SessionSubscriptionStore`, `SchedulerMatcher`) is done, tested, and will be
   ready to consume whichever side ends up building the bridge — that part was not wasted work
   either way.
+  **User decision, 2026-08-09: the agentloop↔executor bridge (wake-to-Run wiring) is ruled out of
+  this branch's workload entirely, not merely paused.** The user was asked directly whether to
+  settle the Group 1/Group 2 split first; the answer was to continue Group 1's remaining work
+  *except* that split decision, and to remove it from scope here rather than revisit it link to
+  link. **Concretely, for this PR:** RFC-0005 stops at the persistence + pure-matching layer above.
+  Nothing calling `SchedulerMatcher`, no `SessionState` transitions, no Run creation, and no
+  further investigation into `agentloop` belongs to this branch going forward — that whole
+  question is the user's to settle separately (with Group 2, or as its own follow-up), not
+  something a future link should pick back up "since it's next." **What this makes RFC-0005 in
+  this PR: the persistence and matching layer, deliberately partial and staying that way here.**
+  If PIPELINE.md's Group 1 checklist item for RFC-0005 is ever marked done in this branch, it
+  means "the layer this branch owns is done," not "RFC-0005 is fully implemented" — the wake path
+  is real, tracked, follow-up work, just not this branch's.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing
