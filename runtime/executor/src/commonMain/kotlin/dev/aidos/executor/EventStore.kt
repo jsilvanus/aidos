@@ -77,16 +77,67 @@ class EventStore(private val driver: SqlDriver) {
         ) { bindString(0, id) }.value
     }
 
-    /** Returns events in sequence order for a project, optionally filtered by type. */
-    fun eventsForProject(projectId: String, type: String? = null): List<EventRow> {
-        val rows = mutableListOf<EventRow>()
-        val sql = if (type != null) {
-            "SELECT id, sequence, type, source, payload, causality, causal_depth, timestamp " +
-                "FROM events WHERE project_id = ? AND type = ? ORDER BY sequence"
-        } else {
-            "SELECT id, sequence, type, source, payload, causality, causal_depth, timestamp " +
-                "FROM events WHERE project_id = ? ORDER BY sequence"
+    /**
+     * Returns events in sequence order for a project, optionally filtered by type and/or topic
+     * pattern (RFC-0004 "Topics and Filtering"; MVP item 5, replay by topic).
+     *
+     * [topicPattern] is matched with [TopicMatcher] against each row's `topic` column. The type
+     * and project filters run in SQL against the indexed columns; the topic pattern is applied
+     * afterwards in Kotlin, since SQLite has no native glob semantics matching the RFC's syntax.
+     */
+    fun eventsForProject(
+        projectId: String,
+        type: String? = null,
+        topicPattern: String? = null,
+    ): List<EventRow> {
+        val rows = queryEvents(
+            sql = if (type != null) {
+                "SELECT id, sequence, type, source, payload, causality, causal_depth, timestamp, topic " +
+                    "FROM events WHERE project_id = ? AND type = ? ORDER BY sequence"
+            } else {
+                "SELECT id, sequence, type, source, payload, causality, causal_depth, timestamp, topic " +
+                    "FROM events WHERE project_id = ? ORDER BY sequence"
+            },
+            parameters = if (type != null) 2 else 1,
+        ) {
+            bindString(0, projectId)
+            if (type != null) bindString(1, type)
         }
+        return if (topicPattern != null) rows.filter { TopicMatcher.matches(topicPattern, it.topic) } else rows
+    }
+
+    /**
+     * Returns events for a project within `[fromIso, toIso]` (inclusive), in sequence order,
+     * optionally filtered by topic pattern (RFC-0004 MVP item 5: "Replay: Events can be queried
+     * by time range and topic").
+     *
+     * `timestamp` is stored as ISO-8601 with a `Z` suffix, which sorts lexically in wall-clock
+     * order, but per RFC-0004 it is not the ordering key — rows are still returned by `sequence`.
+     */
+    fun eventsBetween(
+        projectId: String,
+        fromIso: String,
+        toIso: String,
+        topicPattern: String? = null,
+    ): List<EventRow> {
+        val rows = queryEvents(
+            sql = "SELECT id, sequence, type, source, payload, causality, causal_depth, timestamp, topic " +
+                "FROM events WHERE project_id = ? AND timestamp >= ? AND timestamp <= ? ORDER BY sequence",
+            parameters = 3,
+        ) {
+            bindString(0, projectId)
+            bindString(1, fromIso)
+            bindString(2, toIso)
+        }
+        return if (topicPattern != null) rows.filter { TopicMatcher.matches(topicPattern, it.topic) } else rows
+    }
+
+    private fun queryEvents(
+        sql: String,
+        parameters: Int,
+        binders: app.cash.sqldelight.db.SqlPreparedStatement.() -> Unit,
+    ): List<EventRow> {
+        val rows = mutableListOf<EventRow>()
         driver.executeQuery(
             identifier = null,
             sql = sql,
@@ -102,16 +153,15 @@ class EventStore(private val driver: SqlDriver) {
                             causality = cursor.getString(5),
                             causalDepth = cursor.getLong(6)?.toInt() ?: 0,
                             timestamp = cursor.getString(7)!!,
+                            topic = cursor.getString(8),
                         )
                     )
                 }
                 QueryResult.Value(Unit)
             },
-            parameters = if (type != null) 2 else 1,
-        ) {
-            bindString(0, projectId)
-            if (type != null) bindString(1, type)
-        }
+            parameters = parameters,
+            binders = binders,
+        )
         return rows
     }
 }
@@ -125,4 +175,5 @@ data class EventRow(
     val causality: String?,
     val causalDepth: Int,
     val timestamp: String,
+    val topic: String? = null,
 )

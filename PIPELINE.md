@@ -193,7 +193,14 @@ they're the ones that matter for deciding what to build next.
   at all: `SessionState.SLEEPING` is declared in the kernel and never transitioned to or from, and
   `scheduled_jobs` in `schema/project.sql` is never read or written. (Distinct from the RFC-0044
   background-*job* scheduler PR #18 just added under `androidapp/scheduling/` — that's a different
-  subsystem, notification/work-class dispatch, not session wake/sleep.)
+  subsystem, notification/work-class dispatch, not session wake/sleep.) **Update (2026-08-09,
+  outstanding-work item below): RFC-0004's topic-subscription and replay-by-topic layer is now
+  built and tested (`executor/TopicMatcher.kt`, `SubscriptionRegistry.kt`, `EventStore` replay
+  queries) — genuinely missing, as this review found, not an overstated gap. RFC-0005 turned out
+  to be the opposite mix: `scheduled_jobs` wiring is explicitly post-MVP per the RFC's own text (not
+  a gap at all — the review's framing overstated it, same pattern as RFC-0024/0045/0047), but
+  event-driven wake (the RFC's actual MVP item 1) is a real, unstarted gap despite D34 crediting it
+  to M5 — see the outstanding-work item for detail. Still open.**
 - **RFC-0024 (Resource Graph).** Only `ContentNodeId` and references exist in the kernel; no
   `ContentNode` data class, no promotion/demotion logic, no dedicated store. **Update (2026-08-09,
   outstanding-work item below): the "promotion/demotion" framing overstated the gap — that's
@@ -292,13 +299,80 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   `execution_edges` (`edge_kind = 'TARGETED'`) — nothing currently writes that edge, so
   `listActive()` always returns it `null`. Whoever wires proposal persistence needs a real
   run/audit integration point first, not just a repository class.
-- [ ] **RFC-0004 (Event Bus).** Build the topic-subscription/replay-by-topic layer on top of
-  `executor/EventStore.kt` (today just an append-only log with sequence ordering and the
-  causal-depth guard). If it's actually post-MVP, say so via a D34-style decision instead of
-  leaving it silently unbuilt.
-- [ ] **RFC-0005 (Scheduler).** Implement session wake/sleep: `SessionState.SLEEPING` is declared
-  in the kernel and never transitioned to or from anywhere. Wire `scheduled_jobs`
-  (`schema/project.sql`) to a real reader/writer. Same scope caveat as Event Bus.
+- [x] **RFC-0004 (Event Bus), MVP items 4/5 done — topic-pattern subscriptions and replay-by-topic.**
+  Done 2026-08-09: added `TopicMatcher` (`executor/TopicMatcher.kt`, 9 tests), a pure translator
+  from the RFC's own wildcard syntax (single `*` bounded by `/`, `**` crossing it, a lone `*`
+  meaning "all events" per the RFC's own gloss) to a `Regex`, verified against every worked
+  example in RFC-0004's "Topics and Filtering" section. `EventStore.eventsForProject` gained an
+  optional `topicPattern` parameter and a new `eventsBetween(fromIso, toIso, topicPattern)` query
+  — MVP item 5, "Replay: events can be queried by time range and topic" — both filtering in
+  Kotlin over the existing indexed project/type/timestamp SQL query rather than trying to
+  translate glob syntax into SQL. Added `SubscriptionRegistry` + `Subscription`
+  (`executor/SubscriptionRegistry.kt`, 6 tests) implementing MVP item 4 ("sessions and subsystems
+  can subscribe to topic patterns and event types") as an in-memory matcher — not persisted,
+  because RFC-0004's own Future Work section says live delivery ("Real-Time Event Streaming") is
+  explicitly *not* MVP ("MVP uses request/response"), so a subscription registry with nothing to
+  survive a restart is the correct MVP shape, not a shortcut. 19 new tests total, all green.
+  **Deliberately scoped to `executor` only, not `api/RealRuntimeClient.kt`:** the task brief
+  suggested wiring this into `RealRuntimeClient.events.subscribe`, but that file is explicitly
+  Group 2's ("Finish RealRuntimeClient") — and on inspection its `RuntimeEvent`/`EventFilter`
+  types don't carry a `topic` field at all, they're a separate, higher-level UI-facing event model
+  (`SessionCreated`, `RunStarted`, ~10 fixed cases) distinct from RFC-0004's actual persisted
+  event log. The literal RFC-0004 persistence model (with `topic`) lives entirely in
+  `executor/EventStore.kt`, so building there both avoids the flagged collision and is more
+  faithful to what the RFC actually specifies. Wiring topic-awareness into the `RealRuntimeClient`
+  UI event model — if ever wanted — is a distinct, later design question for whoever owns that
+  file, not a gap in this RFC's MVP.
+  **Correction to D34's own RFC-0004 row:** D34 (`docs/decisions.md`) resolved RFC-0004 as
+  "Already built — M5 publishes, M9 exposes, M10 verifies `sinceSequence` gap replay... Bookkeeping,
+  not scope." That verified sequence-based replay exists, but not topic-pattern replay or
+  subscriptions — items 4 and 5 of the RFC's own MVP list, which had no code anywhere before this
+  commit (confirmed by grep, and by the 2026-08-09 independent review this whole outstanding-work
+  list responds to). D34 is marked `SETTLED` and this file doesn't edit it unilaterally, but
+  flagging per CLAUDE.md's "if a decision looks wrong, say so" — its RFC-0004 row was itself an
+  under-audit, the same failure class the "Accepted is not frozen" note already warns about one
+  level up. Worth a correction pass on D34's table the next time `docs/decisions.md` is touched.
+  Item 2 (most of the ~10 event types) and wiring emission points across subsystems (filesystem
+  watcher, git, timers, tool completions) remain — deliberately deferred as the "much larger,
+  second slice" the task brief called out; not started here.
+- [ ] **RFC-0005 (Scheduler) — not started; checklist framing corrected 2026-08-09, read this
+  before picking it up.** Reading RFC-0005's own MVP section (it was rewritten in the architecture
+  pass, per "What has been settled" below) and D34's RFC-0005 row together changes the shape of
+  this item from how the original review framed it:
+  - **`scheduled_jobs` wiring is explicitly *not* MVP.** RFC-0005's own MVP section: *"Not in the
+    MVP: timers and scheduled triggers... `scheduled_jobs` exists in the schema and nothing writes
+    it before G4."* D34 confirms: *"Timers, the admission policy, and priorities are post-MVP."*
+    The checklist's "wire `scheduled_jobs` to a real reader/writer" item is asking for explicitly
+    post-MVP scope — don't build it. **Also factually stale regardless of scope:** `scheduled_jobs`
+    already has a real reader/writer — `androidapp/scheduling/SqliteScheduledJobManager.kt`
+    (RFC-0044, PR #18) — just for a different purpose (notification/work-class dispatch, not
+    session wake/sleep), which PIPELINE's own "Independent codebase review" section already notes
+    in a parenthetical the checklist bullet itself didn't carry forward.
+  - **The real MVP item is event-driven wake (RFC-0005 MVP item 1): "topic and type matching, so a
+    session wakes from a subscribed event... the load-bearing case is a driver waking when its
+    worker completes."** D34 credits this to M5, but that credit looks overclaimed on inspection —
+    the M5 done-when (`ExecutorTest.kt`'s own doc comment) is about hard-coded Task execution and
+    event publishing, not subscription matching, and **no subscriptions table or column exists
+    anywhere in `schema/`** (`sessions` has a `state` column that can hold `SLEEPING`, but nowhere
+    to persist a session's `topic_patterns`/`event_types` — confirmed by grep, zero hits). Building
+    item 1 for real needs: a schema table for subscriptions (D3: anything surviving a step
+    boundary is a column — this can't live in memory), `SessionState` transitions
+    (`SLEEPING`↔`RUNNING`) wired into `executor`, and matching logic that creates a Run for a
+    woken session — probably consuming this link's new `SubscriptionRegistry`/`TopicMatcher` from
+    the RFC-0004 slice, which were built with exactly this consumer in mind.
+  - **MVP item 3 (causal_depth ceiling + self-wake refusal, both recorded, M6)** is partially
+    there: `EventStore.MAX_CAUSAL_DEPTH` refuses publication past depth 16, but silently (`return
+    null`, no audit row) — RFC-0005 says refusals must be "recorded, not silent" (RFC-0037). Also
+    not yet checked: does anything refuse a *self*-wake specifically (an event waking the session
+    that sourced it), as opposed to just bounding depth generally? Worth verifying, not assuming,
+    before crediting M6 either way.
+  **Why this link didn't attempt item 1 itself:** it's schema + `SessionState` + the `executor`
+  drive loop's territory — "go carefully, ask rather than guess" territory per the task brief, and
+  a genuinely different size of change from the RFC-0004 slice above. Next link: read D3 and D14
+  in `docs/decisions.md` (already read this link, see "What has been settled" — the load-bearing
+  ones are step-machine-as-columns and one-effectful-Task-per-Run), design the subscriptions
+  schema addition first (small, additive DDL — new table, not a change to `events`/`sessions`),
+  and treat wiring it into `drive()` as its own careful step, not bundled with the schema change.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing
@@ -516,6 +590,26 @@ an architecture pass read the whole corpus against them. The durable output:
 ---
 
 ## Notes for the next link
+
+**2026-08-09 — the "Unclosed comment" nested-`/*` bug recurs beyond `schema/*.sql` globs; it's any
+literal `/` immediately followed by `*` inside a KDoc block.** The existing note below about
+`SqlScriptTest`'s `schema/*.sql` glob is one instance of a general trap, not the whole trap: this
+link's own `TopicMatcher.kt` doc comment tripped the identical failure writing prose that quoted
+RFC-0004's example topic pattern `filesystem:/project/src/*` — the `/` before that trailing `*`
+opened a second, unterminated `/**` block. The fix generalizes: before writing a KDoc comment that
+quotes a path-like or glob-like string, grep the comment text for a literal `/*` substring, not
+just for the specific `schema/*.sql`-shaped case already documented.
+
+**`gradle` (no wrapper checked in) lives at `/opt/gradle/bin/gradle` in this sandbox, not
+`./gradlew`.** Run it from `runtime/` directly. The first invocation in a session downloads
+dependencies and reliably exceeds the Bash tool's default 120s foreground timeout — pass
+`timeout: 300000` (or higher) explicitly, or expect it to move to background and poll the output
+file. Subsequent invocations are fast (Gradle daemon + populated cache).
+
+**`gradle jvmTest` (no target) stops at the first failing module** unless run with `--continue` —
+without it, a red `:cookbook` (first alphabetically among the known-red modules) masks whether
+anything *else* broke. Use `--continue` when verifying a change is clean against the whole known-red
+baseline, not just against the one module you touched.
 
 **2026-08-09 — the PR #18 merge left several build scripts and two source files broken; fixing
 them to verify the androidTarget() wiring surfaced more than the wiring itself.** Working the
