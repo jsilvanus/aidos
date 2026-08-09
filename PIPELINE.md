@@ -335,44 +335,68 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   Item 2 (most of the ~10 event types) and wiring emission points across subsystems (filesystem
   watcher, git, timers, tool completions) remain — deliberately deferred as the "much larger,
   second slice" the task brief called out; not started here.
-- [ ] **RFC-0005 (Scheduler) — not started; checklist framing corrected 2026-08-09, read this
-  before picking it up.** Reading RFC-0005's own MVP section (it was rewritten in the architecture
-  pass, per "What has been settled" below) and D34's RFC-0005 row together changes the shape of
-  this item from how the original review framed it:
+- [ ] **RFC-0005 (Scheduler) — matching layer built and tested 2026-08-09; wiring into
+  `SessionState`/`drive()` deliberately not attempted yet.** Checklist framing corrected first
+  (see below), then progress made on the corrected scope:
   - **`scheduled_jobs` wiring is explicitly *not* MVP.** RFC-0005's own MVP section: *"Not in the
     MVP: timers and scheduled triggers... `scheduled_jobs` exists in the schema and nothing writes
     it before G4."* D34 confirms: *"Timers, the admission policy, and priorities are post-MVP."*
-    The checklist's "wire `scheduled_jobs` to a real reader/writer" item is asking for explicitly
-    post-MVP scope — don't build it. **Also factually stale regardless of scope:** `scheduled_jobs`
-    already has a real reader/writer — `androidapp/scheduling/SqliteScheduledJobManager.kt`
+    The original checklist's "wire `scheduled_jobs` to a real reader/writer" item was asking for
+    explicitly post-MVP scope — not built, correctly. **Also factually stale regardless of scope:**
+    `scheduled_jobs` already has a real reader/writer — `androidapp/scheduling/SqliteScheduledJobManager.kt`
     (RFC-0044, PR #18) — just for a different purpose (notification/work-class dispatch, not
-    session wake/sleep), which PIPELINE's own "Independent codebase review" section already notes
-    in a parenthetical the checklist bullet itself didn't carry forward.
+    session wake/sleep).
   - **The real MVP item is event-driven wake (RFC-0005 MVP item 1): "topic and type matching, so a
     session wakes from a subscribed event... the load-bearing case is a driver waking when its
     worker completes."** D34 credits this to M5, but that credit looks overclaimed on inspection —
     the M5 done-when (`ExecutorTest.kt`'s own doc comment) is about hard-coded Task execution and
-    event publishing, not subscription matching, and **no subscriptions table or column exists
-    anywhere in `schema/`** (`sessions` has a `state` column that can hold `SLEEPING`, but nowhere
-    to persist a session's `topic_patterns`/`event_types` — confirmed by grep, zero hits). Building
-    item 1 for real needs: a schema table for subscriptions (D3: anything surviving a step
-    boundary is a column — this can't live in memory), `SessionState` transitions
-    (`SLEEPING`↔`RUNNING`) wired into `executor`, and matching logic that creates a Run for a
-    woken session — probably consuming this link's new `SubscriptionRegistry`/`TopicMatcher` from
-    the RFC-0004 slice, which were built with exactly this consumer in mind.
-  - **MVP item 3 (causal_depth ceiling + self-wake refusal, both recorded, M6)** is partially
-    there: `EventStore.MAX_CAUSAL_DEPTH` refuses publication past depth 16, but silently (`return
-    null`, no audit row) — RFC-0005 says refusals must be "recorded, not silent" (RFC-0037). Also
-    not yet checked: does anything refuse a *self*-wake specifically (an event waking the session
-    that sourced it), as opposed to just bounding depth generally? Worth verifying, not assuming,
-    before crediting M6 either way.
-  **Why this link didn't attempt item 1 itself:** it's schema + `SessionState` + the `executor`
-  drive loop's territory — "go carefully, ask rather than guess" territory per the task brief, and
-  a genuinely different size of change from the RFC-0004 slice above. Next link: read D3 and D14
-  in `docs/decisions.md` (already read this link, see "What has been settled" — the load-bearing
-  ones are step-machine-as-columns and one-effectful-Task-per-Run), design the subscriptions
-  schema addition first (small, additive DDL — new table, not a change to `events`/`sessions`),
-  and treat wiring it into `drive()` as its own careful step, not bundled with the schema change.
+    event publishing, not subscription matching, and no subscriptions table existed anywhere in
+    `schema/` before this link (confirmed by grep, zero hits, prior to the commit below).
+  - **Done this link — the persistence and matching halves of item 1, plus item 3's self-wake
+    refusal as a pure decision:** added `session_subscriptions` to `schema/project.sql` (topic
+    patterns and event types as JSON arrays via `kotlinx.serialization`, matching the convention
+    already used elsewhere in `executor`/`broker`, not hand-rolled encoding; `self_wake` flag per
+    RFC-0005's opt-in). `executor/SessionSubscriptionStore.kt` persists/reads it (4 tests) — the
+    durable counterpart to the RFC-0004 slice's in-memory `SubscriptionRegistry`, needed because
+    D3 requires anything surviving a step boundary to be a column, and the load-bearing wake case
+    (driver woken by its worker) can span a process restart on Android.
+    `executor/SchedulerMatcher.kt` (8 tests) is the pure decision function from RFC-0005's own
+    "Matching" section — given a published event, a source session ID, and the project's
+    subscriptions, it returns which sessions would wake and which self-wakes were refused. Tests
+    include the RFC's own load-bearing case (driver subscribed to its worker's topic, woken when
+    the worker's `RunCompleted` fires) and the self-wake-refused-by-default / opt-in-overrides
+    cases from "Cycles and amplification." Adding the table required bumping `SqlScriptTest`'s
+    hardcoded project-table-count assertion (42→43) — caught by `gradle jvmTest`, not by
+    `schema/check.py`, which doesn't count tables; worth remembering next time a table is added,
+    since `check.py` passing does not mean every test that counts tables is still correct.
+  - **Deliberately not derived from `EventRow.source`:** `SchedulerMatcher.match()` takes
+    `sourceSessionId` as an explicit parameter rather than trying to parse which session published
+    an event from its `source` string, because there is no established convention anywhere in the
+    codebase for encoding session identity in that field (grepped, zero hits) — inventing one as a
+    side effect of this function would be a bigger, unreviewed decision than this slice should
+    make. Whoever wires the actual publish→match→wake path needs to either establish that
+    convention deliberately or thread the source session through some other way; don't let it get
+    invented implicitly inside a matcher.
+  - **Still not done, and it's the harder half:** nothing calls `SchedulerMatcher` yet.
+    `EventStore.publish()` doesn't invoke it, nothing transitions `SessionState` `SLEEPING`↔`RUNNING`,
+    and nothing creates a Run for a woken session. This is `SqliteExecutor`'s `drive()` loop and
+    the step-machine's territory — D3 (anything surviving a step boundary is a column) and D14 (at
+    most one effectful Task per Run is `RUNNING`) both apply directly to how a wake becomes a Run,
+    and CrashRecoveryTest must stay green through it. **Also still open:** MVP item 3's causal-depth
+    half — `EventStore.MAX_CAUSAL_DEPTH` refuses publication past depth 16, but silently (`return
+    null`, no audit row), and RFC-0005 says refusals must be "recorded, not silent" (RFC-0037).
+    `broker/AuditLog` (already an `executor` dependency, used elsewhere for exactly this kind of
+    "record that something was refused and why") is the natural place to write that row from, once
+    the actual wake path exists to call it from.
+  **Why this link stopped before wiring it in:** the matching layer is now built, tested, and
+  ready to be a dependency of the wake path — but the wake path itself changes `drive()`'s
+  behavior and touches `SessionState`, which is exactly the crash-recovery-critical territory the
+  task brief said to go carefully in. Next link: read D3 and D14 in `docs/decisions.md` (done this
+  link, see "What has been settled" below), read `SqliteExecutor.kt`'s `drive()` loop and
+  `recover()` end to end before changing either, and design where a wake enters that loop — as a
+  new Run creation path, most likely — before writing code. `CrashRecoveryTest` must still pass
+  after the change; if it's not obvious how to keep it passing, that's the "stop and ask" case the
+  brief called out, not a place to guess.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing

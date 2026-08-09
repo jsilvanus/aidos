@@ -124,6 +124,26 @@ CREATE INDEX idx_events_topic ON events(project_id, topic);
 CREATE INDEX idx_events_type  ON events(project_id, type, sequence);
 
 -- ---------------------------------------------------------------------------
+-- Scheduler: session subscriptions (RFC-0005 MVP item 1, RFC-0004 "Subscription Model")
+-- ---------------------------------------------------------------------------
+
+-- A session wakes from SLEEPING when a published event matches one of its topic patterns and
+-- (if given) its event type filter. self_wake opts in to being woken by an event the session
+-- itself sourced; the default is refused (RFC-0005 "Cycles and amplification" — a session woken
+-- by its own output is a loop, not a feature, unless a subscription deliberately asks for it).
+CREATE TABLE session_subscriptions (
+    id             TEXT PRIMARY KEY,
+    session_id     TEXT NOT NULL,
+    topic_patterns TEXT NOT NULL,                         -- JSON array of RFC-0004 topic patterns
+    event_types    TEXT,                                  -- JSON array of type strings; NULL = all types
+    self_wake      INTEGER NOT NULL DEFAULT 0,             -- 0|1
+    created_at     TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX idx_session_subscriptions_session ON session_subscriptions(session_id);
+
+-- ---------------------------------------------------------------------------
 -- Capabilities (RFC-0018)
 -- ---------------------------------------------------------------------------
 
