@@ -1,6 +1,7 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    kotlin("plugin.compose")
     id("app.cash.sqldelight") version "2.0.2"
     id("com.android.application")
 }
@@ -29,6 +30,11 @@ kotlin {
                 implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
+                // jvmMain has no Compose UI of its own, but the Compose Compiler Gradle plugin
+                // (kotlin.plugin.compose) runs its version check against every compilation in
+                // this module, androidTarget included — it fails hard without the runtime on
+                // the classpath even here. Unused at runtime, only satisfies that check.
+                implementation("androidx.compose.runtime:runtime:1.6.0")
             }
         }
 
