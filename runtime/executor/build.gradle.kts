@@ -13,6 +13,7 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":storage"))
             implementation(project(":broker"))
+            implementation(project(":prompt"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
