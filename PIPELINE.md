@@ -332,9 +332,26 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   flagging per CLAUDE.md's "if a decision looks wrong, say so" — its RFC-0004 row was itself an
   under-audit, the same failure class the "Accepted is not frozen" note already warns about one
   level up. Worth a correction pass on D34's table the next time `docs/decisions.md` is touched.
-  Item 2 (most of the ~10 event types) and wiring emission points across subsystems (filesystem
-  watcher, git, timers, tool completions) remain — deliberately deferred as the "much larger,
-  second slice" the task brief called out; not started here.
+  **Item 2 (event types), the MVP-scoped naming half done 2026-08-09:** added
+  `executor/EventTypes.kt` — named `String` constants (not a closed enum, deliberately: RFC-0004
+  treats the type vocabulary as open-ended for forward-compat and future event-source plugins) for
+  exactly the 14 types RFC-0004's own MVP line names (`UserCommand, TimerFired,
+  FileModified/Created/Deleted, GitCommit, ToolCompleted, PermissionRequested/Granted/Denied,
+  SessionWoken/Sleeping, ArtifactCreated, Error`) — not the larger set the RFC's fuller "Event
+  Types" design section also describes, which stays valid free-form vocabulary but wasn't what the
+  MVP line committed to. 2 tests (exact spelling, all distinct) — worth having since
+  `SchedulerMatcher`/`SubscriptionRegistry` match event types by plain string equality, so a typo
+  in a constant would silently break matching rather than fail to compile.
+  **`EventTypes.ERROR`'s value is a documented judgment call, not a settled fact:** the MVP line
+  says bare `"Error"`, but the RFC's fuller section never defines a type by that literal name —
+  only `SessionError` (Session category) and `ErrorOccurred` (System category) exist there. Used
+  the MVP line's literal spelling rather than silently resolving the ambiguity toward one of the
+  two more-specific names; flagged in the file's own doc comment for whoever wires real
+  error-event emission to check before depending on it.
+  **Still open — deliberately not started, the "much larger, second slice" the task brief called
+  out:** wiring emission points across subsystems (filesystem watcher, git, timers, tool
+  completions) so these types actually get published somewhere, and the handful of MVP types this
+  slice's constants object doesn't yet have callers for.
 - [ ] **RFC-0005 (Scheduler) — matching layer built and tested 2026-08-09; wiring into
   `SessionState`/`drive()` deliberately not attempted yet.** Checklist framing corrected first
   (see below), then progress made on the corrected scope:
