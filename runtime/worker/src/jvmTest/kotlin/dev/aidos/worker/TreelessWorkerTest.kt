@@ -24,6 +24,12 @@ class TreelessWorkerTest {
     private fun makeRepo(): Pair<Git, File> {
         val dir = Files.createTempDirectory("treeless-test").toFile()
         val git = Git.init().setDirectory(dir).call()
+        // Ambient global gitconfig (e.g. commit.gpgsign=true) must not leak into test repos —
+        // JGit has no signing backend and throws UnsupportedSigningFormatException.
+        git.repository.config.apply {
+            setBoolean("commit", null, "gpgsign", false)
+            save()
+        }
         // Initial commit.
         val readme = File(dir, "README.md")
         readme.writeText("# Initial\n")

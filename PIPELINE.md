@@ -560,18 +560,39 @@ what was actually broken and not caused by the androidTarget() change itself:
   hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
   actually 2023-08-02 — computed and substituted the correct value.
 
-**Three failures remain and are environment artifacts, not code bugs — don't spend time on them
-without checking the environment first:** `:knowledge` and `:modelruntime` fail to resolve
-`gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized — this sandbox has no
-`GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already documents this
-requirement; CI's default token has it, this environment's doesn't). `:git` and `:worker`'s JGit
-tests fail with `UnsupportedSigningFormatException` because this **session's own** global
-`~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key for Claude Code's own
-commit signing, and JGit inherits that ambient config when it opens a repo — nothing in the test
-or in Aidos is wrong, JGit just doesn't support that signing format. `cookbook`'s
-`testExceedsContextAtLongWindow` fails and predates PR #18 entirely (`git diff` across the merge
-shows zero changes to `cookbook/`) — a genuine pre-existing bug, but out of scope for Group 2's
-androidTarget work; flag it for whoever picks up `cookbook` next.
+**2026-08-09 — all three "pre-existing failures" resolved or reclassified.** Two are genuinely
+environment-only and don't need — and can't get — a code fix: `:knowledge` and `:modelruntime`
+fail to resolve `gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized —
+this sandbox has no `GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already
+documents this requirement; CI's default token has it, this environment's doesn't). Confirmed
+again on this link; still 401, still sandbox-only, still not actionable here.
+
+The other two *were* fixable and now are: `:git` and `:worker`'s JGit tests failed with
+`UnsupportedSigningFormatException` because the **sandbox's own** global `~/.gitconfig` sets
+`commit.gpgsign=true` (for Claude Code's own commit signing), and JGit inherited that ambient
+config when it opened a repo — nothing wrong in Aidos, but the tests were relying on an
+environment property (no global signing config) instead of pinning it themselves, so they'd
+fail in any environment with commit signing enabled. Fixed by explicitly setting
+`commit.gpgsign=false` on each test repo's own config in `GitToolTest.tempRepo()` and
+`TreelessWorkerTest.makeRepo()` — the test's repo config now wins regardless of what the host
+has configured globally.
+
+`cookbook`'s `testExceedsContextAtLongWindow` was a real calibration bug in
+`CookbookEngine.computeResidentMemory()`, not a test bug. RFC-0022 doesn't mandate exact
+constants for the resident-memory formula, but it does give a worked example (Qwen2.5 3B
+Q4_K_M, 2.0GB weights: 4k→2.4GB resident/RUNS_WELL, 16k→3.3GB, 32k→4.6GB/WILL_NOT_FIT) — the
+only authoritative numeric anchor available. The old formula (`weights * 1.1` in-RAM inflation,
+15% overhead, 64 bytes/token KV) put the *baseline* (weights + overhead, before any KV term) at
+27.7% headroom on the failing test's device profile — already under the 30% `RUNS_WELL`
+threshold with zero KV cost, so no KV-constant adjustment alone could ever fix it; the baseline
+itself was miscalibrated. Recalibrated against the RFC's own table: drop the 1.1x multiplier
+(use `weightsBytesOnDisk` directly, matching the RFC's literal wording), overhead 15% → 5%, KV
+cache 64 → 76,800 bytes/token. Reproduces the RFC's three worked-example numbers within RFC's
+own rounding and satisfies every existing test with the original 30%/10% `RUNS_WELL`/`RUNS_TIGHT`
+thresholds untouched. `estimateParams()`'s `sizeBytes / 1_500` (likely should be a much smaller
+divisor — Q4 quantization is roughly 0.5-0.7 bytes/param, not 1500) is a separate, still-dormant
+bug: `computeResidentMemory()` never consumes `parameterCount`, so it affects nothing today.
+Left alone rather than guessed at — flag for whoever first makes `parameterCount` load-bearing.
 
 **M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
 note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,
