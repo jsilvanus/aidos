@@ -399,20 +399,30 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   not responsibly scope: RFC-0017 (the canonical session state machine, confirmed via its own
   text: *"a session with queued events is SLEEPING until the scheduler drives it"*) says the
   Scheduler drives a woken session but does not say what tasks a *driver-woken-by-its-worker* Run
-  contains — that decision belongs to the model-call loop (RFC-0020, `runtime/agentloop/`, a
-  module this link did not read), not to `executor` alone. Guessing at a Task list to unblock this
-  would be inventing agent-loop behavior from inside the execution kernel, backwards from how the
-  rest of the codebase layers these concerns. **Next link: before writing a `Scheduler` class,
-  read `runtime/agentloop/` (RFC-0020) to learn how a *driver* currently gets Tasks assigned when
-  handling an incoming user message, and reuse that path for "handling an incoming wake event"
-  rather than inventing a second one.** Once that's understood, the wake path is: call
-  `SchedulerMatcher.match()` → for each woken session, create a Run the same way agentloop already
-  does for a user message, with the causing event as context instead of a `UserMessage` → call
-  `drive()`. `CrashRecoveryTest` must still pass after the change (D3, D14); if it's not obvious
-  how to keep it passing, that's the "stop and ask" case the brief called out, not a place to
-  guess. This is also worth flagging to the user directly: it's larger and more cross-cutting than
-  "wire scheduled_jobs" or "add a SLEEPING transition" made it sound, and may be worth its own
-  scoped-out discussion before a next link just starts writing code against a guess.
+  contains — that decision belongs to the model-call loop (RFC-0020, `runtime/agentloop/`).
+  **Read this link (2026-08-09): `runtime/agentloop/AgentLoop.kt` has zero callers anywhere in the
+  codebase outside its own module** (`grep -rl "AgentLoop(\|RunRequest("` across `runtime/`,
+  excluding `agentloop/` itself, returns nothing). It is not a Task-populator plugged into
+  `SqliteExecutor` — it's a self-contained suspend function (`AgentLoop.run(RunRequest):
+  RunOutcome`) that runs an entire model-call loop to completion in one call, with a `checkpoint`
+  callback for the caller to persist step boundaries into. It has **no relationship at all** to
+  `runs`/`tasks`/`attempts` rows or `drive()` — those are two parallel, currently-disconnected
+  execution models (the SQLite step-machine in `executor`, and the in-memory model-call loop in
+  `agentloop`), and nothing in the runtime bridges them yet.
+  **This changes the assessment from "read agentloop for the pattern" to "there is no pattern to
+  read yet — the bridge itself is unbuilt."** And that bridge is not free-standing: it is, at
+  minimum, adjacent to — quite possibly the same work as — Group 2's own outstanding item **"Finish
+  `RealRuntimeClient`"**, whose own text says *"wire it to storage/executor/capability... this
+  blocks the next two items"* — i.e., the same "make Run creation real instead of a stub" problem,
+  approached from the API side instead of the Scheduler side. Building this from the RFC-0005 side
+  without coordinating risks doing Group 2's work twice, differently, on two branches — precisely
+  the collision the branch split exists to prevent, even though no single file is shared.
+  **This link's conclusion: RFC-0005's actual wake-to-Run wiring should not be attempted by a
+  Group 1 link without the user's input on how it relates to Group 2's `RealRuntimeClient` work.**
+  Flagged directly in the final message of this link, not just buried here. The persistence and
+  matching layer (`SessionSubscriptionStore`, `SchedulerMatcher`) is done, tested, and will be
+  ready to consume whichever side ends up building the bridge — that part was not wasted work
+  either way.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing
