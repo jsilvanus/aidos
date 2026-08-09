@@ -108,7 +108,7 @@ android {
             val keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
             val keyPassword = System.getenv("KEY_PASSWORD") ?: keystorePassword
             
-            if (keystore != null && keystore.isNotEmpty()) {
+            if (keystore != null && keystore.isNotEmpty() && File(keystore).exists()) {
                 storeFile = File(keystore)
                 storePassword = keystorePassword
                 this.keyAlias = keyAlias
