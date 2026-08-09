@@ -4,8 +4,7 @@ plugins {
 
 kotlin {
     jvm()
-    // androidTarget() — uncomment when AGP is resolvable (needs dl.google.com).
-
+    // androidTarget() — requires AGP (D5); see PIPELINE.md
 
     sourceSets {
         val jvmMain by getting {
@@ -30,7 +29,6 @@ kotlin {
             }
         }
 
-        // androidMain sourceSet — uncomment when androidTarget() is wired.
         // val androidMain by getting {
         //     dependencies {
         //         implementation(project(":kernel"))
@@ -38,7 +36,6 @@ kotlin {
         //         implementation("io.github.jsilvanus:gitsema-core-androidRelease:0.1.0-SNAPSHOT")
         //     }
         // }
-
     }
 
     compilerOptions {

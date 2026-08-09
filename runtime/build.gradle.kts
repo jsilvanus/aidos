@@ -7,5 +7,6 @@ plugins {
     // Wire this apply false into :kernel, :api, :androidapp once the CI
     // environment has network access to dl.google.com (blocked in this sandbox).
     // ---------------------------------------------------------------------------
-    // id("com.android.library") version "8.5.2" apply false
+    id("com.android.library") version "8.5.2" apply false
+    id("com.android.application") version "8.5.2" apply false
 }
