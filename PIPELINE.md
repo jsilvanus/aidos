@@ -403,7 +403,65 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   iteration rounds rather than treating local green as done.**
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
   to `storage`/`executor`/`capability`. **`androidTarget()` prerequisite done 2026-08-09** — see
-  below; the actual `RealRuntimeClient` wiring itself is still not started.
+  below.
+
+  **Project persistence + RFC-0055 locking done 2026-08-09 — this was the "unblocked" half (see
+  the AgentLoop↔Executor note below): `projects.create()`/`.open()`/`.close()`/`.list()`/`.get()`/
+  `.delete()` are backed by real storage when wired, in-memory otherwise.** Design: `RealRuntimeClient`
+  gained three optional (`var ... = null`) injection seams — `userDriver: SqlDriver?`,
+  `projectDbFactory: ((String) -> SqlDriver)?`, `projectLocker: ProjectLocker?` — unset preserves
+  the exact pre-existing in-memory behavior (backward-compatible with every other caller:
+  `MainActivity`, `AidosService`, any test). `daemon/RuntimeClientFactory.createRuntimeClient()`
+  is the one JVM consumer wired end-to-end: opens `user.db` via `AidosStorage.openUser`, supplies
+  a `projectDbFactory` via `AidosStorage.openProject(DesktopPaths.stateDb(root), ...)`, and a real
+  `JvmProjectLocker`. `MainActivity`/`AidosService` deliberately left unwired — Android's own
+  `SqlDriver`/lock implementations are the same follow-up work as `capability`'s `SqliteDirHandle`.
+
+  **`ProjectLocker` is dependency-injected (`:api`'s `jvmMain` `JvmProjectLocker` wraps `:lock`'s
+  `ProjectLock`), not an `expect`/`actual` port as an earlier note here suggested.** Correction
+  while implementing: `identity`'s `ProjectRegistry` already has `java.io.File` in a commonMain
+  default parameter and compiles for Android in CI (confirmed, predates this link) — a
+  `jvm()`+`androidTarget()`-only module's `commonMain` genuinely can reference `java.*` APIs both
+  targets share, so `java.nio.channels.FileLock` was likely never a *compilation* blocker either.
+  DI was still the right call: `FileLock`'s actual behavior on Android's storage volumes is
+  unverified from this sandbox (no device, nothing in CI exercises it), so Android gets its own
+  implementation deliberately once someone can verify it, rather than inheriting an untested
+  assumption through a shared `actual`. Don't take this doc's own prior "needs expect/actual"
+  framing as gospel next time either — it was a plausible-sounding guess, not something the RFC
+  mandated, same lesson as everything else in this file.
+
+  **Project ids switched from the `aidos-N` counter to `UuidV7Generator` for projects
+  specifically** (only projects — sessions/runs/capabilities/events are untouched, still `aidos-N`,
+  still purely in-memory). Necessary, not cosmetic: the counter resets to 1 on every
+  `RealRuntimeClient` construction, which is harmless for in-memory-only entities but would
+  silently collide two different real, persisted projects across a runtime restart.
+
+  **8 new tests** (`api/src/jvmTest/.../RealRuntimeClientPersistenceTest.kt`) using a real
+  temp-directory SQLite backend — this is commonMain logic exercised via the JVM target, fully
+  verifiable locally, unlike `androidMain` code. Covers: create persists and a second instance
+  can list/open it (restart simulation), open refuses a project locked by another instance
+  (`runtime.locked_by_other_instance`), close releases the lock, delete unregisters without
+  touching the project's own files, delete without confirm is a no-op, unset-persistence behaves
+  exactly as before, and ids don't collide across instances sharing storage. Also fixed a real bug
+  this surfaced: `DaemonCliIntegrationTest` called the now-real `RuntimeClientFactory` directly
+  against the actual `~/.aidos` on whatever machine runs it — not hermetic. Added a `home`
+  override parameter and pointed the test at a temp directory.
+
+  **A second real bug, found via a genuine SQLITE_CANTOPEN failure, not guessed at**:
+  `resolveProjectPath`'s `RuntimeManaged`/`CloneOf` branches returned a hardcoded `/projects/<slug>`
+  — harmless while projects were purely in-memory (the path was never used for real I/O), but the
+  first thing any real-storage project creation hits once wired. Added an injectable
+  `runtimeManagedProjectsRoot: String?` (same seam pattern), defaulting to the old placeholder when
+  unset. Separately, `AidosStorage.openProject(path, ...)` expects the *file* path
+  (`.aidos/state.db`), not the project root — `DesktopPaths.stateDb(root)` is the translation step;
+  the first version of `projectDbFactory` skipped it and opened the bare project root as if it
+  were the database file.
+
+  **What's still not done, and still blocked**: `executor`/`capability` wiring (real Run
+  execution, capability enforcement) — this is the AgentLoop↔Executor bridge's territory, see
+  below. Session persistence (`sessions.*`) is also still in-memory — deliberately not attempted
+  in this slice; deciding whether session rows should persist ahead of Run execution being real is
+  a judgment call for whoever picks up the executor/capability half, not assumed here.
 
   **`androidTarget()` wired on `storage`, `settings`, `identity`, `capability`, `broker`,
   `executor`** (six modules, not four — `broker` and `settings` turned out to be transitive
@@ -482,17 +540,19 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   (no `ANDROID_HOME`/`local.properties` — confirmed via `gradle :androidapp:compileDebugKotlinAndroid`,
   fails immediately on SDK location, not a code error) — CI's `build-and-publish` is the only way
   this specific change gets verified; `gradle jvmTest` only proves `commonMain`/`jvmMain` compile.
-- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — **checked
-  2026-08-09, this item as written is wrong and would build the wrong thing.** RFC-0055's own
-  "Project locking" section says a project is locked when it is *opened*, not when the daemon
-  starts — the daemon manages multiple projects over its lifetime and has no single "the project"
-  to lock at startup (it doesn't even take a project-path argument today). The real integration
-  point is `RealRuntimeClient.projects.open()`/`.create()`, which is `commonMain` (KMP) — but
-  `ProjectLock` (`runtime/lock/`) is `jvmMain`-only (`java.io.File`, `FileChannel`), so wiring it in
-  needs a small `expect`/`actual` port, not a direct call. This is entangled with "Finish
-  `RealRuntimeClient`" above, not independent of it — do them together, and update `daemon/main.kt`
-  only to remove the now-inaccurate TODO comment, not to add a lock call that doesn't match what
-  the daemon actually is.
+- [x] **RFC-0055 project locking — done 2026-08-09, via `RealRuntimeClient.projects.open()`/
+  `.create()`, not `daemon/main.kt`'s startup path.** The original checklist item ("call
+  `ProjectLock.acquire()` from `daemon/main.kt`'s startup path") was confirmed wrong in an earlier
+  link: RFC-0055's own "Project locking" section locks a project when it's *opened*, not when the
+  daemon starts. Implemented via the `ProjectLocker` interface/`JvmProjectLocker` described above
+  — `create()`/`open()` call `tryAcquire`, translate `HeldByOther` into
+  `ProjectResult.Error("runtime.locked_by_other_instance", ...)`, and `close()`/`delete()` release.
+  Tested against real `FileLock` contention (two `RealRuntimeClient` instances sharing one temp
+  directory) in `RealRuntimeClientPersistenceTest`. **Not done**: RFC-0055 says "locks are never
+  broken silently" — `ProjectLockOutcome.AcquiredAfterBreakingStale` is handled (acquisition
+  proceeds) but not *surfaced* anywhere (no audit-log write, no event emitted) since no such write
+  path exists from this class yet. Flagged in code (`RealRuntimeClient.kt`, both `create()`/
+  `open()`), not silently swallowed.
 
 None of this is new design — every RFC and decision referenced above already exists. This is
 implementation catching up to documents that were, in several cases, marked complete before the
