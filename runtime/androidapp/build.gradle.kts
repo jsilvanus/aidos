@@ -1,5 +1,7 @@
 plugins {
     kotlin("multiplatform")
+    kotlin("plugin.serialization") version "1.9.25"
+    id("app.cash.sqldelight") version "2.0.2"
     id("com.android.application")
 }
 
@@ -15,6 +17,7 @@ kotlin {
             implementation(project(":api"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
         }
 
         val jvmMain by getting {
@@ -22,6 +25,10 @@ kotlin {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+                implementation("app.cash.sqldelight:runtime:2.0.2")
+                implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
+                implementation("org.xerial:sqlite-jdbc:3.45.2.0")
             }
         }
 
@@ -31,6 +38,8 @@ kotlin {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+                implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
             }
         }
 
@@ -61,6 +70,15 @@ kotlin {
                 // For scoped storage and file access
                 implementation("androidx.documentfile:documentfile:1.0.1")
             }
+        }
+    }
+}
+
+sqldelight {
+    databases {
+        create("ScheduledJobsDb") {
+            packageName.set("dev.aidos.androidapp")
+            srcDirs.setFrom("src/commonMain/sqldelight")
         }
     }
 }

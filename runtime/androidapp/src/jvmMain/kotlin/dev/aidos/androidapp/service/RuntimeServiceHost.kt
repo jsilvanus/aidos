@@ -1,5 +1,10 @@
 package dev.aidos.androidapp.service
 
+import dev.aidos.androidapp.scheduling.InMemoryScheduledJobManager
+import dev.aidos.androidapp.scheduling.JobScheduler
+import dev.aidos.androidapp.scheduling.RuntimeClientWorkDispatcher
+import dev.aidos.androidapp.scheduling.ScheduledJobManager
+import dev.aidos.androidapp.scheduling.SqliteScheduledJobManager
 import dev.aidos.api.RuntimeClient
 import dev.aidos.kernel.ExecutionWindow
 import kotlinx.coroutines.CoroutineScope
@@ -27,13 +32,32 @@ import java.util.concurrent.atomic.AtomicReference
  *   eviction is the recovery point (RFC-0009 / RFC-0008 M16).
  * - The foreground notification text reflects what is *actually* running, not a generic label.
  * - A background run without a foreground service parks as `ForegroundRequired` (D24).
+ * - Scheduled jobs are queried and executed on a regular schedule (RFC-0044).
  */
 class RuntimeServiceHost(
     private val client: RuntimeClient,
     private val scope: CoroutineScope,
+    // TODO: useSqlite parameter would accept SqlDriver when SQLDelight is ready
+    useSqlite: Boolean = false,
 ) {
     private val _state = MutableStateFlow<ServiceState>(ServiceState.Idle)
     val state: StateFlow<ServiceState> = _state.asStateFlow()
+
+    /** Execution window derived from the foreground service state (D24). */
+    val executionWindow: ExecutionWindow = ForegroundServiceExecutionWindow(_state.asStateFlow())
+
+    /** Scheduled job manager (RFC-0044). Uses SqliteScheduledJobManager if useSqlite is true, else in-memory. */
+    val jobManager: ScheduledJobManager = if (useSqlite) {
+        SqliteScheduledJobManager()
+    } else {
+        InMemoryScheduledJobManager()
+    }
+
+    /** Work dispatcher for scheduled jobs (RFC-0044). */
+    private val jobDispatcher = RuntimeClientWorkDispatcher(client, jobManager)
+
+    /** Job scheduler that runs periodically (RFC-0044). */
+    val scheduler = JobScheduler(jobManager, jobDispatcher)
 
     /** Human-readable text for the foreground service notification (D24). */
     val currentNotificationText: String
@@ -80,6 +104,15 @@ class RuntimeServiceHost(
         if (s is ServiceState.EvictedMidRun) {
             _state.value = ServiceState.RunningRun(s.runId, "Resumed at step ${s.lastCheckpointStep}")
         }
+    }
+
+    /**
+     * Runs a schedule round: finds due jobs and dispatches them (RFC-0044).
+     *
+     * Call this periodically (e.g., every minute) or on wakeup events.
+     */
+    suspend fun runScheduleRound() {
+        scheduler.runScheduleRound()
     }
 
     suspend fun shutdown() {

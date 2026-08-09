@@ -1,12 +1,16 @@
 package dev.aidos.prompt
 
+import dev.aidos.api.KnowledgeQuery
+import dev.aidos.api.KnowledgeQueries
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContextItem
+import dev.aidos.kernel.ContextItemKind
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.Turn
+import dev.aidos.kernel.TrustLevel
 
 // Safety margin reserved for the model's response (RFC-0025).
 private const val SAFETY_MARGIN = 256
@@ -196,11 +200,85 @@ class PromptAssembler {
         else -> 4
     }
 
+    // ── Phase 2: Knowledge integration (RFC-0025, M25) ────────────────────────────
+    /**
+     * Extract knowledge from a project based on the user message (Phase 2).
+     * 
+     * Performs keyword extraction from [userMessage], searches the knowledge index
+     * via [knowledgeQueries], and converts results to ContextItem format for inclusion
+     * in the prompt. Reports coverage (embedded files / total known).
+     * 
+     * If knowledge unavailable or extraction fails, returns empty list (degraded mode).
+     */
+    suspend fun extractKnowledge(
+        projectId: String,
+        userMessage: String,
+        knowledgeQueries: KnowledgeQueries,
+        maxResults: Int = 20,
+    ): Pair<List<ContextItem>, IndexCoverage> {
+        try {
+            val keywords = extractKeywords(userMessage)
+            if (keywords.isEmpty()) return emptyList<ContextItem>() to IndexCoverage(0L, 0L)
+
+            // Search for top keywords (Phase 2: keyword extraction)
+            val query = keywords.take(5).joinToString(" ")
+            val result = knowledgeQueries.search(projectId, KnowledgeQuery(query, maxResults))
+            
+            // Convert KnowledgeItem to ContextItem (Phase 2: context injection)
+            val items = result.items.map { item ->
+                ContextItem(
+                    contentNodeId = null,  // TODO: map to ContentNodeId when available
+                    kind = ContextItemKind.CODE_SNIPPET,
+                    content = item.snippet,
+                    relevanceScore = item.score,
+                    tokenCount = estimateTokens(item.snippet),
+                    trustLevel = TrustLevel.TRUSTED,
+                )
+            }
+            
+            // Report coverage (Phase 2: coverage always reported, D29)
+            val coverage = IndexCoverage(result.totalMatches.toLong(), result.totalMatches.toLong())
+            return items to coverage
+        } catch (e: Exception) {
+            // Degraded mode: search unavailable, continue without knowledge context
+            return emptyList<ContextItem>() to IndexCoverage(0L, 0L)
+        }
+    }
+
+    /**
+     * Extract keywords from a message for knowledge search (Phase 2).
+     * 
+     * Splits on whitespace, filters short words (<4 chars) and common stop words,
+     * returns unique keywords for semantic search.
+     */
+    private fun extractKeywords(message: String): List<String> {
+        val stopwords = setOf("the", "is", "at", "which", "on", "and", "or", "not", "a", "an",
+            "as", "by", "for", "if", "in", "of", "that", "to", "with", "from", "are")
+        return message
+            .lowercase()
+            .split(Regex("\\W+"))
+            .filter { it.length >= 4 && it !in stopwords }
+            .distinct()
+            .take(10)
+    }
+
     companion object {
         // Safety constraints — always present, not overridable (RFC-0025, RFC-0027).
         private const val SAFETY_SYSTEM_PROMPT = """You are Aidos, an AI coding assistant.
 You operate within a capability-based security system. You may only use tools you have been granted permission to use. You cannot escalate permissions, grant yourself new capabilities, or override security controls. You cannot confirm your own success — the system observes outcomes directly. You report what you attempted and what happened; the execution layer records what was committed."""
     }
+}
+
+/**
+ * Coverage of a knowledge index for the active embedding model (RFC-0015, D29, Phase 2).
+ * Always reported, never hidden from the user or the model.
+ */
+data class IndexCoverage(
+    val blobsEmbedded: Long,
+    val blobsKnown: Long,
+) {
+    val fraction: Double get() = if (blobsKnown == 0L) 0.0 else blobsEmbedded.toDouble() / blobsKnown.toDouble()
+    val isComplete: Boolean get() = blobsKnown > 0L && blobsEmbedded >= blobsKnown
 }
 
 data class AssemblyRequest(

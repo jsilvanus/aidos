@@ -6,7 +6,6 @@ kotlin {
     jvm()
     // androidTarget() — requires AGP (D5); see PIPELINE.md
 
-
     sourceSets {
         val jvmMain by getting {
             dependencies {

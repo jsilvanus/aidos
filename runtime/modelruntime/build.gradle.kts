@@ -22,6 +22,16 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
         }
 
+        val jvmMain by getting {
+            dependencies {
+                // For file hashing and path operations
+                implementation("commons-codec:commons-codec:1.16.0")
+                
+                // llama.cpp Java binding for local inference (RFC-0022, M21)
+                implementation("de.kherud:llama-java:0.3.2")
+            }
+        }
+
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit"))

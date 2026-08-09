@@ -2,6 +2,7 @@ package dev.aidos.kernel
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.datetime.Instant
+import kotlinx.serialization.Serializable
 
 /**
  * The contract between the headless runtime and its frontends (RFC-0052).
@@ -130,6 +131,7 @@ data class GrantCapabilityRequest(
     val expiresAt: Instant? = null,
 )
 
+@Serializable
 data class PendingApproval(
     val requestId: String,
     val sessionId: SessionId,
@@ -176,6 +178,7 @@ interface EventSubscriptions {
     fun subscribe(filter: EventFilter): Flow<RuntimeEvent>
 }
 
+@Serializable
 data class EventFilter(
     val projectIds: List<ProjectId> = emptyList(),
     val sessionIds: List<SessionId> = emptyList(),
@@ -188,12 +191,14 @@ data class EventFilter(
     val sinceSequence: Long? = null,
 )
 
+@Serializable
 sealed interface RuntimeEvent {
     val eventId: EventId
     val sequence: Long
     val timestamp: Instant
     val projectId: ProjectId?
 
+    @Serializable
     data class RunStarted(
         override val eventId: EventId,
         override val sequence: Long,
@@ -203,6 +208,7 @@ sealed interface RuntimeEvent {
         val runId: RunId,
     ) : RuntimeEvent
 
+    @Serializable
     data class RunStateChanged(
         override val eventId: EventId,
         override val sequence: Long,
@@ -214,6 +220,7 @@ sealed interface RuntimeEvent {
         val error: AidosError?,
     ) : RuntimeEvent
 
+    @Serializable
     data class AiResponseDelta(
         override val eventId: EventId,
         override val sequence: Long,
@@ -224,6 +231,7 @@ sealed interface RuntimeEvent {
         val isFinal: Boolean,
     ) : RuntimeEvent
 
+    @Serializable
     data class ToolCallStarted(
         override val eventId: EventId,
         override val sequence: Long,
@@ -234,6 +242,7 @@ sealed interface RuntimeEvent {
         val preview: Preview?,
     ) : RuntimeEvent
 
+    @Serializable
     data class ApprovalRequested(
         override val eventId: EventId,
         override val sequence: Long,
@@ -242,6 +251,7 @@ sealed interface RuntimeEvent {
         val approval: PendingApproval,
     ) : RuntimeEvent
 
+    @Serializable
     data class BudgetUpdated(
         override val eventId: EventId,
         override val sequence: Long,
@@ -252,6 +262,7 @@ sealed interface RuntimeEvent {
         val remaining: Budget?,
     ) : RuntimeEvent
 
+    @Serializable
     data class RuntimeFailure(
         override val eventId: EventId,
         override val sequence: Long,

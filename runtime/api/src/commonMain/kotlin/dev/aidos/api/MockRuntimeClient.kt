@@ -60,8 +60,14 @@ class MockRuntimeClient : RuntimeClient {
         override suspend fun create(request: CreateProjectRequest): ProjectResult {
             val id = nextId()
             val now = Clock.System.now()
+            val projectPath = when (request.location) {
+                is ProjectLocation.LocalPath -> request.location.path
+                is ProjectLocation.RuntimeManaged -> "/mock/${request.location.slug}"
+                is ProjectLocation.CloneOf -> "/mock/${request.location.slug}"
+            }
             val summary = ProjectSummary(
                 id = id, name = request.name, description = request.description,
+                projectPath = projectPath,
                 createdAt = now, lastActiveAt = now, sessionCount = 0,
             )
             _projects[id] = summary
@@ -84,7 +90,7 @@ class MockRuntimeClient : RuntimeClient {
 
         override suspend fun get(projectId: String): ProjectDetail? {
             val p = _projects[projectId] ?: return null
-            return ProjectDetail(p, "/mock/$projectId", "generic")
+            return ProjectDetail(p, p.projectPath, "generic")
         }
 
         override suspend fun delete(projectId: String, confirm: Boolean) {

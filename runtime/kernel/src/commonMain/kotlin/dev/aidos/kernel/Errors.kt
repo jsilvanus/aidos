@@ -1,5 +1,7 @@
 package dev.aidos.kernel
 
+import kotlinx.serialization.Serializable
+
 /**
  * The single error taxonomy (RFC-0029), shared by the Runtime API, the Effect Broker, the agent
  * loop, and the Execution Graph.
@@ -8,6 +10,7 @@ package dev.aidos.kernel
  * introduce codes the core does not know and an enum would flatten them all to `UNKNOWN`.
  * Callers switch on [errorClass], which is closed and small.
  */
+@Serializable
 data class AidosError(
     val code: String,
     val errorClass: ErrorClass,
@@ -20,6 +23,7 @@ data class AidosError(
  * The class determines behaviour: retryability, audience, and terminal effect.
  * Nothing else in the runtime decides these per call site.
  */
+@Serializable
 enum class ErrorClass {
     /** Retry with backoff. */
     TRANSIENT,
