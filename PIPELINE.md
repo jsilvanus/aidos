@@ -428,6 +428,25 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   way kernel/api/androidapp's wiring did in PR #19, and expect it to need the SAF-backed
   `DirHandle` design RFC-0050 deferred, once `RealRuntimeClient` actually needs file access on
   Android rather than just an Android-compiling target.
+
+  **2026-08-09 — cross-branch blocker, user-decided: the AgentLoop↔Executor bridge is a separate,
+  not-yet-scoped item. Neither Group 1 nor Group 2 builds it as a side effect of their own work
+  until it's scoped on its own.** Group 1 (`claude/group1-event-bus-scheduler`, PR #21) found that
+  `runtime/agentloop/AgentLoop.kt` has zero callers anywhere in the codebase outside its own
+  module — it's a self-contained `AgentLoop.run(RunRequest): RunOutcome` with a `checkpoint`
+  callback, with no relationship to `runs`/`tasks`/`attempts` or `executor`'s `drive()`
+  step-machine. Two parallel, currently-disconnected execution models exist (`executor`'s SQLite
+  step-machine, `agentloop`'s in-memory model-call loop), and nothing bridges them. That bridge
+  is squarely in the path of **both** RFC-0005's wake-to-Run wiring (Group 1) and this item,
+  "Finish `RealRuntimeClient`" (Group 2) — building it on either branch risks doing the same work
+  twice, the exact collision the branch split was meant to prevent. Asked the user directly
+  (2026-08-09); their answer was **hold it as its own tracked item, not owned by either branch
+  yet** — so **this item ("Finish `RealRuntimeClient`") is now blocked on that separate item being
+  scoped**, not just on `androidTarget()` (which is done). Do not build the AgentLoop↔Executor
+  bridge as a side effect of wiring `RealRuntimeClient` to `storage`/`executor`/`capability` —
+  wire what doesn't require it (e.g. `ProjectSummary`/`SessionSummary` persistence to `storage`),
+  and stop at the point where continuing would require deciding how a Run actually gets executed.
+  Flag that boundary explicitly if you hit it, the same way this link did.
 - [x] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` into
   `onStartCommand`/`onDestroy`, per RFC-0050. Done 2026-08-09:
   `fi.italeino.aidos.service.AidosService : LifecycleService` (matching RFC-0050's own diagram
