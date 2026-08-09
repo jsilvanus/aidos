@@ -1,5 +1,6 @@
 package fi.italeino.aidos.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -27,7 +28,7 @@ import kotlinx.coroutines.launch
  * pick up the phone is "what needs me?" (inbox), then "what am I working on?"
  * (projects).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     projectsPresenter: ProjectsPresenter,

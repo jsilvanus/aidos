@@ -48,7 +48,7 @@ class NotificationManagerTest {
 
         // Use a timestamp that would be in quiet hours
         // 2026-08-08T23:00:00Z is 23:00, which is within quiet hours (22:00 - 08:00)
-        val quietTime = 1_691_000_000_000L  // Arbitrary past timestamp
+        val quietTime = 1_786_230_000_000L
 
         // Non-approval notification should be held during quiet hours
         val content = nm.parkedRunContent("run-1", "Regular notification", isApproval = false)

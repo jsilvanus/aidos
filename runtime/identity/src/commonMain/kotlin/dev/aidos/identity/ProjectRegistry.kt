@@ -161,21 +161,23 @@ fun applyTypeDefaults(
 ) {
     when (type) {
         ProjectType.PERSONAL -> {
-            // personal → routing.remote_egress = never (privacy-first, M2 done-when)
-            writer.writeProject(
+            // personal → routing.remote_egress = never (privacy-first, RFC-0047 MVP §1, M2
+            // done-when). routing.remote_egress is SECURITY-classed (Settings.kt) and
+            // SettingsWriter.writeProject() rejects SECURITY/SPEND keys outright (RFC-0036) — a
+            // project-scope write here always failed and the default never took effect. Writing
+            // to user scope is what RFC-0047's own MVP section describes ("the type default goes
+            // to user scope at creation time, not to project scope").
+            writer.writeUser(
                 Settings.routingRemoteEgress,
-                projectId,
                 JsonPrimitive(EgressPolicy.NEVER.name),
                 SettingSetByKind.RUNTIME,
                 nowIso,
             )
-            // personal type cannot override SECURITY settings — the above returns failure but
-            // is intentionally attempted here to produce the visible error (RFC-0036).
-            // In the full implementation, the type default goes to user scope at creation time,
-            // not to project scope. This is recorded as a correction: type defaults for SECURITY
-            // settings must be applied at user scope as a one-time suggestion, not as a project
-            // scope write. That constraint is part of M2's audit-row requirement for project
-            // attempts.
+            // Applying this at user scope means it affects every project for this user, not just
+            // the personal one being created, and this call re-applies (clobbering any explicit
+            // choice) every time a personal project is created or its type changes to PERSONAL —
+            // see PIPELINE.md's outstanding-work notes for the unresolved "one-time suggestion,
+            // not a standing override" question this still leaves.
         }
         ProjectType.CODING -> {
             // coding → trust.untrusted_paths has a useful default in Settings; no override needed.

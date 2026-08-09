@@ -19,6 +19,12 @@ milestone either serves it or is cuttable.
 
 **2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
 
+**2026-08-09 · PR #18 merged** (RFC-0044 M32: trigger types, workclass dispatch, job scheduler;
+also landed the local llama.cpp inference backend and tool-calling protocol from M21/M22).
+**An independent codebase review ran the same day — see "Independent codebase review" below the
+table.** It confirms the bulk of Phases 0-3 as claimed, but found several specific status-table
+cells overstated or understated. Read the review section before trusting a row at face value.
+
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
@@ -32,7 +38,7 @@ milestone either serves it or is cuttable.
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
-| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (production implementation with resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅ |
+| API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
 | CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅ |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
@@ -46,8 +52,8 @@ milestone either serves it or is cuttable.
 | Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅ |
 | Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
 | Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
-| AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31). 37 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ |
-| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ |
+| AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31); PR #18 added `ScheduledJobManager`/`JobScheduler`/`TriggerCalculator` (RFC-0044 M32, 89 tests). 37+89 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ (platform-neutral logic). **Caveat (2026-08-09 review): the Android-target half is thinner than the checkmarks suggest — see "Independent codebase review" below.** |
+| Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ (logic layer only — **no real STT/TTS backend exists, only the `NoOp` providers**; hands-free is untestable end-to-end until one is wired in) |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
 | Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
 
@@ -162,6 +168,265 @@ Pin a commit, not a branch. Full list in RFC-0015, "Known dependency risks".
 
 ---
 
+## Independent codebase review — 2026-08-09
+
+Three parallel reviews read every RFC in `docs/rfcs/` against the actual code in `runtime/`,
+grepping for the types and classes each RFC names rather than trusting this file's own table. This
+is the same audit discipline the "Accepted is not frozen" note above already asks for, run against
+the whole corpus instead of a sample. Most of the corpus held up: the execution kernel (M1-M9),
+capability/security (RFC-0003/0018), tool broker and audit (RFC-0030), crash recovery (RFC-0009),
+git/filesystem/vault/prompt/agent-loop/injection-suite/MCP (RFC-0016/0025/0030-0035), model runtime
+and routing (RFC-0020/0021/0049), worker and retention (RFC-0024→0056 successors) are real, tested,
+and match their milestone claims. The discrepancies below are the exceptions, not the rule — but
+they're the ones that matter for deciding what to build next.
+
+**Credited as done, actually a stub or unbuilt:**
+- **RFC-0012 (Intent Graph), credited under M32c.** `androidapp/intent/IntentList.kt` is a 105-line
+  pure in-memory file — flat items, a derived-status function, no persistence to the
+  `intent_nodes`/`intent_edges`/`intent_proposals` schema tables, **and zero test files**. The 37
+  AndroidApp tests belong to the other M27-M32 presenters, none to this one. **Update (2026-08-09,
+  outstanding-work item below): `intent_nodes` persistence and tests done. `intent_proposals` and
+  `intent_edges` deliberately still not — see the outstanding-work item for why.**
+- **RFC-0004 (Event Bus) and RFC-0005 (Scheduler).** Confirms D34's own flag, more specifically:
+  `executor/EventStore.kt` is an append-only log with sequence ordering and the causal-depth
+  guard — there is no topic-subscription or replay-by-topic layer anywhere. Scheduler has no code
+  at all: `SessionState.SLEEPING` is declared in the kernel and never transitioned to or from, and
+  `scheduled_jobs` in `schema/project.sql` is never read or written. (Distinct from the RFC-0044
+  background-*job* scheduler PR #18 just added under `androidapp/scheduling/` — that's a different
+  subsystem, notification/work-class dispatch, not session wake/sleep.)
+- **RFC-0024 (Resource Graph).** Only `ContentNodeId` and references exist in the kernel; no
+  `ContentNode` data class, no promotion/demotion logic, no dedicated store. **Update (2026-08-09,
+  outstanding-work item below): the "promotion/demotion" framing overstated the gap — that's
+  explicitly post-MVP in the RFC itself. The actual MVP (node class, basic queries, DERIVED_FROM/
+  VERSION_OF provenance with acyclicity) is now built and tested.**
+- **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin, manifest, or sandbox code
+  anywhere in `runtime/`. Unlike the Draft RFCs this file already excludes from MVP scope, this one
+  is Accepted with nothing built — a real gap, not a documented deferral. **Correction (2026-08-09,
+  outstanding-work item below): not a gap after all.** RFC-0043's own MVP section: *"No plugin
+  host ships in v1. The MVP of this RFC is the decision"* — and D18 (`docs/decisions.md`) already
+  records exactly that decision (WASM-only when built, user-scope install, no native loading).
+  There was never code to write here; "Accepted with nothing built" described the RFC correctly
+  for once. Same overstated-gap pattern as RFC-0047/0024/0045, just with no build item on the
+  other side of the correction.
+- **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder` or budget-ladder
+  class; the RFC number appears only in doc-comments citing it, not in an implementation. **Update
+  (2026-08-09, outstanding-work item below): the decision logic (rungs 1/2/4/5) and
+  `degradation_events` persistence are now built and tested. What's still genuinely missing —
+  wiring real device signals and on-device measurement — needs a real phone, same as M21/M26.**
+- **RFC-0047 (Project Templates and Types).** Only 2 of 6 `ProjectType` values
+  (`PERSONAL`, `CODING`) have real defaults in `applyTypeDefaults`; the rest are no-ops. No
+  scaffolding/template-loading system exists. **Correction (2026-08-09, outstanding-work item
+  below): the "2 of 6" framing overstates this — RFC-0047's own MVP section says only PERSONAL and
+  CODING get overrides, so that part was never a gap.** What *was* a real gap: PERSONAL's override
+  silently never worked (wrong settings scope) and had no test — now fixed. See the outstanding
+  work item for what's still open.
+
+**Credited as unbuilt, actually implemented — fix the record the other way:**
+- **RFC-0036 (Settings and Configuration).** This file's own D34 list and the "Notes for the next
+  link" section both call Settings unbuilt ("M1 is half done... Settings... is what's left").
+  That's stale: `runtime/settings/` has an 848-line `SettingsStore`/`SettingDescriptor`/`TomlParser`
+  implementation with 18 tests, landed in a dedicated commit ("Implement RFC-0036: Settings and M1
+  mapping test"). Drop RFC-0036 from any future D34-style "unbuilt" list.
+
+**The Android application layer (Phase 4) is thinner than its milestone checkmarks suggest.** This
+is the one that matters most, because G4 — the actual product thesis — depends on the app running
+the real runtime on a real phone:
+- **`androidTarget()` is wired in `runtime/androidapp/` and `runtime/knowledge/`'s own
+  `build.gradle.kts`, but `runtime/kernel/` and `runtime/api/` — the two modules `androidapp`
+  depends on — still have `androidTarget()`/`id("com.android.library")` commented out on `main`.**
+  This file's "androidTarget() unblocked upstream" note (above) is only true for the leaf module;
+  as configured, `:androidapp`'s Android compilation cannot resolve `project(":kernel")` or
+  `project(":api")` for that target. The "one `google()` repo add and three uncomments" framing
+  undercounts what's left — `androidapp`'s own uncomment is done, kernel's and api's are not.
+- **No `android.app.Service` subclass exists anywhere in `androidMain`.** `RuntimeServiceHost.kt`
+  (jvmMain) is the platform-neutral logic RFC-0050 asks for; the Service subclass its own
+  doc-comment says wires it into `onStartCommand`/`onDestroy` has not been written.
+- **`MainActivity.kt` wires `MockRuntimeClient`, not `RealRuntimeClient`/`RuntimeServiceHost`.** The
+  Compose screens are real (`MainActivity.kt`, `Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`, ~550 lines, plus a working `AndroidManifest.xml`) but they're driving the mock,
+  not the runtime — consistent with `RealRuntimeClient` itself still being in-memory (see the API
+  row's caveat above).
+- **`daemon/main.kt` has a literal `// TODO(M33 Phase 4.5): Implement project locking per
+  RFC-0055`** — `ProjectLock` (`runtime/lock/`) is solid and tested on its own, but the daemon
+  startup path doesn't call it yet.
+
+**Net effect:** the milestone table's Phase 0-3 checkmarks (M1-M26) are trustworthy. Phase 4's
+platform-neutral logic (M27-M33) is real and tested in isolation, but the wiring that makes it into
+a working Android app — full multiplatform target coverage, a real foreground Service, the UI
+talking to the real runtime instead of the mock, the daemon actually taking the project lock — is
+the next work, not finished work. Treat M27-M33's "✅" as "logic done, integration open" until
+someone closes these four gaps and updates this table to say so with evidence, not a checkmark.
+
+### Outstanding work from this review
+
+Two groups. Neither is in `docs/mvp-roadmap.md` yet — before picking an item up, either add it as a
+milestone there or record in `docs/decisions.md` that it's out of MVP scope. Building ahead of a
+milestone with no record either way is exactly how the corpus drifted from this file before.
+
+**Group 1 — RFCs credited as built (or Accepted) with little or no code:**
+
+- [x] **RFC-0012 (Intent Graph), partial — `intent_nodes` persistence done, `intent_proposals`
+  and `intent_edges` deliberately not.** Done 2026-08-09: `SqliteIntentStore`
+  (`androidapp/src/jvmMain/.../intent/`) persists `IntentItem` (create/list/archive/user-override)
+  to `intent_nodes`, with 6 new tests. Re-reading D20 first (`docs/decisions.md`) confirmed
+  `IntentList.kt`'s own doc comment is the decided scope, not an in-progress cut corner: "task
+  list only... built last and small... flat, no hierarchy, no dependencies." The schema's
+  hierarchy columns (`parent_id`) and acceptance-criteria columns are nullable and left unset by
+  design, matching that decision — not a gap. **What's still not wired, on purpose:**
+  `intent_proposals` has `proposed_by_run_id` and `audit_ref` as foreign keys into `runs` and
+  `audit_log`; `IntentProposal` (the pure data class) doesn't carry a real run ID, taint, or an
+  audit row to point at, and inventing placeholder values for those FKs would be worse than not
+  persisting proposals at all — fabricating an audit trail entry is exactly the kind of thing
+  RFC-0003 exists to prevent. `intent_edges` (dependencies) stays unused — D20 decided against
+  that scope outright. Also unwired: `targetedByRunId`, which is meant to come from
+  `execution_edges` (`edge_kind = 'TARGETED'`) — nothing currently writes that edge, so
+  `listActive()` always returns it `null`. Whoever wires proposal persistence needs a real
+  run/audit integration point first, not just a repository class.
+- [ ] **RFC-0004 (Event Bus).** Build the topic-subscription/replay-by-topic layer on top of
+  `executor/EventStore.kt` (today just an append-only log with sequence ordering and the
+  causal-depth guard). If it's actually post-MVP, say so via a D34-style decision instead of
+  leaving it silently unbuilt.
+- [ ] **RFC-0005 (Scheduler).** Implement session wake/sleep: `SessionState.SLEEPING` is declared
+  in the kernel and never transitioned to or from anywhere. Wire `scheduled_jobs`
+  (`schema/project.sql`) to a real reader/writer. Same scope caveat as Event Bus.
+- [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
+  Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
+  are explicitly listed under "The MVP does not implement" — the original review's framing
+  overstated the gap the same way RFC-0047's did. What the MVP section actually asks for: the
+  `ContentNode` data class with all fields, basic queries (by project/kind/ID), and
+  `ProvenanceEdge` limited to `DERIVED_FROM`/`VERSION_OF`. All done: `kernel/Content.kt` adds
+  `ContentNode`, `ContentKind`, `ContentNodeState`, `StorageLocation` (sealed: `SqliteBlob`/
+  `FilesystemPath`/`GitObject`), `ProvenanceEdge`, `ProvenanceEdgeKind` — reusing `TrustLevel`,
+  `SensitivityLevel`, `EgressEligibility`, `MutabilityPolicy`, which turned out to already exist
+  in `kernel/Trust.kt` (someone had built the classification enums but never the node/edge shapes
+  that use them). `SqliteContentNodeStore` (`androidapp/.../content/`) persists to
+  `content_nodes`/`provenance_edges`, including the acyclicity check the RFC's own "Acyclicity"
+  section calls for on insert (BFS reachability from the new edge's target back to its source) —
+  8 tests, including a 3-node chain closing a cycle, not just the direct 2-node case. Not part of
+  MVP scope and not built, per the RFC's own list: promotion/demotion, cross-project references,
+  content-addressed dedup, `REFERENCED_BY`/`MERGED_FROM` edges. **Module placement is a call I
+  made for expediency, not a designed decision:** the store lives in `androidapp` (matching where
+  `SqliteIntentStore` and `SqliteScheduledJobManager` already live and where `:storage` access was
+  already wired), even though `ContentNode` is used by other subsystems too (`PromptAssembler`'s
+  `ContextItem.contentNodeId`, `execution_edges`' `CONTENT_NODE` kind) and arguably deserves its
+  own module long-term. Revisit if `androidapp` starts feeling like a dumping ground.
+- [x] **RFC-0043 (Plugin Packaging and Sandbox) — checked 2026-08-09, nothing to build.**
+  RFC-0043's own MVP section: *"No plugin host ships in v1. The MVP of this RFC is the
+  decision."* D18 (`docs/decisions.md`) already records that decision (WASM-only when built,
+  user-scope installation, no project-local plugins, no in-process native loading). The original
+  review's "Accepted with nothing built = uncaught D34 gap" framing was wrong here — there was
+  never anything to build. Writing plugin/sandbox code now would directly contradict the RFC's
+  own instruction not to. Nothing left to do until the decision changes.
+- [x] **RFC-0045 (Performance and Resource Budgets), partial — the pure decision logic is done,
+  the real-device half is a genuine, still-open hardware gap.** Done 2026-08-09: read RFC-0045's
+  own "MVP" section first (by now the standing discipline after RFC-0047/0012/0024 all turned out
+  narrower or differently scoped than the review's framing). MVP has 5 items; two are
+  buildable without hardware and two are not:
+  - **Item 2 (degradation rungs 1, 2, 4, 5) and item 4 (`degradation_events` recording) — done.**
+    `routing/DegradationLadder.kt` is a pure, stateless decision function (`DeviceSignals ->
+    Map<DegradationRung, reason>`), matching where `PolicyInferenceRouter` already lives for the
+    same shape of problem — device signals in, policy out, no I/O. `kernel/Degradation.kt` adds
+    the shared types (`DegradationRung`, `MemoryPressureLevel`, `BatteryState`, `DeviceSignals`,
+    `DegradationEvent`). `androidapp/degradation/SqliteDegradationEventStore` persists
+    transitions to `degradation_events` — reconciled by *querying currently-open rows*, not
+    tracking state in memory, matching D3's "anything that must survive a step boundary is a
+    column" rather than inventing a new exception to it. 9 ladder tests + 6 store tests, 15 total,
+    including independent-rung interleaving and re-entry after closing.
+  - **Items 1, 3, 5 (targets measured on a reference device, model admission with real memory/
+    thermal checks, regression benchmarking) — not done, and not started.** These require an
+    actual mid-range Android device to produce real numbers; this is the same class of gap as
+    M21/M26/M34/M35, not a coding task. **Whoever eventually wires real signals in**: nothing here
+    reads `ComponentCallbacks2`/`BatteryManager`/Android thermal APIs — `DeviceSignals` is a plain
+    data class deliberately platform-neutral (see its doc comment), and *that* translation is the
+    remaining wiring work, not a redesign.
+  - Rungs 3 (drop knowledge caches) and 6 (thermal → disable local inference) are declared in
+    `DegradationRung` for completeness against the schema's `rung INTEGER` column but the ladder
+    never activates them — both are explicitly post-MVP in the RFC, not a gap.
+- [x] **RFC-0047 (Project Templates and Types), partial — the `applyTypeDefaults` bug is fixed,
+  the RFC's larger MVP scope isn't.** Done 2026-08-09: re-reading RFC-0047's own MVP section shows
+  only `PERSONAL` and `CODING` are supposed to have type-specific overrides — `RESEARCH`/`WRITING`/
+  `GENERIC` being no-ops is correct, documented MVP scope, not a gap (the original review's "2 of
+  6" framing overstated this). But `PERSONAL`'s override was a genuine bug: it wrote
+  `routing.remote_egress` at **project** scope, and that setting is `ScopeClass.SECURITY` —
+  `SettingsWriter.writeProject()` rejects SECURITY/SPEND keys outright, so the write always failed
+  and RFC-0047's headline MVP requirement ("personal defaulting `routing.remote_egress = never`...
+  worth having on day one") silently never took effect, with zero test coverage to catch it.
+  Fixed by writing to user scope instead (`identity/src/commonMain/.../ProjectRegistry.kt`), which
+  is literally what the RFC's own MVP section describes. Added
+  `identity/src/jvmTest/.../IdentityTest.kt` coverage for both the `PERSONAL` write and the
+  `CODING`/`GENERIC` no-op case. **Two things this does NOT fix, left for whoever wires project
+  creation into `RealRuntimeClient`:** (1) `applyTypeDefaults` still has zero call sites anywhere
+  in the codebase — nothing invokes it at project-creation time yet, so the correct behavior only
+  exists as a correct, tested, *unused* function until that wiring lands; (2) writing to user scope
+  means this now affects every project for the user, not just the one being created, and
+  re-applies (silently overwriting any explicit prior choice) every time a `PERSONAL` project is
+  created — the original code comment called this "a one-time suggestion, not a project scope
+  write," which implies something more like "set only if still at `SettingOrigin.DEFAULT`," not an
+  unconditional upsert. That's a real product decision (how insistent should a privacy default be
+  against a user's own prior choice?), not an implementation bug, and it doesn't belong to whoever
+  just wires the call site — flag it for the user rather than guessing.
+  No scaffolding/template loader — RFC-0047 explicitly puts templates out of MVP scope
+  ("Not in MVP: built-in templates, instantiation..."), so that part was never a gap to begin with.
+
+**Group 2 — Phase 4: making the Android app real, not just its platform-neutral logic:**
+
+- [x] **Wire `androidTarget()` in `runtime/kernel/build.gradle.kts` and
+  `runtime/api/build.gradle.kts`** — done and verified green in CI 2026-08-09 (PR #19,
+  `build-and-publish` check, commit `b4ce0a5`). Both apply `id("com.android.library")` and call
+  `androidTarget()`, matching `androidapp`'s pattern. `dl.google.com` **is** reachable from a
+  sandbox without an Android SDK (confirmed live) — the root `build.gradle.kts` comment calling it
+  "blocked in this sandbox" no longer holds universally; don't assume it as fact next time, check
+  it. This sandbox still cannot compile the Android variant itself (no `ANDROID_HOME`), same class
+  of gap as M21/M34/M35 — but **CI has a real Android SDK and a real Gradle+AGP+D8 toolchain, and
+  it caught six more real bugs the sandbox structurally could not**, each fixed in its own commit
+  on top of the wiring: a Java/Kotlin JVM-target mismatch (11 vs 21) once AGP actually compiled the
+  release variant; `android.useAndroidX=true` missing from `gradle.properties`; the release
+  signing config referencing a keystore file the CI workflow's own "optional" step never created,
+  fixed twice (once to leave `storeFile` unset when absent, again because AGP still refuses to
+  *package* a release build type that references an incomplete signing config at all — the fix is
+  to not attach one in that case, not just to leave it half-filled); `HomeScreen.kt`'s pager code
+  using `ExperimentalFoundationApi` without an opt-in; and `androidapp` using `@Composable`
+  throughout without ever applying the `kotlin.plugin.compose` Gradle plugin — mandatory since
+  Kotlin 2.0, and this module's Android compile had apparently never succeeded before, so nothing
+  had surfaced it. **Lesson for future Android-target work: a green `gradle build` in this sandbox
+  proves the JVM targets and the module graph; it proves nothing about the Android variant. Expect
+  CI to find real things a from-scratch sandbox verification cannot, and budget for a few
+  iteration rounds rather than treating local green as done.**
+- [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
+  to `storage`/`executor`/`capability`. This blocks the next two items. **Scoped 2026-08-09, not
+  yet started: this is bigger than it looks.** None of `storage`, `executor`, `capability`, or
+  `identity` have `androidTarget()` wired — only `kernel`/`api`/`androidapp`/`knowledge` do. Wiring
+  `RealRuntimeClient` to them for real means repeating the `androidTarget()` pattern across four
+  more modules first, and per the androidTarget item above, expect each one to surface its own
+  latent bugs once a real Android SDK actually compiles it (six turned up for three modules; budget
+  similarly here). Treat this as its own multi-link piece of work, not a single commit.
+- [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
+  platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
+  `androidMain` extends `Service` yet.
+- [ ] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
+  `MockRuntimeClient`.** The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`) is real; it's driving the mock. Doesn't strictly need `RealRuntimeClient` to be
+  *durable* first (M9's original framing was an in-process transport, in-memory is a legitimate
+  intermediate step) — wiring the UI to the existing in-memory `RealRuntimeClient` is itself real
+  progress and doesn't have to wait on the item above.
+- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — **checked
+  2026-08-09, this item as written is wrong and would build the wrong thing.** RFC-0055's own
+  "Project locking" section says a project is locked when it is *opened*, not when the daemon
+  starts — the daemon manages multiple projects over its lifetime and has no single "the project"
+  to lock at startup (it doesn't even take a project-path argument today). The real integration
+  point is `RealRuntimeClient.projects.open()`/`.create()`, which is `commonMain` (KMP) — but
+  `ProjectLock` (`runtime/lock/`) is `jvmMain`-only (`java.io.File`, `FileChannel`), so wiring it in
+  needs a small `expect`/`actual` port, not a direct call. This is entangled with "Finish
+  `RealRuntimeClient`" above, not independent of it — do them together, and update `daemon/main.kt`
+  only to remove the now-inaccurate TODO comment, not to add a lock call that doesn't match what
+  the daemon actually is.
+
+None of this is new design — every RFC and decision referenced above already exists. This is
+implementation catching up to documents that were, in several cases, marked complete before the
+code was.
+
+---
+
 ## Next
 
 ### Phase 2 — First vertical slice (M9–M19)
@@ -200,6 +465,11 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 Platform-neutral logic implemented and tested. Android wiring (Compose, Service lifecycle,
 androidTarget()) requires the Android SDK and a real device.
 
+**See "Independent codebase review — 2026-08-09" above before treating M27-M33 below as finished:**
+`kernel`/`api` still lack `androidTarget()`, no `Service` subclass exists, and the Compose UI wires
+`MockRuntimeClient`, not the real runtime. The ✅ marks below are for the platform-neutral logic
+each milestone specified, not for a working Android app end to end.
+
 - [x] **M27** — Foreground service and runtime hosting (platform-neutral logic) ✅
 - [x] **M28** — Compose UI over the Runtime API — ✅ (platform-neutral presenters: Projects, Sessions, Runs, EventStream)
 - [x] **M29** — Availability reporting ✅
@@ -237,8 +507,68 @@ an architecture pass read the whole corpus against them. The durable output:
 
 ## Notes for the next link
 
-**M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** Do not
-start M2 (identity and scopes) with M1 incomplete — the roadmap lists M1 and M2 as parallel-safe
+**2026-08-09 — the PR #18 merge left several build scripts and two source files broken; fixing
+them to verify the androidTarget() wiring surfaced more than the wiring itself.** Working the
+first Group 2 item ("wire androidTarget() in kernel and api") required getting `gradle build` to
+evaluate and pass at all, which it did not on `main` immediately after the PR #18 merge. In order,
+what was actually broken and not caused by the androidTarget() change itself:
+- `androidapp/build.gradle.kts` pinned `kotlin("plugin.serialization") version "1.9.25"` while
+  root pins `2.1.0` — Gradle evaluates every subproject's build script even for a
+  single-module task, so this alone blocked *any* Gradle command project-wide. Fixed by dropping
+  the redundant version (every other module already does this).
+- Same file's `android { kotlinOptions { jvmTarget = "11" } }` doesn't resolve against this
+  AGP/Kotlin combo — that DSL moved. Removed it; `compileOptions` already sets Java 11, and
+  `androidTarget()` needs no separate jvmTarget override here.
+- `modelruntime/build.gradle.kts` had **two** `val jvmMain by getting { ... }` blocks — an
+  unresolved-conflict artifact from the PR #18 merge (the haiku subagent that resolved PR #18's
+  Gradle conflicts only saw 2 conflicting files at merge time; this wasn't one of them, so it
+  merged "clean" into a duplicate declaration). Merged into one.
+- `prompt/build.gradle.kts` was missing `implementation(project(":api"))` even though
+  `PromptAssembler.kt`'s Phase 2 knowledge-integration code (added by PR #18) imports
+  `dev.aidos.api.KnowledgeQuery`/`KnowledgeQueries` — both types genuinely exist in `:api` with
+  exactly the signature the code expects; it was a missing module dependency, not a missing type.
+- `androidapp/src/commonMain/sqldelight/*.sq` files were directly in `sqldelight/`, not in a
+  package-matching subdirectory — SQLDelight requires `sqldelight/dev/aidos/androidapp/*.sq` to
+  match `packageName.set("dev.aidos.androidapp")`. Moved both files.
+- `ScheduledJobs.sq`'s `SELECT COUNT(*) as count` doesn't parse — `count` collides with
+  SQLDelight's grammar as a bare alias. Quoted it: `AS "count"`.
+- `SqliteScheduledJobManager.kt` (PR #18, RFC-0044) had several mismatches against what SQLDelight
+  actually generates: missing `import dev.aidos.androidapp.ScheduledJobsDb`; the row type is
+  `Scheduled_jobs` (SQLDelight capitalizes-and-keeps-underscores from `scheduled_jobs`), not
+  `ScheduledJobs`; `listDue`'s `WHERE next_run_at IS NOT NULL` narrows SQLDelight's inferred
+  nullability enough that it generates a *separate* `ListDue` row type from the same "SELECT *",
+  needing its own `deserializeScheduledJobRow` overload; `countDeletedBefore` is a single-column
+  query, so SQLDelight returns the `Long` directly rather than wrapping it in a row with a
+  `.count` field; two `create`/`update` functions used `return` inside a `= try { }` expression
+  body, which Kotlin forbids — restructured as if/else expressions instead.
+- `RuntimeServiceHost.kt` had a `useSqlite: Boolean` parameter with a TODO literally saying
+  "would accept SqlDriver when SQLDelight is ready" and then called
+  `SqliteScheduledJobManager()` with **no** driver argument — SQLDelight is ready now, so this
+  became `sqlDriver: SqlDriver? = null`, wired through properly instead of left half-finished.
+- Two tests never actually ran before now (the module didn't compile): `SqliteScheduledJobManagerTest`
+  never called `ScheduledJobsDb.Schema.create(driver)`, so every test hit a missing table —
+  added the schema-create call. `NotificationManagerTest`'s "bypasses quiet hours" test had a
+  hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
+  actually 2023-08-02 — computed and substituted the correct value.
+
+**Three failures remain and are environment artifacts, not code bugs — don't spend time on them
+without checking the environment first:** `:knowledge` and `:modelruntime` fail to resolve
+`gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized — this sandbox has no
+`GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already documents this
+requirement; CI's default token has it, this environment's doesn't). `:git` and `:worker`'s JGit
+tests fail with `UnsupportedSigningFormatException` because this **session's own** global
+`~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key for Claude Code's own
+commit signing, and JGit inherits that ambient config when it opens a repo — nothing in the test
+or in Aidos is wrong, JGit just doesn't support that signing format. `cookbook`'s
+`testExceedsContextAtLongWindow` fails and predates PR #18 entirely (`git diff` across the merge
+shows zero changes to `cookbook/`) — a genuine pre-existing bug, but out of scope for Group 2's
+androidTarget work; flag it for whoever picks up `cookbook` next.
+
+**M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
+note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,
+tested `SettingsStore` implementation. Left in place rather than deleted, per this file's own rule
+that a correction supersedes rather than erases, but do not act on it as current. Do
+not start M2 (identity and scopes) with M1 incomplete — the roadmap lists M1 and M2 as parallel-safe
 only with respect to each other, not as a license to skip M1's own done-when.
 
 **`JdbcSqliteDriver` opens a new JDBC connection per call — session PRAGMAs don't survive a

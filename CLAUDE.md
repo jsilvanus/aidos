@@ -2,6 +2,21 @@
 
 This document describes how to work with Claude on Aidos development and how Claude Code operates in this project.
 
+## Current status
+
+**Read [`PIPELINE.md`](PIPELINE.md) first for the real state of the project.** It is the single
+source of truth for what's built, what's next, and the accumulated lessons — this file is process,
+PIPELINE.md is status. Don't duplicate status here; if the two ever disagree, PIPELINE.md wins and
+this line is the bug.
+
+**RFC status is not implementation status.** An independent codebase review (2026-08-09) found
+several RFCs marked Accepted with little or no code behind them (RFC-0043 Plugin Sandbox, RFC-0024
+Resource Graph, RFC-0045 Performance Budgets), one credited as done that is an untested stub
+(RFC-0012 Intent Graph), and one credited as unbuilt that turned out to have real, tested code
+(RFC-0036 Settings). See PIPELINE.md's "Independent codebase review" section for the full list.
+**Before implementing against or reporting on an RFC, check the actual code — don't trust a status
+line or a milestone checkmark without grepping for the implementation.**
+
 ## Philosophy
 
 Aidos is designed to be AI-assisted from day one. These guidelines ensure:
@@ -105,17 +120,24 @@ Aidos uses RFCs to drive implementation. This means:
 /
 ├── README.md              # Quick start
 ├── ARCHITECTURE.md        # Map to RFCs
-├── CLAUDE.md             # This file
-├── LICENSE               # EUPL-1.2
+├── CLAUDE.md              # This file
+├── PIPELINE.md            # Working status: what's built, what's next (source of truth)
+├── LICENSE                # EUPL-1.2
 ├── docs/
-│   ├── README.md         # Documentation structure
-│   ├── rfcs/             # All RFCs
-│   ├── vision.md         # Vision statement
-│   ├── principles.md     # Core principles
-│   ├── roadmap.md        # High-level roadmap
+│   ├── README.md          # Documentation structure
+│   ├── rfcs/              # All RFCs (0000-0102)
+│   ├── decisions.md       # Settled architecture decisions (D1-D34+)
+│   ├── mvp-roadmap.md     # Milestones, RFCs, and done-when conditions
 │   └── ...
-├── src/                  # Implementation (Rust, if core)
-├── tests/                # Test suite
+├── schema/                 # Canonical SQLite DDL (governs; RFC DDL defers to it), check.py
+├── runtime/                # Kotlin Multiplatform Gradle project — the implementation
+│   ├── kernel/             # Contract types only, no implementations (frozen at G0)
+│   ├── androidapp/         # Phase 4: Android app (Compose UI, foreground service host)
+│   ├── cli/                # CLI frontend
+│   └── ...                 # capability, broker, executor, storage, git, filesystem, vault,
+│                            # prompt, agentloop, mcp, modelruntime, routing, worker, retention,
+│                            # knowledge, voice, settings, identity, lock, memory, etc. — one
+│                            # module per subsystem, each with its own tests
 └── ...
 ```
 
@@ -125,7 +147,7 @@ Aidos uses RFCs to drive implementation. This means:
 1. **Minimal** — Do what the RFC says, no more.
 2. **Clear** — Code should be readable without excessive comments.
 3. **Tested** — New code has tests; old code isn't broken.
-4. **Safe** — Rust (for core); memory safety matters.
+4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in `runtime/kernel/`.
 5. **Documented** — Public APIs have doc comments.
 
 **Comments:**
@@ -134,11 +156,11 @@ Aidos uses RFCs to drive implementation. This means:
 - Mark workarounds and technical debt clearly.
 
 Example:
-```rust
+```kotlin
 // RFC-0003: Session must check permission before invoking tool.
 // This guard prevents privilege escalation.
-if !session.has_capability(&capability) {
-    return Err(PermissionError { ... });
+if (!session.hasCapability(capability)) {
+    throw PermissionError(...)
 }
 ```
 
@@ -153,14 +175,17 @@ if !session.has_capability(&capability) {
 ### Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# Canonical DDL check — must pass before and after any schema/RFC change
+python3 schema/check.py
 
-# Run specific test
-cargo test session::tests::test_create_session
+# Build and run all module tests
+cd runtime && gradle build
+
+# Run a specific module's tests
+cd runtime && gradle :executor:test
 
 # With output
-cargo test -- --nocapture
+cd runtime && gradle :executor:test --info
 ```
 
 ### What to Test
@@ -210,7 +235,7 @@ See [RFC-0003: Security](docs/rfcs/0003-security.md) for details.
 1. **Provide context** — Error message, code snippet, RFC reference.
 2. **Describe the behavior** — What did you expect? What happened?
 3. **Show recent commits** — What changed?
-4. **Mention environment** — OS, Rust version, hardware.
+4. **Mention environment** — OS, JDK/Kotlin version, hardware (phone model if Android-specific).
 
 Claude will:
 - Read the error and code
@@ -239,7 +264,8 @@ Claude will:
 
 RFCs are frozen after acceptance (by design). To propose changes:
 
-1. **Read RFC-0000 through RFC-0099** — Understand the process.
+1. **Read `docs/rfcs/README.md` and RFC-0099 (roadmap)** — understand the process and the current
+   milestone plan before proposing changes.
 2. **Propose RFC change** — File issue with specific text changes.
 3. **Get approval** — Project owner reviews.
 4. **Update RFC** — In a commit.
@@ -270,7 +296,7 @@ Result: Error: "invalid path"
 
 Expected: Worktree created successfully.
 
-Environment: macOS 14, Rust 1.75, Aidos commit abc123
+Environment: macOS 14, JDK 17, Aidos commit abc123
 
 Relevant RFC: RFC-0032: Git (Design section, Worktree Support)
 ```

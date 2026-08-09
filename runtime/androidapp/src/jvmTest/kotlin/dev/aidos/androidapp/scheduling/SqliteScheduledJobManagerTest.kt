@@ -2,6 +2,7 @@ package dev.aidos.androidapp.scheduling
 
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.aidos.androidapp.ScheduledJobsDb
 import dev.aidos.kernel.GuaranteeClass
 import dev.aidos.kernel.ScheduledJob
 import dev.aidos.kernel.ScheduledJobId
@@ -20,7 +21,9 @@ import kotlin.time.Duration.Companion.hours
 class SqliteScheduledJobManagerTest {
 
     private fun createDriver(): SqlDriver {
-        return JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        ScheduledJobsDb.Schema.create(driver)
+        return driver
     }
 
     private fun createTestJob(

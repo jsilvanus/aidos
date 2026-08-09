@@ -8,6 +8,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(project(":api"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
         }
 

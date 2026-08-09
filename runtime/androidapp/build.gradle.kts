@@ -1,6 +1,7 @@
 plugins {
     kotlin("multiplatform")
-    kotlin("plugin.serialization") version "1.9.25"
+    kotlin("plugin.serialization")
+    kotlin("plugin.compose")
     id("app.cash.sqldelight") version "2.0.2"
     id("com.android.application")
 }
@@ -24,11 +25,17 @@ kotlin {
             dependencies {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
+                implementation(project(":storage"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
                 implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
+                // jvmMain has no Compose UI of its own, but the Compose Compiler Gradle plugin
+                // (kotlin.plugin.compose) runs its version check against every compilation in
+                // this module, androidTarget included — it fails hard without the runtime on
+                // the classpath even here. Unused at runtime, only satisfies that check.
+                implementation("androidx.compose.runtime:runtime:1.6.0")
             }
         }
 
@@ -97,35 +104,37 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
-    
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-    
+
+    // A release build type may only reference a signingConfig that is actually
+    // signing-ready (AGP's packageRelease requires storeFile once one is attached) - so the
+    // keystore's presence gates both populating the config below and attaching it to the
+    // release build type. Absent (e.g. no KEYSTORE_BASE64 secret in CI), the release build
+    // proceeds unsigned, matching the workflow's own documented fallback.
+    val releaseKeystorePath = System.getenv("KEYSTORE_FILE")
+        ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
+    val hasReleaseKeystore = releaseKeystorePath != null && File(releaseKeystorePath).exists()
+
     signingConfigs {
         create("release") {
-            val keystore = System.getenv("KEYSTORE_FILE") ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
-            val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-            val keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
-            val keyPassword = System.getenv("KEY_PASSWORD") ?: keystorePassword
-            
-            if (keystore != null && keystore.isNotEmpty()) {
-                storeFile = File(keystore)
-                storePassword = keystorePassword
-                this.keyAlias = keyAlias
-                this.keyPassword = keyPassword
+            if (hasReleaseKeystore) {
+                storeFile = File(releaseKeystorePath!!)
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: storePassword
             }
         }
     }
-    
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
