@@ -412,12 +412,20 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
 - [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
   platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
   `androidMain` extends `Service` yet.
-- [ ] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
-  `MockRuntimeClient`.** The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
-  `AidosTheme.kt`) is real; it's driving the mock. Doesn't strictly need `RealRuntimeClient` to be
+- [x] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
+  `MockRuntimeClient`.** Done 2026-08-09. The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`) was already real; it was driving the mock. `MainActivity.onCreate` now
+  constructs `RealRuntimeClient()` instead of `MockRuntimeClient()` — a one-line swap since both
+  implement `RuntimeClient` with a no-arg constructor. Didn't wait on `RealRuntimeClient` being
   *durable* first (M9's original framing was an in-process transport, in-memory is a legitimate
-  intermediate step) — wiring the UI to the existing in-memory `RealRuntimeClient` is itself real
-  progress and doesn't have to wait on the item above.
+  intermediate step), per RFC-0050 MVP item 2. What this does *not* yet do: bind to the
+  foreground service (`RuntimeServiceHost`, the "Write the Service subclass" item below) and get
+  its client injected — each `MainActivity` instance today owns its own `RealRuntimeClient`, so
+  state doesn't survive activity destruction. That binding is the natural next step once the
+  Service subclass exists. Verification note: `androidMain` cannot compile in this sandbox at all
+  (no `ANDROID_HOME`/`local.properties` — confirmed via `gradle :androidapp:compileDebugKotlinAndroid`,
+  fails immediately on SDK location, not a code error) — CI's `build-and-publish` is the only way
+  this specific change gets verified; `gradle jvmTest` only proves `commonMain`/`jvmMain` compile.
 - [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — **checked
   2026-08-09, this item as written is wrong and would build the wrong thing.** RFC-0055's own
   "Project locking" section says a project is locked when it is *opened*, not when the daemon
