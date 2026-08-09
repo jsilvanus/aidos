@@ -348,10 +348,32 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   the MVP line's literal spelling rather than silently resolving the ambiguity toward one of the
   two more-specific names; flagged in the file's own doc comment for whoever wires real
   error-event emission to check before depending on it.
-  **Still open — deliberately not started, the "much larger, second slice" the task brief called
-  out:** wiring emission points across subsystems (filesystem watcher, git, timers, tool
-  completions) so these types actually get published somewhere, and the handful of MVP types this
-  slice's constants object doesn't yet have callers for.
+  **First emission point wired 2026-08-09: `ToolCompleted` from `SqliteExecutor.drive()`.** Of the
+  four subsystems named ("filesystem watcher, git, timers, tool completions"), tool completions
+  was the lowest-risk to start with — `drive()` already publishes a `RunStepCompleted` event per
+  task outcome (it already holds an `EventStore` reference, already builds a payload, already runs
+  inside the transaction-adjacent path that writes the audit row), so adding one more `publish()`
+  call there is additive, not a step-machine change: no new state transition, no new column
+  `recover()` reads, same call shape as the existing publish four lines above it.
+  `CrashRecoveryTest` confirmed still green (5/5) — this was checked, not assumed, given how
+  carefully this file has told every link to treat `SqliteExecutor.kt`. Publishes
+  `EventTypes.TOOL_COMPLETED` (category `FACT`, not the existing call's `SIGNAL` default — a tool
+  result is a durable outcome per RFC-0004's own category table, not lossy progress) with topic
+  `tool:<operation>:<taskId>`, matching the RFC's own worked example shape (`tool:shell:cmd-456`).
+  **Only on success, deliberately:** the RFC's MVP line names `ToolCompleted` but not `ToolFailed`
+  (that's in the fuller design section only), so a failed task publishes nothing new here rather
+  than reaching for a type outside the MVP-scoped vocabulary — the existing `RunStepCompleted`
+  event (which already carries `state: FAILED`) still records the failure. 2 new tests: one
+  confirming the topic shape on success, one confirming silence on failure.
+  **Still open — the other three subsystems, each its own slice, none started:** filesystem
+  watcher (`FileModified`/`FileCreated`/`FileDeleted`), git tool (`GitCommit`), and timers
+  (`TimerFired`) have no publish call sites anywhere yet. Also still unaddressed: `UserCommand`,
+  `PermissionRequested`/`Granted`/`Denied`, `SessionWoken`/`Sleeping`, `ArtifactCreated`, `Error` —
+  none of the MVP-scoped 14 have callers except `ToolCompleted` now. Each remaining subsystem is
+  independent of the others (unlike the tool-completion case, none of them sit inside
+  crash-recovery-critical code, so the same "verify `CrashRecoveryTest` explicitly" caution doesn't
+  apply — but each still deserves its own commit and its own look at what payload shape the
+  RFC's worked examples actually specify, rather than inventing one per call site ad hoc).
 - [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
   wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
   Checklist framing corrected first (see below), then progress made on the corrected scope:
