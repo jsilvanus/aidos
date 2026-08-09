@@ -710,12 +710,14 @@ PR #21's description were true but narrower than they read — local `gradle jvm
 this file's own verification steps always required) were the actual test coverage the whole time,
 CI was not an independent check on top of them for anything outside `kernel`. Nothing in this file
 needs retracting because of it (the local runs were real and were done), but don't read a past
-"CI green" note as having meant more than `:kernel` + Android-assembles until this fix's own PR
-lands and a run confirms the broader job's real, unknown-until-observed baseline (this sandbox's
-ambient gitconfig and missing `GITHUB_TOKEN` scope make `:git`/`:worker`/`:knowledge`/`:modelruntime`
-fail locally regardless of CI's actual behavior — `:cookbook`'s failure is the one of the five
-that's a genuine bug rather than a sandbox artifact, so it may be the only one of the five that
-still shows red in the real CI run this fix produces; check, don't assume).
+"CI green" note as having meant more than `:kernel` + Android-assembles for any commit before this
+one. **Confirmed by the actual run this fix produced (same day):** `:git` and `:worker` pass in
+real CI — the ambient-gitconfig diagnosis was right and *is* sandbox-only. `:knowledge` and
+`:modelruntime` fail in real CI too, but not for the reason this file had assumed (missing
+`GITHUB_TOKEN` scope) — package resolution succeeds in real CI, then each fails at compilation for
+its own real, previously-invisible bug. Full detail in the corrected version of the old
+"Three failures remain" note, below — this paragraph predicted the outcome before the run
+completed; the correction below reports what actually happened, and is the one to trust.
 
 **2026-08-09 — the "Unclosed comment" nested-`/*` bug recurs beyond `schema/*.sql` globs; it's any
 literal `/` immediately followed by `*` inside a KDoc block.** The existing note below about
@@ -781,18 +783,42 @@ what was actually broken and not caused by the androidTarget() change itself:
   hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
   actually 2023-08-02 — computed and substituted the correct value.
 
-**Three failures remain and are environment artifacts, not code bugs — don't spend time on them
-without checking the environment first:** `:knowledge` and `:modelruntime` fail to resolve
-`gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized — this sandbox has no
-`GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already documents this
-requirement; CI's default token has it, this environment's doesn't). `:git` and `:worker`'s JGit
-tests fail with `UnsupportedSigningFormatException` because this **session's own** global
-`~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key for Claude Code's own
-commit signing, and JGit inherits that ambient config when it opens a repo — nothing in the test
-or in Aidos is wrong, JGit just doesn't support that signing format. `cookbook`'s
-`testExceedsContextAtLongWindow` fails and predates PR #18 entirely (`git diff` across the merge
-shows zero changes to `cookbook/`) — a genuine pre-existing bug, but out of scope for Group 2's
-androidTarget work; flag it for whoever picks up `cookbook` next.
+**Five failures were long assumed environment-only. Real CI (2026-08-09, once `runtime.yml` was
+fixed to actually run `:knowledge`/`:modelruntime`/`:git`/`:worker` at all — see the note above)
+showed that's only true for two of them.** Corrected, not superseded — the original note's
+*mechanism* for each failure in this sandbox was accurate; what was wrong was extrapolating "fails
+here for environment reason X" to "therefore fine in real CI." Two module pairs, two different
+outcomes:
+
+- **`:git` and `:worker` really are sandbox-only, confirmed by a real CI run passing both.** The
+  mechanism as originally documented holds: this session's own global `~/.gitconfig` sets
+  `commit.gpgsign=true` with an ssh-format signing key, JGit inherits it and throws
+  `UnsupportedSigningFormatException` opening any repo in this sandbox. A fresh CI runner has no
+  such config. Nothing to fix in either module.
+- **`:knowledge` and `:modelruntime` are not environment-only — real CI fails them too, for two
+  different, real, previously-invisible bugs the sandbox's 401 Unauthorized was masking (auth
+  failed before compilation ever got far enough to hit either one):**
+  - `:modelruntime:compileKotlinJvm` — `de.kherud:llama-java:0.3.2` genuinely does not exist at
+    Maven Central, Google's repo, or `jsilvanus/gitsema-kotlin`'s package registry (a 404 in real
+    CI, once auth succeeded — not a 401). The dependency coordinate in
+    `modelruntime/build.gradle.kts` is wrong or stale.
+  - `:knowledge:compileKotlinJvm` — package resolution succeeds in real CI (confirming
+    `settings.gradle.kts`'s own claim that CI's default `GITHUB_TOKEN` has `read:packages` scope),
+    but `IndexingJob.kt` then fails to compile: `Unresolved reference 'datetime'/'serialization'/
+    'Clock'/'BACKGROUND'`. The module is missing a `kotlinx-datetime` (and likely coroutines)
+    dependency declaration in `knowledge/build.gradle.kts`.
+  - **Neither fixed here** — both are real bugs in modules outside RFC-0004/0005's scope, and need
+    whoever owns `knowledge`/`modelruntime` to look at them with intent, not as a side effect of
+    unrelated work. Flagging clearly is the point of this note; guessing at a fix isn't.
+- **`cookbook`'s `testExceedsContextAtLongWindow` is unaffected by any of this — confirmed a real,
+  environment-independent bug** by matching in both the sandbox and real CI runs. Predates PR #18
+  entirely (`git diff` across the merge shows zero changes to `cookbook/`); out of scope here,
+  flagged for whoever picks up `cookbook` next.
+
+**The lesson worth keeping:** a documented "why this fails here" is not the same claim as "and
+therefore nowhere else" — the first is an observation, the second is an inference, and this file
+had, until CI actually ran these modules, been treating the inference as equally settled. Don't
+extend a sandbox-failure diagnosis to a scope it wasn't verified against.
 
 **M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
 note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,
