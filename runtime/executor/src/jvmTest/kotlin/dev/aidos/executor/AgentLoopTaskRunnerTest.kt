@@ -1,0 +1,279 @@
+package dev.aidos.executor
+
+import dev.aidos.broker.AuditLog
+import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.DenialReason
+import dev.aidos.kernel.EffectBroker
+import dev.aidos.kernel.EventId
+import dev.aidos.kernel.InferenceRouter
+import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.PlatformProfile
+import dev.aidos.kernel.Preview
+import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.RoutingContext
+import dev.aidos.kernel.RoutingDecision
+import dev.aidos.kernel.RunId
+import dev.aidos.kernel.SessionId
+import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.Tool
+import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolCallResult
+import dev.aidos.kernel.ToolDescriptor
+import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrustLevel
+import dev.aidos.kernel.Turn
+import dev.aidos.prompt.PromptAssembler
+import dev.aidos.storage.AidosStorage
+import dev.aidos.storage.DesktopPaths
+import java.nio.file.Files
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+
+/**
+ * The AgentLoop↔executor bridge end to end: [RunCreator] creates the Run, [SqliteExecutor.drive]
+ * with [AgentLoopTaskRunner] steps it through MODEL_CALL/TOOL_CALL tasks, matching RFC-0008's own
+ * mapping table. Fakes mirror `agentloop.AgentLoopTest`'s so the two suites stay comparable even
+ * though nothing is shared between them (see [AgentLoopTaskRunner]'s class doc for why).
+ */
+class AgentLoopTaskRunnerTest {
+
+    private val nowIso = "2026-08-09T00:00:00Z"
+
+    private fun nextId() = UuidV7Generator().next()
+
+    private fun openDriver() = run {
+        val root = Files.createTempDirectory("bridge-test").toFile()
+        AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
+            as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+    }
+
+    private fun seedProjectAndSession(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        projectId: String,
+        sessionId: String,
+        triggerEventId: String,
+    ) {
+        driver.execute(null,
+            "INSERT INTO projects (id, name, root_path, project_type, created_at, updated_at, state_updated_at) " +
+                "VALUES (?, 'test', '/', 'generic', ?, ?, ?)", 4
+        ) { bindString(0, projectId); bindString(1, nowIso); bindString(2, nowIso); bindString(3, nowIso) }
+        driver.execute(null,
+            "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) " +
+                "VALUES (?, ?, 'test', 'DRIVER', 'RUNNING', ?, ?, ?)", 5
+        ) { bindString(0, sessionId); bindString(1, projectId); bindString(2, nowIso); bindString(3, nowIso); bindString(4, nowIso) }
+        driver.execute(null,
+            "INSERT INTO events (id, project_id, sequence, type, schema_version, category, visibility, " +
+                "timestamp, source, payload, causal_depth) VALUES (?, ?, 0, 'UserMessage', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)", 4
+        ) { bindString(0, triggerEventId); bindString(1, projectId); bindString(2, nowIso) }
+    }
+
+    private fun fakeModel(responses: List<ModelResponse>, requestLog: MutableList<ModelRequest> = mutableListOf()): ModelAdapter {
+        val queue = ArrayDeque(responses)
+        return object : ModelAdapter {
+            override val providerId = "test"
+            override val modelId = "test-model"
+            override val modelVersion = "1.0"
+            override val contextWindow = 4096
+            override val isLocal = true
+            override fun supportsNativeToolCalls() = false
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+                requestLog.add(request)
+                return if (queue.isEmpty()) Result.failure(NoSuchElementException("No more responses"))
+                else Result.success(queue.removeFirst())
+            }
+        }
+    }
+
+    private fun fakeRouter(adapter: ModelAdapter): InferenceRouter = object : InferenceRouter {
+        override suspend fun select(kind: ModelKind, context: RoutingContext) = RoutingDecision.Local(adapter)
+    }
+
+    private fun brokerReturning(outcome: ToolOutcome, trustLevel: TrustLevel, text: String = "ok"): EffectBroker =
+        object : EffectBroker {
+            override fun register(tool: Tool) {}
+            override fun descriptorsFor(s: String, p: PlatformProfile, n: Boolean) = emptyList<ToolDescriptor>()
+            override suspend fun invoke(s: String, call: ToolCall, runTaint: TrustLevel) = ToolCallResult(
+                callId = call.callId,
+                outcome = outcome,
+                content = listOf(ContentBlock.Text(text)),
+                trustLevel = trustLevel,
+            )
+            override suspend fun preview(s: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+            override suspend fun cancel(callId: String) {}
+        }
+
+    private fun noOpBroker() = brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED)
+
+    private fun endTurnResponse(text: String = "Done") = ModelResponse(
+        text = text, toolCalls = emptyList(), stopReason = StopReason.END_TURN,
+        usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+    )
+
+    private fun toolCallResponse(toolName: String, callId: String = "call-1") = ModelResponse(
+        text = null,
+        toolCalls = listOf(ToolCall(callId = callId, toolName = toolName, arguments = buildJsonObject {}, capabilityId = null)),
+        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+    )
+
+    private fun createRun(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        maxSteps: Int = 24,
+    ): Triple<String, String, RunId> {
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProjectAndSession(driver, pid, sid, eid)
+        val runId = RunCreator(driver, idGen = { nextId() }, nowIso = { nowIso }).createForUserMessage(
+            sessionId = SessionId(sid),
+            projectId = ProjectId(pid),
+            triggerEventId = EventId(eid),
+            userMessageSummary = "Please help",
+            platformProfile = PlatformProfile.DESKTOP,
+            deviceId = "dev-1",
+            networkAvailable = false,
+            maxSteps = maxSteps,
+        )
+        return Triple(pid, sid, runId)
+    }
+
+    private fun buildExecutor(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        router: InferenceRouter,
+        broker: EffectBroker,
+    ) = SqliteExecutor(
+        driver = driver,
+        audit = AuditLog(driver),
+        events = EventStore(driver),
+        idGen = { nextId() },
+        nowIso = { nowIso },
+        taskRunner = AgentLoopTaskRunner(
+            driver = driver,
+            audit = AuditLog(driver),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            router = router,
+            assembler = PromptAssembler(),
+            broker = broker,
+        ),
+    )
+
+    private fun runRow(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): Pair<String, String> =
+        driver.executeQuery(null, "SELECT state, taint_level FROM runs WHERE id = ?",
+            mapper = { c ->
+                check(c.next().value) { "run ${runId.value} not found" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!! to c.getString(1)!!)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun toolCallOutcome(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): List<String> {
+        val rows = mutableListOf<String>()
+        driver.executeQuery(null, "SELECT outcome FROM tool_calls WHERE run_id = ? ORDER BY step_index",
+            mapper = { c ->
+                while (c.next().value) rows.add(c.getString(0)!!)
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            }, 1
+        ) { bindString(0, runId.value) }
+        return rows
+    }
+
+    @Test
+    fun `run with no tool calls completes on the first MODEL_CALL task`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse("Task complete")))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (state, taint) = runRow(driver, runId)
+        assertEquals("COMPLETED", state)
+        assertEquals("TRUSTED", taint, "no tool call was made — taint stays TRUSTED")
+    }
+
+    @Test
+    fun `tool call round trip completes and taints the run`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()), requests)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (state, taint) = runRow(driver, runId)
+        assertEquals("COMPLETED", state)
+        assertEquals("UNTRUSTED", taint, "a tool result taints the Run monotonically (RFC-0027)")
+        assertEquals(listOf("OK"), toolCallOutcome(driver, runId))
+
+        // The second model call must see the first turn's tool result in its history — proof
+        // that reconstructHistory() rebuilt it from durable rows, not from anything held in
+        // memory across the two Task executions.
+        assertEquals(2, requests.size)
+        val secondRequestMessages = requests[1].messages
+        assertTrue(secondRequestMessages.any { it is Turn.Assistant && it.toolCalls.any { c -> c.toolName == "read-file" } })
+        assertTrue(secondRequestMessages.any { it is Turn.ToolResult })
+    }
+
+    @Test
+    fun `denied tool call is recorded and does not fail the run`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(toolCallResponse("write-remote"), endTurnResponse()))
+        val denied = brokerReturning(ToolOutcome.Denied(DenialReason.ATTENUATED_BY_TAINT), TrustLevel.UNTRUSTED, "Denied: tainted")
+
+        buildExecutor(driver, fakeRouter(adapter), denied).drive(runId)
+
+        val (state, _) = runRow(driver, runId)
+        assertEquals("COMPLETED", state, "Denied/Failed outcomes are data returned to the model, not a Task failure (RFC-0008)")
+        assertEquals(listOf("DENIED"), toolCallOutcome(driver, runId))
+    }
+
+    @Test
+    fun `same tool call repeated three times fails the run with no-progress`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        // Same tool name and arguments each time (what the no-progress guard actually compares)
+        // but a distinct call_id per turn — tool_calls.call_id is a real primary key, and a
+        // provider mints a fresh one per call even when the model is stuck in a loop.
+        val responses = (1..4).map { toolCallResponse("echo", callId = "call-$it") }
+        val adapter = fakeModel(responses)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (state, _) = runRow(driver, runId)
+        assertEquals("FAILED", state)
+    }
+
+    @Test
+    fun `run fails when the step ceiling is reached`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver, maxSteps = 3)
+        // Distinct call each time so the no-progress guard doesn't fire first.
+        val responses = (1..10).map { toolCallResponse("tool-$it", callId = "call-$it") }
+        val adapter = fakeModel(responses)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (state, _) = runRow(driver, runId)
+        assertEquals("FAILED", state)
+    }
+
+    @Test
+    fun `unavailable offline routing fails the model call task without a model invocation`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val offlineRouter = object : InferenceRouter {
+            override suspend fun select(kind: ModelKind, context: RoutingContext) = RoutingDecision.UnavailableOffline(kind)
+        }
+
+        buildExecutor(driver, offlineRouter, noOpBroker()).drive(runId)
+
+        val (state, _) = runRow(driver, runId)
+        assertEquals("FAILED", state)
+    }
+}

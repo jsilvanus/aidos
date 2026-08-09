@@ -1,9 +1,11 @@
 plugins {
     kotlin("multiplatform")
+    id("com.android.library")
 }
 
 kotlin {
     jvm()
+    androidTarget()
 
     sourceSets {
         commonMain.dependencies {
@@ -23,5 +25,19 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
             }
         }
+    }
+}
+
+android {
+    namespace = "dev.aidos.prompt"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 }

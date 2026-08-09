@@ -25,6 +25,15 @@ also landed the local llama.cpp inference backend and tool-calling protocol from
 table.** It confirms the bulk of Phases 0-3 as claimed, but found several specific status-table
 cells overstated or understated. Read the review section before trusting a row at face value.
 
+**2026-08-09 · the AgentLoop↔executor bridge is built** (`RunCreator.kt` + `AgentLoopTaskRunner.kt`
+in `runtime/executor/`, branch `claude/agentloop-executor-bridge-k7rko2`) — the piece both prior
+session-pipeline branches found and deliberately held back from building, tracked separately per
+the user's own decision at the time. Full design and what's deliberately still deferred (schema
+validation, capability resolution, the approval/park-resume flow) is in the "Group 2" checklist
+below, under the "Finish `RealRuntimeClient`" item's cross-branch-blocker note — read that before
+picking up either of the two things it now unblocks: RFC-0005's wake-to-Run wiring, and finishing
+`RealRuntimeClient.sessions.send()` itself.
+
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
@@ -35,7 +44,7 @@ cells overstated or understated. Read the review section before trusting a row a
 | Identity | `runtime/identity/` — UUIDv7 generator (expect/actual KMP), ProjectRegistry. M2 ✅ |
 | Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅ |
 | Broker | `runtime/broker/` — `AuditLog` + `ToolBroker` 8-step invocation sequence (RFC-0030); every invocation writes an audit row naming subject, capability, and outcome. M4 ✅ |
-| Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset). M5 ✅, M6 ✅ |
+| Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction, crash-safe task appending via `TaskResult.appendTasks`); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset); `RunCreator` (how a Run comes to exist — `runs` row + first `MODEL_CALL` task, for a user message); `AgentLoopTaskRunner` (the AgentLoop↔executor bridge, RFC-0008: drives `MODEL_CALL`/`TOOL_CALL` Tasks one at a time, transcript reconstructed from `attempts`/`tool_calls` rows, not held in memory). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
 | API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
@@ -44,7 +53,7 @@ cells overstated or understated. Read the review section before trusting a row a
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
 | Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅ |
 | Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅ |
-| AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅ |
+| AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅. **Still has zero callers (2026-08-09) — and by design now, not just neglect: it holds the whole transcript in memory across its `while` loop in one suspend call, which RFC-0009 forbids for durable execution. `executor/AgentLoopTaskRunner.kt` is the actual production path for driving a Run's model-call loop (same `kernel`/`prompt` building blocks, rebuilt at the step machine's real grain); `AgentLoop.kt` remains valid for non-durable contexts, if any ever need one.** |
 | Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
 | Injection | `runtime/agentloop/injection/` — 7 hostile corpus tests: README, comments, commits, tool output, MCP, role reassignment, nested injection. M17 ✅ |
 | MCP | `runtime/mcp/` — stdio (DESKTOP/SERVER, SHELL_EXEC) + HTTP (all profiles, HTTPS enforced, NETWORK_EGRESS); resultGuidance null (D23); D30 enforced. 11 tests. M18 ✅ |
@@ -732,6 +741,104 @@ further down this file.
   wire what doesn't require it (e.g. `ProjectSummary`/`SessionSummary` persistence to `storage`),
   and stop at the point where continuing would require deciding how a Run actually gets executed.
   Flag that boundary explicitly if you hit it, the same way this link did.
+
+  **Update (2026-08-09 — bridge built, own branch `claude/agentloop-executor-bridge-k7rko2`,
+  scoped exactly as this note asked: as its own tracked item, not a side effect of either group's
+  work.** Both `runtime/executor/RunCreator.kt` (how a Run comes to exist) and
+  `runtime/executor/AgentLoopTaskRunner.kt` (a `TaskRunner` driving the model-call loop one Task
+  at a time) are new. **`AgentLoop.kt` itself is deliberately not called by either** — read
+  `AgentLoopTaskRunner`'s own class doc for the full reasoning, short version: `AgentLoop.run()`
+  holds its whole transcript in a local variable across a `while` loop in one suspend call, which
+  is exactly what RFC-0009 forbids for durable execution ("anything that must survive a step
+  boundary is a column"). It remains a valid, non-durable, self-contained loop for contexts that
+  don't need step-machine durability; it simply isn't the right shape to plug into
+  `SqliteExecutor.drive()`, so the bridge is new code at the step machine's actual grain, sharing
+  only the `kernel`/`prompt` types both are built from (accepted duplication: model resolution,
+  the `TooBig` retry, termination conditions — a few dozen lines, flagged rather than forced into
+  a shared abstraction with only one real caller so far).
+
+  **The mechanism, mapped directly from RFC-0008's own table:** one step's model call is
+  `Task(kind = MODEL_CALL)`; one tool call from the response is `Task(kind = TOOL_CALL)`, linked
+  by a `tool_calls` row (`model_task_id`/`tool_task_id`, the `PRODUCED_CALL` relationship);
+  termination is `drive()`'s existing "no runnable tasks, all terminal → COMPLETED" path, reached
+  by a `MODEL_CALL` task appending nothing. The transcript — necessarily a query, never a variable
+  held across the two Tasks' separate executions (D3) — is rebuilt each time from
+  `attempts.output_snapshot` (one row per Task, `attempt_number` always 1: this bridge doesn't
+  retry an attempt in place, a failing Task just fails its Run, matching `drive()`'s existing
+  behaviour) plus `tool_calls`. Taint reads and writes `runs.taint_level` directly, so it survives
+  a restart the same way the rest of the Run's state does.
+
+  **A real, load-bearing gap this surfaced and fixed: `SqliteExecutor.drive()` had no way for a
+  Task's execution to append a follow-on Task at all** — `TaskRunner.execute()` only ever returned
+  success/failure. RFC-0009's own pseudocode says `execute(task) // may append new Tasks`, but
+  nothing implemented that half. Fixed narrowly: `TaskResult` gained `appendTasks: List<NewTaskSpec>`,
+  and `drive()` now wraps "this task is done" and "here is what comes next" in one SQL transaction
+  (`SqlDriver.newTransaction()`/`Transacter`, reached via a bare `TransacterImpl(driver)` since a
+  raw `SqlDriver` has no public transaction entry point of its own). This matters beyond the
+  bridge: without it, a crash between the two writes would leave a Run whose task set looks
+  all-terminal on resume, and `drive()` would complete it one step early, truncating a Run that
+  still had a model turn to take. New tests (`TaskAppendingTest.kt`) cover this directly with a
+  generic scripted `TaskRunner`, independent of the agentloop bridge, including the crash boundary
+  (task RUNNING, no follow-on row — the same B3 shape `CrashRecoveryTest` already covers, checked
+  again for the appending case specifically). `NewTaskSpec` also gained an `afterInsert: () -> Unit`
+  hook, run inside the same transaction right after each task row lands — needed because
+  `tool_calls.tool_task_id` is a foreign key onto a task that is minted (its id chosen) at
+  `MODEL_CALL` execution time but doesn't have a row until `appendTasks` creates it; the first
+  version of this tried to write the `tool_calls` row eagerly and hit
+  `SQLITE_CONSTRAINT_FOREIGNKEY` immediately, which is exactly the kind of bug this hook exists to
+  make structurally impossible rather than remembered.
+
+  **`CrashRecoveryTest` confirmed still green, unmodified** — checked, not assumed, per this
+  file's standing rule for anything touching `SqliteExecutor.kt`. `python3 schema/check.py` and
+  `gradle jvmTest --continue` both clean except the two pre-existing, documented red modules
+  (`:knowledge`, `:modelruntime` — GitHub Packages auth, unrelated).
+
+  **Deliberately not built, flagged rather than silently absent — the bridge's job was the
+  structural wiring, not the rest of RFC-0008's authorization boundary:**
+  - **JSON Schema argument validation (RFC-0008 step 8b).** Every `tool_calls` row is written
+    `schema_valid = 1` unconditionally. A real check needs a JSON Schema validator this codebase
+    doesn't depend on yet.
+  - **Capability resolution for a model's tool call (RFC-0008 step 8c).** `ToolCall.capabilityId`
+    is always `null` — the same gap `AgentLoop.kt` already had (it never populated one either).
+    `ToolBroker.invoke()` denies every call with `capability.missing` until something maps "a
+    session, a tool name" → a held `CapabilityId`. That mapping is a separate, not-yet-built
+    subsystem; inventing one inside this bridge would have been a bigger, unreviewed decision than
+    this link should make alone.
+  - **The approval flow (RFC-0008 step 8d, `Task(kind = CAPABILITY_REQUEST)`, `AWAITING_APPROVAL`,
+    the `continuations` table).** `RoutingDecision.RemotePendingApproval` fails the Run outright
+    today instead of parking it for a later approval event to resume. Building park/resume is
+    substantial — its own `continuations` row, an event that un-parks it — and was ruled out of
+    this link's scope the same way RFC-0009's own MVP section defers `CHECKABLE` recovery probes.
+  - **Instruction sets (RFC-0016).** `instructionSet` is always `null`, matching `AgentLoop.kt`'s
+    own default. Wiring `InstructionDiscovery` in is unrelated to bridging the two execution
+    models and was left alone.
+  - **`step_index` now counts every dispatched Task (`MODEL_CALL` and `TOOL_CALL` alike), not one
+    increment per agent-loop turn the way `AgentLoop.kt`'s own `steps` counter did.** A tool-call
+    round trip costs 2 of the Run's `max_steps` budget instead of 1. Left as-is rather than
+    reconciled: `runs.step_index` is the *executor's* step counter, shared across every task kind
+    by design (RFC-0009's own motivation: "the step ceiling that bounds spend is enforced by the
+    same counter that drives execution"), and counting total task dispatches is arguably more
+    correct — it bounds actual work, not just model calls. Flagged as a known behavioural
+    difference from `AgentLoop.kt`, not reconciled further; reconciling it would mean redesigning
+    one of the two step-counting conventions, which is a bigger decision than this link should
+    make as a side effect.
+
+  **What this unblocks, now buildable and not attempted in this link:**
+  1. **RFC-0005's wake-to-Run wiring** — `SchedulerMatcher.match()` → for a woken session, a Run
+     the way `RunCreator` now creates one for a user message, with the causing event as context
+     instead of a `UserMessage`, → `drive()`. `SessionSubscriptionStore`/`SchedulerMatcher` (built
+     by Group 1) are ready to consume; nothing calls `SchedulerMatcher` yet.
+  2. **`RealRuntimeClient.sessions.send()`** wired to `RunCreator` + `drive()` instead of an
+     in-memory stub — Group 2's "Finish `RealRuntimeClient`" checklist item, previously blocked
+     exactly on this bridge existing, is unblocked as of this commit.
+  3. **`TimerFired` (RFC-0004 MVP item 2)**, sequenced after this bridge per the task brief that
+     scoped this branch, since `RuntimeClientWorkDispatcher.kt` calls `client.sessions.send()`
+     directly — wiring emission around a call shape that was about to change underneath it would
+     have been wasted work before this link, and isn't anymore.
+
+  Neither of these three was attempted in this link — the brief scoped this branch to the bridge
+  itself first, several links' worth on its own. Picking one of them up is the natural next
+  session.
 - [x] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` into
   `onStartCommand`/`onDestroy`, per RFC-0050. Done 2026-08-09:
   `fi.italeino.aidos.service.AidosService : LifecycleService` (matching RFC-0050's own diagram
@@ -866,6 +973,32 @@ an architecture pass read the whole corpus against them. The durable output:
 ---
 
 ## Notes for the next link
+
+**2026-08-09 — a bare `SqlDriver` has no public transaction API; `driver.newTransaction()` pairs
+with a `protected fun endTransaction`, reachable only through a `Transacter` subclass.** Building
+the AgentLoop↔executor bridge needed one real SQL transaction (task completion + its follow-on
+tasks, atomically) for the first time anywhere in `executor` — every prior write in this module
+was a single `driver.execute()` call. The fix, once the protected-access compile error explained
+what was actually missing: `private val transacter = object : TransacterImpl(driver) {}`, then
+`transacter.transaction { ... }` (from `app.cash.sqldelight.TransacterImpl`, part of the
+`sqldelight:runtime` dependency already present everywhere `SqlDriver` is used — no new dependency
+needed, just the right entry point). `Transacter.transaction` already rolls back and rethrows on
+an exception from its body, so no manual try/catch around it. Worth remembering next time anything
+needs more than one statement to land together: reach for `TransacterImpl(driver)`, not
+`driver.newTransaction()` directly.
+
+**A foreign key minted before its row exists is a real ordering hazard in `appendTasks`-shaped
+code, not a hypothetical one — it broke 4 of the bridge's own first tests.** `AgentLoopTaskRunner`
+mints a `TOOL_CALL` task's id itself (so it can write `tool_calls.tool_task_id` pointing at it),
+but the task row that id names doesn't exist until `SqliteExecutor.appendTasks` inserts it — which
+happens *after* `TaskRunner.execute()` returns, not before. Writing the `tool_calls` row eagerly,
+inside `execute()`, hit `SQLITE_CONSTRAINT_FOREIGNKEY` immediately (foreign_keys=ON, per
+`storage/JvmSqlDriver.kt`'s own `SQLiteConfig`). Fixed by giving `NewTaskSpec` an
+`afterInsert: () -> Unit` hook that `appendTasks` calls right after each task row lands, still
+inside the same transaction — the id exists from the moment the runner mints it, but nothing may
+reference it as a foreign key until this hook fires. Anything else that appends a task and also
+wants to write a row referencing it should reach for this, not rediscover the ordering the hard
+way.
 
 **2026-08-09 — CI's `runtime.yml` only ever ran `gradle :kernel:jvmTest`. Every other module —
 `executor`, `git`, `broker`, `capability`, `agentloop`, and everything else under `runtime/` —

@@ -1,5 +1,6 @@
 package dev.aidos.executor
 
+import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
@@ -94,7 +95,19 @@ class SqliteExecutor(
 
                 val result = taskRunner.execute(task)
                 val newState = if (result.success) TaskState.COMPLETED else TaskState.FAILED
-                updateTaskState(task.id, newState)
+
+                // The task's own completion and any follow-on Tasks it produces are one
+                // checkpoint (RFC-0009). A crash between "this task is done" and "here is what
+                // comes next" must never be observable: if it were, drive() would see an
+                // all-terminal task set on resume and complete the Run one step early, silently
+                // truncating a Run that still had a next model step to take (RFC-0008's
+                // MODEL_CALL → TOOL_CALL → MODEL_CALL fan-out).
+                inTransaction {
+                    updateTaskState(task.id, newState)
+                    if (result.success && result.appendTasks.isNotEmpty()) {
+                        appendTasks(runId, currentRun, task.ordinal, result.appendTasks)
+                    }
+                }
 
                 // Write audit row for this task execution.
                 val auditId = idGen()
@@ -231,7 +244,7 @@ class SqliteExecutor(
     private fun loadRun(runId: RunId): RunSnapshot? =
         driver.executeQuery(
             identifier = null,
-            sql = "SELECT state, step_index, max_steps, project_id, trigger_event_id " +
+            sql = "SELECT state, step_index, max_steps, project_id, trigger_event_id, session_id " +
                 "FROM runs WHERE id = ?",
             mapper = { c ->
                 QueryResult.Value(
@@ -241,6 +254,7 @@ class SqliteExecutor(
                         maxSteps = c.getLong(2)?.toInt() ?: 24,
                         projectId = ProjectId(c.getString(3)!!),
                         triggerEventId = EventId(c.getString(4)!!),
+                        sessionId = SessionId(c.getString(5)!!),
                     ) else null
                 )
             },
@@ -283,6 +297,54 @@ class SqliteExecutor(
             bindLong(3, if (isTerminal) 1L else 0L)
             bindString(4, if (isTerminal) nowIso() else null)
             bindString(5, taskId.value)
+        }
+    }
+
+    /**
+     * A bare [SqlDriver] has no public transaction entry point of its own — `newTransaction()`
+     * pairs with `Transaction.endTransaction()`, which is `protected`, reachable only through a
+     * `Transacter` subclass. This one exists solely to reach it.
+     */
+    private val transacter = object : TransacterImpl(driver) {}
+
+    /**
+     * Runs [block] inside one SQLite transaction. `JdbcSqliteDriver` opens a connection per call
+     * unless a transaction is active (`storage/JvmSqlDriver.kt`'s own doc comment); a live
+     * transaction is what makes the statements inside [block] land on the same connection and
+     * commit or roll back together, which is the property `appendTasks` below relies on.
+     * `Transacter.transaction` already rolls back and rethrows on an exception from [block].
+     */
+    private fun inTransaction(block: () -> Unit) {
+        transacter.transaction {
+            block()
+        }
+    }
+
+    /** Appends [specs] as new PENDING tasks starting right after [afterOrdinal]. */
+    private fun appendTasks(runId: RunId, run: RunSnapshot, afterOrdinal: Int, specs: List<NewTaskSpec>) {
+        specs.forEachIndexed { i, spec ->
+            driver.execute(
+                identifier = null,
+                sql = "INSERT INTO tasks (id, run_id, session_id, project_id, ordinal, kind, " +
+                    "description, tool_name, state, retry_policy_json) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', '{}')",
+                parameters = 8,
+            ) {
+                bindString(0, spec.id)
+                bindString(1, runId.value)
+                bindString(2, run.sessionId.value)
+                bindString(3, run.projectId.value)
+                bindLong(4, (afterOrdinal + 1 + i).toLong())
+                bindString(5, spec.kind.name)
+                bindString(6, spec.description)
+                bindString(7, spec.toolName)
+            }
+            // Runs inside this same transaction, after the row above — the hook a TaskRunner
+            // needs to write rows with a foreign key onto the task that did not exist a
+            // statement ago (AgentLoopTaskRunner's tool_calls.tool_task_id is exactly this: it
+            // cannot be written at MODEL_CALL execution time because the TOOL_CALL task it
+            // references is only created here).
+            spec.afterInsert()
         }
     }
 
@@ -470,12 +532,39 @@ private data class RunSnapshot(
     val maxSteps: Int,
     val projectId: ProjectId,
     val triggerEventId: EventId,
+    val sessionId: SessionId,
+)
+
+/**
+ * A follow-on Task a [TaskRunner] wants appended to the Run once its own task completes
+ * (RFC-0009's `execute(task) // may append new Tasks`; RFC-0008's `MODEL_CALL` → `TOOL_CALL`
+ * fan-out).
+ *
+ * The runner assigns [id] itself (via its own `idGen`) rather than letting the executor mint
+ * one, because a runner that also writes rows referencing the future task — [AgentLoopTaskRunner]
+ * writes `tool_calls.tool_task_id` pointing at the `TOOL_CALL` task it is about to append — needs
+ * to know that id before the task row exists.
+ */
+data class NewTaskSpec(
+    val id: String,
+    val kind: TaskKind,
+    val description: String,
+    val toolName: String? = null,
+    /**
+     * Runs immediately after this task's row is inserted, still inside `appendTasks`'s
+     * transaction. For a runner that needs to write a row referencing the new task's id via a
+     * foreign key — the id exists (it was minted by the runner itself) but the row doesn't,
+     * until this point.
+     */
+    val afterInsert: () -> Unit = {},
 )
 
 /** Result of running a single task. */
 data class TaskResult(
     val success: Boolean,
     val errorMessage: String? = null,
+    /** Ignored when [success] is false — a failed task fails its Run (see `drive()`). */
+    val appendTasks: List<NewTaskSpec> = emptyList(),
 )
 
 /** Pluggable task runner — replaced by a stub in tests. */
