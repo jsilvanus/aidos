@@ -34,7 +34,10 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.revwalk.RevCommit
+import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.EmptyTreeIterator
 import org.eclipse.jgit.treewalk.FileTreeIterator
 import org.eclipse.jgit.treewalk.filter.PathFilter
 import java.io.ByteArrayOutputStream
@@ -51,7 +54,17 @@ import java.io.File
  * Reconciliation: any operation that checks the working tree re-reads the index and status
  * on every call, so changes made outside Aidos between two steps are always reflected.
  */
-class GitTool(private val repoDir: File) : Tool {
+class GitTool(
+    private val repoDir: File,
+    /**
+     * Called after a successful `git:commit`, with an event shaped exactly like RFC-0004's own
+     * worked "GitCommit" example. `GitTool` has no `EventStore`/`executor` dependency and no
+     * `projectId` of its own — deliberately: the caller decides whether/how to publish this as a
+     * real event (the same plain-callback pattern `AgentLoop.checkpoint` uses in `agentloop`).
+     * Not yet exercised by any live caller — see PIPELINE.md's Group 1 notes.
+     */
+    private val onCommit: (GitCommitEvent) -> Unit = {},
+) : Tool {
 
     override val id = "git"
     override val version = "0.1.0"
@@ -162,14 +175,39 @@ class GitTool(private val repoDir: File) : Tool {
         val message = args["message"]?.jsonPrimitive?.content ?: "commit"
         val author = args["author"]?.jsonPrimitive?.content ?: "Aidos Session"
         val git = openGit()
-        val rev = git.use { g ->
-            g.commit()
+        val event = git.use { g ->
+            val rev = g.commit()
                 .setMessage(message)
                 .setAuthor(author, "session@aidos.dev")
                 .setCommitter("Aidos", "aidos@aidos.dev")
                 .call()
+            GitCommitEvent(
+                topic = "git:${g.repository.branch ?: "HEAD"}",
+                commitHash = rev.name,
+                author = author,
+                message = message,
+                files = changedFiles(g, rev),
+            )
         }
-        return listOf(ContentBlock.Text("committed: ${rev.name.take(8)} $message"))
+        onCommit(event)
+        return listOf(ContentBlock.Text("committed: ${event.commitHash.take(8)} $message"))
+    }
+
+    /** Paths changed by [commit] relative to its first parent (or an empty tree, for a root commit). */
+    private fun changedFiles(git: Git, commit: RevCommit): List<String> {
+        val repo = git.repository
+        return RevWalk(repo).use { walk ->
+            val reader = repo.newObjectReader()
+            val newTree = CanonicalTreeParser().apply { reset(reader, commit.tree) }
+            val oldTree = if (commit.parentCount > 0) {
+                val parent = walk.parseCommit(commit.getParent(0).id)
+                CanonicalTreeParser().apply { reset(reader, parent.tree) }
+            } else {
+                EmptyTreeIterator()
+            }
+            val diffs = git.diff().setOldTree(oldTree).setNewTree(newTree).call()
+            diffs.map { entry -> entry.newPath.takeUnless { it == "/dev/null" } ?: entry.oldPath }
+        }
     }
 
     private fun gitBranch(args: JsonObject): List<ContentBlock> {
@@ -327,3 +365,16 @@ class GitTool(private val repoDir: File) : Tool {
 
     private fun err(op: String, t: Throwable) = err(op, t.message ?: t::class.simpleName ?: "unknown")
 }
+
+/**
+ * RFC-0004's `GitCommit` event, matching the RFC's own worked example shape
+ * (`topic: "git:master"`, `payload: {commit, author, message, files}`). Plain data, not tied to
+ * any event-bus type — the caller decides how (or whether) to publish it.
+ */
+data class GitCommitEvent(
+    val topic: String,
+    val commitHash: String,
+    val author: String,
+    val message: String,
+    val files: List<String>,
+)

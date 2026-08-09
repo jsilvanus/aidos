@@ -365,15 +365,38 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   than reaching for a type outside the MVP-scoped vocabulary — the existing `RunStepCompleted`
   event (which already carries `state: FAILED`) still records the failure. 2 new tests: one
   confirming the topic shape on success, one confirming silence on failure.
-  **Still open — the other three subsystems, each its own slice, none started:** filesystem
-  watcher (`FileModified`/`FileCreated`/`FileDeleted`), git tool (`GitCommit`), and timers
-  (`TimerFired`) have no publish call sites anywhere yet. Also still unaddressed: `UserCommand`,
-  `PermissionRequested`/`Granted`/`Denied`, `SessionWoken`/`Sleeping`, `ArtifactCreated`, `Error` —
-  none of the MVP-scoped 14 have callers except `ToolCompleted` now. Each remaining subsystem is
-  independent of the others (unlike the tool-completion case, none of them sit inside
-  crash-recovery-critical code, so the same "verify `CrashRecoveryTest` explicitly" caution doesn't
-  apply — but each still deserves its own commit and its own look at what payload shape the
-  RFC's worked examples actually specify, rather than inventing one per call site ad hoc).
+  **Second emission point, `GitCommit` from `GitTool.gitCommit()` — built differently on purpose,
+  because unlike `ToolCompleted` above, nothing calls `GitTool` at all.** Checked before writing
+  any code: `GitTool`, `ToolBroker`, and `AgentLoop` all have zero callers anywhere outside their
+  own module (same discovery as the RFC-0005 agentloop finding, just a second instance of it —
+  see the user exchange in this session: build the hooks anyway, unit-tested, ready for whoever
+  wires the tool itself into something live, same as `SchedulerMatcher` last session). `GitTool`
+  gained an optional `onCommit: (GitCommitEvent) -> Unit = {}` constructor parameter — a plain
+  callback, not an `executor`/`EventStore` dependency, because `git` has no reason to depend on
+  `executor` (that dependency direction would invert the natural tool-broker→tool layering) and
+  `GitTool` has no `projectId` of its own to publish under anyway. `GitCommitEvent` matches
+  RFC-0004's own worked `GitCommit` example exactly (`topic: "git:<branch>"`, `commitHash`,
+  `author`, `message`, `files`) — `files` computed by diffing the new commit's tree against its
+  first parent (or an empty tree, for a root commit) with JGit's own `DiffFormatter`/tree-parser
+  APIs, the same technique `gitDiff()` already used two methods above it in the file, not a new
+  pattern. Fires only after a successful commit — verified explicitly, not assumed, by adding a
+  test that points `GitTool` at a non-git directory (so `Git.open()` throws before `onCommit`
+  could ever be reached) and asserting the event list stays empty.
+  **Genuinely could not be verified locally, unlike everything else this session** —
+  `GitToolTest`'s entire suite fails in this sandbox on the *pre-existing, unrelated*
+  `UnsupportedSigningFormatException` (this session's own ambient `~/.gitconfig`), so the new
+  commit-path tests could only be confirmed correct by inspection plus a real CI run, not by
+  running them here. **This is exactly why the CI fix above happened first, in the same link**:
+  before this fix, `:git` wasn't run by CI either, so there would have been no way to verify this
+  change at all, anywhere. With the fix, real CI (not this sandbox) is the actual verification —
+  check the PR's `test` job result for `GitToolTest`, don't trust a local run of this specific
+  suite.
+  **Still open — filesystem watcher and timers, neither started:** `FileModified`/`FileCreated`/
+  `FileDeleted` and `TimerFired` have no publish call sites or hooks anywhere yet. Also still
+  unaddressed: `UserCommand`, `PermissionRequested`/`Granted`/`Denied`, `SessionWoken`/`Sleeping`,
+  `ArtifactCreated`, `Error` — only `ToolCompleted` and `GitCommit` have any path to being
+  published now. Each remaining subsystem is independent of the others and deserves its own commit
+  and its own look at the RFC's worked payload shape, same discipline as the two done here.
 - [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
   wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
   Checklist framing corrected first (see below), then progress made on the corrected scope:
