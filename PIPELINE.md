@@ -203,7 +203,10 @@ they're the ones that matter for deciding what to build next.
   anywhere in `runtime/`. Unlike the Draft RFCs this file already excludes from MVP scope, this one
   is Accepted with nothing built — a real gap, not a documented deferral.
 - **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder` or budget-ladder
-  class; the RFC number appears only in doc-comments citing it, not in an implementation.
+  class; the RFC number appears only in doc-comments citing it, not in an implementation. **Update
+  (2026-08-09, outstanding-work item below): the decision logic (rungs 1/2/4/5) and
+  `degradation_events` persistence are now built and tested. What's still genuinely missing —
+  wiring real device signals and on-device measurement — needs a real phone, same as M21/M26.**
 - **RFC-0047 (Project Templates and Types).** Only 2 of 6 `ProjectType` values
   (`PERSONAL`, `CODING`) have real defaults in `applyTypeDefaults`; the rest are no-ops. No
   scaffolding/template-loading system exists. **Correction (2026-08-09, outstanding-work item
@@ -304,8 +307,31 @@ milestone with no record either way is exactly how the corpus drifted from this 
 - [ ] **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin/manifest/sandbox code
   anywhere. Either build a minimal version or move it out of MVP scope with a recorded decision —
   Accepted-with-nothing-built is exactly the gap D34 exists to catch, and this one wasn't caught.
-- [ ] **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder`/budget
-  enforcement exists; the RFC number appears only in doc-comments citing it.
+- [x] **RFC-0045 (Performance and Resource Budgets), partial — the pure decision logic is done,
+  the real-device half is a genuine, still-open hardware gap.** Done 2026-08-09: read RFC-0045's
+  own "MVP" section first (by now the standing discipline after RFC-0047/0012/0024 all turned out
+  narrower or differently scoped than the review's framing). MVP has 5 items; two are
+  buildable without hardware and two are not:
+  - **Item 2 (degradation rungs 1, 2, 4, 5) and item 4 (`degradation_events` recording) — done.**
+    `routing/DegradationLadder.kt` is a pure, stateless decision function (`DeviceSignals ->
+    Map<DegradationRung, reason>`), matching where `PolicyInferenceRouter` already lives for the
+    same shape of problem — device signals in, policy out, no I/O. `kernel/Degradation.kt` adds
+    the shared types (`DegradationRung`, `MemoryPressureLevel`, `BatteryState`, `DeviceSignals`,
+    `DegradationEvent`). `androidapp/degradation/SqliteDegradationEventStore` persists
+    transitions to `degradation_events` — reconciled by *querying currently-open rows*, not
+    tracking state in memory, matching D3's "anything that must survive a step boundary is a
+    column" rather than inventing a new exception to it. 9 ladder tests + 6 store tests, 15 total,
+    including independent-rung interleaving and re-entry after closing.
+  - **Items 1, 3, 5 (targets measured on a reference device, model admission with real memory/
+    thermal checks, regression benchmarking) — not done, and not started.** These require an
+    actual mid-range Android device to produce real numbers; this is the same class of gap as
+    M21/M26/M34/M35, not a coding task. **Whoever eventually wires real signals in**: nothing here
+    reads `ComponentCallbacks2`/`BatteryManager`/Android thermal APIs — `DeviceSignals` is a plain
+    data class deliberately platform-neutral (see its doc comment), and *that* translation is the
+    remaining wiring work, not a redesign.
+  - Rungs 3 (drop knowledge caches) and 6 (thermal → disable local inference) are declared in
+    `DegradationRung` for completeness against the schema's `rung INTEGER` column but the ladder
+    never activates them — both are explicitly post-MVP in the RFC, not a gap.
 - [x] **RFC-0047 (Project Templates and Types), partial — the `applyTypeDefaults` bug is fixed,
   the RFC's larger MVP scope isn't.** Done 2026-08-09: re-reading RFC-0047's own MVP section shows
   only `PERSONAL` and `CODING` are supposed to have type-specific overrides — `RESEARCH`/`WRITING`/
