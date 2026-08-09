@@ -693,6 +693,30 @@ an architecture pass read the whole corpus against them. The durable output:
 
 ## Notes for the next link
 
+**2026-08-09 — CI's `runtime.yml` only ever ran `gradle :kernel:jvmTest`. Every other module —
+`executor`, `git`, `broker`, `capability`, `agentloop`, and everything else under `runtime/` —
+was neither compiled nor tested by CI, at all, this whole time.** Discovered while about to add
+untested `GitTool` code: `build-and-publish` (the Android APK workflow) runs
+`gradle :androidapp:assembleRelease`, and `androidapp` depends on `kernel`/`api`/`storage` only —
+not `executor`, not `git`. So a PR reporting "CI green" on `build-and-publish` + `kernel` proved
+the Android variant assembles and the contracts module's own tests pass; it proved nothing about
+whether `executor`'s 45+ tests (several added this session and last, none of them ever run in CI)
+or `git`'s tests actually pass. **Fixed:** `runtime.yml`'s job now runs `gradle jvmTest --continue`
+across every module, with `GITHUB_TOKEN` passed through (needed for `:knowledge`/`:modelruntime`'s
+GitHub Packages dependency — `settings.gradle.kts` already documents that the default
+`GITHUB_TOKEN` has `read:packages` scope in Actions, this sandbox's copy doesn't). **What this
+means for every commit before this fix landed:** their "CI green" checkmarks in this file and in
+PR #21's description were true but narrower than they read — local `gradle jvmTest` runs (which
+this file's own verification steps always required) were the actual test coverage the whole time,
+CI was not an independent check on top of them for anything outside `kernel`. Nothing in this file
+needs retracting because of it (the local runs were real and were done), but don't read a past
+"CI green" note as having meant more than `:kernel` + Android-assembles until this fix's own PR
+lands and a run confirms the broader job's real, unknown-until-observed baseline (this sandbox's
+ambient gitconfig and missing `GITHUB_TOKEN` scope make `:git`/`:worker`/`:knowledge`/`:modelruntime`
+fail locally regardless of CI's actual behavior — `:cookbook`'s failure is the one of the five
+that's a genuine bug rather than a sandbox artifact, so it may be the only one of the five that
+still shows red in the real CI run this fix produces; check, don't assume).
+
 **2026-08-09 — the "Unclosed comment" nested-`/*` bug recurs beyond `schema/*.sql` globs; it's any
 literal `/` immediately followed by `*` inside a KDoc block.** The existing note below about
 `SqlScriptTest`'s `schema/*.sql` glob is one instance of a general trap, not the whole trap: this
