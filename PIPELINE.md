@@ -272,17 +272,27 @@ milestone with no record either way is exactly how the corpus drifted from this 
 **Group 2 — Phase 4: making the Android app real, not just its platform-neutral logic:**
 
 - [x] **Wire `androidTarget()` in `runtime/kernel/build.gradle.kts` and
-  `runtime/api/build.gradle.kts`** — done 2026-08-09. Both now apply `id("com.android.library")`
-  and call `androidTarget()`, with an `android { namespace = "dev.aidos.kernel" / "dev.aidos.api";
-  compileSdk = 34; ... }` block matching `androidapp`'s existing pattern. `dl.google.com` **is**
-  reachable from this environment (confirmed with a live request) — the root `build.gradle.kts`
-  comment calling it "blocked in this sandbox" no longer holds here, though it may still be true
-  elsewhere; don't assume it as fact next time, check it. `gradle :kernel:compileKotlinJvm
-  :api:compileKotlinJvm` passes. Actually compiling the *Android* variant
-  (`:kernel:compileDebugKotlinAndroid`) still fails with "SDK location not found" — there is no
-  Android SDK in this environment (no `ANDROID_HOME`, no `local.properties`), so the Android
-  compile itself is genuinely unverifiable here, same class of gap as M21/M34/M35. What's
-  verified: the module graph resolves and the JVM targets are unaffected.
+  `runtime/api/build.gradle.kts`** — done and verified green in CI 2026-08-09 (PR #19,
+  `build-and-publish` check, commit `b4ce0a5`). Both apply `id("com.android.library")` and call
+  `androidTarget()`, matching `androidapp`'s pattern. `dl.google.com` **is** reachable from a
+  sandbox without an Android SDK (confirmed live) — the root `build.gradle.kts` comment calling it
+  "blocked in this sandbox" no longer holds universally; don't assume it as fact next time, check
+  it. This sandbox still cannot compile the Android variant itself (no `ANDROID_HOME`), same class
+  of gap as M21/M34/M35 — but **CI has a real Android SDK and a real Gradle+AGP+D8 toolchain, and
+  it caught six more real bugs the sandbox structurally could not**, each fixed in its own commit
+  on top of the wiring: a Java/Kotlin JVM-target mismatch (11 vs 21) once AGP actually compiled the
+  release variant; `android.useAndroidX=true` missing from `gradle.properties`; the release
+  signing config referencing a keystore file the CI workflow's own "optional" step never created,
+  fixed twice (once to leave `storeFile` unset when absent, again because AGP still refuses to
+  *package* a release build type that references an incomplete signing config at all — the fix is
+  to not attach one in that case, not just to leave it half-filled); `HomeScreen.kt`'s pager code
+  using `ExperimentalFoundationApi` without an opt-in; and `androidapp` using `@Composable`
+  throughout without ever applying the `kotlin.plugin.compose` Gradle plugin — mandatory since
+  Kotlin 2.0, and this module's Android compile had apparently never succeeded before, so nothing
+  had surfaced it. **Lesson for future Android-target work: a green `gradle build` in this sandbox
+  proves the JVM targets and the module graph; it proves nothing about the Android variant. Expect
+  CI to find real things a from-scratch sandbox verification cannot, and budget for a few
+  iteration rounds rather than treating local green as done.**
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
   to `storage`/`executor`/`capability`. This blocks the next two items.
 - [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
