@@ -117,6 +117,31 @@ class SqliteExecutor(
                     nowIso = nowIso(),
                 )
 
+                // Publish RFC-0004's ToolCompleted (MVP item 2) for a successful task — a FACT,
+                // not a SIGNAL: the tool result is a durable outcome, not lossy progress. Topic
+                // follows the RFC's own worked example (tool:<name>:<id>); failures publish no
+                // event here since "ToolFailed" is outside the RFC's MVP-scoped type list
+                // (EventTypes doc comment) and inventing one wasn't this slice's call to make.
+                if (result.success) {
+                    val operation = task.toolName ?: task.kind.name
+                    events.publish(
+                        id = idGen(),
+                        projectId = currentRun.projectId.value,
+                        type = EventTypes.TOOL_COMPLETED,
+                        category = "FACT",
+                        source = "tool:$operation",
+                        topic = "tool:$operation:${task.id.value}",
+                        payload = buildJsonObject {
+                            put("run_id", runId.value)
+                            put("task_id", task.id.value)
+                            put("operation", operation)
+                        }.toString(),
+                        causedBy = currentRun.triggerEventId.value,
+                        causalDepth = 1,
+                        nowIso = nowIso(),
+                    )
+                }
+
                 if (!result.success) {
                     // Task failed — fail the Run.
                     updateRunState(runId, RunState.FAILED,

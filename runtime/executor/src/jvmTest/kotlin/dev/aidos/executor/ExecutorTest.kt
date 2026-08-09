@@ -258,6 +258,47 @@ class ExecutorTest {
         assertEquals("FAILED", taskState(driver, t1))
     }
 
+    @Test
+    fun `successful task publishes ToolCompleted with a tool topic`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProject(driver, pid)
+        seedRunContext(driver, pid, sid, eid)
+
+        val runId = nextId(); val t1 = nextId()
+        insertRun(driver, runId, pid, sid, eid)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0, kind = "TOOL_CALL")
+
+        val eventStore = EventStore(driver)
+        val executor = buildExecutor(driver)
+        executor.drive(RunId(runId))
+
+        val toolCompleted = eventStore.eventsForProject(pid, type = EventTypes.TOOL_COMPLETED)
+        assertEquals(1, toolCompleted.size, "One ToolCompleted event for the one successful task")
+        assertEquals("tool:TOOL_CALL:$t1", toolCompleted.single().topic)
+    }
+
+    @Test
+    fun `failed task does not publish ToolCompleted`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProject(driver, pid)
+        seedRunContext(driver, pid, sid, eid)
+
+        val runId = nextId(); val t1 = nextId()
+        insertRun(driver, runId, pid, sid, eid)
+        insertTask(driver, t1, runId, sid, pid, ordinal = 0)
+
+        val eventStore = EventStore(driver)
+        val executor = buildExecutor(driver, AlwaysFailRunner())
+        executor.drive(RunId(runId))
+
+        assertTrue(
+            eventStore.eventsForProject(pid, type = EventTypes.TOOL_COMPLETED).isEmpty(),
+            "A failed task must not publish ToolCompleted — ToolFailed is outside the MVP type list",
+        )
+    }
+
     // ─── M6: Recovery ────────────────────────────────────────────────────────
 
     @Test

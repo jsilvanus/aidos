@@ -184,4 +184,74 @@ class GitToolTest {
         val p = preview.getOrThrow()
         assertTrue(p is Preview.Description || p is Preview.NoChange)
     }
+
+    @Test
+    fun `successful commit fires onCommit with RFC-0004's GitCommit shape`() = runTest {
+        val dir = Files.createTempDirectory("git-tool-test").toFile()
+        val events = mutableListOf<GitCommitEvent>()
+        val tool = run {
+            Git.init().setDirectory(dir).call().use { git ->
+                git.repository.config.apply {
+                    setString("user", null, "name", "Test")
+                    setString("user", null, "email", "test@test.com")
+                    setBoolean("commit", null, "gpgsign", false)
+                    save()
+                }
+                val readme = File(dir, "README.md")
+                readme.writeText("# Test\n")
+                git.add().addFilepattern("README.md").call()
+                git.commit().setMessage("init").setAuthor("Test", "test@test.com").call()
+            }
+            GitTool(dir, onCommit = { events.add(it) })
+        }
+
+        File(dir, "hello.txt").writeText("hello world")
+        tool.execute(mockHandle, "git:add", buildJsonObject { put("path", "hello.txt") })
+        tool.execute(mockHandle, "git:commit",
+            buildJsonObject { put("message", "add hello.txt"); put("author", "Tester") })
+
+        assertEquals(1, events.size)
+        val event = events.single()
+        assertEquals("git:master", event.topic)
+        assertEquals("add hello.txt", event.message)
+        assertEquals("Tester", event.author)
+        assertEquals(listOf("hello.txt"), event.files)
+        assertEquals(40, event.commitHash.length, "commit hash should be the full SHA-1, not shortened")
+    }
+
+    @Test
+    fun `root commit with no parent still fires onCommit`() = runTest {
+        val dir = Files.createTempDirectory("git-tool-test").toFile()
+        val events = mutableListOf<GitCommitEvent>()
+        Git.init().setDirectory(dir).call().use { git ->
+            git.repository.config.apply {
+                setString("user", null, "name", "Test")
+                setString("user", null, "email", "test@test.com")
+                setBoolean("commit", null, "gpgsign", false)
+                save()
+            }
+        }
+        val tool = GitTool(dir, onCommit = { events.add(it) })
+        File(dir, "README.md").writeText("# Test\n")
+        tool.execute(mockHandle, "git:add", buildJsonObject { put("path", "README.md") })
+        tool.execute(mockHandle, "git:commit", buildJsonObject { put("message", "init") })
+
+        assertEquals(1, events.size)
+        assertEquals(listOf("README.md"), events.single().files)
+    }
+
+    @Test
+    fun `failed commit does not fire onCommit`() = runTest {
+        val events = mutableListOf<GitCommitEvent>()
+        // Not a git repository at all — Git.open() throws RepositoryNotFoundException, caught by
+        // execute()'s runCatching, so the tool call fails before onCommit could ever be reached.
+        // (Deliberately not "nothing staged": JGit's CommitCommand defaults allowEmpty to true
+        // when no path restrictions are set, so that would succeed rather than fail.)
+        val notARepo = Files.createTempDirectory("git-tool-test-not-a-repo").toFile()
+        val tool = GitTool(notARepo, onCommit = { events.add(it) })
+
+        val result = tool.execute(mockHandle, "git:commit", buildJsonObject { put("message", "should not happen") })
+        assertIs<ToolOutcome.Failed>(result.outcome)
+        assertTrue(events.isEmpty(), "a failed commit must not fire onCommit")
+    }
 }

@@ -7,7 +7,7 @@ on:
     paths: ['runtime/**', '.github/workflows/runtime.yml']
 
 jobs:
-  kernel:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,6 +16,13 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Compile and test kernel contracts
+      # This used to run only `:kernel:jvmTest` — every other module (executor, git, broker,
+      # capability, agentloop, etc.) was compiled by nothing CI does and tested by nothing CI
+      # does. `gradle :androidapp:assembleRelease` in the Android workflow doesn't reach them
+      # either (androidapp depends on kernel/api/storage, not executor or git). --continue so one
+      # red module doesn't hide failures in the rest.
+      - name: Compile and test all runtime modules
         working-directory: runtime
-        run: gradle :kernel:jvmTest --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle jvmTest --continue --no-daemon

@@ -193,7 +193,14 @@ they're the ones that matter for deciding what to build next.
   at all: `SessionState.SLEEPING` is declared in the kernel and never transitioned to or from, and
   `scheduled_jobs` in `schema/project.sql` is never read or written. (Distinct from the RFC-0044
   background-*job* scheduler PR #18 just added under `androidapp/scheduling/` — that's a different
-  subsystem, notification/work-class dispatch, not session wake/sleep.)
+  subsystem, notification/work-class dispatch, not session wake/sleep.) **Update (2026-08-09,
+  outstanding-work item below): RFC-0004's topic-subscription and replay-by-topic layer is now
+  built and tested (`executor/TopicMatcher.kt`, `SubscriptionRegistry.kt`, `EventStore` replay
+  queries) — genuinely missing, as this review found, not an overstated gap. RFC-0005 turned out
+  to be the opposite mix: `scheduled_jobs` wiring is explicitly post-MVP per the RFC's own text (not
+  a gap at all — the review's framing overstated it, same pattern as RFC-0024/0045/0047), but
+  event-driven wake (the RFC's actual MVP item 1) is a real, unstarted gap despite D34 crediting it
+  to M5 — see the outstanding-work item for detail. Still open.**
 - **RFC-0024 (Resource Graph).** Only `ContentNodeId` and references exist in the kernel; no
   `ContentNode` data class, no promotion/demotion logic, no dedicated store. **Update (2026-08-09,
   outstanding-work item below): the "promotion/demotion" framing overstated the gap — that's
@@ -265,12 +272,17 @@ milestone with no record either way is exactly how the corpus drifted from this 
 
 **2026-08-09 — split into two parallel session-pipeline branches, both from the same `main`
 (`3a3c396`) after PR #19 merged the RFC-0047/0012/0024/0045/0043 work below:**
-- **RFC-0004 (Event Bus) + RFC-0005 (Scheduler)** — branch `claude/group1-event-bus-scheduler`.
-- **Group 2 (Android integration)** — branch `claude/group2-android-integration`, this branch.
+- **RFC-0004 (Event Bus) + RFC-0005 (Scheduler)** — branch `claude/group1-event-bus-scheduler`
+  (PR #21).
+- **Group 2 (Android integration)** — branch `claude/group2-android-integration` (PR #20, merged
+  to `main` 2026-08-09).
 
-Working the same two schema tables or the same source file from both branches at once is exactly
-the merge-conflict risk splitting them was meant to buy down — if a change on one branch looks
-like it needs to touch a file the other branch owns, stop and reconcile before pushing, not after.
+Working the same schema tables or the same source file from both branches at once was exactly the
+merge-conflict risk splitting them was meant to buy down. It mostly worked: the one real
+cross-branch collision found (the `AgentLoop`↔`executor` bridge, needed by both RFC-0005's
+wake-to-Run wiring and Group 2's "Finish `RealRuntimeClient`") was caught before either branch
+built it twice, and held as its own tracked item per the user's direct decision — see that note
+further down this file.
 
 **Group 1 — RFCs credited as built (or Accepted) with little or no code:**
 
@@ -291,13 +303,228 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   `execution_edges` (`edge_kind = 'TARGETED'`) — nothing currently writes that edge, so
   `listActive()` always returns it `null`. Whoever wires proposal persistence needs a real
   run/audit integration point first, not just a repository class.
-- [ ] **RFC-0004 (Event Bus).** Build the topic-subscription/replay-by-topic layer on top of
-  `executor/EventStore.kt` (today just an append-only log with sequence ordering and the
-  causal-depth guard). If it's actually post-MVP, say so via a D34-style decision instead of
-  leaving it silently unbuilt.
-- [ ] **RFC-0005 (Scheduler).** Implement session wake/sleep: `SessionState.SLEEPING` is declared
-  in the kernel and never transitioned to or from anywhere. Wire `scheduled_jobs`
-  (`schema/project.sql`) to a real reader/writer. Same scope caveat as Event Bus.
+- [x] **RFC-0004 (Event Bus), MVP items 4/5 done — topic-pattern subscriptions and replay-by-topic.**
+  Done 2026-08-09: added `TopicMatcher` (`executor/TopicMatcher.kt`, 9 tests), a pure translator
+  from the RFC's own wildcard syntax (single `*` bounded by `/`, `**` crossing it, a lone `*`
+  meaning "all events" per the RFC's own gloss) to a `Regex`, verified against every worked
+  example in RFC-0004's "Topics and Filtering" section. `EventStore.eventsForProject` gained an
+  optional `topicPattern` parameter and a new `eventsBetween(fromIso, toIso, topicPattern)` query
+  — MVP item 5, "Replay: events can be queried by time range and topic" — both filtering in
+  Kotlin over the existing indexed project/type/timestamp SQL query rather than trying to
+  translate glob syntax into SQL. Added `SubscriptionRegistry` + `Subscription`
+  (`executor/SubscriptionRegistry.kt`, 6 tests) implementing MVP item 4 ("sessions and subsystems
+  can subscribe to topic patterns and event types") as an in-memory matcher — not persisted,
+  because RFC-0004's own Future Work section says live delivery ("Real-Time Event Streaming") is
+  explicitly *not* MVP ("MVP uses request/response"), so a subscription registry with nothing to
+  survive a restart is the correct MVP shape, not a shortcut. 19 new tests total, all green.
+  **Deliberately scoped to `executor` only, not `api/RealRuntimeClient.kt`:** the task brief
+  suggested wiring this into `RealRuntimeClient.events.subscribe`, but that file is explicitly
+  Group 2's ("Finish RealRuntimeClient") — and on inspection its `RuntimeEvent`/`EventFilter`
+  types don't carry a `topic` field at all, they're a separate, higher-level UI-facing event model
+  (`SessionCreated`, `RunStarted`, ~10 fixed cases) distinct from RFC-0004's actual persisted
+  event log. The literal RFC-0004 persistence model (with `topic`) lives entirely in
+  `executor/EventStore.kt`, so building there both avoids the flagged collision and is more
+  faithful to what the RFC actually specifies. Wiring topic-awareness into the `RealRuntimeClient`
+  UI event model — if ever wanted — is a distinct, later design question for whoever owns that
+  file, not a gap in this RFC's MVP.
+  **Correction to D34's own RFC-0004 row:** D34 (`docs/decisions.md`) resolved RFC-0004 as
+  "Already built — M5 publishes, M9 exposes, M10 verifies `sinceSequence` gap replay... Bookkeeping,
+  not scope." That verified sequence-based replay exists, but not topic-pattern replay or
+  subscriptions — items 4 and 5 of the RFC's own MVP list, which had no code anywhere before this
+  commit (confirmed by grep, and by the 2026-08-09 independent review this whole outstanding-work
+  list responds to). D34 is marked `SETTLED` and this file doesn't edit it unilaterally, but
+  flagging per CLAUDE.md's "if a decision looks wrong, say so" — its RFC-0004 row was itself an
+  under-audit, the same failure class the "Accepted is not frozen" note already warns about one
+  level up. Worth a correction pass on D34's table the next time `docs/decisions.md` is touched.
+  **Item 2 (event types), the MVP-scoped naming half done 2026-08-09:** added
+  `executor/EventTypes.kt` — named `String` constants (not a closed enum, deliberately: RFC-0004
+  treats the type vocabulary as open-ended for forward-compat and future event-source plugins) for
+  exactly the 14 types RFC-0004's own MVP line names (`UserCommand, TimerFired,
+  FileModified/Created/Deleted, GitCommit, ToolCompleted, PermissionRequested/Granted/Denied,
+  SessionWoken/Sleeping, ArtifactCreated, Error`) — not the larger set the RFC's fuller "Event
+  Types" design section also describes, which stays valid free-form vocabulary but wasn't what the
+  MVP line committed to. 2 tests (exact spelling, all distinct) — worth having since
+  `SchedulerMatcher`/`SubscriptionRegistry` match event types by plain string equality, so a typo
+  in a constant would silently break matching rather than fail to compile.
+  **`EventTypes.ERROR`'s value is a documented judgment call, not a settled fact:** the MVP line
+  says bare `"Error"`, but the RFC's fuller section never defines a type by that literal name —
+  only `SessionError` (Session category) and `ErrorOccurred` (System category) exist there. Used
+  the MVP line's literal spelling rather than silently resolving the ambiguity toward one of the
+  two more-specific names; flagged in the file's own doc comment for whoever wires real
+  error-event emission to check before depending on it.
+  **First emission point wired 2026-08-09: `ToolCompleted` from `SqliteExecutor.drive()`.** Of the
+  four subsystems named ("filesystem watcher, git, timers, tool completions"), tool completions
+  was the lowest-risk to start with — `drive()` already publishes a `RunStepCompleted` event per
+  task outcome (it already holds an `EventStore` reference, already builds a payload, already runs
+  inside the transaction-adjacent path that writes the audit row), so adding one more `publish()`
+  call there is additive, not a step-machine change: no new state transition, no new column
+  `recover()` reads, same call shape as the existing publish four lines above it.
+  `CrashRecoveryTest` confirmed still green (5/5) — this was checked, not assumed, given how
+  carefully this file has told every link to treat `SqliteExecutor.kt`. Publishes
+  `EventTypes.TOOL_COMPLETED` (category `FACT`, not the existing call's `SIGNAL` default — a tool
+  result is a durable outcome per RFC-0004's own category table, not lossy progress) with topic
+  `tool:<operation>:<taskId>`, matching the RFC's own worked example shape (`tool:shell:cmd-456`).
+  **Only on success, deliberately:** the RFC's MVP line names `ToolCompleted` but not `ToolFailed`
+  (that's in the fuller design section only), so a failed task publishes nothing new here rather
+  than reaching for a type outside the MVP-scoped vocabulary — the existing `RunStepCompleted`
+  event (which already carries `state: FAILED`) still records the failure. 2 new tests: one
+  confirming the topic shape on success, one confirming silence on failure.
+  **Second emission point, `GitCommit` from `GitTool.gitCommit()` — built differently on purpose,
+  because unlike `ToolCompleted` above, nothing calls `GitTool` at all.** Checked before writing
+  any code: `GitTool`, `ToolBroker`, and `AgentLoop` all have zero callers anywhere outside their
+  own module (same discovery as the RFC-0005 agentloop finding, just a second instance of it —
+  see the user exchange in this session: build the hooks anyway, unit-tested, ready for whoever
+  wires the tool itself into something live, same as `SchedulerMatcher` last session). `GitTool`
+  gained an optional `onCommit: (GitCommitEvent) -> Unit = {}` constructor parameter — a plain
+  callback, not an `executor`/`EventStore` dependency, because `git` has no reason to depend on
+  `executor` (that dependency direction would invert the natural tool-broker→tool layering) and
+  `GitTool` has no `projectId` of its own to publish under anyway. `GitCommitEvent` matches
+  RFC-0004's own worked `GitCommit` example exactly (`topic: "git:<branch>"`, `commitHash`,
+  `author`, `message`, `files`) — `files` computed by diffing the new commit's tree against its
+  first parent (or an empty tree, for a root commit) with JGit's own `DiffFormatter`/tree-parser
+  APIs, the same technique `gitDiff()` already used two methods above it in the file, not a new
+  pattern. Fires only after a successful commit — verified explicitly, not assumed, by adding a
+  test that points `GitTool` at a non-git directory (so `Git.open()` throws before `onCommit`
+  could ever be reached) and asserting the event list stays empty.
+  **Genuinely could not be verified locally, unlike everything else this session** —
+  `GitToolTest`'s entire suite fails in this sandbox on the *pre-existing, unrelated*
+  `UnsupportedSigningFormatException` (this session's own ambient `~/.gitconfig`), so the new
+  commit-path tests could only be confirmed correct by inspection plus a real CI run, not by
+  running them here. **This is exactly why the CI fix above happened first, in the same link**:
+  before this fix, `:git` wasn't run by CI either, so there would have been no way to verify this
+  change at all, anywhere. With the fix, real CI (not this sandbox) is the actual verification —
+  check the PR's `test` job result for `GitToolTest`, don't trust a local run of this specific
+  suite.
+  **Third emission point, `FileModified`/`FileCreated` from `FilesystemTool.write()` — required
+  converting the tool from a Kotlin `object` to a `class` first.** `FilesystemTool` was a
+  singleton with zero external callers (same check as `GitTool`), so adding an `onWrite`
+  constructor callback the same way meant the object-to-class conversion first — deliberately
+  *not* a mutable `var` on the singleton instead, even though that would have avoided touching the
+  9 existing call sites in `FilesystemToolTest.kt`: a `var` on a shared object is mutable state
+  every test in the same JVM would see, and one test forgetting to reset it silently leaks into
+  the next. `filesystem` isn't on the pre-existing-failure list, so unlike `git` this was fully
+  verified locally — all 13 original tests plus 3 new ones (`created=true` for a new path,
+  `created=false` for an overwrite, silence on a failed write) pass. `FileChangeEvent` carries
+  `created: Boolean` rather than an `EventTypes` string directly — `filesystem` has no reason to
+  depend on `executor`, so the caller maps `created` to `EventTypes.FILE_CREATED`/`FILE_MODIFIED`
+  itself. **`FileDeleted` has no emission point to wire**: `FilesystemTool` has no `fs:delete`
+  operation at all (only `fs:read`/`write`/`list`/`search`), so there's nothing to hook for it.
+  **`TimerFired` was not attempted — a real, structural dead end for this branch, not a "didn't
+  get to it" gap.** Checked before writing anything: the only timer/scheduling code anywhere in
+  the codebase lives in `androidapp/scheduling/` (RFC-0044), and its dispatcher
+  (`RuntimeClientWorkDispatcher`) calls `client.sessions.send(sessionId, message)` directly on
+  `RuntimeClient` — exactly the `RealRuntimeClient` territory the task brief named as Group 2's
+  from the outset, unlike `GitTool`/`FilesystemTool` which were standalone, unclaimed modules.
+  There is no unclaimed hook point to add here the way there was for the other two; building one
+  would mean either modifying the flagged file directly or duplicating scheduling logic elsewhere
+  to route around it. Flagged rather than pushed through, per the branch's standing rule.
+  **Net state of RFC-0004 item 2 + emission wiring:** `ToolCompleted`, `GitCommit`,
+  `FileModified`/`FileCreated` have real, tested emission points. `TimerFired` is blocked on
+  Group 2 territory. `UserCommand`, `PermissionRequested`/`Granted`/`Denied`,
+  `SessionWoken`/`Sleeping`, `ArtifactCreated`, `Error`, and `FileDeleted` have no natural
+  emission point identified yet — none of them sit behind an operation this session found and
+  checked, unlike the four above.
+- [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
+  wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
+  Checklist framing corrected first (see below), then progress made on the corrected scope:
+  - **`scheduled_jobs` wiring is explicitly *not* MVP.** RFC-0005's own MVP section: *"Not in the
+    MVP: timers and scheduled triggers... `scheduled_jobs` exists in the schema and nothing writes
+    it before G4."* D34 confirms: *"Timers, the admission policy, and priorities are post-MVP."*
+    The original checklist's "wire `scheduled_jobs` to a real reader/writer" item was asking for
+    explicitly post-MVP scope — not built, correctly. **Also factually stale regardless of scope:**
+    `scheduled_jobs` already has a real reader/writer — `androidapp/scheduling/SqliteScheduledJobManager.kt`
+    (RFC-0044, PR #18) — just for a different purpose (notification/work-class dispatch, not
+    session wake/sleep).
+  - **The real MVP item is event-driven wake (RFC-0005 MVP item 1): "topic and type matching, so a
+    session wakes from a subscribed event... the load-bearing case is a driver waking when its
+    worker completes."** D34 credits this to M5, but that credit looks overclaimed on inspection —
+    the M5 done-when (`ExecutorTest.kt`'s own doc comment) is about hard-coded Task execution and
+    event publishing, not subscription matching, and no subscriptions table existed anywhere in
+    `schema/` before this link (confirmed by grep, zero hits, prior to the commit below).
+  - **Done this link — the persistence and matching halves of item 1, plus item 3's self-wake
+    refusal as a pure decision:** added `session_subscriptions` to `schema/project.sql` (topic
+    patterns and event types as JSON arrays via `kotlinx.serialization`, matching the convention
+    already used elsewhere in `executor`/`broker`, not hand-rolled encoding; `self_wake` flag per
+    RFC-0005's opt-in). `executor/SessionSubscriptionStore.kt` persists/reads it (4 tests) — the
+    durable counterpart to the RFC-0004 slice's in-memory `SubscriptionRegistry`, needed because
+    D3 requires anything surviving a step boundary to be a column, and the load-bearing wake case
+    (driver woken by its worker) can span a process restart on Android.
+    `executor/SchedulerMatcher.kt` (8 tests) is the pure decision function from RFC-0005's own
+    "Matching" section — given a published event, a source session ID, and the project's
+    subscriptions, it returns which sessions would wake and which self-wakes were refused. Tests
+    include the RFC's own load-bearing case (driver subscribed to its worker's topic, woken when
+    the worker's `RunCompleted` fires) and the self-wake-refused-by-default / opt-in-overrides
+    cases from "Cycles and amplification." Adding the table required bumping `SqlScriptTest`'s
+    hardcoded project-table-count assertion (42→43) — caught by `gradle jvmTest`, not by
+    `schema/check.py`, which doesn't count tables; worth remembering next time a table is added,
+    since `check.py` passing does not mean every test that counts tables is still correct.
+  - **Deliberately not derived from `EventRow.source`:** `SchedulerMatcher.match()` takes
+    `sourceSessionId` as an explicit parameter rather than trying to parse which session published
+    an event from its `source` string, because there is no established convention anywhere in the
+    codebase for encoding session identity in that field (grepped, zero hits) — inventing one as a
+    side effect of this function would be a bigger, unreviewed decision than this slice should
+    make. Whoever wires the actual publish→match→wake path needs to either establish that
+    convention deliberately or thread the source session through some other way; don't let it get
+    invented implicitly inside a matcher.
+  - **Still not done, and it's the harder half:** nothing calls `SchedulerMatcher` yet.
+    `EventStore.publish()` doesn't invoke it, nothing transitions `SessionState` `SLEEPING`↔`RUNNING`,
+    and nothing creates a Run for a woken session. This is `SqliteExecutor`'s `drive()` loop and
+    the step-machine's territory — D3 (anything surviving a step boundary is a column) and D14 (at
+    most one effectful Task per Run is `RUNNING`) both apply directly to how a wake becomes a Run,
+    and CrashRecoveryTest must stay green through it. **Also still open:** MVP item 3's causal-depth
+    half — `EventStore.MAX_CAUSAL_DEPTH` refuses publication past depth 16, but silently (`return
+    null`, no audit row), and RFC-0005 says refusals must be "recorded, not silent" (RFC-0037).
+    `broker/AuditLog` (already an `executor` dependency, used elsewhere for exactly this kind of
+    "record that something was refused and why") is the natural place to write that row from, once
+    the actual wake path exists to call it from.
+  **Why this link stopped before wiring it in — read `SqliteExecutor.kt` and RFC-0017 first, this
+  changes the shape of the remaining work:** `drive(runId)` takes an *existing* `runs` row and
+  steps it to completion; it has zero knowledge of `SessionState` or of how a Run comes to exist
+  in the first place — nothing in `executor` creates `runs` rows or populates their `tasks`. So
+  "wire the wake path into `drive()`" was itself imprecise: there's no `drive()` change to make.
+  What's actually missing is a **new** component — call it a `Scheduler` — that, given a matched
+  wake, (a) transitions the session `SLEEPING`→`RUNNING`, (b) creates a `runs` row, and (c) decides
+  what `tasks` populate that Run, then calls `drive()` on it. Step (c) is the part this link could
+  not responsibly scope: RFC-0017 (the canonical session state machine, confirmed via its own
+  text: *"a session with queued events is SLEEPING until the scheduler drives it"*) says the
+  Scheduler drives a woken session but does not say what tasks a *driver-woken-by-its-worker* Run
+  contains — that decision belongs to the model-call loop (RFC-0020, `runtime/agentloop/`).
+  **Read this link (2026-08-09): `runtime/agentloop/AgentLoop.kt` has zero callers anywhere in the
+  codebase outside its own module** (`grep -rl "AgentLoop(\|RunRequest("` across `runtime/`,
+  excluding `agentloop/` itself, returns nothing). It is not a Task-populator plugged into
+  `SqliteExecutor` — it's a self-contained suspend function (`AgentLoop.run(RunRequest):
+  RunOutcome`) that runs an entire model-call loop to completion in one call, with a `checkpoint`
+  callback for the caller to persist step boundaries into. It has **no relationship at all** to
+  `runs`/`tasks`/`attempts` rows or `drive()` — those are two parallel, currently-disconnected
+  execution models (the SQLite step-machine in `executor`, and the in-memory model-call loop in
+  `agentloop`), and nothing in the runtime bridges them yet.
+  **This changes the assessment from "read agentloop for the pattern" to "there is no pattern to
+  read yet — the bridge itself is unbuilt."** And that bridge is not free-standing: it is, at
+  minimum, adjacent to — quite possibly the same work as — Group 2's own outstanding item **"Finish
+  `RealRuntimeClient`"**, whose own text says *"wire it to storage/executor/capability... this
+  blocks the next two items"* — i.e., the same "make Run creation real instead of a stub" problem,
+  approached from the API side instead of the Scheduler side. Building this from the RFC-0005 side
+  without coordinating risks doing Group 2's work twice, differently, on two branches — precisely
+  the collision the branch split exists to prevent, even though no single file is shared.
+  **This link's conclusion: RFC-0005's actual wake-to-Run wiring should not be attempted by a
+  Group 1 link without the user's input on how it relates to Group 2's `RealRuntimeClient` work.**
+  Flagged directly in the final message of this link, not just buried here. The persistence and
+  matching layer (`SessionSubscriptionStore`, `SchedulerMatcher`) is done, tested, and will be
+  ready to consume whichever side ends up building the bridge — that part was not wasted work
+  either way.
+  **User decision, 2026-08-09: the agentloop↔executor bridge (wake-to-Run wiring) is ruled out of
+  this branch's workload entirely, not merely paused.** The user was asked directly whether to
+  settle the Group 1/Group 2 split first; the answer was to continue Group 1's remaining work
+  *except* that split decision, and to remove it from scope here rather than revisit it link to
+  link. **Concretely, for this PR:** RFC-0005 stops at the persistence + pure-matching layer above.
+  Nothing calling `SchedulerMatcher`, no `SessionState` transitions, no Run creation, and no
+  further investigation into `agentloop` belongs to this branch going forward — that whole
+  question is the user's to settle separately (with Group 2, or as its own follow-up), not
+  something a future link should pick back up "since it's next." **What this makes RFC-0005 in
+  this PR: the persistence and matching layer, deliberately partial and staying that way here.**
+  If PIPELINE.md's Group 1 checklist item for RFC-0005 is ever marked done in this branch, it
+  means "the layer this branch owns is done," not "RFC-0005 is fully implemented" — the wake path
+  is real, tracked, follow-up work, just not this branch's.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing
@@ -640,6 +867,52 @@ an architecture pass read the whole corpus against them. The durable output:
 
 ## Notes for the next link
 
+**2026-08-09 — CI's `runtime.yml` only ever ran `gradle :kernel:jvmTest`. Every other module —
+`executor`, `git`, `broker`, `capability`, `agentloop`, and everything else under `runtime/` —
+was neither compiled nor tested by CI, at all, this whole time.** Discovered while about to add
+untested `GitTool` code: `build-and-publish` (the Android APK workflow) runs
+`gradle :androidapp:assembleRelease`, and `androidapp` depends on `kernel`/`api`/`storage` only —
+not `executor`, not `git`. So a PR reporting "CI green" on `build-and-publish` + `kernel` proved
+the Android variant assembles and the contracts module's own tests pass; it proved nothing about
+whether `executor`'s 45+ tests (several added this session and last, none of them ever run in CI)
+or `git`'s tests actually pass. **Fixed:** `runtime.yml`'s job now runs `gradle jvmTest --continue`
+across every module, with `GITHUB_TOKEN` passed through (needed for `:knowledge`/`:modelruntime`'s
+GitHub Packages dependency — `settings.gradle.kts` already documents that the default
+`GITHUB_TOKEN` has `read:packages` scope in Actions, this sandbox's copy doesn't). **What this
+means for every commit before this fix landed:** their "CI green" checkmarks in this file and in
+PR #21's description were true but narrower than they read — local `gradle jvmTest` runs (which
+this file's own verification steps always required) were the actual test coverage the whole time,
+CI was not an independent check on top of them for anything outside `kernel`. Nothing in this file
+needs retracting because of it (the local runs were real and were done), but don't read a past
+"CI green" note as having meant more than `:kernel` + Android-assembles for any commit before this
+one. **Confirmed by the actual run this fix produced (same day):** `:git` and `:worker` pass in
+real CI — the ambient-gitconfig diagnosis was right and *is* sandbox-only. `:knowledge` and
+`:modelruntime` fail in real CI too, but not for the reason this file had assumed (missing
+`GITHUB_TOKEN` scope) — package resolution succeeds in real CI, then each fails at compilation for
+its own real, previously-invisible bug. Full detail in the corrected version of the old
+"Three failures remain" note, below — this paragraph predicted the outcome before the run
+completed; the correction below reports what actually happened, and is the one to trust.
+
+**2026-08-09 — the "Unclosed comment" nested-`/*` bug recurs beyond `schema/*.sql` globs; it's any
+literal `/` immediately followed by `*` inside a KDoc block.** The existing note below about
+`SqlScriptTest`'s `schema/*.sql` glob is one instance of a general trap, not the whole trap: this
+link's own `TopicMatcher.kt` doc comment tripped the identical failure writing prose that quoted
+RFC-0004's example topic pattern `filesystem:/project/src/*` — the `/` before that trailing `*`
+opened a second, unterminated `/**` block. The fix generalizes: before writing a KDoc comment that
+quotes a path-like or glob-like string, grep the comment text for a literal `/*` substring, not
+just for the specific `schema/*.sql`-shaped case already documented.
+
+**`gradle` (no wrapper checked in) lives at `/opt/gradle/bin/gradle` in this sandbox, not
+`./gradlew`.** Run it from `runtime/` directly. The first invocation in a session downloads
+dependencies and reliably exceeds the Bash tool's default 120s foreground timeout — pass
+`timeout: 300000` (or higher) explicitly, or expect it to move to background and poll the output
+file. Subsequent invocations are fast (Gradle daemon + populated cache).
+
+**`gradle jvmTest` (no target) stops at the first failing module** unless run with `--continue` —
+without it, a red `:cookbook` (first alphabetically among the known-red modules) masks whether
+anything *else* broke. Use `--continue` when verifying a change is clean against the whole known-red
+baseline, not just against the one module you touched.
+
 **2026-08-09 — the PR #18 merge left several build scripts and two source files broken; fixing
 them to verify the androidTarget() wiring surfaced more than the wiring itself.** Working the
 first Group 2 item ("wire androidTarget() in kernel and api") required getting `gradle build` to
@@ -684,39 +957,61 @@ what was actually broken and not caused by the androidTarget() change itself:
   hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
   actually 2023-08-02 — computed and substituted the correct value.
 
-**2026-08-09 — all three "pre-existing failures" resolved or reclassified.** Two are genuinely
-environment-only and don't need — and can't get — a code fix: `:knowledge` and `:modelruntime`
-fail to resolve `gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized —
-this sandbox has no `GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already
-documents this requirement; CI's default token has it, this environment's doesn't). Confirmed
-again on this link; still 401, still sandbox-only, still not actionable here.
+**2026-08-09 — of the five long-assumed-environment-only failures, three are now actually fixed,
+and two turned out not to be environment-only at all.** This took two separate steps across the
+two branches: Group 1 (this branch, PR #21) fixed `runtime.yml` to actually run
+`:knowledge`/`:modelruntime`/`:git`/`:worker` in CI at all (previously only `:kernel` ran), which
+for the first time gave a real-CI baseline to check the sandbox's own diagnosis against. Group 2
+(PR #20, merged to `main` same day) then fixed the two that turned out to be genuinely
+environment-only, ahead of its own work. Full picture, reconciled:
 
-The other two *were* fixable and now are: `:git` and `:worker`'s JGit tests failed with
-`UnsupportedSigningFormatException` because the **sandbox's own** global `~/.gitconfig` sets
-`commit.gpgsign=true` (for Claude Code's own commit signing), and JGit inherited that ambient
-config when it opened a repo — nothing wrong in Aidos, but the tests were relying on an
-environment property (no global signing config) instead of pinning it themselves, so they'd
-fail in any environment with commit signing enabled. Fixed by explicitly setting
-`commit.gpgsign=false` on each test repo's own config in `GitToolTest.tempRepo()` and
-`TreelessWorkerTest.makeRepo()` — the test's repo config now wins regardless of what the host
-has configured globally.
+- **`:git` and `:worker` were sandbox-only, confirmed by a real CI run passing both — and now
+  fixed properly rather than left as a known sandbox artifact.** Mechanism: this session's own
+  global `~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key, JGit inherits
+  it opening any repo, and throws `UnsupportedSigningFormatException` since JGit has no signing
+  backend for that format. The tests were relying on an environment property (no global signing
+  config) instead of pinning their own — fixed by explicitly setting `commit.gpgsign=false` on
+  each test repo's own config in `GitToolTest.tempRepo()` and `TreelessWorkerTest.makeRepo()`, so
+  the test's repo config wins regardless of what the host has configured globally. Passes in any
+  environment now, including this one.
+- **`:knowledge` and `:modelruntime` are not environment-only — real CI fails them too, for two
+  different, real, previously-invisible bugs the sandbox's 401 Unauthorized was masking** (auth
+  failed before compilation ever got far enough to hit either one, so the 401 looked like the
+  whole story when it wasn't):
+  - `:modelruntime:compileKotlinJvm` — `de.kherud:llama-java:0.3.2` genuinely does not exist at
+    Maven Central, Google's repo, or `jsilvanus/gitsema-kotlin`'s package registry (a 404 in real
+    CI, once auth succeeded — not a 401). The dependency coordinate in
+    `modelruntime/build.gradle.kts` is wrong or stale.
+  - `:knowledge:compileKotlinJvm` — package resolution succeeds in real CI (confirming
+    `settings.gradle.kts`'s own claim that CI's default `GITHUB_TOKEN` has `read:packages` scope),
+    but `IndexingJob.kt` then fails to compile: `Unresolved reference 'datetime'/'serialization'/
+    'Clock'/'BACKGROUND'`. The module is missing a `kotlinx-datetime` (and likely coroutines)
+    dependency declaration in `knowledge/build.gradle.kts`.
+  - **Neither fixed as of this merge** — both are real bugs in modules outside RFC-0004/0005's and
+    Group 2's scope, and need whoever owns `knowledge`/`modelruntime` to look at them with intent.
+- **`cookbook`'s `testExceedsContextAtLongWindow` was a real calibration bug, not a test bug — now
+  fixed.** RFC-0022 doesn't mandate exact constants for `CookbookEngine.computeResidentMemory()`'s
+  resident-memory formula, but it does give a worked example (Qwen2.5 3B Q4_K_M, 2.0GB weights:
+  4k→2.4GB resident/RUNS_WELL, 16k→3.3GB, 32k→4.6GB/WILL_NOT_FIT) — the only authoritative numeric
+  anchor available. The old formula (`weights * 1.1` in-RAM inflation, 15% overhead, 64
+  bytes/token KV) put the *baseline* (weights + overhead, before any KV term) at 27.7% headroom on
+  the failing test's device profile — already under the 30% `RUNS_WELL` threshold with zero KV
+  cost, so no KV-constant adjustment alone could ever have fixed it; the baseline itself was
+  miscalibrated. Recalibrated against the RFC's own table: drop the 1.1x multiplier (use
+  `weightsBytesOnDisk` directly, matching the RFC's literal wording), overhead 15% → 5%, KV cache
+  64 → 76,800 bytes/token. Reproduces the RFC's three worked-example numbers within its own
+  rounding and satisfies every existing test with the original 30%/10%
+  `RUNS_WELL`/`RUNS_TIGHT` thresholds untouched. `estimateParams()`'s `sizeBytes / 1_500` (likely
+  should be a much smaller divisor — Q4 quantization is roughly 0.5-0.7 bytes/param, not 1500) is
+  a separate, still-dormant bug: `computeResidentMemory()` never consumes `parameterCount`, so it
+  affects nothing today. Left alone rather than guessed at — flag for whoever first makes
+  `parameterCount` load-bearing.
 
-`cookbook`'s `testExceedsContextAtLongWindow` was a real calibration bug in
-`CookbookEngine.computeResidentMemory()`, not a test bug. RFC-0022 doesn't mandate exact
-constants for the resident-memory formula, but it does give a worked example (Qwen2.5 3B
-Q4_K_M, 2.0GB weights: 4k→2.4GB resident/RUNS_WELL, 16k→3.3GB, 32k→4.6GB/WILL_NOT_FIT) — the
-only authoritative numeric anchor available. The old formula (`weights * 1.1` in-RAM inflation,
-15% overhead, 64 bytes/token KV) put the *baseline* (weights + overhead, before any KV term) at
-27.7% headroom on the failing test's device profile — already under the 30% `RUNS_WELL`
-threshold with zero KV cost, so no KV-constant adjustment alone could ever fix it; the baseline
-itself was miscalibrated. Recalibrated against the RFC's own table: drop the 1.1x multiplier
-(use `weightsBytesOnDisk` directly, matching the RFC's literal wording), overhead 15% → 5%, KV
-cache 64 → 76,800 bytes/token. Reproduces the RFC's three worked-example numbers within RFC's
-own rounding and satisfies every existing test with the original 30%/10% `RUNS_WELL`/`RUNS_TIGHT`
-thresholds untouched. `estimateParams()`'s `sizeBytes / 1_500` (likely should be a much smaller
-divisor — Q4 quantization is roughly 0.5-0.7 bytes/param, not 1500) is a separate, still-dormant
-bug: `computeResidentMemory()` never consumes `parameterCount`, so it affects nothing today.
-Left alone rather than guessed at — flag for whoever first makes `parameterCount` load-bearing.
+**The lesson worth keeping, from the real-CI discovery that started this:** a documented "why this
+fails here" is not the same claim as "and therefore nowhere else" — the first is an observation,
+the second is an inference, and this file had, until CI actually ran these modules, been treating
+the inference as equally settled. Don't extend a sandbox-failure diagnosis to a scope it wasn't
+verified against — the fix, when there was one, came only after checking.
 
 **2026-08-09 — `androidapp`'s `service`/`notification`/`scheduling` packages were `jvmMain`-only,
 which broke as soon as `AidosService.kt` (`androidMain`) tried to reference them: CI failed with

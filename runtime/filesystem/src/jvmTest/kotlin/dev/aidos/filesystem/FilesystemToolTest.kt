@@ -26,11 +26,12 @@ class FilesystemToolTest {
 
     private val capId: CapabilityId = CapabilityId("cap-1")
     private val handle = InMemoryDirHandle(capId)
+    private val tool = FilesystemTool()
 
     @Test
     fun `read returns file content`() = runTest {
         handle.seed("src/main.kt", "fun main() {}")
-        val result = FilesystemTool.execute(
+        val result = tool.execute(
             handle, "fs:read",
             buildJsonObject { put("path", "src/main.kt") }
         )
@@ -41,7 +42,7 @@ class FilesystemToolTest {
 
     @Test
     fun `write stores content and returns ok`() = runTest {
-        val result = FilesystemTool.execute(
+        val result = tool.execute(
             handle, "fs:write",
             buildJsonObject { put("path", "new-file.txt"); put("content", "hello") }
         )
@@ -53,7 +54,7 @@ class FilesystemToolTest {
     fun `list returns entries`() = runTest {
         handle.seed("src/a.kt", "")
         handle.seed("src/b.kt", "")
-        val result = FilesystemTool.execute(
+        val result = tool.execute(
             handle, "fs:list",
             buildJsonObject { put("path", "src") }
         )
@@ -66,7 +67,7 @@ class FilesystemToolTest {
     @Test
     fun `search finds matching lines`() = runTest {
         handle.seed("src/foo.kt", "class Foo {}\nclass Bar {}\n")
-        val result = FilesystemTool.execute(
+        val result = tool.execute(
             handle, "fs:search",
             buildJsonObject { put("path", "src"); put("pattern", "Foo") }
         )
@@ -78,7 +79,7 @@ class FilesystemToolTest {
     @Test
     fun `write preview returns structured FileDiff not a string`() = runTest {
         handle.seed("README.md", "# Old title\n")
-        val preview = FilesystemTool.preview(
+        val preview = tool.preview(
             handle, "fs:write",
             buildJsonObject { put("path", "README.md"); put("content", "# New title\n") }
         )
@@ -91,7 +92,7 @@ class FilesystemToolTest {
 
     @Test
     fun `write preview for new file returns Added diff`() = runTest {
-        val preview = FilesystemTool.preview(
+        val preview = tool.preview(
             handle, "fs:write",
             buildJsonObject { put("path", "brand-new.txt"); put("content", "line one\nline two\n") }
         )
@@ -104,7 +105,7 @@ class FilesystemToolTest {
     @Test
     fun `write preview for identical content returns NoChange`() = runTest {
         handle.seed("same.txt", "unchanged")
-        val preview = FilesystemTool.preview(
+        val preview = tool.preview(
             handle, "fs:write",
             buildJsonObject { put("path", "same.txt"); put("content", "unchanged") }
         )
@@ -124,7 +125,7 @@ class FilesystemToolTest {
 
     @Test
     fun `unknown operation returns Failed`() = runTest {
-        val result = FilesystemTool.execute(
+        val result = tool.execute(
             handle, "fs:unknown",
             buildJsonObject {}
         )
@@ -135,13 +136,51 @@ class FilesystemToolTest {
     fun `operations all have RecoveryClass`() {
         // RecoveryClass is non-nullable in ToolDescriptor — this test asserts all operations
         // are registered and the recovery class is correctly typed per RFC-0034's table.
-        val ops = FilesystemTool.operations().associateBy { it.name }
+        val ops = tool.operations().associateBy { it.name }
         assertNotNull(ops["fs:read"])
         assertNotNull(ops["fs:write"])
         assertNotNull(ops["fs:list"])
         assertNotNull(ops["fs:search"])
         assertEquals(dev.aidos.kernel.RecoveryClass.PURE, ops["fs:read"]!!.recoveryClass)
         assertEquals(dev.aidos.kernel.RecoveryClass.IDEMPOTENT, ops["fs:write"]!!.recoveryClass)
+    }
+
+    @Test
+    fun `write of a new path fires onWrite with created true`() = runTest {
+        val events = mutableListOf<FileChangeEvent>()
+        val watchedTool = FilesystemTool(onWrite = { events.add(it) })
+
+        watchedTool.execute(handle, "fs:write", buildJsonObject { put("path", "brand-new.txt"); put("content", "hello") })
+
+        assertEquals(1, events.size)
+        val event = events.single()
+        assertEquals("filesystem:/project/brand-new.txt", event.topic)
+        assertEquals("brand-new.txt", event.path)
+        assertEquals(5, event.sizeBytes)
+        assertTrue(event.created, "a write to a path that didn't exist before should report created=true")
+    }
+
+    @Test
+    fun `write of an existing path fires onWrite with created false`() = runTest {
+        handle.seed("existing.txt", "old content")
+        val events = mutableListOf<FileChangeEvent>()
+        val watchedTool = FilesystemTool(onWrite = { events.add(it) })
+
+        watchedTool.execute(handle, "fs:write", buildJsonObject { put("path", "existing.txt"); put("content", "new content") })
+
+        assertEquals(1, events.size)
+        assertTrue(!events.single().created, "overwriting an existing path should report created=false")
+    }
+
+    @Test
+    fun `failed write does not fire onWrite`() = runTest {
+        val events = mutableListOf<FileChangeEvent>()
+        val watchedTool = FilesystemTool(onWrite = { events.add(it) })
+
+        // Missing 'content' — the tool returns Failed before ever calling dir.write().
+        val result = watchedTool.execute(handle, "fs:write", buildJsonObject { put("path", "no-content.txt") })
+        assertIs<ToolOutcome.Failed>(result.outcome)
+        assertTrue(events.isEmpty(), "a failed write must not fire onWrite")
     }
 }
 
