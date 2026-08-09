@@ -40,7 +40,17 @@ import kotlinx.serialization.json.put
  *
  * Operations: `fs:read`, `fs:write`, `fs:list`, `fs:search`.
  */
-object FilesystemTool : Tool {
+class FilesystemTool(
+    /**
+     * Called after a successful `fs:write`, with an event shaped like RFC-0004's own worked
+     * `FileModified`/`FileCreated` examples. No `EventStore`/`executor` dependency and no
+     * `projectId` — same reasoning as `GitTool.onCommit`: the caller decides whether/how to
+     * publish it, and owns mapping [FileChangeEvent.created] to the right `EventTypes` constant.
+     * Not yet exercised by any live caller — see PIPELINE.md's Group 1 notes. There is no
+     * `fs:delete` operation on this tool, so `FileDeleted` has no emission point here to wire.
+     */
+    private val onWrite: (FileChangeEvent) -> Unit = {},
+) : Tool {
 
     override val id = "filesystem"
     override val version = "0.1.0"
@@ -175,8 +185,18 @@ object FilesystemTool : Tool {
         val path = relPath(args, "path") ?: return error("fs:write", "missing or invalid 'path'")
         val content = args["content"]?.jsonPrimitive?.content
             ?: return error("fs:write", "missing 'content'")
-        dir.write(path, content.encodeToByteArray())
+        val existedBefore = dir.exists(path)
+        val bytes = content.encodeToByteArray()
+        dir.write(path, bytes)
             .getOrElse { return error("fs:write", it.message ?: "write failed") }
+        onWrite(
+            FileChangeEvent(
+                topic = "filesystem:/project/${path.value}",
+                path = path.value,
+                sizeBytes = bytes.size,
+                created = !existedBefore,
+            )
+        )
         return ok(listOf(ContentBlock.Text("wrote ${path.value}")))
     }
 
@@ -358,3 +378,17 @@ object FilesystemTool : Tool {
         return bytes.take(4).joinToString("") { "%02x".format(it) }
     }
 }
+
+/**
+ * RFC-0004's `FileModified`/`FileCreated` events, matching the RFC's own worked example shape
+ * (`topic: "filesystem:/project/<path>"`, `payload: {path, size}`). [created] is `true` when the
+ * path did not exist before the write (RFC-0004's `FileCreated`), `false` for an overwrite
+ * (`FileModified`) — the caller maps this to the right `EventTypes` constant, since this module
+ * has no reason to depend on `executor`.
+ */
+data class FileChangeEvent(
+    val topic: String,
+    val path: String,
+    val sizeBytes: Int,
+    val created: Boolean,
+)

@@ -391,12 +391,35 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
   change at all, anywhere. With the fix, real CI (not this sandbox) is the actual verification —
   check the PR's `test` job result for `GitToolTest`, don't trust a local run of this specific
   suite.
-  **Still open — filesystem watcher and timers, neither started:** `FileModified`/`FileCreated`/
-  `FileDeleted` and `TimerFired` have no publish call sites or hooks anywhere yet. Also still
-  unaddressed: `UserCommand`, `PermissionRequested`/`Granted`/`Denied`, `SessionWoken`/`Sleeping`,
-  `ArtifactCreated`, `Error` — only `ToolCompleted` and `GitCommit` have any path to being
-  published now. Each remaining subsystem is independent of the others and deserves its own commit
-  and its own look at the RFC's worked payload shape, same discipline as the two done here.
+  **Third emission point, `FileModified`/`FileCreated` from `FilesystemTool.write()` — required
+  converting the tool from a Kotlin `object` to a `class` first.** `FilesystemTool` was a
+  singleton with zero external callers (same check as `GitTool`), so adding an `onWrite`
+  constructor callback the same way meant the object-to-class conversion first — deliberately
+  *not* a mutable `var` on the singleton instead, even though that would have avoided touching the
+  9 existing call sites in `FilesystemToolTest.kt`: a `var` on a shared object is mutable state
+  every test in the same JVM would see, and one test forgetting to reset it silently leaks into
+  the next. `filesystem` isn't on the pre-existing-failure list, so unlike `git` this was fully
+  verified locally — all 13 original tests plus 3 new ones (`created=true` for a new path,
+  `created=false` for an overwrite, silence on a failed write) pass. `FileChangeEvent` carries
+  `created: Boolean` rather than an `EventTypes` string directly — `filesystem` has no reason to
+  depend on `executor`, so the caller maps `created` to `EventTypes.FILE_CREATED`/`FILE_MODIFIED`
+  itself. **`FileDeleted` has no emission point to wire**: `FilesystemTool` has no `fs:delete`
+  operation at all (only `fs:read`/`write`/`list`/`search`), so there's nothing to hook for it.
+  **`TimerFired` was not attempted — a real, structural dead end for this branch, not a "didn't
+  get to it" gap.** Checked before writing anything: the only timer/scheduling code anywhere in
+  the codebase lives in `androidapp/scheduling/` (RFC-0044), and its dispatcher
+  (`RuntimeClientWorkDispatcher`) calls `client.sessions.send(sessionId, message)` directly on
+  `RuntimeClient` — exactly the `RealRuntimeClient` territory the task brief named as Group 2's
+  from the outset, unlike `GitTool`/`FilesystemTool` which were standalone, unclaimed modules.
+  There is no unclaimed hook point to add here the way there was for the other two; building one
+  would mean either modifying the flagged file directly or duplicating scheduling logic elsewhere
+  to route around it. Flagged rather than pushed through, per the branch's standing rule.
+  **Net state of RFC-0004 item 2 + emission wiring:** `ToolCompleted`, `GitCommit`,
+  `FileModified`/`FileCreated` have real, tested emission points. `TimerFired` is blocked on
+  Group 2 territory. `UserCommand`, `PermissionRequested`/`Granted`/`Denied`,
+  `SessionWoken`/`Sleeping`, `ArtifactCreated`, `Error`, and `FileDeleted` have no natural
+  emission point identified yet — none of them sit behind an operation this session found and
+  checked, unlike the four above.
 - [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
   wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
   Checklist framing corrected first (see below), then progress made on the corrected scope:
