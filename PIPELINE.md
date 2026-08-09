@@ -388,15 +388,31 @@ to touch a file the other branch owns, stop and reconcile before pushing, not af
     `broker/AuditLog` (already an `executor` dependency, used elsewhere for exactly this kind of
     "record that something was refused and why") is the natural place to write that row from, once
     the actual wake path exists to call it from.
-  **Why this link stopped before wiring it in:** the matching layer is now built, tested, and
-  ready to be a dependency of the wake path — but the wake path itself changes `drive()`'s
-  behavior and touches `SessionState`, which is exactly the crash-recovery-critical territory the
-  task brief said to go carefully in. Next link: read D3 and D14 in `docs/decisions.md` (done this
-  link, see "What has been settled" below), read `SqliteExecutor.kt`'s `drive()` loop and
-  `recover()` end to end before changing either, and design where a wake enters that loop — as a
-  new Run creation path, most likely — before writing code. `CrashRecoveryTest` must still pass
-  after the change; if it's not obvious how to keep it passing, that's the "stop and ask" case the
-  brief called out, not a place to guess.
+  **Why this link stopped before wiring it in — read `SqliteExecutor.kt` and RFC-0017 first, this
+  changes the shape of the remaining work:** `drive(runId)` takes an *existing* `runs` row and
+  steps it to completion; it has zero knowledge of `SessionState` or of how a Run comes to exist
+  in the first place — nothing in `executor` creates `runs` rows or populates their `tasks`. So
+  "wire the wake path into `drive()`" was itself imprecise: there's no `drive()` change to make.
+  What's actually missing is a **new** component — call it a `Scheduler` — that, given a matched
+  wake, (a) transitions the session `SLEEPING`→`RUNNING`, (b) creates a `runs` row, and (c) decides
+  what `tasks` populate that Run, then calls `drive()` on it. Step (c) is the part this link could
+  not responsibly scope: RFC-0017 (the canonical session state machine, confirmed via its own
+  text: *"a session with queued events is SLEEPING until the scheduler drives it"*) says the
+  Scheduler drives a woken session but does not say what tasks a *driver-woken-by-its-worker* Run
+  contains — that decision belongs to the model-call loop (RFC-0020, `runtime/agentloop/`, a
+  module this link did not read), not to `executor` alone. Guessing at a Task list to unblock this
+  would be inventing agent-loop behavior from inside the execution kernel, backwards from how the
+  rest of the codebase layers these concerns. **Next link: before writing a `Scheduler` class,
+  read `runtime/agentloop/` (RFC-0020) to learn how a *driver* currently gets Tasks assigned when
+  handling an incoming user message, and reuse that path for "handling an incoming wake event"
+  rather than inventing a second one.** Once that's understood, the wake path is: call
+  `SchedulerMatcher.match()` → for each woken session, create a Run the same way agentloop already
+  does for a user message, with the causing event as context instead of a `UserMessage` → call
+  `drive()`. `CrashRecoveryTest` must still pass after the change (D3, D14); if it's not obvious
+  how to keep it passing, that's the "stop and ask" case the brief called out, not a place to
+  guess. This is also worth flagging to the user directly: it's larger and more cross-cutting than
+  "wire scheduled_jobs" or "add a SLEEPING transition" made it sound, and may be worth its own
+  scoped-out discussion before a next link just starts writing code against a guess.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing
