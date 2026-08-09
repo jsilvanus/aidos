@@ -402,13 +402,32 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   CI to find real things a from-scratch sandbox verification cannot, and budget for a few
   iteration rounds rather than treating local green as done.**
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
-  to `storage`/`executor`/`capability`. This blocks the next two items. **Scoped 2026-08-09, not
-  yet started: this is bigger than it looks.** None of `storage`, `executor`, `capability`, or
-  `identity` have `androidTarget()` wired — only `kernel`/`api`/`androidapp`/`knowledge` do. Wiring
-  `RealRuntimeClient` to them for real means repeating the `androidTarget()` pattern across four
-  more modules first, and per the androidTarget item above, expect each one to surface its own
-  latent bugs once a real Android SDK actually compiles it (six turned up for three modules; budget
-  similarly here). Treat this as its own multi-link piece of work, not a single commit.
+  to `storage`/`executor`/`capability`. **`androidTarget()` prerequisite done 2026-08-09** — see
+  below; the actual `RealRuntimeClient` wiring itself is still not started.
+
+  **`androidTarget()` wired on `storage`, `settings`, `identity`, `capability`, `broker`,
+  `executor`** (six modules, not four — `broker` and `settings` turned out to be transitive
+  dependencies of `executor`/`capability`/`identity` that also needed the target, or the Android
+  variant couldn't resolve them at all; Gradle KMP requires every module in a dependency's graph
+  to publish a matching target). None of the six had an `expect`/`actual` blocker except
+  `identity`'s `UuidV7Generator` — its JVM `actual` uses only
+  `java.util.concurrent.atomic.AtomicInteger`, `kotlin.random.Random`, and
+  `System.currentTimeMillis()`, all part of the Android runtime, so the `androidMain` actual is a
+  straight copy, not a redesign. **`capability`'s `SqliteDirHandle` was deliberately left
+  untouched** — its own doc comment already says "This implementation is JVM-only; Android will
+  provide its own actual backed by SAF or scoped storage when the Android module arrives" —
+  matching RFC-0050's own Future Work item for Storage Access Framework support. That's a real
+  design gap, not a wiring gap: designing an Android file-access implementation is out of scope
+  here, and forcing one through today would mean inventing what RFC-0050 explicitly defers.
+  Wiring the *target* on `capability` doesn't require solving that — `SqliteDirHandle`/
+  `SqliteCapabilityManager` simply aren't visible from `androidMain` yet, the same "compiles, but
+  the real implementation is a separate follow-up" state `storage`'s own SQLite driver code is in
+  (its `jvmMain` desktop driver won't be visible from Android either; an `AndroidSqliteDriver`
+  wiring is follow-up work, not done here). **The actual `RealRuntimeClient` → storage/executor/
+  capability wiring is the next link's work** — expect it to surface its own latent bugs the same
+  way kernel/api/androidapp's wiring did in PR #19, and expect it to need the SAF-backed
+  `DirHandle` design RFC-0050 deferred, once `RealRuntimeClient` actually needs file access on
+  Android rather than just an Android-compiling target.
 - [x] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` into
   `onStartCommand`/`onDestroy`, per RFC-0050. Done 2026-08-09:
   `fi.italeino.aidos.service.AidosService : LifecycleService` (matching RFC-0050's own diagram
