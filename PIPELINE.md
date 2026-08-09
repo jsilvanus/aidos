@@ -239,6 +239,61 @@ talking to the real runtime instead of the mock, the daemon actually taking the 
 the next work, not finished work. Treat M27-M33's "✅" as "logic done, integration open" until
 someone closes these four gaps and updates this table to say so with evidence, not a checkmark.
 
+### Outstanding work from this review
+
+Two groups. Neither is in `docs/mvp-roadmap.md` yet — before picking an item up, either add it as a
+milestone there or record in `docs/decisions.md` that it's out of MVP scope. Building ahead of a
+milestone with no record either way is exactly how the corpus drifted from this file before.
+
+**Group 1 — RFCs credited as built (or Accepted) with little or no code:**
+
+- [ ] **RFC-0012 (Intent Graph).** Wire `androidapp/intent/IntentList.kt` to the
+  `intent_nodes`/`intent_edges`/`intent_proposals` schema tables (it's pure in-memory today, no
+  persistence). Add a test suite — zero tests currently exist for this file. Only then does M32c's
+  ✅ actually hold.
+- [ ] **RFC-0004 (Event Bus).** Build the topic-subscription/replay-by-topic layer on top of
+  `executor/EventStore.kt` (today just an append-only log with sequence ordering and the
+  causal-depth guard). If it's actually post-MVP, say so via a D34-style decision instead of
+  leaving it silently unbuilt.
+- [ ] **RFC-0005 (Scheduler).** Implement session wake/sleep: `SessionState.SLEEPING` is declared
+  in the kernel and never transitioned to or from anywhere. Wire `scheduled_jobs`
+  (`schema/project.sql`) to a real reader/writer. Same scope caveat as Event Bus.
+- [ ] **RFC-0024 (Resource Graph).** Build the actual `ContentNode` data class and
+  promotion/demotion logic — today only `ContentNodeId` and references exist in the kernel.
+- [ ] **RFC-0043 (Plugin Packaging and Sandbox), Accepted.** No plugin/manifest/sandbox code
+  anywhere. Either build a minimal version or move it out of MVP scope with a recorded decision —
+  Accepted-with-nothing-built is exactly the gap D34 exists to catch, and this one wasn't caught.
+- [ ] **RFC-0045 (Performance and Resource Budgets), Accepted.** No `DegradationLadder`/budget
+  enforcement exists; the RFC number appears only in doc-comments citing it.
+- [ ] **RFC-0047 (Project Templates and Types).** `applyTypeDefaults` only has real defaults for 2
+  of 6 `ProjectType` values (`PERSONAL`, `CODING`); the other 4 are no-ops, and no
+  scaffolding/template loader exists at all.
+
+**Group 2 — Phase 4: making the Android app real, not just its platform-neutral logic:**
+
+- [ ] **Wire `androidTarget()` in `runtime/kernel/build.gradle.kts` and
+  `runtime/api/build.gradle.kts`** — both still have `androidTarget()`/`id("com.android.library")`
+  commented out on `main`, even though `runtime/androidapp/` and `runtime/knowledge/` already
+  uncommented theirs. Until both of `androidapp`'s dependencies publish an Android variant,
+  `:androidapp`'s Android compilation cannot resolve `project(":kernel")`/`project(":api")` as
+  configured. This is the actual remaining blocker behind "androidTarget() unblocked upstream" —
+  that note was true for the leaf module only.
+- [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
+  to `storage`/`executor`/`capability`. This blocks the next two items.
+- [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
+  platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
+  `androidMain` extends `Service` yet.
+- [ ] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
+  `MockRuntimeClient`.** The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`) is real; it's driving the mock.
+- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — replace the
+  `// TODO(M33 Phase 4.5): Implement project locking per RFC-0055` with the real call.
+  `ProjectLock` itself is already built and tested in isolation.
+
+None of this is new design — every RFC and decision referenced above already exists. This is
+implementation catching up to documents that were, in several cases, marked complete before the
+code was.
+
 ---
 
 ## Next
