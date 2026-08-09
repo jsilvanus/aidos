@@ -107,27 +107,33 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
+    // A release build type may only reference a signingConfig that is actually
+    // signing-ready (AGP's packageRelease requires storeFile once one is attached) - so the
+    // keystore's presence gates both populating the config below and attaching it to the
+    // release build type. Absent (e.g. no KEYSTORE_BASE64 secret in CI), the release build
+    // proceeds unsigned, matching the workflow's own documented fallback.
+    val releaseKeystorePath = System.getenv("KEYSTORE_FILE")
+        ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
+    val hasReleaseKeystore = releaseKeystorePath != null && File(releaseKeystorePath).exists()
+
     signingConfigs {
         create("release") {
-            val keystore = System.getenv("KEYSTORE_FILE") ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
-            val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-            val keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
-            val keyPassword = System.getenv("KEY_PASSWORD") ?: keystorePassword
-            
-            if (keystore != null && keystore.isNotEmpty() && File(keystore).exists()) {
-                storeFile = File(keystore)
-                storePassword = keystorePassword
-                this.keyAlias = keyAlias
-                this.keyPassword = keyPassword
+            if (hasReleaseKeystore) {
+                storeFile = File(releaseKeystorePath!!)
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("KEY_ALIAS") ?: "aidos-key"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: storePassword
             }
         }
     }
-    
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
