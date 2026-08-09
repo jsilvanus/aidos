@@ -620,6 +620,26 @@ divisor — Q4 quantization is roughly 0.5-0.7 bytes/param, not 1500) is a separ
 bug: `computeResidentMemory()` never consumes `parameterCount`, so it affects nothing today.
 Left alone rather than guessed at — flag for whoever first makes `parameterCount` load-bearing.
 
+**2026-08-09 — `androidapp`'s `service`/`notification`/`scheduling` packages were `jvmMain`-only,
+which broke as soon as `AidosService.kt` (`androidMain`) tried to reference them: CI failed with
+`Unresolved reference` on every import from those packages.** They were placed in `jvmMain` back
+when `androidapp` only had a `jvm()` target — genuinely platform-neutral code (their own doc
+comments said so), just physically in the wrong source set now that the module has an Android
+target too. `jvmMain` is not visible to `androidMain`; only `commonMain` is shared between them.
+Checked each file for actual JVM-only imports before moving — found exactly one,
+`java.util.concurrent.atomic.AtomicReference` in `RuntimeServiceHost.kt`, and it turned out to be
+dead code (declared, read in `shutdown()`, never assigned anywhere) — retyped to a plain `var
+Job?`, which changes nothing behaviorally today. Moved `service/`, `notification/`, and
+`scheduling/` (the packages `AidosService.kt` actually needs, transitively) to `commonMain`;
+left `content/`, `degradation/`, `intent/`, `approval/`, and `ui/AvailabilityReporter.kt` in
+`jvmMain` since nothing in `androidMain` references them yet — move them too, the same way, if
+and when something does. **Lesson: `gradle jvmTest` passing after adding `androidTarget()` to a
+module proves nothing about whether `androidMain` can actually see the classes it needs — that
+requires either a real Android SDK (CI) or manually checking source-set placement against what
+`androidMain` imports.** The dead `activeJob` field (never assigned, so `shutdown()`'s
+`cancelAndJoin()` is currently a no-op) is flagged, not fixed — out of scope for a source-set
+move.
+
 **M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
 note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,
 tested `SettingsStore` implementation. Left in place rather than deleted, per this file's own rule
