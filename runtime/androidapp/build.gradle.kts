@@ -73,6 +73,9 @@ kotlin {
                 implementation("androidx.core:core-ktx:1.10.1")
                 implementation("androidx.appcompat:appcompat:1.6.1")
                 implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
+                // AidosService : LifecycleService (RFC-0050) — the foreground service hosting
+                // RuntimeServiceHost.
+                implementation("androidx.lifecycle:lifecycle-service:2.6.1")
                 
                 // For scoped storage and file access
                 implementation("androidx.documentfile:documentfile:1.0.1")

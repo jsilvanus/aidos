@@ -263,6 +263,15 @@ Two groups. Neither is in `docs/mvp-roadmap.md` yet — before picking an item u
 milestone there or record in `docs/decisions.md` that it's out of MVP scope. Building ahead of a
 milestone with no record either way is exactly how the corpus drifted from this file before.
 
+**2026-08-09 — split into two parallel session-pipeline branches, both from the same `main`
+(`3a3c396`) after PR #19 merged the RFC-0047/0012/0024/0045/0043 work below:**
+- **RFC-0004 (Event Bus) + RFC-0005 (Scheduler)** — branch `claude/group1-event-bus-scheduler`.
+- **Group 2 (Android integration)** — branch `claude/group2-android-integration`, this branch.
+
+Working the same two schema tables or the same source file from both branches at once is exactly
+the merge-conflict risk splitting them was meant to buy down — if a change on one branch looks
+like it needs to touch a file the other branch owns, stop and reconcile before pushing, not after.
+
 **Group 1 — RFCs credited as built (or Accepted) with little or no code:**
 
 - [x] **RFC-0012 (Intent Graph), partial — `intent_nodes` persistence done, `intent_proposals`
@@ -393,33 +402,157 @@ milestone with no record either way is exactly how the corpus drifted from this 
   CI to find real things a from-scratch sandbox verification cannot, and budget for a few
   iteration rounds rather than treating local green as done.**
 - [ ] **Finish `RealRuntimeClient`.** It's explicitly in-memory today (own code comment) — wire it
-  to `storage`/`executor`/`capability`. This blocks the next two items. **Scoped 2026-08-09, not
-  yet started: this is bigger than it looks.** None of `storage`, `executor`, `capability`, or
-  `identity` have `androidTarget()` wired — only `kernel`/`api`/`androidapp`/`knowledge` do. Wiring
-  `RealRuntimeClient` to them for real means repeating the `androidTarget()` pattern across four
-  more modules first, and per the androidTarget item above, expect each one to surface its own
-  latent bugs once a real Android SDK actually compiles it (six turned up for three modules; budget
-  similarly here). Treat this as its own multi-link piece of work, not a single commit.
-- [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
-  platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
-  `androidMain` extends `Service` yet.
-- [ ] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
-  `MockRuntimeClient`.** The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
-  `AidosTheme.kt`) is real; it's driving the mock. Doesn't strictly need `RealRuntimeClient` to be
+  to `storage`/`executor`/`capability`. **`androidTarget()` prerequisite done 2026-08-09** — see
+  below.
+
+  **Project persistence + RFC-0055 locking done 2026-08-09 — this was the "unblocked" half (see
+  the AgentLoop↔Executor note below): `projects.create()`/`.open()`/`.close()`/`.list()`/`.get()`/
+  `.delete()` are backed by real storage when wired, in-memory otherwise.** Design: `RealRuntimeClient`
+  gained three optional (`var ... = null`) injection seams — `userDriver: SqlDriver?`,
+  `projectDbFactory: ((String) -> SqlDriver)?`, `projectLocker: ProjectLocker?` — unset preserves
+  the exact pre-existing in-memory behavior (backward-compatible with every other caller:
+  `MainActivity`, `AidosService`, any test). `daemon/RuntimeClientFactory.createRuntimeClient()`
+  is the one JVM consumer wired end-to-end: opens `user.db` via `AidosStorage.openUser`, supplies
+  a `projectDbFactory` via `AidosStorage.openProject(DesktopPaths.stateDb(root), ...)`, and a real
+  `JvmProjectLocker`. `MainActivity`/`AidosService` deliberately left unwired — Android's own
+  `SqlDriver`/lock implementations are the same follow-up work as `capability`'s `SqliteDirHandle`.
+
+  **`ProjectLocker` is dependency-injected (`:api`'s `jvmMain` `JvmProjectLocker` wraps `:lock`'s
+  `ProjectLock`), not an `expect`/`actual` port as an earlier note here suggested.** Correction
+  while implementing: `identity`'s `ProjectRegistry` already has `java.io.File` in a commonMain
+  default parameter and compiles for Android in CI (confirmed, predates this link) — a
+  `jvm()`+`androidTarget()`-only module's `commonMain` genuinely can reference `java.*` APIs both
+  targets share, so `java.nio.channels.FileLock` was likely never a *compilation* blocker either.
+  DI was still the right call: `FileLock`'s actual behavior on Android's storage volumes is
+  unverified from this sandbox (no device, nothing in CI exercises it), so Android gets its own
+  implementation deliberately once someone can verify it, rather than inheriting an untested
+  assumption through a shared `actual`. Don't take this doc's own prior "needs expect/actual"
+  framing as gospel next time either — it was a plausible-sounding guess, not something the RFC
+  mandated, same lesson as everything else in this file.
+
+  **Project ids switched from the `aidos-N` counter to `UuidV7Generator` for projects
+  specifically** (only projects — sessions/runs/capabilities/events are untouched, still `aidos-N`,
+  still purely in-memory). Necessary, not cosmetic: the counter resets to 1 on every
+  `RealRuntimeClient` construction, which is harmless for in-memory-only entities but would
+  silently collide two different real, persisted projects across a runtime restart.
+
+  **8 new tests** (`api/src/jvmTest/.../RealRuntimeClientPersistenceTest.kt`) using a real
+  temp-directory SQLite backend — this is commonMain logic exercised via the JVM target, fully
+  verifiable locally, unlike `androidMain` code. Covers: create persists and a second instance
+  can list/open it (restart simulation), open refuses a project locked by another instance
+  (`runtime.locked_by_other_instance`), close releases the lock, delete unregisters without
+  touching the project's own files, delete without confirm is a no-op, unset-persistence behaves
+  exactly as before, and ids don't collide across instances sharing storage. Also fixed a real bug
+  this surfaced: `DaemonCliIntegrationTest` called the now-real `RuntimeClientFactory` directly
+  against the actual `~/.aidos` on whatever machine runs it — not hermetic. Added a `home`
+  override parameter and pointed the test at a temp directory.
+
+  **A second real bug, found via a genuine SQLITE_CANTOPEN failure, not guessed at**:
+  `resolveProjectPath`'s `RuntimeManaged`/`CloneOf` branches returned a hardcoded `/projects/<slug>`
+  — harmless while projects were purely in-memory (the path was never used for real I/O), but the
+  first thing any real-storage project creation hits once wired. Added an injectable
+  `runtimeManagedProjectsRoot: String?` (same seam pattern), defaulting to the old placeholder when
+  unset. Separately, `AidosStorage.openProject(path, ...)` expects the *file* path
+  (`.aidos/state.db`), not the project root — `DesktopPaths.stateDb(root)` is the translation step;
+  the first version of `projectDbFactory` skipped it and opened the bare project root as if it
+  were the database file.
+
+  **What's still not done, and still blocked**: `executor`/`capability` wiring (real Run
+  execution, capability enforcement) — this is the AgentLoop↔Executor bridge's territory, see
+  below. Session persistence (`sessions.*`) is also still in-memory — deliberately not attempted
+  in this slice; deciding whether session rows should persist ahead of Run execution being real is
+  a judgment call for whoever picks up the executor/capability half, not assumed here.
+
+  **`androidTarget()` wired on `storage`, `settings`, `identity`, `capability`, `broker`,
+  `executor`** (six modules, not four — `broker` and `settings` turned out to be transitive
+  dependencies of `executor`/`capability`/`identity` that also needed the target, or the Android
+  variant couldn't resolve them at all; Gradle KMP requires every module in a dependency's graph
+  to publish a matching target). None of the six had an `expect`/`actual` blocker except
+  `identity`'s `UuidV7Generator` — its JVM `actual` uses only
+  `java.util.concurrent.atomic.AtomicInteger`, `kotlin.random.Random`, and
+  `System.currentTimeMillis()`, all part of the Android runtime, so the `androidMain` actual is a
+  straight copy, not a redesign. **`capability`'s `SqliteDirHandle` was deliberately left
+  untouched** — its own doc comment already says "This implementation is JVM-only; Android will
+  provide its own actual backed by SAF or scoped storage when the Android module arrives" —
+  matching RFC-0050's own Future Work item for Storage Access Framework support. That's a real
+  design gap, not a wiring gap: designing an Android file-access implementation is out of scope
+  here, and forcing one through today would mean inventing what RFC-0050 explicitly defers.
+  Wiring the *target* on `capability` doesn't require solving that — `SqliteDirHandle`/
+  `SqliteCapabilityManager` simply aren't visible from `androidMain` yet, the same "compiles, but
+  the real implementation is a separate follow-up" state `storage`'s own SQLite driver code is in
+  (its `jvmMain` desktop driver won't be visible from Android either; an `AndroidSqliteDriver`
+  wiring is follow-up work, not done here). **The actual `RealRuntimeClient` → storage/executor/
+  capability wiring is the next link's work** — expect it to surface its own latent bugs the same
+  way kernel/api/androidapp's wiring did in PR #19, and expect it to need the SAF-backed
+  `DirHandle` design RFC-0050 deferred, once `RealRuntimeClient` actually needs file access on
+  Android rather than just an Android-compiling target.
+
+  **2026-08-09 — cross-branch blocker, user-decided: the AgentLoop↔Executor bridge is a separate,
+  not-yet-scoped item. Neither Group 1 nor Group 2 builds it as a side effect of their own work
+  until it's scoped on its own.** Group 1 (`claude/group1-event-bus-scheduler`, PR #21) found that
+  `runtime/agentloop/AgentLoop.kt` has zero callers anywhere in the codebase outside its own
+  module — it's a self-contained `AgentLoop.run(RunRequest): RunOutcome` with a `checkpoint`
+  callback, with no relationship to `runs`/`tasks`/`attempts` or `executor`'s `drive()`
+  step-machine. Two parallel, currently-disconnected execution models exist (`executor`'s SQLite
+  step-machine, `agentloop`'s in-memory model-call loop), and nothing bridges them. That bridge
+  is squarely in the path of **both** RFC-0005's wake-to-Run wiring (Group 1) and this item,
+  "Finish `RealRuntimeClient`" (Group 2) — building it on either branch risks doing the same work
+  twice, the exact collision the branch split was meant to prevent. Asked the user directly
+  (2026-08-09); their answer was **hold it as its own tracked item, not owned by either branch
+  yet** — so **this item ("Finish `RealRuntimeClient`") is now blocked on that separate item being
+  scoped**, not just on `androidTarget()` (which is done). Do not build the AgentLoop↔Executor
+  bridge as a side effect of wiring `RealRuntimeClient` to `storage`/`executor`/`capability` —
+  wire what doesn't require it (e.g. `ProjectSummary`/`SessionSummary` persistence to `storage`),
+  and stop at the point where continuing would require deciding how a Run actually gets executed.
+  Flag that boundary explicitly if you hit it, the same way this link did.
+- [x] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` into
+  `onStartCommand`/`onDestroy`, per RFC-0050. Done 2026-08-09:
+  `fi.italeino.aidos.service.AidosService : LifecycleService` (matching RFC-0050's own diagram
+  name/base class). `onCreate` builds the notification channel and observes
+  `runtimeServiceHost.state` to keep the ongoing notification live; `onStartCommand` starts a run
+  from Intent extras if present and always calls `startForeground` (D24(a) — the foreground
+  window has to be open for *any* run that might reach a model call, not just ones this Service
+  instance started); `onDestroy` runs `shutdown()` via `runBlocking` on a dedicated
+  `serviceScope` rather than `lifecycleScope`, specifically to avoid a real race: `lifecycleScope`
+  is cancelled as part of `ON_DESTROY` dispatch, which would kill `shutdown()`'s
+  `cancelAndJoin()` before the checkpoint-safe cancellation it exists to guarantee actually
+  completes. Owns its own `RealRuntimeClient`, separate from `MainActivity`'s — **not yet bound
+  together**, so state doesn't survive either component being recreated; that binding is the
+  natural next step once one of them needs to actually observe the other's state. **Deliberately
+  not done in this link, flagged rather than guessed at:** the Cancel notification action and the
+  wake lock RFC-0050's D24(a) explicitly calls for. Manifest gained `FOREGROUND_SERVICE_DATA_SYNC`
+  and `POST_NOTIFICATIONS` permissions and the real `<service>` declaration (`dataSync` type — no
+  standard Android 14 FGS type names "runs the agent loop the user started" exactly; `dataSync` is
+  the closest fit, revisit if that stops being defensible). `androidx.lifecycle:lifecycle-service`
+  added as a dependency. Same verification caveat as the `MainActivity` change: this sandbox has
+  no `ANDROID_HOME` at all, so CI's `build-and-publish` is the only real verification.
+- [x] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
+  `MockRuntimeClient`.** Done 2026-08-09. The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
+  `AidosTheme.kt`) was already real; it was driving the mock. `MainActivity.onCreate` now
+  constructs `RealRuntimeClient()` instead of `MockRuntimeClient()` — a one-line swap since both
+  implement `RuntimeClient` with a no-arg constructor. Didn't wait on `RealRuntimeClient` being
   *durable* first (M9's original framing was an in-process transport, in-memory is a legitimate
-  intermediate step) — wiring the UI to the existing in-memory `RealRuntimeClient` is itself real
-  progress and doesn't have to wait on the item above.
-- [ ] **Call `ProjectLock.acquire()` from `daemon/main.kt`'s startup path** (RFC-0055) — **checked
-  2026-08-09, this item as written is wrong and would build the wrong thing.** RFC-0055's own
-  "Project locking" section says a project is locked when it is *opened*, not when the daemon
-  starts — the daemon manages multiple projects over its lifetime and has no single "the project"
-  to lock at startup (it doesn't even take a project-path argument today). The real integration
-  point is `RealRuntimeClient.projects.open()`/`.create()`, which is `commonMain` (KMP) — but
-  `ProjectLock` (`runtime/lock/`) is `jvmMain`-only (`java.io.File`, `FileChannel`), so wiring it in
-  needs a small `expect`/`actual` port, not a direct call. This is entangled with "Finish
-  `RealRuntimeClient`" above, not independent of it — do them together, and update `daemon/main.kt`
-  only to remove the now-inaccurate TODO comment, not to add a lock call that doesn't match what
-  the daemon actually is.
+  intermediate step), per RFC-0050 MVP item 2. What this does *not* yet do: bind to the
+  foreground service (`RuntimeServiceHost`, the "Write the Service subclass" item below) and get
+  its client injected — each `MainActivity` instance today owns its own `RealRuntimeClient`, so
+  state doesn't survive activity destruction. That binding is the natural next step once the
+  Service subclass exists. Verification note: `androidMain` cannot compile in this sandbox at all
+  (no `ANDROID_HOME`/`local.properties` — confirmed via `gradle :androidapp:compileDebugKotlinAndroid`,
+  fails immediately on SDK location, not a code error) — CI's `build-and-publish` is the only way
+  this specific change gets verified; `gradle jvmTest` only proves `commonMain`/`jvmMain` compile.
+- [x] **RFC-0055 project locking — done 2026-08-09, via `RealRuntimeClient.projects.open()`/
+  `.create()`, not `daemon/main.kt`'s startup path.** The original checklist item ("call
+  `ProjectLock.acquire()` from `daemon/main.kt`'s startup path") was confirmed wrong in an earlier
+  link: RFC-0055's own "Project locking" section locks a project when it's *opened*, not when the
+  daemon starts. Implemented via the `ProjectLocker` interface/`JvmProjectLocker` described above
+  — `create()`/`open()` call `tryAcquire`, translate `HeldByOther` into
+  `ProjectResult.Error("runtime.locked_by_other_instance", ...)`, and `close()`/`delete()` release.
+  Tested against real `FileLock` contention (two `RealRuntimeClient` instances sharing one temp
+  directory) in `RealRuntimeClientPersistenceTest`. **Not done**: RFC-0055 says "locks are never
+  broken silently" — `ProjectLockOutcome.AcquiredAfterBreakingStale` is handled (acquisition
+  proceeds) but not *surfaced* anywhere (no audit-log write, no event emitted) since no such write
+  path exists from this class yet. Flagged in code (`RealRuntimeClient.kt`, both `create()`/
+  `open()`), not silently swallowed.
 
 None of this is new design — every RFC and decision referenced above already exists. This is
 implementation catching up to documents that were, in several cases, marked complete before the
@@ -551,18 +684,59 @@ what was actually broken and not caused by the androidTarget() change itself:
   hardcoded epoch-millis timestamp whose comment claimed it was `2026-08-08T23:00:00Z` but was
   actually 2023-08-02 — computed and substituted the correct value.
 
-**Three failures remain and are environment artifacts, not code bugs — don't spend time on them
-without checking the environment first:** `:knowledge` and `:modelruntime` fail to resolve
-`gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized — this sandbox has no
-`GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already documents this
-requirement; CI's default token has it, this environment's doesn't). `:git` and `:worker`'s JGit
-tests fail with `UnsupportedSigningFormatException` because this **session's own** global
-`~/.gitconfig` sets `commit.gpgsign=true` with an ssh-format signing key for Claude Code's own
-commit signing, and JGit inherits that ambient config when it opens a repo — nothing in the test
-or in Aidos is wrong, JGit just doesn't support that signing format. `cookbook`'s
-`testExceedsContextAtLongWindow` fails and predates PR #18 entirely (`git diff` across the merge
-shows zero changes to `cookbook/`) — a genuine pre-existing bug, but out of scope for Group 2's
-androidTarget work; flag it for whoever picks up `cookbook` next.
+**2026-08-09 — all three "pre-existing failures" resolved or reclassified.** Two are genuinely
+environment-only and don't need — and can't get — a code fix: `:knowledge` and `:modelruntime`
+fail to resolve `gitsema-core-jvm`/`llama-java` from GitHub Packages with 401 Unauthorized —
+this sandbox has no `GITHUB_TOKEN` with `read:packages` scope (`settings.gradle.kts` already
+documents this requirement; CI's default token has it, this environment's doesn't). Confirmed
+again on this link; still 401, still sandbox-only, still not actionable here.
+
+The other two *were* fixable and now are: `:git` and `:worker`'s JGit tests failed with
+`UnsupportedSigningFormatException` because the **sandbox's own** global `~/.gitconfig` sets
+`commit.gpgsign=true` (for Claude Code's own commit signing), and JGit inherited that ambient
+config when it opened a repo — nothing wrong in Aidos, but the tests were relying on an
+environment property (no global signing config) instead of pinning it themselves, so they'd
+fail in any environment with commit signing enabled. Fixed by explicitly setting
+`commit.gpgsign=false` on each test repo's own config in `GitToolTest.tempRepo()` and
+`TreelessWorkerTest.makeRepo()` — the test's repo config now wins regardless of what the host
+has configured globally.
+
+`cookbook`'s `testExceedsContextAtLongWindow` was a real calibration bug in
+`CookbookEngine.computeResidentMemory()`, not a test bug. RFC-0022 doesn't mandate exact
+constants for the resident-memory formula, but it does give a worked example (Qwen2.5 3B
+Q4_K_M, 2.0GB weights: 4k→2.4GB resident/RUNS_WELL, 16k→3.3GB, 32k→4.6GB/WILL_NOT_FIT) — the
+only authoritative numeric anchor available. The old formula (`weights * 1.1` in-RAM inflation,
+15% overhead, 64 bytes/token KV) put the *baseline* (weights + overhead, before any KV term) at
+27.7% headroom on the failing test's device profile — already under the 30% `RUNS_WELL`
+threshold with zero KV cost, so no KV-constant adjustment alone could ever fix it; the baseline
+itself was miscalibrated. Recalibrated against the RFC's own table: drop the 1.1x multiplier
+(use `weightsBytesOnDisk` directly, matching the RFC's literal wording), overhead 15% → 5%, KV
+cache 64 → 76,800 bytes/token. Reproduces the RFC's three worked-example numbers within RFC's
+own rounding and satisfies every existing test with the original 30%/10% `RUNS_WELL`/`RUNS_TIGHT`
+thresholds untouched. `estimateParams()`'s `sizeBytes / 1_500` (likely should be a much smaller
+divisor — Q4 quantization is roughly 0.5-0.7 bytes/param, not 1500) is a separate, still-dormant
+bug: `computeResidentMemory()` never consumes `parameterCount`, so it affects nothing today.
+Left alone rather than guessed at — flag for whoever first makes `parameterCount` load-bearing.
+
+**2026-08-09 — `androidapp`'s `service`/`notification`/`scheduling` packages were `jvmMain`-only,
+which broke as soon as `AidosService.kt` (`androidMain`) tried to reference them: CI failed with
+`Unresolved reference` on every import from those packages.** They were placed in `jvmMain` back
+when `androidapp` only had a `jvm()` target — genuinely platform-neutral code (their own doc
+comments said so), just physically in the wrong source set now that the module has an Android
+target too. `jvmMain` is not visible to `androidMain`; only `commonMain` is shared between them.
+Checked each file for actual JVM-only imports before moving — found exactly one,
+`java.util.concurrent.atomic.AtomicReference` in `RuntimeServiceHost.kt`, and it turned out to be
+dead code (declared, read in `shutdown()`, never assigned anywhere) — retyped to a plain `var
+Job?`, which changes nothing behaviorally today. Moved `service/`, `notification/`, and
+`scheduling/` (the packages `AidosService.kt` actually needs, transitively) to `commonMain`;
+left `content/`, `degradation/`, `intent/`, `approval/`, and `ui/AvailabilityReporter.kt` in
+`jvmMain` since nothing in `androidMain` references them yet — move them too, the same way, if
+and when something does. **Lesson: `gradle jvmTest` passing after adding `androidTarget()` to a
+module proves nothing about whether `androidMain` can actually see the classes it needs — that
+requires either a real Android SDK (CI) or manually checking source-set placement against what
+`androidMain` imports.** The dead `activeJob` field (never assigned, so `shutdown()`'s
+`cancelAndJoin()` is currently a no-op) is flagged, not fixed — out of scope for a source-set
+move.
 
 **M1 is half done. Settings (RFC-0036) and the mapping test are what's left before M2.** — this
 note is now stale (see "Independent codebase review — 2026-08-09" above): RFC-0036 has a real,

@@ -1,11 +1,12 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    id("com.android.library")
 }
 
 kotlin {
     jvm()
-    // androidTarget() arrives with the Android app (RFC-0099 Phase 4).
+    androidTarget()
 
     sourceSets {
         commonMain.dependencies {
@@ -32,5 +33,19 @@ kotlin {
 
     compilerOptions {
         allWarningsAsErrors.set(true)
+    }
+}
+
+android {
+    namespace = "dev.aidos.settings"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 }

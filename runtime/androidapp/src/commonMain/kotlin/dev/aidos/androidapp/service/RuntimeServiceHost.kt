@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Runtime hosting for the Android foreground service (M27, RFC-0050, RFC-0044, RFC-0009, D24).
@@ -69,7 +68,11 @@ class RuntimeServiceHost(
             is ServiceState.EvictedMidRun -> "Aidos: paused at step ${s.lastCheckpointStep}"
         }
 
-    private val activeJob = AtomicReference<Job?>(null)
+    // TODO: never actually assigned anywhere today, so shutdown()'s cancelAndJoin() below is a
+    // no-op in practice — a pre-existing gap, not introduced by this move from JVM-only
+    // AtomicReference (dropped since nothing here is JVM-specific once RuntimeServiceHost is
+    // visible to the Android target too). Flagged, not fixed, in PIPELINE.md.
+    private var activeJob: Job? = null
 
     /**
      * Starts hosting a run. The [runDescription] is shown in the notification (D24).
@@ -118,7 +121,7 @@ class RuntimeServiceHost(
     }
 
     suspend fun shutdown() {
-        activeJob.get()?.cancelAndJoin()
+        activeJob?.cancelAndJoin()
         _state.value = ServiceState.Idle
     }
 }

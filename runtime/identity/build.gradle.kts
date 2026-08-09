@@ -1,10 +1,12 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    id("com.android.library")
 }
 
 kotlin {
     jvm()
+    androidTarget()
 
     sourceSets {
         commonMain.dependencies {
@@ -35,5 +37,19 @@ kotlin {
         // expect/actual classes are Beta in Kotlin 2.x; suppress the warning so -Werror doesn't
         // trip on our UuidV7Generator expect class. Remove when the feature stabilises.
         freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+}
+
+android {
+    namespace = "dev.aidos.identity"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 }

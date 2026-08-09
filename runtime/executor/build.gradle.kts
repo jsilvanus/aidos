@@ -1,10 +1,12 @@
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
+    id("com.android.library")
 }
 
 kotlin {
     jvm()
+    androidTarget()
 
     sourceSets {
         commonMain.dependencies {
@@ -34,5 +36,19 @@ kotlin {
 
     compilerOptions {
         allWarningsAsErrors.set(true)
+    }
+}
+
+android {
+    namespace = "dev.aidos.executor"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 }
