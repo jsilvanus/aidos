@@ -409,9 +409,27 @@ like it needs to touch a file the other branch owns, stop and reconcile before p
   more modules first, and per the androidTarget item above, expect each one to surface its own
   latent bugs once a real Android SDK actually compiles it (six turned up for three modules; budget
   similarly here). Treat this as its own multi-link piece of work, not a single commit.
-- [ ] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` (already built,
-  platform-neutral, jvmMain) into `onStartCommand`/`onDestroy`, per RFC-0050. Nothing in
-  `androidMain` extends `Service` yet.
+- [x] **Write the `android.app.Service` subclass** that wires `RuntimeServiceHost` into
+  `onStartCommand`/`onDestroy`, per RFC-0050. Done 2026-08-09:
+  `fi.italeino.aidos.service.AidosService : LifecycleService` (matching RFC-0050's own diagram
+  name/base class). `onCreate` builds the notification channel and observes
+  `runtimeServiceHost.state` to keep the ongoing notification live; `onStartCommand` starts a run
+  from Intent extras if present and always calls `startForeground` (D24(a) — the foreground
+  window has to be open for *any* run that might reach a model call, not just ones this Service
+  instance started); `onDestroy` runs `shutdown()` via `runBlocking` on a dedicated
+  `serviceScope` rather than `lifecycleScope`, specifically to avoid a real race: `lifecycleScope`
+  is cancelled as part of `ON_DESTROY` dispatch, which would kill `shutdown()`'s
+  `cancelAndJoin()` before the checkpoint-safe cancellation it exists to guarantee actually
+  completes. Owns its own `RealRuntimeClient`, separate from `MainActivity`'s — **not yet bound
+  together**, so state doesn't survive either component being recreated; that binding is the
+  natural next step once one of them needs to actually observe the other's state. **Deliberately
+  not done in this link, flagged rather than guessed at:** the Cancel notification action and the
+  wake lock RFC-0050's D24(a) explicitly calls for. Manifest gained `FOREGROUND_SERVICE_DATA_SYNC`
+  and `POST_NOTIFICATIONS` permissions and the real `<service>` declaration (`dataSync` type — no
+  standard Android 14 FGS type names "runs the agent loop the user started" exactly; `dataSync` is
+  the closest fit, revisit if that stops being defensible). `androidx.lifecycle:lifecycle-service`
+  added as a dependency. Same verification caveat as the `MainActivity` change: this sandbox has
+  no `ANDROID_HOME` at all, so CI's `build-and-publish` is the only real verification.
 - [x] **Wire `MainActivity.kt` / the Compose screens to `RealRuntimeClient`, not
   `MockRuntimeClient`.** Done 2026-08-09. The UI itself (`Screens.kt`, `HomeScreen.kt`, `NavHost.kt`,
   `AidosTheme.kt`) was already real; it was driving the mock. `MainActivity.onCreate` now
