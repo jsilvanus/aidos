@@ -25,7 +25,10 @@ import java.io.File
  * AgentLoop↔executor bridge landed: a real `CapabilityManager` + `ToolBroker` with
  * `FilesystemTool`/`GitTool` registered, a real `InferenceRouter`, and the `PromptAssembler` that
  * together let [SqliteExecutor.drive] produce an actual model response instead of leaving a Run
- * `PENDING` forever.
+ * `PENDING` forever. Also constructs [GitRunReconciler] (M13, RFC-0053) and passes it to
+ * `SqliteExecutor` as its before-a-Run-starts reconciliation gate — this is the one seam in this
+ * class that isn't itself deliberately half-wired; see [GitRunReconciler]'s own doc comment for
+ * its scope.
  *
  * **Deliberately does not resolve capabilities for model-emitted tool calls.**
  * `AgentLoopTaskRunner` always sets `ToolCall.capabilityId = null` (its own doc comment names this
@@ -118,6 +121,7 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,
+            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
         )
         executor.drive(runId)
     }

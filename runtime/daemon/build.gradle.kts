@@ -25,6 +25,10 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+                // GitRunReconciler (M13, RFC-0053) uses JGit directly -- :git's own dependency on
+                // it is `implementation`, not transitively visible here, same reason cli/daemon
+                // needed their own kotlinx-serialization-json declaration for M10.
+                implementation("org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
             }

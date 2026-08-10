@@ -82,7 +82,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
 | CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): M10's audit gap is fixed — `runtime/cli/src/jvmMain/.../Main.kt` is a real argv-parsing executable (`gradle :cli:run --args=...`), and `daemon/.../RuntimeSocketServer.kt` is a real Unix domain socket server (newline-delimited JSON, token handshake per RFC-0052/RFC-0055, `user_interactive` enforcement on grant/approve) — no longer the placeholder that printed a string and returned. `SocketRuntimeClient` (cli) is a real `RuntimeClient` wired over that socket for projects/sessions/capabilities/events/runtime-info — exactly M10's done-when surface. Diff/artifact/knowledge queries are deliberately not yet on the wire (out of M10's done-when; `Wire.kt`'s own doc comment says so) and throw a clear `UnsupportedOperationException` naming the gap if called remotely, rather than silently no-op — a real, narrow, documented gap instead of the prior undocumented total absence. Proven by `RealSocketIntegrationTest` (daemon module), which spawns the daemon as a genuine OS subprocess and drives it end-to-end over the real socket, not `MockRuntimeClient`.** |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
-| Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
+| Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): RFC-0053's actual reconciliation protocol is now built** — `git/.../Reconciliation.kt` (`RepoFingerprint`, the five classifications, JGit-based compute/classify) and `daemon/.../GitRunReconciler.kt` (the SQL orchestration: `repo_fingerprints`/`reconciliations` read-write, content-node re-hash/`DANGLING`/`SUPERSEDED` per RFC-0053's object-class table, parked-Run termination with `FAILED(repo.mutated)`), wired into `SqliteExecutor.drive()` via a new nullable `RunReconciler` seam that gates the PENDING/INTERRUPTED→RUNNING transition — real "before any Run may start" gating, not `gitStatus()`'s live re-read standing in for it. Scoped to RFC-0053's own MVP list: "on project open" fingerprinting and filesystem watching are not wired (flagged in the class's own doc comment, not silently dropped — the former needs `api`→`git`/`executor`, a module cycle this pass didn't take on); `intent_conflicted` is always 0, honestly, since RFC-0012's Intent Graph has no live writer yet. |
 | Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅ |
 | Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅ |
 | AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅. **Still has zero callers (2026-08-09) — and by design now, not just neglect: it holds the whole transcript in memory across its `while` loop in one suspend call, which RFC-0009 forbids for durable execution. `executor/AgentLoopTaskRunner.kt` is the actual production path for driving a Run's model-call loop (same `kernel`/`prompt` building blocks, rebuilt at the step machine's real grain); `AgentLoop.kt` remains valid for non-durable contexts, if any ever need one.** |
@@ -1328,6 +1328,30 @@ passed (M19 ✅)**. The findings below do not support that.
   protocol. M13's done-when ("Reconciliation handles the user changing the working tree outside
   Aidos between two Aidos steps") reads as satisfied by this test but the RFC it cites specifies
   much more than "status happens to be live."
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`) — fixed.** `repo_fingerprints`
+  and `reconciliations` are both real read/write tables now: `git/.../Reconciliation.kt` computes
+  a `RepoFingerprint` (head ref, head commit, an index-content SHA-256 standing in for JGit's
+  non-public `DirCache` checksum, dirty-path count) and classifies a mismatch into the RFC's five
+  classifications (`HEAD_MOVED`/`BRANCH_SWITCHED`/`HISTORY_REWRITTEN` via `RevWalk.isMergedInto`/
+  `INDEX_CHANGED`/`WORKTREE_DIRTIED`), each independently tested against a real repository
+  (`ReconciliationTest.kt`, 6 tests, one exercising each classification plus the no-change case).
+  `daemon/.../GitRunReconciler.kt` is the SQL orchestration — re-hashes `content_nodes` rows
+  backed by a git-tracked `FilesystemPath`, marks `IMMUTABLE` nodes `DANGLING` and `VERSIONED`
+  nodes `SUPERSEDED`-plus-a-new-version on a hash change (RFC-0053's own per-object-class table),
+  marks unreachable `GitObject` nodes `DANGLING` after `HISTORY_REWRITTEN`/`BRANCH_SWITCHED`,
+  terminates every `INTERRUPTED`/`YIELDED` ("parked") Run on the project with
+  `FAILED(run.repo_mutated)`, and writes one `reconciliations` row with real counts — tested
+  end-to-end against a real repository and a real SQLite project DB in `GitRunReconcilerTest.kt`
+  (5 tests: baseline establishment, no-op on no change, `HEAD_MOVED` classification recorded, a
+  parked Run terminated while a fresh `PENDING` Run in the same check is correctly left alone, an
+  `IMMUTABLE` node dangling on an external edit). Wired into the actual gate: `SqliteExecutor`
+  gained a nullable `RunReconciler` seam (`executor`'s own `commonMain`, JGit-free — the concrete
+  JVM implementation is injected by `RuntimeCompositionRoot`) consulted immediately before the
+  `PENDING`/`INTERRUPTED`→`RUNNING` transition, covered by `RunReconcilerGateTest.kt` (3 tests,
+  reconciler test-doubled) proving `drive()` actually calls it and honors a termination verdict
+  rather than just having the table exist unread. `intent_conflicted` is always written 0 and "on
+  project open" fingerprinting is not wired — both named explicitly, not silently cut; see the
+  Status table's Git row above for the same note with file references.
 - **M14 (Secrets vault) — OVERSTATED.** The vault round-trip itself is real (AES-256-GCM, real
   SQLite, `CharArray` zeroing) and `AnthropicAdapter`'s tool-call normalization is real. **But the
   "never appears in a log, an event, an audit row, or a prompt" claim has no enforced code path
@@ -2071,6 +2095,33 @@ plain `flow{}` builder does not make when the body contains blocking I/O. Anythi
 codebase that bridges a blocking read loop into a `Flow` (a future MCP stdio transport at M18 is
 the obvious next case) should reach for `callbackFlow`/`awaitClose` from the start, not rediscover
 this the same way.
+
+**2026-08-10 — a Kotlin Multiplatform module's `implementation(...)` dependency is never visible
+to a downstream module that depends on it, even transitively; this bit twice in one link and is
+worth checking first, not last.** Building M13's `GitRunReconciler`, `daemon` already depends on
+`:git` (for `GitTool`) and JGit compiled fine *inside* `:git` itself — but `daemon`'s own code
+couldn't resolve `org.eclipse.jgit.api.Git` at all ("Cannot access class... Check your module
+classpath") until `daemon/build.gradle.kts` declared the same JGit coordinate itself. Exactly the
+same shape as M10's `kotlinx-serialization-json` needing separate declarations in both `cli` and
+`daemon` despite `api` already declaring it. The tell is specific: "Unresolved reference" for a
+package that a dependency-of-a-dependency definitely has on ITS OWN classpath means the owning
+module used `implementation`, not `api`, and the fix is to re-declare the coordinate in the
+consuming module — not to chase a phantom missing-dependency-of-the-dependency.
+
+**2026-08-10 — hand-writing a polymorphic `@Serializable` sealed class's JSON in a test is a
+silent-failure trap; construct the real object and let `Json.encodeToString` produce it.**
+`GitRunReconcilerTest`'s first draft hand-wrote `{"type":"FilesystemPath",...}` for a
+`content_nodes.storage_location_json` fixture. `dev.aidos.kernel.StorageLocation`'s subclasses
+carry no `@SerialName`, so kotlinx.serialization's actual discriminator is the fully-qualified
+class name, not the simple one — the hand-written JSON silently failed to decode inside
+`GitRunReconciler`'s own `runCatching { json.decodeFromString<StorageLocation>(...) }.getOrNull()
+?: continue`, which is itself the right production behavior (skip an unparseable row rather than
+crash the whole reconciliation) but meant the test's assertion failure ("expected DANGLING but was
+ACTIVE") pointed at the wrong layer at first glance. Fixed by building the real
+`StorageLocation.FilesystemPath(...)` instance and calling `Json{encodeDefaults=true}
+.encodeToString(...)` on it, matching what `SqliteContentNodeStore` already does in production —
+never hand-write JSON for a sealed/polymorphic `@Serializable` type in this codebase, construct
+and encode it.
 
 ---
 
