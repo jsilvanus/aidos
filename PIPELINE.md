@@ -80,7 +80,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
 | API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
-| CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅ |
+| CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): M10's audit gap is fixed — `runtime/cli/src/jvmMain/.../Main.kt` is a real argv-parsing executable (`gradle :cli:run --args=...`), and `daemon/.../RuntimeSocketServer.kt` is a real Unix domain socket server (newline-delimited JSON, token handshake per RFC-0052/RFC-0055, `user_interactive` enforcement on grant/approve) — no longer the placeholder that printed a string and returned. `SocketRuntimeClient` (cli) is a real `RuntimeClient` wired over that socket for projects/sessions/capabilities/events/runtime-info — exactly M10's done-when surface. Diff/artifact/knowledge queries are deliberately not yet on the wire (out of M10's done-when; `Wire.kt`'s own doc comment says so) and throw a clear `UnsupportedOperationException` naming the gap if called remotely, rather than silently no-op — a real, narrow, documented gap instead of the prior undocumented total absence. Proven by `RealSocketIntegrationTest` (daemon module), which spawns the daemon as a genuine OS subprocess and drives it end-to-end over the real socket, not `MockRuntimeClient`.** |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅ |
 | Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅ |
@@ -1269,6 +1269,34 @@ passed (M19 ✅)**. The findings below do not support that.
   sense the done-when states, and there is no caveat anywhere in this file's M10 ✅ comparable to
   the ones it uses for other partial milestones (e.g. `RealRuntimeClient`'s prior in-memory note,
   Voice's `NoOp`-provider note).
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`) — fixed.** Both halves of this
+  finding are addressed: `runtime/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt` is a real
+  `fun main(args: Array<String>)` that parses subcommands (`create-project`, `list-sessions`,
+  `send`, `watch-events --since`, `grant`, `approve`, `list-pending`, `ping`, `version`) and drives
+  `AidosCli` — a person can now type this at a terminal, given a running daemon. `RuntimeSocketServer`
+  (`daemon/.../RuntimeSocketServer.kt`) is a real `ServerSocketChannel.open(StandardProtocolFamily.UNIX)`
+  server: newline-delimited JSON, a connection-token handshake minted at daemon startup
+  (`RFC-0052` Authentication / `RFC-0055` Security), and `user_interactive` enforcement refusing
+  `capabilities.grant`/`approve` over a non-interactive connection. `SocketRuntimeClient`
+  (`cli/.../SocketRuntimeClient.kt`) is the client half, a real `RuntimeClient` implementation —
+  `AidosCli` runs against it unmodified, the same class the mock/in-process tests already exercised.
+  Wire codec is hand-written (`api/.../socket/Wire.kt`) rather than a generic reflective dispatcher,
+  scoped to exactly the methods M10's done-when needs (project/session/capability/event/runtime-info);
+  `DiffQueries`/`ArtifactQueries`/`KnowledgeQueries` are explicitly not yet on the wire and throw a
+  named `UnsupportedOperationException` rather than silently no-opping — a real, bounded, documented
+  gap for a later link, not the prior undocumented total absence. Proven end-to-end by
+  `daemon/.../RealSocketIntegrationTest.kt`, which spawns `dev.aidos.daemon.MainKt` as a genuine
+  subprocess (not in-process, not mocked) and drives project/session/send/ping/version and a real
+  `events.subscribe` with `sinceSequence` replay over the actual socket, plus negative tests for a
+  wrong connection token and a non-interactive `grant` refusal. One real bug found and fixed writing
+  that test: `events.subscribe()`'s blocking `BufferedReader.readLine()` does not observe ordinary
+  Flow cancellation (`take(n)`, a collector's `withTimeout`) — confirmed by an end-to-end run where a
+  `take(1)` collector let two events pass through before the read wedged forever on a third that
+  never arrived. Fixed by moving the read loop to a dedicated thread bridged through `callbackFlow`,
+  whose `awaitClose` is guaranteed to fire for every way a flow's collection can end, and closing the
+  channel there — closing a blocking NIO channel from another thread is what actually wakes a blocked
+  read. `gradle jvmTest --continue` clean across `:api`/`:cli`/`:daemon` (the whole-project run is
+  clean except the pre-existing, sandbox-only `:knowledge` 401).
 - **M11 (Effect broker) — CONFIRMED for ordering and `descriptorsFor` filtering** (independently
   read `ToolBroker.invoke()` top to bottom: tool-resolution → capability → taint-validate →
   budget-stub → preview → audit → execute → audit, matching the claimed order exactly), **with one
@@ -2022,6 +2050,27 @@ every AI-layer bug found afterwards will be misattributed to the model.
 
 **Commit standards** are in `CLAUDE.md`: reference the RFC, explain the *why*, one logical change
 per commit, tests pass before committing.
+
+**2026-08-10 — a `Flow` built from a blocking-I/O `flow{}` builder does not stop when its
+collector does; `callbackFlow` + `awaitClose` is the fix, not `Job.invokeOnCompletion`.** Building
+M10's real socket transport, `SocketRuntimeClient.events.subscribe()` originally read lines with a
+plain `flow { ... reader.readLine() ... }.flowOn(Dispatchers.IO)`. `BufferedReader.readLine()` is
+a blocking `java.io` call, not a suspension point, so ordinary coroutine cancellation never reaches
+it — proven by an actual run where a `take(1)` collector let *two* events pass through `emit()`
+before the underlying read wedged forever waiting on a third that was never coming. The first fix
+attempt, `currentCoroutineContext().job.invokeOnCompletion { channel.close() }` inside the `flow{}`
+body, did not help — `take()`'s abort signal travels back to a `flowOn`-wrapped producer through
+its bridging channel, asynchronously with respect to any one `emit()`/`trySend()` call, so the
+producer coroutine's own Job was never actually being completed/cancelled promptly enough to fire
+that handler. What worked: `callbackFlow { ... }`, with the blocking read loop moved to its own
+daemon `Thread` (not a coroutine) pushing into the channel via `trySend`, and the *only* place that
+closes the socket is `awaitClose { channel.close() }` — `callbackFlow`'s documented contract is
+that `awaitClose` runs exactly once for every way the flow's collection can end (downstream
+`take()`, a `withTimeout`, normal exhaustion, an exception), which is precisely the guarantee a
+plain `flow{}` builder does not make when the body contains blocking I/O. Anything else in this
+codebase that bridges a blocking read loop into a `Flow` (a future MCP stdio transport at M18 is
+the obvious next case) should reach for `callbackFlow`/`awaitClose` from the start, not rediscover
+this the same way.
 
 ---
 
