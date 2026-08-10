@@ -17,6 +17,9 @@ import dev.aidos.kernel.RunId
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
+import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingsStore
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.Redactor
 import java.io.File
@@ -50,9 +53,22 @@ import java.io.File
  * non-throwing `RoutingDecision` `AgentLoopTaskRunner` already handles by failing that one task,
  * not the whole `drive()` call (confirmed by reading both `AnthropicAdapter.invoke`, which wraps
  * its network call in `runCatching`, and `AgentLoopTaskRunner`'s `UnavailableOffline` branch).
+ *
+ * **Egress policy (M23, RFC-0020/0049/0023): `allowRemote` now reflects the user's own setting,
+ * not just whether a key happens to be configured.** [userDriver], when supplied, is resolved
+ * through [SettingsStore] for `Settings.routingRemoteEgress`; `EgressPolicy.ALLOW` is the only
+ * value that permits automatic remote routing. `NEVER` blocks it outright, and `ASK` — despite
+ * its name suggesting a per-Run prompt — fails closed to the same result as `NEVER` here: no
+ * per-Run approval flow exists yet (`AgentLoopTaskRunner`'s own doc comment: a
+ * `RemotePendingApproval` decision fails the Run outright rather than parking it for approval),
+ * so treating `ASK` as automatic-allow would silently grant exactly the approval it says it
+ * requires. [userDriver] absent (e.g. most existing tests) resolves to the declared default,
+ * `ASK` — conservative, matching this same fail-closed behavior rather than the old
+ * key-presence-only check.
  */
 class RuntimeCompositionRoot(
     private val anthropicApiKey: () -> CharArray? = { null },
+    private val userDriver: SqlDriver? = null,
 ) {
 
     /**
@@ -100,7 +116,7 @@ class RuntimeCompositionRoot(
         } ?: emptyList()
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
-                allowRemote = remoteAdapters.isNotEmpty(),
+                allowRemote = allowRemoteFor(resolveEgressPolicy(userDriver)),
                 allowedRemoteModelIds = remoteAdapters.map { it.modelId }.toSet(),
             ),
             remoteAdapters = remoteAdapters,
@@ -138,4 +154,25 @@ class RuntimeCompositionRoot(
             mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
             parameters = 1,
         ) { bindString(0, projectId) }.value
+
+    companion object {
+        /**
+         * M23: resolves `Settings.routingRemoteEgress` from [userDriver] (user scope only, per
+         * the setting's SECURITY scope class), falling back to the declared default (`ASK`) when
+         * no [userDriver] is supplied. `internal` so tests can verify the resolution without
+         * driving a full Run.
+         */
+        internal fun resolveEgressPolicy(userDriver: SqlDriver?): EgressPolicy =
+            userDriver?.let {
+                SettingsStore(userDriver = it, projectDriver = null).resolve(Settings.routingRemoteEgress).value
+            } ?: Settings.routingRemoteEgress.default
+
+        /**
+         * M23: only `ALLOW` permits automatic remote routing. `NEVER` blocks it outright; `ASK`
+         * fails closed to the same result, since no per-Run approval flow exists yet to honor
+         * what "ASK" actually promises (see this class's own doc comment). `internal` so tests
+         * can verify the mapping directly.
+         */
+        internal fun allowRemoteFor(egressPolicy: EgressPolicy): Boolean = egressPolicy == EgressPolicy.ALLOW
+    }
 }
