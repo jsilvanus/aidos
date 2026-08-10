@@ -32,7 +32,10 @@ import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.AssemblyRequest
 import dev.aidos.prompt.AssemblyResult
+import dev.aidos.prompt.InstructionDiscovery
+import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
+import java.io.File
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -117,9 +120,12 @@ private data class StoredToolResult(
  *   Building the park/resume machinery (a `continuations` row, an event that un-parks it) is
  *   substantial and was ruled out of this link's scope deliberately, the same way RFC-0009's own
  *   MVP section defers `CHECKABLE` recovery probes.
- * - **Instruction sets (RFC-0016)** — `instructionSet` is always `null`, matching `AgentLoop.kt`'s
- *   own default; wiring `InstructionDiscovery` in is unrelated to bridging the two execution
- *   models and was left alone.
+ * - **Instruction adoption UX (RFC-0016)** — [discoverInstructionSet] reads `instruction_adoptions`
+ *   but nothing in this codebase writes to it yet, so a freshly discovered `AGENTS.md`/`CLAUDE.md`
+ *   is correctly excluded from the system turn (never adopted) and stays that way until some other
+ *   part of the system inserts an adoption row; there is no session/UI flow here that could ever
+ *   produce one. What *is* wired: discovery, the adopted/unadopted gate itself, and persisting
+ *   `runs.instruction_set_hash` — M15's actual done-when.
  */
 class AgentLoopTaskRunner(
     private val driver: SqlDriver,
@@ -168,11 +174,13 @@ class AgentLoopTaskRunner(
 
         val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
         val history = reconstructHistory(task.runId, task.ordinal)
+        val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = run.userMessageSummary,
             tools = tools,
             conversationHistory = history,
+            instructionSet = instructionSet,
         )
         val pkg = when (val ar = assembler.assemble(assemblyReq)) {
             is AssemblyResult.Ok -> ar.pkg
@@ -194,6 +202,10 @@ class AgentLoopTaskRunner(
                 }
             }
         }
+        // RFC-0016: "records which set governed the Run" -- written on every MODEL_CALL, not just
+        // the first, so a Run that spans a mid-run instruction-file edit reflects the set that
+        // actually steered its most recent turn, not a stale first-turn value.
+        updateInstructionSetHash(task.runId, pkg.instructionSetHash)
 
         val modelReq = ModelRequest(
             messages = pkg.request.messages,
@@ -487,6 +499,45 @@ class AgentLoopTaskRunner(
             parameters = 2,
         ) {
             bindString(0, taint.name)
+            bindString(1, runId.value)
+        }
+    }
+
+    /**
+     * RFC-0016: discovers AGENTS.md/CLAUDE.md at the project root and marks the set adopted iff
+     * its hash has an `instruction_adoptions` row for this project -- an unadopted set is still
+     * returned (so its hash can be recorded), but [PromptAssembler] excludes an unadopted set's
+     * text from the system turn, which is the actual security property this gates.
+     */
+    private fun discoverInstructionSet(projectId: ProjectId): InstructionSet? {
+        val rootPath = projectRootPath(projectId.value) ?: return null
+        val discovered = InstructionDiscovery.discover(File(rootPath)) ?: return null
+        return discovered.copy(adopted = isInstructionSetAdopted(projectId.value, discovered.hash))
+    }
+
+    private fun projectRootPath(projectId: String): String? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT root_path FROM projects WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, projectId) }.value
+
+    private fun isInstructionSetAdopted(projectId: String, hash: String): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT 1 FROM instruction_adoptions WHERE project_id = ? AND set_hash = ?",
+            mapper = { c -> QueryResult.Value(c.next().value) },
+            parameters = 2,
+        ) { bindString(0, projectId); bindString(1, hash) }.value
+
+    private fun updateInstructionSetHash(runId: RunId, hash: String?) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE runs SET instruction_set_hash = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, hash)
             bindString(1, runId.value)
         }
     }

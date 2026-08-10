@@ -84,7 +84,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): RFC-0053's actual reconciliation protocol is now built** — `git/.../Reconciliation.kt` (`RepoFingerprint`, the five classifications, JGit-based compute/classify) and `daemon/.../GitRunReconciler.kt` (the SQL orchestration: `repo_fingerprints`/`reconciliations` read-write, content-node re-hash/`DANGLING`/`SUPERSEDED` per RFC-0053's object-class table, parked-Run termination with `FAILED(repo.mutated)`), wired into `SqliteExecutor.drive()` via a new nullable `RunReconciler` seam that gates the PENDING/INTERRUPTED→RUNNING transition — real "before any Run may start" gating, not `gitStatus()`'s live re-read standing in for it. Scoped to RFC-0053's own MVP list: "on project open" fingerprinting and filesystem watching are not wired (flagged in the class's own doc comment, not silently dropped — the former needs `api`→`git`/`executor`, a module cycle this pass didn't take on); `intent_conflicted` is always 0, honestly, since RFC-0012's Intent Graph has no live writer yet. |
 | Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): the redaction and retention wiring the audit found missing is now real.** `SqliteSecretsVault` registers/unregisters values with an injected `Redactor` on `resolve()`/`delete()`; `AnthropicAdapter` reports a real `ProviderRetention` through the new `ModelAdapter.providerRetention` kernel property; `AgentLoopTaskRunner.writeAttempt()` redacts `output_snapshot` and writes `attempts.provider_retention_json` (UNKNOWN fallback for a remote adapter with no stated policy, null for local), wired end to end by `RuntimeCompositionRoot`. Scoped honestly: only the vault's own register/unregister and `attempts.output_snapshot` are covered — events, prompt packages, diagnostic logs, and memory entries/exports are not yet redacted (see the Part 2 audit's M14 finding for the full list). |
-| Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅ |
+| Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): now live end-to-end, not just unit-tested.** `AgentLoopTaskRunner` (`runtime/executor/`) calls `InstructionDiscovery` on every `MODEL_CALL`, checks adoption against the real `instruction_adoptions` table, and writes `runs.instruction_set_hash` — an unadopted `AGENTS.md`/`CLAUDE.md` no longer silently reaches (or fails to reach) a real Run's system turn untested. Nothing yet writes an `instruction_adoptions` row (no adoption UX exists), so every freshly discovered set stays correctly excluded until that separate, not-yet-built flow lands — see the Part 2 audit's M15 finding for detail. |
 | AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅. **Still has zero callers (2026-08-09) — and by design now, not just neglect: it holds the whole transcript in memory across its `while` loop in one suspend call, which RFC-0009 forbids for durable execution. `executor/AgentLoopTaskRunner.kt` is the actual production path for driving a Run's model-call loop (same `kernel`/`prompt` building blocks, rebuilt at the step machine's real grain); `AgentLoop.kt` remains valid for non-durable contexts, if any ever need one.** |
 | Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
 | Injection | `runtime/agentloop/injection/` — 7 hostile corpus tests: README, comments, commits, tool output, MCP, role reassignment, nested injection. M17 ✅ |
@@ -1403,6 +1403,24 @@ passed (M19 ✅)**. The findings below do not support that.
   in schema and never written anywhere** (grepped exhaustively; the in-memory hash is computed
   correctly but only reaches a no-op default `checkpoint` callback in the unused `AgentLoop.kt`, not
   the wired `AgentLoopTaskRunner`).
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): both specific gaps are fixed.**
+  `AgentLoopTaskRunner.executeModelCall()` now calls a new `discoverInstructionSet()` (reads
+  `projects.root_path`, then `InstructionDiscovery.discover()`) on every `MODEL_CALL` task, checks
+  the discovered hash against `instruction_adoptions` (the real schema table RFC-0016 defines — it
+  had zero code touching it before this), and passes the result into `AssemblyRequest.instructionSet`
+  so `PromptAssembler`'s existing adopted/unadopted gate finally has live input instead of always
+  seeing `null`. `runs.instruction_set_hash` is written after every assembly (`pkg.instructionSetHash`,
+  updated each `MODEL_CALL` so a Run reflects its most recently governing set, not a stale first-turn
+  value). 4 new tests: no files → null hash; an unadopted `AGENTS.md` is discovered (hash recorded)
+  but its text does not reach the system turn; an adopted one does reach it and its hash matches;
+  plus the pre-existing `PromptAssembler`/`InstructionDiscovery` unit tests, unchanged. **Still
+  deliberately absent, not silently claimed done: nothing writes to `instruction_adoptions` anywhere
+  in the codebase.** `discoverInstructionSet()` reads that table but there is no session/UI adoption
+  flow that could ever insert a row — a freshly discovered instruction file is correctly excluded
+  from every system turn and will stay that way until some other, not-yet-built part of the system
+  (RFC-0016's own "diff-review surface") adopts it. That gap is real but is not what M15's
+  done-when names (`runs.instruction_set_hash` + the adopted/unadopted gate), so it is out of this
+  link's scope, flagged rather than quietly left implied-fixed.
 - **M16 (Agent loop with trust and taint) — OVERSTATED.** The step cycle and taint monotonicity are
   real (`TrustLevel.raisedBy` is monotonic by construction, tested at both the kernel-contract and
   executor-integration level) and egress denial under taint is real and tested. Schema/capability
