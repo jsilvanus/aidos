@@ -1068,6 +1068,159 @@ code was.
 
 ---
 
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 1: Phase 0/1 + re-verification of the 2026-08-09 review)
+
+Commissioned separately from the work above, on its own branch (`claude/rfc-mvp-audit`), with an
+explicit brief: don't trust this file's own status lines or the 2026-08-09 review's claims of
+resolution without independently grepping code and running tests. This entry is the first
+installment — Phase 0/1 (M0.1–M8) plus re-verification of the 2026-08-09 review's "Outstanding
+work" section above — not the full corpus. **This audit is not complete as of this entry; do not
+read it as a final MVP-readiness verdict.** See the tracking doc, `docs/rfc-mvp-audit-tracking.md`,
+for what's left and continued in dated updates below as later links land.
+
+**Method:** two independent subagents, each with no access to the other's findings, tasked with
+re-deriving evidence from scratch — grep the actual `runtime/` source for the classes and line
+counts this file claims, read enough of each file to judge whether it's real logic or a stub, find
+and count the actual `@Test` functions, and run the tests that could be run in this sandbox.
+Neither agent was told what the other found. Below reports where their independent conclusions
+landed.
+
+### Baseline: PR #27 status and the real `gradle jvmTest --continue` result
+
+**PR #27 (`claude/fix-baseline-modules`, fixes `:knowledge`/`:modelruntime`) is still open, not
+merged, as of this audit** — its base is `main`@`c9173b5`, the exact commit this audit branch is
+also cut from. So on this checkout, `:knowledge` and `:modelruntime` are still red.
+
+Ran `gradle jvmTest --continue` to completion (not assumed from a PR description): **28 of 30
+modules compile and pass with 0 failures, 0 errors** — `:kernel`, `:storage`, `:settings`,
+`:identity`, `:capability`, `:broker`, `:executor`, `:lock`, `:api`, `:cli`, `:filesystem`, `:git`,
+`:http`, `:vault`, `:prompt`, `:agentloop`, `:memory`, `:mcp`, `:cookbook`, `:huggingface`,
+`:downloads`, `:models`, `:routing`, `:worker`, `:retention`, `:androidapp`, `:daemon`, `:voice`.
+**`:knowledge` and `:modelruntime` both fail at `compileKotlinJvm`**, both on a `401 Unauthorized`
+resolving a private GitHub Packages coordinate (`io.github.jsilvanus:gitsema-core-jvm` /
+`de.kherud:llama-java:0.3.2`) — this sandbox has no credentials for that registry. This matches
+this file's own prior claim exactly. The deeper bugs PR #27's description attributes to real CI
+(missing `kotlinx-datetime`/`kotlinx-serialization-json` deps in `knowledge/build.gradle.kts`; a
+genuinely-nonexistent `llama-java:0.3.2` coordinate) could not be independently reached from this
+sandbox — the 401 wall is hit first — but the missing-dependency claim was independently
+corroborated by reading `runtime/knowledge/build.gradle.kts`'s `jvmMain` dependency block (only
+`kotlinx-coroutines-core` declared) against `IndexingJob.kt`'s actual imports
+(`kotlinx.datetime.Clock`, `kotlinx.serialization.json.JsonObject`) — the missing-dependency
+diagnosis is plausible by inspection, not just assumed from the PR body.
+
+### Re-verification: the 2026-08-09 review's "Outstanding work" resolutions are real, not narrative
+
+Independently checked all thirteen files/mechanisms the "Outstanding work from this review"
+section above claims were built 2026-08-09/10: `SqliteIntentStore` (6 tests, exact match),
+`TopicMatcher` (9 tests), `SubscriptionRegistry` (6 tests), `EventTypes` (14 constants, 2 tests),
+the four emission call sites (`ToolCompleted` in `SqliteExecutor.drive()`, `GitCommit` in
+`GitTool.gitCommit()`, `FileModified`/`FileCreated` in `FilesystemTool.write()`, `TimerFired` in
+`RuntimeClientWorkDispatcher`), `SessionSubscriptionStore` (4 tests) + `SchedulerMatcher` (8
+tests), `Scheduler.kt` (5 tests), `RunCreator.kt` + `AgentLoopTaskRunner.kt` (2 + 6 tests, plus
+`TaskAppendingTest.kt`'s 4), `RunExecutor`/`SqliteRunExecutor` (3 tests), `RuntimeCompositionRoot`
+(2 tests), `SqliteContentNodeStore` (8 tests), `DegradationLadder`/`SqliteDegradationEventStore`
+(10 + 6 tests), and the RFC-0043 "still nothing built" claim.
+
+**All thirteen are CONFIRMED** — every file is real, non-stub logic; every claimed test count was
+independently recounted and matched exactly (not approximately) in every case checked. This is a
+meaningfully different outcome from the 2026-08-09 review's original findings about these same
+RFCs, and the difference is real: the 2026-08-09 review was correct about the state of the code
+*that day*; the follow-up work in the "Outstanding work" section actually landed, on `main`, with
+tests, across PRs #18–#26 (all confirmed merged via `git log`). **To directly answer the
+commissioning question — was the 2026-08-09 review ever fully completed or acted upon: yes, for
+everything the review itself flagged.** Its findings were not left to rot in PIPELINE.md prose;
+they were followed by real commits.
+
+This does not mean the underlying RFCs (0004/0005/0012/0024/0043/0045/0047) are *fully* built —
+several of the "Outstanding work" entries are explicit about deliberately-out-of-scope remainders
+(e.g. RFC-0012's `intent_proposals`/`intent_edges` still unwired; RFC-0005's timer/scheduled-job
+path still post-MVP by the RFC's own text). Those remainders are accurately flagged already in this
+file's own prose and were not re-litigated here — the audit's job was to check whether the *claimed
+work* was real, not to re-open scope questions this file already answered with a citation to the
+RFC's own MVP section.
+
+### Phase 0/1 re-verification (M0.1–M8)
+
+Independently re-derived, not copied from this file's own summary table:
+
+- **M0.1 (canonical DDL) — CONFIRMED**, with one trivial drift: `python3 schema/check.py` reports
+  **59 tables** across the three schema files (`user.sql: 13`, `vault.sql: 3`, `project.sql: 43`),
+  not the "58 tables" this file's own summary table (near the top of this file) states. Cosmetic,
+  not a fabrication — worth fixing the number next time that table is touched.
+- **M0.2 (`runtime/kernel/`) — CONFIRMED.** 16 files, 2172 lines, `allWarningsAsErrors` on. Exactly
+  one non-DTO `class` in all of `commonMain` (`RelPath`, `Capabilities.kt:161`) — a
+  construction-validated value type, not a hidden implementation; the kernel-is-contracts-only rule
+  holds. `ContractTest.kt`: 14/14 green.
+- **M0.3 (`docs/decisions.md`) — CONFIRMED, count is higher than the roadmap's own stale figure.**
+  35 `### D` headings (D1–D35), every one `SETTLED`, none `OPEN`/`RECOMMENDED`.
+  `docs/mvp-roadmap.md`'s M0.3 row still says "26 settled decisions" from an earlier pass — also
+  cosmetic drift, not a fabrication, but worth a fix in the same pass as the table-count one above.
+- **M1 (storage/settings) — CONFIRMED, precisely.** `MigrationRunner.kt` implements RFC-0040's
+  bootstrap/ready/read-only state machine exactly, including the `storage.migration_required`
+  read-only path (never a refusal) RFC-0017 calls for. `runtime/settings/` totals **848 lines**
+  across four files, matching this file's own claim exactly; `SettingsTest.kt` has **18** `@Test`
+  functions, also an exact match, and they're real (SECURITY/SPEND rejection, fail-closed on
+  invalid value, per-line TOML error continuation) — not padding.
+- **M2 (identity/scopes) — CONFIRMED.** `UuidV7Generator` has real `actual` implementations in both
+  `jvmMain` and `androidMain`. `ProjectRegistry.resolveById()` returns a real `ProjectMovedError`,
+  not a null. `SettingsStore` enforces the SECURITY/SPEND project-write rejection at 4 call sites.
+- **M3 (capability manager) — CONFIRMED in substance, one overstatement.** `SqliteCapabilityManager`
+  is real and its taint-ceiling/revocation-by-epoch tests pass. **The roadmap's own done-when calls
+  the escape-guard test a "property test... covering every encoding"; the actual test
+  (`CapabilityTest.kt:104-126`) is a fixed list of ~8–11 hand-picked strings, not generative
+  fuzzing** — no `Arb`/`checkAll`, no URL-encoding or Unicode-confusable coverage. A solid
+  example-based regression suite, not literally the property test the done-when describes. Worth
+  either writing the real property test or correcting the done-when's wording.
+- **M4 (audit log) — the one milestone with a real, findable functional gap, not just a wording
+  overstatement.** `ToolBroker`'s 8-step sequence and `AuditLog` both exist and are exercised by
+  8/8 green tests — but those tests don't happen to hit two silent-drop paths that do exist in the
+  real code: **(1)** `ToolBroker.kt:68-70` returns `denied()` directly when no tool matches a call,
+  bypassing the audit write entirely for a `tool.not_found` outcome. **(2)** `AuditLog.kt:36`:
+  `if (projectId.isBlank()) return id // no project context — skip` — a write call that arrives
+  with no resolvable project ID is silently dropped, contradicting the class's own doc comment two
+  lines above ("cannot be turned down, sampled, or dropped under pressure"). **(3)** `ToolBroker.kt`'s
+  own docstring claims an `AuditEnforcingBroker` wrapper class enforces complete coverage "as a test
+  failure, not a review comment" — **no such class exists anywhere in the repo** (grepped, zero
+  matches); the actual check in `AuditTest.kt:114` is a loose `assertTrue(after > before, ...)`, not
+  an enforcing harness. M4's own done-when says "an effect with no audit row is a test failure,
+  enforced by the broker harness, not by review" — as written today, that's not true for either
+  silent-drop path. This is exactly the kind of gap the "Accepted is not frozen" discipline exists
+  to catch, and it wasn't caught by the 2026-08-09 review (M4/RFC-0003/RFC-0037 weren't named in
+  its list of exceptions).
+- **M5/M6 (execution graph, executor, recovery/runaway bounds) — CONFIRMED, strong.** All claimed
+  files are real (not re-listing them here, see the "Outstanding work" section above and the
+  re-verification paragraph above it) — 64 executor tests total, 0 failures. `Scheduler.kt` writes
+  `WakeRefused` audit rows for both self-wake and causal-depth-ceiling refusals, independently
+  confirmed against a real test asserting the audit row exists.
+- **M7 (project lock) — CONFIRMED.** `ProjectLock.kt` uses real `FileChannel.tryLock`, heartbeat
+  metadata, and a 3-minute staleness threshold matching RFC-0055. 5/5 tests green.
+- **M8 (crash-recovery suite) — CONFIRMED functionally, one wording overstatement worth flagging.**
+  `CrashRecoveryTest.kt`: 5/5 green, covering B1–B4 plus idempotency, each a real assertion against
+  concrete DB-row state, not a stub. **But no test anywhere in the repo literally forks a process
+  and sends `SIGKILL`** — every "crash" boundary is simulated by writing the post-crash row state
+  directly via SQL, then calling `recover()`/`drive()` on a *fresh executor instance*, not a fresh
+  process. This is a reasonable, common substitute for testing DB-durable checkpointing and it does
+  exercise the real recovery paths — but the literal "`kill -9`" language this file (line 137) and
+  `docs/mvp-roadmap.md`'s M8 done-when both use to describe the guarantee is not what's tested.
+  Whether that gap matters depends on whether SQLite's own durability guarantees (WAL +
+  `synchronous=NORMAL`, confirmed in M1) are considered sufficient to stand in for an actual
+  process-kill test — a judgment call for the project owner, not resolved here.
+
+### What this Part 1 does not cover yet
+
+Phase 2 (M9–M19), Phase 3 (M20–M26), and Phase 4 (M27–M35) milestones are **not yet
+independently re-verified** by this audit — the summaries in this file's earlier sections (the
+Status table, the 2026-08-09 review, and its "Outstanding work" follow-ups) are the only evidence
+for those right now, and per this audit's own brief, that is exactly the kind of claim that needs
+independent grep-and-test verification, not trust. Also not yet done: the RFCs never named by
+either the original review or Part 1 (0000–0002, 0013–0014, 0017, 0020–0023, 0025–0027, 0030–0035,
+0037–0042, 0044, 0046, 0048–0057, 0060, 0099–0102) and a milestone-by-milestone cross-check table
+against `docs/mvp-roadmap.md`. No overall MVP-readiness verdict is given here — it would be
+premature given the coverage so far. Continued in later dated entries below as the audit proceeds;
+see `docs/rfc-mvp-audit-tracking.md` for live status between entries.
+
+---
+
 ## Next
 
 ### Phase 2 — First vertical slice (M9–M19)
