@@ -11,8 +11,10 @@ import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
+import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.ProviderRetention
@@ -111,11 +113,11 @@ private data class StoredToolResult(
  * - **JSON Schema argument validation (RFC-0008 step 8b)** — every `tool_calls` row is written
  *   with `schema_valid = 1` unconditionally. Real validation needs a schema validator this
  *   codebase doesn't yet depend on; this bridge's job was the structural wiring, not that.
- * - **Capability resolution for a model's tool call (RFC-0008 step 8c)** — `ToolCall.capabilityId`
- *   is always `null` here, the same gap `AgentLoop.kt` already has (it never populates one
- *   either). `ToolBroker.invoke()` denies with `capability.missing` for every call until
- *   something maps "a session, a tool name" → a held `CapabilityId`; that mapping is a separate,
- *   not-yet-built subsystem, not this bridge's to invent.
+ * - ~~Capability resolution for a model's tool call (RFC-0008 step 8c)~~ **Built, M19**: see
+ *   [resolveCapability] and [dev.aidos.daemon.CapabilityResolver]. `ToolCall.capabilityId` is
+ *   resolved fresh in [executeToolCall], immediately before the call — the actual authority
+ *   decision still lives entirely in `CapabilityManager.validate()`, called next by
+ *   `ToolBroker.invoke()`; this bridge only looks up which existing grant to hand it.
  * - **The approval flow (RFC-0008 step 8d, `Task(kind = CAPABILITY_REQUEST)`, `AWAITING_APPROVAL`)**
  *   — a `RoutingDecision.RemotePendingApproval` fails the Run outright instead of parking it.
  *   Building the park/resume machinery (a `continuations` row, an event that un-parks it) is
@@ -144,6 +146,17 @@ class AgentLoopTaskRunner(
      * [dev.aidos.vault.Redactor] to inject (most tests) keep the pre-M14 behaviour.
      */
     private val redact: (String) -> String = { it },
+    /**
+     * RFC-0008 step 8c, M19: resolves a model-emitted [ToolCall] to a capability the subject
+     * already holds for the tool's required permission — picking the most recently issued,
+     * unexpired, unrevoked match; see [dev.aidos.daemon.CapabilityResolver]'s own doc comment
+     * for why a resolver this simple is safe (it can only under-grant: `ToolBroker.invoke()`
+     * calls `CapabilityManager.validate()` immediately after on whatever id this returns, and
+     * that call remains the actual authority decision — scope, expiry, revocation, taint
+     * attenuation). Defaults to always-null so callers with no [dev.aidos.kernel.CapabilityManager]
+     * to inject (most tests) keep the pre-M19 behaviour of every tool call being denied.
+     */
+    private val resolveCapability: suspend (subjectId: String, permission: Permission) -> CapabilityId? = { _, _ -> null },
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
@@ -300,11 +313,20 @@ class AgentLoopTaskRunner(
             ?: return TaskResult(false, "No tool_calls row for task ${task.id.value}")
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // RFC-0008 step 8c, M19: resolved fresh here, immediately before the call it gates --
+        // not carried from executeModelCall's fan-out -- so a capability revoked in between the
+        // model turn and this step is never used (D3: nothing security-relevant held across a
+        // step boundary). A tool no longer in the current catalog (descriptor == null) resolves
+        // to no capability, same as today's unconditional null -- ToolBroker denies it either way.
+        val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+            .firstOrNull { it.name == callRow.toolName }
+        val capabilityId = descriptor?.let { resolveCapability(subjectId, it.requiredPermission) }
+
         val call = ToolCall(
             callId = callRow.callId,
             toolName = callRow.toolName,
             arguments = parseJsonObject(callRow.argumentsJson),
-            capabilityId = null,
+            capabilityId = capabilityId,
         )
         // Denied/Failed outcomes are data returned to the model (RFC-0008 Security #3), not a
         // reason to fail this Task — only an actual runner-level problem (missing row, no Run)

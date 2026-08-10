@@ -31,17 +31,12 @@ import java.io.File
  * class that isn't itself deliberately half-wired; see [GitRunReconciler]'s own doc comment for
  * its scope.
  *
- * **Deliberately does not resolve capabilities for model-emitted tool calls.**
- * `AgentLoopTaskRunner` always sets `ToolCall.capabilityId = null` (its own doc comment names this
- * as a known, accepted gap — a `(subjectId, toolName) -> CapabilityId` resolver is a separate,
- * not-yet-designed subsystem). `ToolBroker.invoke`'s own step 2 therefore denies every tool call
- * with `capability.missing` regardless of what this class does, so no capability is granted here
- * either — granting one nothing will ever consult would just be dead code dressed up as progress.
- * The `CapabilityManager` is still constructed and passed to `ToolBroker`, because `ToolBroker`
- * needs one to exist at all (RFC-0030's `validate()` step), not because anything grants through it
- * yet. **What this means concretely: a driven Run can reach a real model response (`MODEL_CALL`),
- * but any `TOOL_CALL` it emits will be denied.** That is the honest, current state of the bridge,
- * not a bug in this composition.
+ * **Resolves capabilities for model-emitted tool calls (M19).** [CapabilityResolver] is wired into
+ * `AgentLoopTaskRunner`, closing the gap this class's own doc comment used to name here — a Run
+ * whose subject actually holds a matching, unexpired, unrevoked capability can now reach a real
+ * `TOOL_CALL` execution instead of an automatic `capability.missing` denial. This class still
+ * grants nothing itself: whatever capabilities exist for [sessionId] were issued elsewhere
+ * (RFC-0018's ordinary grant/delegate flow), before `drive()` is ever called.
  *
  * **Where the model adapter comes from:** [anthropicApiKey] is a plain provider function, not a
  * vault lookup — `SqliteSecretsVault`'s JVM key handling generates a fresh in-memory key by
@@ -111,6 +106,7 @@ class RuntimeCompositionRoot(
             remoteAdapters = remoteAdapters,
         )
 
+        val capabilityResolver = CapabilityResolver(capabilityManager, nowIso)
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -121,6 +117,7 @@ class RuntimeCompositionRoot(
             broker = broker,
             subjectId = sessionId,
             redact = redactor::redact,
+            resolveCapability = capabilityResolver::resolve,
         )
         val executor = SqliteExecutor(
             driver = projectDriver,
