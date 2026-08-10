@@ -1580,15 +1580,178 @@ in this very file for three days before this audit caught it.** RFC-0099 places 
 Android UI work specifically so a negative result there is cheap to act on. A false positive is the
 one outcome that structure doesn't defend against, and that is exactly what's in the record today.
 
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 4: Phase 4, M27–M35)
+
+Same method: independent subagents (three, split by subsystem), re-deriving evidence from scratch,
+running every reachable gradle target with `--rerun-tasks`, one pulling real GitHub Actions run
+data via the API rather than trusting this file's own CI narrative. One agent specifically
+re-verified the four "fixed" claims the 2026-08-09 review's Android-wiring findings prompted; one
+gave gate **G4 (M35)** the same G3-caliber scrutiny Part 3 applied to G3, since G4 is the gate that
+depends on it.
+
+### G4 (M35) — the one piece of good news in this audit so far
+
+**Unlike G3, G4/M35 is honestly represented as not-done, everywhere checked.** `PIPELINE.md`'s own
+checklist carries an unchecked box with an explicit label
+(`- [ ] **M35** — The scenario, by a person **G4** — BLOCKED: requires real person on real
+device`), not a checkmark. `docs/mvp-roadmap.md` states only the done-when, with no pass mark.
+`docs/G4-report-template.md` and `docs/M35-test-report-template.md` are confirmed, by full read, to
+be entirely unfilled placeholders. The only two commits touching M34/M35 artifacts
+(`9852a14`, `e6f04e4`, both `copilot-swe-agent[bot]`, 2026-08-08) are explicit
+planning/infrastructure commits whose own messages say "Blocked on tester availability" and
+"Blocked on AGP network access" — not completion claims. **No fabrication here; the file's own
+prior text (written by the Part 3 link) already anticipated this correctly: "no real tester session
+was ever recorded for G4 either — consistent with G3 never having actually run."** This is worth
+recording precisely because Part 3 found the opposite for G3 — the corpus is capable of getting
+this right, which sharpens rather than excuses the G3 finding.
+
+### Re-verifying the four "fixed" Android-wiring claims from the 2026-08-09 review
+
+All four **CONFIRMED real**, including via real GitHub Actions run data pulled directly (not
+assumed from this file's prose) — `.github/workflows/android-build-and-publish.yml`'s
+`assembleRelease` job has been green on every run since PR #20 merged (2026-08-09), one earlier
+failed attempt on that same PR's branch followed by fixes, consistent with this file's own "CI
+caught six more bugs" narrative rather than contradicting it. `kernel`/`api`'s `build.gradle.kts`
+genuinely have live (not commented-out) `androidTarget()`/`com.android.library`. `AidosService :
+LifecycleService()` genuinely exists, wires `RuntimeServiceHost` into `onStartCommand`/`onDestroy`,
+and the manifest genuinely declares the service and its permissions. `MainActivity.kt` genuinely
+constructs `RealRuntimeClient()`, not `MockRuntimeClient()`. RFC-0055 locking genuinely runs
+through `RealRuntimeClient.projects.open()`/`.create()` via a real `JvmProjectLocker`/`ProjectLock`
+seam, confirmed by an independently-re-run test exercising genuine `FileLock` contention between
+two real client instances (8/8 pass). **Two precise caveats, both already honestly disclosed in
+this file's own prior text and re-confirmed accurate, not new gaps**: `MainActivity` constructs
+`RealRuntimeClient()` bare (no storage/locker seams set), so on Android today it runs in-memory
+only, same as `MockRuntimeClient` would, just through the real code path; and `daemon/main.kt`'s
+RFC-0055 TODO is still literally present in the file (correctly superseded by the seam existing
+elsewhere, not removed) since nothing in the daemon's own startup path calls `projects.open()`
+either.
+
+### The recurring pattern gets worse in Phase 4: correctly-designed presenters wired to stub clients
+
+Parts 2 and 3 found individual subsystems solid with wiring gaps at the integration layer. **Part 4
+finds the same pattern one layer further out, and it is now hitting the product's actual headline
+feature — "review the diff and commit" — not a peripheral one:**
+
+- **M30 (Approval, preview, memory review) — OVERSTATED, severely.** `ApprovalPresenter` is real
+  code with the right shape, but has **no production emission site at all** — the
+  `RuntimeEvent.ToolApprovalRequired` it consumes is constructed nowhere outside its own test file
+  in the entire repository. Even if it fired, `ToolApprovalRequired` has no field to carry a named
+  untrusted source (the presenter's `untrustedSourceDescription` is derived by substring-matching
+  `"UNTRUSTED"` in a generic `previewDescription` string) — this is a structural gap spanning the
+  whole pipeline, not just the executor-side gap Part 2 already found. `providerRetention` is a
+  literal hardcoded placeholder string (`"Provider retention policy: see run details"`), with the
+  code's own comment admitting the real column is never populated (confirming Part 2's M14 finding
+  from the UI side too). **`RealRuntimeClient.approveEffect()`/`.denyEffect()` — the actual approve/
+  deny actions — are stubs**: `approveEffect()` returns a fabricated success without touching the
+  broker or executor; `denyEffect()` is an empty no-op. **The memory review surface does not exist
+  at all** — there is no `MemoryQueries`-shaped API surface anywhere on `RuntimeClient`, and
+  `SessionMemoryStore.promoteToProject()` (confirmed real and schema-enforced by Part 2) is called
+  from exactly one place in the whole repository: its own test. D33's promotion path is real but
+  entirely unreachable from any UI.
+- **M31 (Diff and commit review) — OVERSTATED.** `DiffUiState`/`CommitPresenter`/`CommitDraftState`
+  are real, well-structured, and genuinely typed against the kernel's real structured-hunk types —
+  no reimplemented diff parser. **But every `RuntimeClient` method they call is stubbed identically
+  in both `RealRuntimeClient` and `MockRuntimeClient`**: `diff.changes()` returns a hardcoded empty
+  `DiffSummary` (confirming Part 2's M9 finding), `diff.hunks()` throws
+  `UnsupportedOperationException`, `diff.stage()` is a no-op returning success, and
+  `diff.commit()` **fabricates a commit hash string and returns success without ever calling any
+  git backend** — `RealRuntimeClient.kt` has zero references to `GitTool`/`ToolBroker` anywhere.
+  The real, JGit-backed `GitTool.gitCommit()` exists and works (confirmed by Part 2), but nothing in
+  the diff/commit API path invokes it. This directly contradicts this file's own prior claim that
+  `DiffQueries.commit()` was "added to API" in a sense that implies real wiring. Test coverage
+  matches the gap exactly: the actual hunk-level review feature (keep/skip/revert per hunk — D25's
+  whole point) has zero tests, because exercising it would hit the `UnsupportedOperationException`.
+- **M32 (Notifications) — OVERSTATED, less severely.** Rate-limiting and one-shot dedup are real,
+  correctly implemented, and pass a genuinely substantial 14/14 test suite (throttle-elapsed
+  firing, quiet-hours bypass, category tagging), independently re-run. **But `shouldFire()`,
+  `recordFired()`, and `NotificationBudget.tryConsume()` have zero production call sites** — the
+  only real caller anywhere is the unrelated M27 foreground-service text, which doesn't go through
+  this decision logic at all. The mechanism that would make "rate-limited" and "never silently
+  repeated" true for an actual parked-Run or completion notification is correct and tested in
+  isolation, unreachable from anything that would fire in practice today.
+- **M27 (Foreground service) — OVERSTATED on its most safety-relevant clause.** The Service/
+  notification/manifest wiring is real, and the notification content genuinely derives from live
+  service state (not a static string). **But "eviction mid-Run loses no committed step" has no
+  actual mechanism behind it in this layer**: `RuntimeServiceHost`'s own code comment admits
+  `activeJob` is "never actually assigned anywhere today," so `shutdown()`'s `cancelAndJoin()` is a
+  no-op — and more fundamentally, nothing in `androidapp` ever calls `RuntimeCompositionRoot`/
+  `.drive()`/`RunExecutor` at all (grepped, zero hits), so there is no Run actually running under
+  the Service for anything to evict yet. The state machine (`Idle`/`RunningRun`/`EvictedMidRun`) is
+  real and tested, but as a label simulation, not a mechanism connected to real execution. Whatever
+  crash-safety exists today comes entirely from `executor`'s own RFC-0009 guarantees (real, tested
+  there per Part 1), not from anything in this Android-specific layer.
+- **M28 (Compose UI) — split verdict.** The presenter layer (`ProjectsPresenter`,
+  `SessionListPresenter`, `RunListPresenter`, `CommitPresenter`, `EventStreamPresenter`, 573 lines)
+  is real, and the "built against `MockRuntimeClient` first" discipline genuinely holds — 126 tests
+  pass, independently re-run, and this remains true regardless of `MainActivity` now using
+  `RealRuntimeClient` since both implement the same interface (not a contradiction). **But the
+  actual Compose screens do not render any of the presenters' data** — `Screens.kt`/`HomeScreen.kt`
+  contain literal placeholder text (`Text("(Projects list will appear here via collectAsState)")`)
+  and `collectAsState` is never actually called anywhere in `androidMain`. Real navigation graph,
+  real presenters, no binding between them yet.
+- **M29 (Availability reporting) — OVERSTATED, the same unwired-leaf pattern as M23/M24/M25 in
+  Phase 3.** `AvailabilityReporter`'s decision logic is real and correctly handles MCP/model-query
+  cases, with 3 passing tests — and has exactly two references in the entire repository: its own
+  definition and its own test. Nothing in the UI layer calls `.report(...)` at project-open time.
+
+### The rest of Phase 4
+
+- **M32b (Run Summary and benign classifier) — CONFIRMED for the projection itself, one new
+  security-relevant finding.** `RunSummaryComputer` is a genuine pure data projection with zero
+  model-call references anywhere in its file, and the never-collapse guarantee for pending/errors/
+  egress/out-of-project/INDETERMINATE outcomes is real and tested. **New finding: the benign
+  classifier this component uses (`RunSummaryComputer.isBenign()`) is a second, divergent
+  implementation from the canonical one.** `docs/decisions.md` records a 2026-08-03 fix to the
+  actual D26 classifier (`kernel/Effects.kt`'s `approvalTier()`) specifically to stop an irreversible
+  `git checkout` from being misclassified as benign — but that fix was never propagated to
+  `RunSummaryComputer.isBenign()`, which implements its own separate hardcoded 5-tool allowlist with
+  no `reversible` concept at all, and which `VoiceApprovalHandler` (M33) also depends on. This is
+  fail-safe *today* (no mutation tool sits in the allowlist), but it means two implementations of a
+  security-relevant classification exist with nothing enforcing they stay equivalent — exactly the
+  kind of drift D26's own fix was meant to close off, reopened by a second, unaudited copy.
+- **M32c (Intent as a task list, proposal gate) — CONFIRMED, unchanged from Part 1's finding,
+  independently re-verified rather than assumed stale.** `intent_nodes` genuinely has no `status`
+  column (confirmed against the schema directly); status is genuinely derived, never stored.
+  `intent_edges`/`intent_proposals`/`TARGETED` edges remain unwritten by anything — same gap Part 1
+  found, still true today.
+- **M33 (Voice) — CONFIRMED, this file's own caveat is accurate.** `NoOpSttProvider`/
+  `NoOpTtsProvider` remain the only implementations anywhere; the benign-only gate is real and
+  tested (12 tests, including explicit denial cases for tainted/UNSAFE/new-grant Runs) — though it
+  inherits the M32b finding above, since it gates on the same divergent classifier.
+- **M34 (F-Droid distribution) — OVERSTATED specifically on reproducibility, dependency claim
+  holds.** F-Droid metadata files exist, but the actual build recipe in `metadata/fi.italeino.aidos.yml`
+  is **entirely commented out** ("uncomment once AGP is available"), and
+  `docs/M34-reproducibility-blockers.md`'s own checklist is 0 of 8 items checked for the
+  reproducibility/F-Droid-integration phases — directly contradicting a separate summary document's
+  "✅ Reproducible build verified" line, which has no actual build behind it. The "no proprietary
+  dependencies" claim itself does hold up (grepped all `build.gradle.kts` files for Firebase/GMS/
+  Crashlytics/analytics SDKs — zero hits; this file's own checklist already marks M34 `[ ]`
+  BLOCKED, so the top-level status is honest, the overstatement is confined to the implementation
+  summary document).
+
+### What Part 4 means for the audit so far
+
+Phase 4 confirms the pattern Parts 2 and 3 already found, one layer further out than either: not
+just "the CLI/MCP don't exist" or "a setting is ignored," but specifically that **the presenter
+layer for the MVP's actual headline interaction — reviewing a diff and committing it — is real,
+well-structured, and tested against a client whose diff/commit/approve/deny methods are uniformly
+stubbed.** Nothing here is fabricated the way G3 was; every gap found is a real, findable stub with
+a clear boundary, and several (M28's Mock-first discipline, the four re-verified Android-wiring
+claims, G4's honest blocked status) held up exactly as claimed. But the cumulative picture across
+Parts 2-4 is that most of what a person would actually touch — the CLI, MCP, the diff/commit
+review screen, approvals, memory review, notifications — sits behind at least one stubbed or
+unwired layer between real subsystem code and anything reachable by a user, even setting aside the
+G3 fabrication entirely.
+
 ### What this audit does not cover yet
 
-Phase 4 (M27–M35) milestones are **not yet independently re-verified**. Also not yet done: the
-RFCs never named by the original review or Parts 1-3 (0000–0002, 0013–0014, 0017, 0028–0029
-partially, 0037–0042, 0044, 0046, 0048–0057, 0060, 0099–0102) and a milestone-by-milestone
-cross-check table against `docs/mvp-roadmap.md`. No overall MVP-readiness verdict is given here —
-it would be premature given the coverage so far, though Parts 2 and 3's findings already narrow
-what that verdict can honestly say about G2 and G3. Continued in later dated entries below as the
-audit proceeds; see `docs/rfc-mvp-audit-tracking.md` for live status between entries.
+Also not yet done: the RFCs never named by the original review or Parts 1-4 (0000–0002, 0013–0014,
+0017, 0028–0029 partially, 0037–0042, 0044, 0046, 0048–0057, 0060, 0099–0102) and a
+milestone-by-milestone cross-check table against `docs/mvp-roadmap.md`. No overall MVP-readiness
+verdict is given here — it would be premature given the coverage so far, though Parts 2-4's
+findings already narrow what that verdict can honestly say about G2, G3, and the product's actual
+headline interaction. Continued in later dated entries below as the audit proceeds; see
+`docs/rfc-mvp-audit-tracking.md` for live status between entries.
 
 ---
 

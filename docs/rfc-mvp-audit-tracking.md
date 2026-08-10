@@ -13,10 +13,9 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 3 · 2026-08-10 · complete, pushed. Started interactively (user request) ahead of the
-scheduled wakeup. PIPELINE.md now also has "Part 3: Phase 3, M20–M26" with the audit's most
-severe finding: **G3 ("PASSED") is fabricated — a bare doc-status edit with zero backing
-measurement, code, or data, self-contradicting M21's own "blocked" status in the same file.**
+Link 4 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 4: Phase 4, M27–M35". Good
+news for once: G4/M35 is honestly marked blocked, not fabricated like G3. But the presenter layer
+for the MVP's actual headline feature (diff/commit review) is wired to a fully-stubbed client.
 
 ## Done
 
@@ -130,16 +129,55 @@ measurement, code, or data, self-contradicting M21's own "blocked" status in the
       callers anywhere).
 - [x] Wrote the PIPELINE.md audit section (Part 3), including a clear note that even the
       2026-08-09 review missed the G3 fabrication. Committed, pushed.
+- [x] Woken by scheduled trigger for link 4 (not user-triggered this time). Rescheduled to link 5
+      first, per pipeline discipline, before doing anything else.
+- [x] Re-verified main hasn't moved (git fetch, no new commits) — no merge needed this link.
+- [x] Dispatched 3 independent verification subagents in parallel for Phase 4 (M27-M35), split:
+      Agent A (M27-M29 + re-verifying the 2026-08-09 review's 4 "fixed" Android-wiring claims),
+      Agent B (M30-M32: approval/diff-commit/notifications), Agent C (M32b/M32c/M33/M34/M35,
+      including a dedicated G4-caliber-scrutiny check mirroring Part 3's G3 investigation).
+- [x] **G4/M35 checked with the same rigor Part 3 applied to G3 — and it's the opposite result.**
+      Honestly marked `[ ]` BLOCKED everywhere (PIPELINE.md, mvp-roadmap.md, both report templates
+      confirmed blank by full read). The only two commits touching M34/M35 artifacts are explicit
+      planning/infrastructure commits, not completion claims. No fabrication here — worth recording
+      since it shows the corpus CAN get this right, which sharpens rather than excuses G3.
+- [x] **The four specific 2026-08-09-review "fixed" Android-wiring claims all CONFIRMED real**,
+      including via real GitHub Actions CI run data pulled directly via the API (not assumed from
+      prose) — `assembleRelease` green on every run since PR #20 merged. androidTarget() on
+      kernel/api, the AidosService Service subclass, MainActivity→RealRuntimeClient, and RFC-0055
+      locking via JvmProjectLocker are all real, with two already-honestly-disclosed caveats
+      re-confirmed accurate (MainActivity's RealRuntimeClient has no storage seams set; daemon's
+      RFC-0055 TODO comment is stale-but-harmless since locking now lives elsewhere).
+- [x] **Part 4 found the pattern from Parts 2-3 hitting the MVP's actual headline feature.** M30
+      (approval/memory review) OVERSTATED severely — zero production emission site for approval
+      events anywhere in the repo, RealRuntimeClient.approveEffect()/denyEffect() are complete
+      stubs, no memory-review API surface exists at all. M31 (diff/commit review) OVERSTATED —
+      DiffUiState/CommitPresenter are real and well-typed but every RuntimeClient method they call
+      (diff.changes/hunks/stage/commit) is stubbed in BOTH clients; diff.commit() fabricates a
+      commit hash without ever calling GitTool. M32 (notifications) OVERSTATED less severely — the
+      rate-limit/dedup logic is real and well-tested (14/14) but has zero production callers. M27
+      (foreground service) OVERSTATED on its safety claim specifically — activeJob is never
+      assigned so shutdown()'s cancellation is a no-op, and nothing in androidapp ever calls
+      RuntimeCompositionRoot/.drive() at all, so nothing is actually being evicted yet. M28
+      (Compose UI) split verdict — presenters real and Mock-first tested (126 tests), but the
+      actual screens are placeholder text, collectAsState never called anywhere. M29 (availability
+      reporting) OVERSTATED — same unwired-leaf pattern as M23-M25 in Phase 3, exactly 2 references
+      to AvailabilityReporter in the whole repo (its own definition + its own test).
+- [x] Rest of Phase 4: M32b CONFIRMED for the projection itself, but **new security-relevant
+      finding**: RunSummaryComputer.isBenign() (also used by M33's voice gate) is a second,
+      divergent benign-classifier implementation that never got the 2026-08-03 D26 security fix
+      the canonical kernel/Effects.kt approvalTier() received — fail-safe today, but a real drift
+      risk with nothing enforcing the two stay equivalent. M32c CONFIRMED, unchanged from Part 1
+      (re-verified rather than assumed stale). M33 CONFIRMED, this file's own NoOp-provider caveat
+      is accurate. M34 OVERSTATED on reproducibility specifically — F-Droid build recipe is
+      entirely commented out, reproducibility checklist is 0/8, contradicting a separate summary
+      doc's "✅ Reproducible build verified" line; the "no proprietary dependencies" claim itself
+      does hold up.
+- [x] Wrote the PIPELINE.md audit section (Part 4), committed, pushed.
 
 ## Next
 
-- **Part 4 (next link): Phase 4 (M27-M35)** — RFCs 0044, 0050-0051, 0057, 0060. The 2026-08-09 review already
-  found the Android wiring thinner than milestone checkmarks suggest (androidTarget() on
-  kernel/api, Service subclass, MainActivity→RealRuntimeClient, daemon locking) — PIPELINE.md's
-  later dated entries (2026-08-09/10) claim several of these were subsequently fixed. Re-verify
-  those specific claims the same way Part 1 did for the RFC-0004/0005/etc. claims — do not assume
-  they're accurate just because they're detailed.
-- **Part 5: RFCs never named by any milestone or the original review** — 0000-0002 (vision/
+- **Part 5 (next link): RFCs never named by any milestone or the original review** — 0000-0002 (vision/
   principles/runtime, mostly prose — light-touch check they're not contradicted by code), 0017
   (state model), 0028-0029 (cost/quota, error taxonomy — partially covered by M6, check the rest),
   0037-0041 (observability, testing strategy, serialization, storage — partially covered by M1,
@@ -224,3 +262,31 @@ measurement, code, or data, self-contradicting M21's own "blocked" status in the
   not let Part 6 soften this into "G3 needs re-verification" language — the evidence found is that
   G3 was never run at all, on any device, ever, and the current "PASSED" mark is actively false,
   not merely unverified. State it with the same directness Part 3 already does.
+- **Link 4 lesson: G4 came back clean, and that matters for how Part 6 should be written.** Not
+  every gate/status claim in this repo is inflated — G4/M35 was checked with the exact same
+  rigor as G3 and held up completely honest. Part 6's final assessment should show both results
+  side by side (G3 fabricated, G4 honest) rather than implying the whole corpus is unreliable —
+  the actual pattern is narrower and more specific than that, and overstating the audit's own
+  findings would be the same failure mode this audit exists to catch.
+- **Link 4 lesson: the "real subsystem, stubbed integration" pattern from Parts 2-3 is not
+  Phase-2/3-specific — it recurs at every layer, including presenter code sitting directly on top
+  of a stubbed API client.** M31 is the clearest instance yet: a well-typed, well-designed
+  presenter (`CommitPresenter`) calling a `RuntimeClient` method (`diff.commit()`) that fabricates
+  its return value. This means "the presenter has tests and they pass" is now confirmed
+  insufficient evidence at THREE layers deep (subsystem → API client → presenter) — when Part 5
+  covers any remaining subsystem, check not just the immediate caller but the next layer out too,
+  since a passing test can be validating against a stub two calls removed from anything real.
+  Consider whether Part 6's final table needs a fourth verdict category beyond
+  CONFIRMED/PARTIAL/MISSING — something like "real but stub-terminated" — since "PARTIAL" doesn't
+  quite capture "fully real code, wired to a fully fake dependency."
+- **Link 4 lesson: `RunSummaryComputer.isBenign()` vs. `kernel/Effects.kt`'s `approvalTier()` is a
+  new pattern worth watching for in Part 5 too — a security-relevant decision function duplicated
+  across a module boundary, where one copy got a fix and the other didn't.** This is distinct from
+  "real but unwired" — both copies ARE wired into something real (M32b, M33's voice gate). The risk
+  is drift, not absence. If Part 5 finds any other place a kernel-level security/trust decision
+  (taint, capability tiers, taint-ceiling checks) appears to be reimplemented rather than called
+  from its canonical location, flag it the same way.
+- **3 agents remains the right number** — Part 4 covered 9 milestones (M27-M35, counting M32b/c as
+  distinct) with 3 agents, no coordination problems, each came back with substantial independent
+  findings neither of the others touched. Continue with 3 for Part 5's ~15 remaining RFCs, split
+  roughly by RFC-number range as the tracking doc's "Next" section already suggests.
