@@ -3,6 +3,7 @@ package dev.aidos.executor
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.EventId
@@ -191,6 +192,14 @@ class AgentLoopTaskRunnerTest {
             mapper = { c ->
                 check(c.next().value) { "no MODEL_CALL attempt for run ${runId.value}" }
                 app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!! to c.getString(1))
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun runTaintSourceNodeId(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String? =
+        driver.executeQuery(null, "SELECT taint_source_node_id FROM runs WHERE id = ?",
+            mapper = { c ->
+                check(c.next().value) { "run ${runId.value} not found" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0))
             }, 1
         ) { bindString(0, runId.value) }.value
 
@@ -428,5 +437,88 @@ class AgentLoopTaskRunnerTest {
         val systemText = (requests[0].messages.first { it is Turn.System } as Turn.System).content
         assertTrue(systemText.contains("use kotlin idioms"), "an adopted instruction set must reach the system turn")
         assertEquals(expectedHash, runInstructionSetHash(driver, runId))
+    }
+
+    /** A broker whose result queue is driven by test setup, one entry per [EffectBroker.invoke] call. */
+    private fun sequencedBroker(results: List<ToolCallResult>): EffectBroker {
+        val queue = ArrayDeque(results)
+        return object : EffectBroker {
+            override fun register(tool: Tool) {}
+            override fun descriptorsFor(s: String, p: PlatformProfile, n: Boolean) = emptyList<ToolDescriptor>()
+            override suspend fun invoke(s: String, call: ToolCall, runTaint: TrustLevel): ToolCallResult =
+                queue.removeFirst().copy(callId = call.callId)
+            override suspend fun preview(s: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+            override suspend fun cancel(callId: String) {}
+        }
+    }
+
+    private fun toolCallAttemptSnapshot(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, callId: String): String =
+        driver.executeQuery(
+            null,
+            "SELECT a.output_snapshot FROM tool_calls tc " +
+                "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
+                "WHERE tc.call_id = ?",
+            mapper = { c ->
+                check(c.next().value) { "no attempt for call $callId" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, callId) }.value
+
+    @Test
+    fun `a taint-attenuated denial names the tool call that first raised the taint`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(
+            toolCallResponse("read-untrusted-file", callId = "call-1"),
+            toolCallResponse("push-to-remote", callId = "call-2"),
+            endTurnResponse(),
+        ))
+        val broker = sequencedBroker(listOf(
+            ToolCallResult(
+                callId = "call-1", outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.Text("file contents")), trustLevel = TrustLevel.UNTRUSTED,
+            ),
+            ToolCallResult(
+                callId = "call-2", outcome = ToolOutcome.Denied(DenialReason.ATTENUATED_BY_TAINT),
+                content = listOf(ContentBlock.Text("denied: ATTENUATED_BY_TAINT")), trustLevel = TrustLevel.TRUSTED,
+            ),
+        ))
+
+        buildExecutor(driver, fakeRouter(adapter), broker).drive(runId)
+
+        val snapshot = toolCallAttemptSnapshot(driver, "call-2")
+        assertTrue(
+            snapshot.contains("read-untrusted-file"),
+            "the denial must name the tool call that actually tainted the Run, not a bare enum (RFC-0027): $snapshot",
+        )
+    }
+
+    @Test
+    fun `taint_source_node_id is recorded when the tainting result carries a content node reference`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(toolCallResponse("search-knowledge"), endTurnResponse()))
+        val broker = sequencedBroker(listOf(
+            ToolCallResult(
+                callId = "call-1", outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.ResourceRef(ContentNodeId("node-42"), sizeBytes = 128)),
+                trustLevel = TrustLevel.UNTRUSTED,
+            ),
+        ))
+
+        buildExecutor(driver, fakeRouter(adapter), broker).drive(runId)
+
+        assertEquals("node-42", runTaintSourceNodeId(driver, runId))
+    }
+
+    @Test
+    fun `taint_source_node_id stays null when the tainting result carries no content node`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        assertEquals(null, runTaintSourceNodeId(driver, runId), "Text-only content names no content node to record")
     }
 }

@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ErrorClass
@@ -313,7 +314,19 @@ class AgentLoopTaskRunner(
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.
         val newTaint = run.taintLevel raisedBy result.trustLevel
-        if (newTaint != run.taintLevel) updateRunTaint(task.runId, newTaint)
+        if (newTaint != run.taintLevel) {
+            updateRunTaint(task.runId, newTaint)
+            if (run.taintLevel == TrustLevel.TRUSTED) {
+                // RFC-0027 Data Model: "first node that raised the taint" -- written once, at the
+                // moment the Run first leaves TRUSTED, and only when the tainting result actually
+                // names a content node. No production tool returns ContentBlock.ResourceRef today
+                // (FilesystemTool/GitTool are Text-only), so this stays null for them -- honest
+                // absence, not a silent no-op; see this class's own doc comment for the gap.
+                result.content.filterIsInstance<ContentBlock.ResourceRef>().firstOrNull()?.let {
+                    updateTaintSourceNode(task.runId, it.nodeId)
+                }
+            }
+        }
 
         val outcomeStr = when (result.outcome) {
             is ToolOutcome.Ok -> "OK"
@@ -326,7 +339,18 @@ class AgentLoopTaskRunner(
             is ToolOutcome.Failed -> outcome.error.message
             else -> null
         }
-        val text = result.content.filterIsInstance<ContentBlock.Text>().joinToString("\n") { it.text }
+        val rawText = result.content.filterIsInstance<ContentBlock.Text>().joinToString("\n") { it.text }
+        // RFC-0027 "Escalation": a taint-attenuated denial must name which untrusted content
+        // caused it, not just report that the Run is tainted -- "the prompt is unanswerable [to a
+        // human approver] and the user will click through it" otherwise. Best available source
+        // today is the tool operation that first raised the taint (durable data, always present);
+        // a real content node (path, not just an operation name) is used instead once one exists.
+        val deniedOutcome = result.outcome as? ToolOutcome.Denied
+        val text = if (deniedOutcome != null && deniedOutcome.reason == DenialReason.ATTENUATED_BY_TAINT) {
+            rawText + " (Run is tainted by: ${taintSourceDescription(task.runId)})"
+        } else {
+            rawText
+        }
 
         updateToolCallOutcome(callRow.callId, outcomeStr)
         writeAttempt(
@@ -502,6 +526,43 @@ class AgentLoopTaskRunner(
             bindString(1, runId.value)
         }
     }
+
+    private fun updateTaintSourceNode(runId: RunId, nodeId: ContentNodeId) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE runs SET taint_source_node_id = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, nodeId.value)
+            bindString(1, runId.value)
+        }
+    }
+
+    /**
+     * RFC-0027 "Escalation": which tool call first raised this Run's taint, read back from
+     * durable rows (no in-memory tracking across the Run — D3). `writeAttempt` stores the *Run's*
+     * taint level as of each TOOL_CALL, not that call's own result, so the earliest row whose
+     * stored taint differs from `TRUSTED` is exactly the call that caused the transition — every
+     * row before it was written while the Run was still `TRUSTED`.
+     */
+    private fun taintSourceDescription(runId: RunId): String =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT tc.tool_name, a.output_snapshot FROM tool_calls tc " +
+                "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
+                "WHERE tc.run_id = ? ORDER BY tc.step_index ASC",
+            mapper = { c ->
+                var found: String? = null
+                while (found == null && c.next().value) {
+                    val toolName = c.getString(0) ?: continue
+                    val snapshot = c.getString(1) ?: continue
+                    val stored = runCatching { json.decodeFromString<StoredToolResult>(snapshot) }.getOrNull()
+                    if (stored != null && stored.trustLevel != TrustLevel.TRUSTED.name) found = toolName
+                }
+                QueryResult.Value(found)
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: "unknown tool call"
 
     /**
      * RFC-0016: discovers AGENTS.md/CLAUDE.md at the project root and marks the set adopted iff
