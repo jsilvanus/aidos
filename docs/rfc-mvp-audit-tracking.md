@@ -13,9 +13,12 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 4 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 4: Phase 4, M27–M35". Good
-news for once: G4/M35 is honestly marked blocked, not fabricated like G3. But the presenter layer
-for the MVP's actual headline feature (diff/commit review) is wired to a fully-stubbed client.
+Link 5 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 5: remaining RFCs". Found
+the audit's first live correctness bug (not just absence/overstatement): tool-call Attempts always
+persist `recoveryClass = "IDEMPOTENT"` regardless of the tool's real declared class, so a crash
+mid-`git push` would be retried by `SqliteExecutor.recover()` — exactly what RFC-0029 exists to
+prevent. Also found RFC-0042 (egress) has no centralized enforcement and `HttpTool` has zero SSRF
+protection. Only Part 6 (final cross-check table + MVP-readiness verdict) remains.
 
 ## Done
 
@@ -174,19 +177,72 @@ for the MVP's actual headline feature (diff/commit review) is wired to a fully-s
       doc's "✅ Reproducible build verified" line; the "no proprietary dependencies" claim itself
       does hold up.
 - [x] Wrote the PIPELINE.md audit section (Part 4), committed, pushed.
+- [x] Woken by scheduled trigger for link 5. Rescheduled to link 6 first, per pipeline discipline.
+- [x] **Re-orient found PR #28 merged since Part 4** — the Phase 2 fix session's work (M10 CLI,
+      M13 reconciliation, M14 vault/redaction, M15 instruction adoption, M16 taint naming, M18 MCP
+      client, M19 capability resolution) landed as real code (4,787 insertions, 42 files). Merged
+      `main` into the audit branch, pushed. **Confirmed the fix session self-annotated Part 2's
+      findings directly and honestly** (scoped "Update: ..." notes naming what's fixed and what
+      remains open, same style this file's own review section already used) — did NOT
+      independently re-verify those fixes myself this link (out of Part 5's scope; different RFCs),
+      just confirmed the annotations exist and read as honest on a skim. A full independent
+      re-verification of the fix session's own claims could be a good Part 7 or a note for whoever
+      picks up the final PR review, but is not required for Part 6's cross-check (Part 6 can cite
+      the self-annotations as-is, flagged as "self-reported, not independently re-verified by this
+      audit" where relevant).
+- [x] Dispatched 3 independent verification subagents in parallel for the remaining RFCs, split:
+      Agent A (0000-0002, 0013-0014, 0041, 0060 — foundational/superseded/Draft, lower-effort
+      batch), Agent B (0017, 0028, 0029 — state model, cost/quota, error taxonomy), Agent C (0037,
+      0039, 0042, 0046, 0054-0055 remainder — observability, serialization, networking, identity,
+      scope/instances beyond what M1/M2/M7/M24 already covered).
+- [x] **Found the audit's first live correctness bug, not an absence/overstatement finding.**
+      `AgentLoopTaskRunner.executeToolCall()` resolves each tool's real `RecoveryClass` correctly,
+      then discards it — the Attempt row is written with a hardcoded `recoveryClass = "IDEMPOTENT"`
+      literal regardless of the tool. `git:push` is tagged `UNSAFE` on its own descriptor, but if a
+      crash happens mid-push, the persisted attempt says `IDEMPOTENT`, and `SqliteExecutor.recover()`
+      (correct in isolation, confirmed by Part 1) would retry it — the exact duplicate-push scenario
+      RFC-0029 names by name as what `UNSAFE` exists to prevent. Untested: zero mentions of
+      `recoveryClass`/`IDEMPOTENT`/`UNSAFE` anywhere in `AgentLoopTaskRunnerTest.kt`. This is a
+      genuine, live, exploitable bug in the crash-recovery path this project treats as its one
+      non-negotiable guarantee — flag prominently in Part 6, don't bury it among the "not built yet"
+      findings, it's a different and more urgent class of problem.
+- [x] **RFC-0042 (Networking/Egress) NOT FOUND — a real security gap, independent of MVP
+      completeness.** No centralized egress enforcement exists anywhere; at least 3 independently-
+      built HTTP clients with inconsistent protection. `HttpTool` has zero host-allowlist/private-
+      address rejection at all — a direct SSRF exposure, calls user-supplied URLs with no check.
+      Only `HttpMcpClient` (built post-PR#28) has real protections, and they're bespoke to that one
+      module.
+- [x] Rest of Part 5: 0000-0002/0013-0014/0041/0060 all CONFIRMED CLEAN — no contradictions, Draft
+      RFCs correctly have nothing built. RFC-0017 (state model) PARTIAL — Project lifecycle
+      entirely unbuilt (schema-only), Session lifecycle half-built (SLEEPING→RUNNING real and
+      guarded, but nothing transitions RUNNING→SLEEPING anywhere, crash recovery never resets a
+      crashed session's state, and the CLI's real `archive()` is a literal `notWired(...)`).
+      RFC-0028 (cost/quota) PARTIAL, precisely split: D8 divide-on-delegation is correct and tested
+      but has zero callers (nothing delegates yet — "correct but unreachable," not "not built");
+      the actual spend ceilings (`modelCalls`/`costUnits`) are simply never enforced anywhere,
+      only the pre-existing flat step ceiling is real; one numeric discrepancy found
+      (`MAX_CAUSAL_DEPTH = 16` vs. the RFC's stated default of 8). RFC-0037 (observability) NOT
+      FOUND — wholesale gap, no Logger class anywhere, metric/crash-record tables never written.
+      RFC-0039 (serialization) PARTIAL — unknown-field preservation entirely absent, and the new
+      post-PR#28 `Wire.kt` socket codec silently drops unknown fields, no size/depth limits on any
+      deserialized input. RFC-0046 (identity/actors) PARTIAL — actor attribution collapses to two
+      hardcoded literals (`"SESSION"`/`"RUNTIME"`), DeviceIdentity completely unimplemented
+      (`device_id` is always the literal string `"runtime"`). RFC-0054/0055 PARTIAL — MCP's
+      user-scope registration/adoption unwired (consistent with M18), `lock_breaks` never written
+      (already honestly self-flagged in the code's own comment).
+- [x] Wrote the PIPELINE.md audit section (Part 5), committed, pushed.
 
 ## Next
 
-- **Part 5 (next link): RFCs never named by any milestone or the original review** — 0000-0002 (vision/
-  principles/runtime, mostly prose — light-touch check they're not contradicted by code), 0017
-  (state model), 0028-0029 (cost/quota, error taxonomy — partially covered by M6, check the rest),
-  0037-0041 (observability, testing strategy, serialization, storage — partially covered by M1,
-  check remainder — export/import is Draft/post-MVP, confirm nothing built contradicts that), 0046
-  (identity/actors — confirm ActorRef usage), 0054-0055 (scope/instances — partially covered by
-  M1/M2/M7, check remainder), 0060 (plugin SDK — Draft, confirm nothing built).
-- **Part 6 (final): milestone-by-milestone cross-check table** (M1-M35 in one table: CONFIRMED /
-  PARTIAL / MISSING / HARDWARE-BLOCKED) and the honest final MVP-readiness assessment against G4.
-  Do this LAST, once every phase has independent evidence — not before.
+- **Part 6 (final, next link): milestone-by-milestone cross-check table** (M1-M35 in one table,
+  citing which Part found what) and the honest final MVP-readiness assessment against G4. This is
+  a synthesis of Parts 1-5's already-gathered evidence, not new investigation — read ALL prior
+  "Notes for the next link" sections below before drafting, several contain explicit instructions
+  for how Part 6 must be written (don't soften G2/G3, don't imply the whole corpus is unreliable
+  when G4 was clean, consider a 4th verdict category for "real but stub-terminated", surface the
+  RFC-0029 recovery-class bug and RFC-0042 egress gap prominently since they're a different class
+  of finding than the rest). Once Part 6 is done and pushed, decide whether the audit is complete —
+  if so, open the single PR now and STOP the chain, per the original task brief.
 
 ## Notes for the next link
 
@@ -290,3 +346,25 @@ for the MVP's actual headline feature (diff/commit review) is wired to a fully-s
   distinct) with 3 agents, no coordination problems, each came back with substantial independent
   findings neither of the others touched. Continue with 3 for Part 5's ~15 remaining RFCs, split
   roughly by RFC-number range as the tracking doc's "Next" section already suggests.
+- **Link 5 lesson: not every severe finding is the same shape, and Part 6 must not flatten them
+  into one bucket.** This audit now has at least four distinct kinds of finding: (1) fabricated
+  status with zero backing (G3), (2) real subsystems wired to stubbed/fake dependents (M10/M18/M19/
+  M30/M31/etc.), (3) real subsystems simply unwired/uncalled from anything (M24/M25/M29/AvailabilityReporter),
+  and now (4) a live correctness bug in code that IS wired, real, and tested-but-not-for-this-case
+  (the RFC-0029 recovery-class bug). Kind 4 is arguably the most urgent for the project owner
+  regardless of MVP timeline, because it's a bug in shipped, working code, not a gap in unshipped
+  work. Part 6's table and prose should distinguish these kinds explicitly, not just mark
+  everything "PARTIAL."
+- **Link 5 lesson: security-relevant gaps that aren't about MVP milestone completeness (RFC-0042's
+  egress/SSRF gap, and to a lesser extent RFC-0046's device-identity gap) deserve their own
+  visibility in Part 6, separate from the M1-M35 milestone table.** They don't map cleanly onto any
+  single milestone's done-when, so a milestone-by-milestone table alone would bury them. Consider a
+  short separate subsection in Part 6 for "cross-cutting gaps found outside the milestone table."
+- **The fix sessions are now landing real, large, honest work (PR #28 confirmed) — Part 6 should
+  acknowledge this state explicitly rather than writing the final assessment as if Parts 1-5's
+  findings are all still exactly as-found.** Where a fix session's own self-annotation directly
+  addresses something Part 2/3/4 found, Part 6 can note "since fixed, see PR #28" rather than
+  re-stating the original gap as if it's still fully open — but distinguish self-reported-fixed
+  from independently-re-verified-fixed, since this audit hasn't re-checked the fix session's own
+  claims with the same independent rigor applied to everything else. Don't let that distinction
+  get lost in the final write-up.

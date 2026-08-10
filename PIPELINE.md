@@ -1906,15 +1906,172 @@ review screen, approvals, memory review, notifications — sits behind at least 
 unwired layer between real subsystem code and anything reachable by a user, even setting aside the
 G3 fabrication entirely.
 
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 5: remaining RFCs not named by any milestone or the original review)
+
+**Housekeeping first.** Since Part 4, PR #28 merged — the Phase 2 fix session's work (M10 CLI,
+M13 reconciliation, M14 vault/redaction, M15 instruction adoption, M16 taint naming, M18 MCP
+client, M19 capability resolution) landed on `main` as real, substantial code (4,787 insertions
+across 42 files). `main` was merged into this audit branch. **The fix session self-annotated
+Part 2's findings directly**, in the same "Update (date, branch): ..." style this file's own
+2026-08-09 review section already used — each annotation is honestly scoped, naming what's fixed
+and what remains open rather than claiming blanket completion. This audit did not independently
+re-verify those fixes in Part 5 (out of this link's scope; Part 5 covers different RFCs) — noted
+here for the record, and the fix-session branch remains a decision for the project owner on
+timing/merge, not this audit's to judge further.
+
+Same method as prior Parts: three independent subagents, split by RFC batch, re-deriving evidence
+from scratch. This batch covers every RFC not named by any milestone, the 2026-08-09 review, or
+Parts 1–4: 0000–0002, 0013–0014, 0017, 0028–0029, 0037, 0039, 0041–0042, 0046, 0054–0055, 0060.
+
+### The most severe finding in Part 5: a real, exploitable crash-recovery bug, not just an overstatement
+
+Every prior finding in this audit has been about something missing, stubbed, unwired, or falsely
+claimed done. **This one is different: it is a live correctness bug in code that is real, tested,
+and wired into the production path — the kind of bug RFC-0009's crash-recovery guarantee exists
+specifically to prevent.**
+
+`AgentLoopTaskRunner.executeToolCall()` (`runtime/executor/.../AgentLoopTaskRunner.kt:321-323`)
+correctly resolves each tool's real, declared `RecoveryClass` from its `ToolDescriptor` — and then,
+several lines later, discards it: the Attempt row is written with a **hardcoded literal**,
+`recoveryClass = "IDEMPOTENT"` (`AgentLoopTaskRunner.kt:378-387`), regardless of what the resolved
+descriptor actually said. `git:push` is registered with the broker, exposed to the model, and
+correctly tagged `RecoveryClass.UNSAFE` on its own descriptor (`GitTool.kt:81-88`, confirmed by
+Part 2) — but if a model calls it and the process crashes mid-push, the persisted
+`attempts.recovery_class` column reads `"IDEMPOTENT"`, not `"UNSAFE"`. `SqliteExecutor.recover()`
+reads that column verbatim and treats anything that isn't `UNSAFE`/`CHECKABLE` as safe to retry
+(confirmed correct in isolation by Part 1) — so **on this exact, real, wired code path, a crash
+mid-`git push` would cause the runtime to retry the push**, precisely the duplicate-push scenario
+RFC-0029 names by name as the reason `UNSAFE` attempts must never be retried ("Silently retrying is
+how duplicate pushes and double notifications happen").
+
+This is untested, not merely undertested: `AgentLoopTaskRunnerTest.kt` has zero mentions of
+`recoveryClass`/`IDEMPOTENT`/`UNSAFE` anywhere. The specific test this file's own M13 entry cites as
+proof recovery works correctly for `UNSAFE` attempts (`ExecutorTest.kt`'s `recover marks UNSAFE
+attempt as INDETERMINATE`) manually inserts a row that already says `UNSAFE` via raw SQL — it
+proves `SqliteExecutor.recover()` itself is correct given the right input, and says nothing about
+whether the live tool-call path ever produces that input. It doesn't, for any tool, today.
+Model-call Attempts are separately hardcoded to `"PURE"`, which is a defensible simplification (a
+model response has no external effect) — the bug is specific to tool-call Attempts. This is stated
+as a finding, not fixed, per this audit's investigation-only scope, but it is the kind of finding
+that should not wait for a routine milestone pass — it's a latent data-integrity risk in the actual
+crash-recovery path this project treats as its one non-negotiable guarantee (M8: "100%, not
+mostly").
+
+### RFC-0042 (Networking and Egress) — NOT FOUND, and this one is a real security gap too
+
+No centralized egress chokepoint exists. The RFC's core requirement — every outbound network call
+funnels through one enforcement point doing destination scoping (host allowlist, private/loopback
+address rejection, redirect re-validation) — has no implementation (`grep` for `EgressClient`/
+`NetworkScope`/`EgressGuard`/`NetworkPolicy` across `runtime/` returns nothing). `CapabilityScope.Network`
+exists in the kernel with exactly the RFC's field shape but is never consulted by any network-calling
+code — it's a stored value with no enforcement behind it. **At least three independently-built HTTP
+clients exist with inconsistent, in two cases absent, protection**: `HttpTool` (`runtime/http/`)
+builds a raw `java.net.http.HttpClient` and calls user-supplied URLs directly with **no host
+allowlist and no private/loopback-address rejection at all** — a direct SSRF exposure the RFC
+itself names by example (`http://169.254.169.254/`); `AnthropicAdapter`'s Ktor client has no
+comparable check either. Only `HttpMcpClient` (built in the Phase 2 fix session, post-PR#28) has
+real protections — cross-host redirect refusal, HTTPS-except-loopback — but they're bespoke to that
+one module, not shared. No `egress_records` audit table is ever written by any of these paths
+(schema-only). The RFC's own Motivation section names this exact failure mode ("the first one to
+get it wrong defines the system's actual egress posture") — realized in full.
+
+### The rest of Part 5
+
+- **RFC-0000/0001/0002 (Vision, Principles, Runtime) — CONFIRMED CONSISTENT.** All prose/
+  architectural documents; checked every concrete, falsifiable claim (treeless workers, SQLite
+  storage, no plugin host in v1, capability-based security with no admin bypass) against the code.
+  No contradictions found. A clean result here is itself a useful finding, not a non-finding — these
+  documents have held up.
+- **RFC-0013/0014 (Resources, Artifacts) — CONFIRMED fully superseded, nothing resurrected.** Both
+  describe a data model distinct from RFC-0024's `ContentNode`/`ProvenanceEdge` (confirmed real by
+  Part 1); exhaustive grep found zero trace of the old `Resource`/`Artifact`/`ResourceType`/
+  `ArtifactStatus` types or a `resources`/`artifacts` table anywhere.
+- **RFC-0041 (Export/Import), RFC-0060 (Plugin SDK) — CONFIRMED, correctly nothing built.** Both
+  Draft, both post-MVP by design. RFC-0060's only artifact is a schema table explicitly commented
+  `-- Reserved. No plugin host in v1 (RFC-0043).` with zero code touching it.
+- **RFC-0017 (State Model) — PARTIAL.** `RunState`/`TaskState`/`ContentNodeState` match the RFC
+  exactly (already confirmed elsewhere). **Project lifecycle is entirely unbuilt**: schema has the
+  column (`CREATING|OPEN|CLOSING|CLOSED|DELETED`) but no `ProjectState` Kotlin type exists anywhere,
+  and no code ever writes anything but the hardcoded initial `'OPEN'` — `close()`/`delete()` never
+  update the state column at all. **Session lifecycle is half-built**: `SLEEPING→RUNNING` is real
+  and correctly guarded (`Scheduler.kt`), but nothing transitions `RUNNING→SLEEPING` anywhere in the
+  codebase, `SqliteExecutor.recover()` never resets a crashed session's state (so a session left
+  `RUNNING` by a crash stays `RUNNING` forever), and `RealRuntimeClient.sessions.archive()` mutates
+  only an in-memory map with no state guard at all — while the CLI's real transport,
+  `SocketRuntimeClient.sessions.archive()`, is a literal `notWired("sessions.archive")`.
+- **RFC-0028 (Cost and Quota) — PARTIAL, and precisely split into two different kinds of gap.** D8
+  (divide-on-delegation) is correctly implemented and unit-tested (`Budget.split()`) — but has zero
+  callers anywhere outside its own test, because nothing in the codebase actually delegates a
+  budget to a worker yet (`TreelessWorker` itself has zero production callers, confirmed by Part 3).
+  This is "correct but currently unreachable," a different and lower-risk finding than "not built."
+  What IS simply not built: `BudgetLedger` has zero implementations; `ToolBroker`'s own step-4
+  comment says budget is "enforced at grant time" and `SqliteCapabilityManager.validate()` performs
+  no such check — the sentence is false on both halves. Only the flat `runs.max_steps` step ceiling
+  (confirmed real by Part 1) is enforced; the RFC's `modelCalls`/`costUnits` ceilings are never
+  checked anywhere. One numeric discrepancy: `EventStore.MAX_CAUSAL_DEPTH = 16`, not the RFC's
+  stated default of 8.
+- **RFC-0029 (Error Taxonomy) — PARTIAL**, covered above by the recovery-class bug finding.
+  Separately: the `AidosError`/`ErrorClass`/`ErrorCodes` registry is real and well-formed, but
+  `SqliteExecutor`'s Task→Run failure boundary uses a plain nullable `String` instead
+  (`TaskResult.errorMessage`), so several real failure paths (loop detection, `UnavailableOffline`,
+  pending-approval) collapse into one generic, non-registry code (`"task.failed"`,
+  `ErrorClass.TRANSIENT`) whose class contradicts its own actual terminal effect (the Run is
+  `FAILED`, not retryable, despite `TRANSIENT`'s defined meaning being "retry").
+- **RFC-0037 (Observability) — NOT FOUND, a wholesale gap.** Every MVP item (structured logging
+  with correlation IDs, levels, metrics, crash records, diagnostic bundle) is either entirely
+  absent or reduced to unused schema tables (`metric_samples`, `crash_records` — zero `INSERT`s
+  anywhere). No `Logger` class exists anywhere in `runtime/`; diagnostics are raw `println`. The
+  real, tested `AuditLog` (RFC-0003) is correctly out of this RFC's scope — it's the permanent audit
+  record, not the diagnostic log RFC-0037 actually defines — so this isn't double-counting M4's
+  earlier finding, it's a separate, unbuilt subsystem.
+- **RFC-0039 (Serialization and Versioning) — PARTIAL.** `kotlinx.serialization` is used
+  consistently for persisted JSON payloads, and the storage migration state machine is real
+  (confirmed elsewhere). **The RFC's own headline rule — unknown-field preservation on
+  read-modify-write — is entirely absent**: no kernel type carries the prescribed
+  `unknownFields: JsonObject`. New since PR #28: `Wire.kt`, the real socket protocol's codec, is a
+  hand-written field-by-field parser that silently drops any field it doesn't explicitly name on
+  decode and never re-emits it — exactly the forward-compatibility failure this RFC's Motivation
+  section describes, now live on the client↔daemon boundary. No size/depth limits exist on any
+  deserialized input anywhere (a real resource-exhaustion gap, not just a spec gap).
+- **RFC-0046 (Identity, Actors, and Collaboration) — PARTIAL.** `ActorRef`/`ActorKind`'s type shape
+  and schema columns are real and correctly designed. **But actor attribution in practice collapses
+  to two hardcoded literals**: nearly every audit-writing call site across `ToolBroker`,
+  `SqliteExecutor`, `AgentLoopTaskRunner`, and `Scheduler` writes `actorKind = "SESSION"`
+  unconditionally, regardless of whether the real actor is a worker, MCP server, or anything else;
+  only one call site (`GitRunReconciler`) ever writes `"RUNTIME"`. `USER`/`WORKER`/`MCP_SERVER`/
+  `PLUGIN` are never written by any exercised path. **`DeviceIdentity` (the RFC's own MVP item 2) is
+  completely unimplemented** — the `device_identity` table is never read or written by any Kotlin
+  code, and every `device_id` value that does get written is the literal hardcoded string
+  `"runtime"`, so "which machine did this happen on" is unanswerable from the audit trail today.
+- **RFC-0054/0055 (Scope Model, Runtime Instances) — PARTIAL for the parts beyond what Parts 1/2/3
+  already confirmed.** The project registry, connection-token socket auth, scrubbed-environment
+  subprocess spawning, and `user_interactive`/TTY-gated approvals are all real (the latter three new
+  since PR #28). **MCP's "registered at user scope, enabled per project" rule is not
+  implemented** — `McpServerRegistration` is a purely in-memory struct with no persistence, and
+  `McpTool`'s own doc comment says outright it needs "the user-scope registration loading... none
+  of which exist yet," consistent with M18's Part 2 finding from a different angle. **`lock_breaks`
+  is never written** — `RealRuntimeClient`'s own code comment already flags this honestly ("RFC-0055:
+  'locks are never broken silently'... No audit-log write path exists yet from this class"), so a
+  stale-lock break happens (correctly) but is never surfaced to the user as the RFC requires.
+
+### What Part 5 means for the audit so far
+
+Part 5's cleanest results (0000–0002, 0013–0014, 0041, 0060) are a useful counterweight to the rest
+of this audit — not everything in this corpus is overstated, and the audit should not be read as
+implying that. But Part 5 also produced the first finding in this whole audit that isn't about
+absence, stubbing, or false completion claims: a real, live, untested correctness bug in the exact
+code path RFC-0009's crash-recovery guarantee is supposed to make airtight. And RFC-0042's finding
+— no centralized egress enforcement, with at least one tool (`HttpTool`) having no SSRF protection
+at all — is a genuine security gap independent of anything this audit has found about MVP milestone
+completeness. Both are flagged here for the project owner's attention regardless of how the
+eventual MVP-readiness verdict reads, because both are real today, not contingent on any future
+Phase.
+
 ### What this audit does not cover yet
 
-Also not yet done: the RFCs never named by the original review or Parts 1-4 (0000–0002, 0013–0014,
-0017, 0028–0029 partially, 0037–0042, 0044, 0046, 0048–0057, 0060, 0099–0102) and a
-milestone-by-milestone cross-check table against `docs/mvp-roadmap.md`. No overall MVP-readiness
-verdict is given here — it would be premature given the coverage so far, though Parts 2-4's
-findings already narrow what that verdict can honestly say about G2, G3, and the product's actual
-headline interaction. Continued in later dated entries below as the audit proceeds; see
-`docs/rfc-mvp-audit-tracking.md` for live status between entries.
+Only Part 6 remains: the final milestone-by-milestone cross-check table (M1–M35) and the honest
+MVP-readiness assessment against G4. Continued in the next dated entry below; see
+`docs/rfc-mvp-audit-tracking.md` for live status.
 
 ---
 
