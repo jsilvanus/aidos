@@ -119,20 +119,3 @@ class DigestMismatchException(
     "Digest mismatch for model $modelId: expected $expected but got $actual. " +
             "Weights have been deleted. Re-install the model."
 )
-
-/**
- * Factory for GlobalModelRuntime with default JVM backend (M21).
- *
- * Usage:
- * ```kotlin
- * val runtime = GlobalModelRuntime.create()  // Uses LlamaCppInferenceBackend
- * ```
- *
- * The underlying InferenceBackend can be tested with mock implementations:
- * ```kotlin
- * val mockBackend = object : InferenceBackend { ... }
- * val runtime = GlobalModelRuntime(mockBackend)
- * ```
- */
-fun GlobalModelRuntime.Companion.create(): GlobalModelRuntime =
-    GlobalModelRuntime(backend = LlamaCppInferenceBackend())

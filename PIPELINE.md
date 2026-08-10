@@ -53,6 +53,19 @@ model-emitted `ToolCall`s yet — a deliberate, user-confirmed scope boundary, n
 `Scheduler`-woken Runs stay un-driven, per RFC-0044's own work-class table. Full detail in the
 "Finish `RealRuntimeClient`" checklist item below, under its own dated update.
 
+**2026-08-10 · both of the two long-standing pre-existing red modules are fixed** (branch
+`claude/fix-baseline-modules`). `:modelruntime`'s `LlamaCppAdapter.kt` was written against a
+fictional `de.kherud.llama` API (wrong package, wrong version, a method that never existed at any
+published version) — rewritten against the real library (`2.3.5`), plus three smaller independent
+bugs the real dependency then exposed (a non-exhaustive `ContentBlock` `when`, a `DigestUtils`
+overload that doesn't exist, a `commonMain` file illegally referencing a `jvmMain`-only class).
+Compiles and its 26 existing tests pass for the first time — real on-device inference correctness
+is still unverified (no test ever constructed a real model). `:knowledge`'s `IndexingJob.kt` was
+missing `kotlinx-datetime`/`kotlinx-serialization-json` and also referenced `WorkClass.BACKGROUND`,
+never a real enum value — fixed and cross-checked line-by-line against `gitsema-kotlin`'s actual
+source, but not locally re-compiled end-to-end (private registry auth this session's token
+doesn't carry); CI is the real verifier here. Full detail in "Independent codebase review" below.
+
 | | |
 |---|---|
 | RFCs | **54 Accepted, 7 Draft** — every remaining Draft is a subsystem the MVP does not build |
@@ -1296,6 +1309,78 @@ environment-only, ahead of its own work. Full picture, reconciled:
     dependency declaration in `knowledge/build.gradle.kts`.
   - **Neither fixed as of this merge** — both are real bugs in modules outside RFC-0004/0005's and
     Group 2's scope, and need whoever owns `knowledge`/`modelruntime` to look at them with intent.
+
+  **Update (2026-08-10, branch `claude/fix-baseline-modules`) — both fixed, and both turned out
+  deeper than their own CI error text suggested.**
+  - **`:modelruntime`: the real bug wasn't the version number, it was the whole API.** Checked
+    Maven Central's own index directly (`search.maven.org`) rather than guessing a replacement
+    coordinate: the real artifact is `de.kherud:llama` (not `llama-java`), versioned from `1.0.0`
+    — `0.3.2` never existed at any version, ever. But `LlamaCppAdapter.kt` also imported
+    `de.kherud.llama.args.ModelParameters` (fetched and diffed the real sources jar for every
+    published `1.x`–`4.x` version: that `.args` sub-package never existed either, at any version)
+    and called a `model.generateToken(prompt)` method that has never been part of this library's
+    API (real method is `generate(prompt, InferenceParameters): Iterable<Output>` — `Output.text`
+    holds the decoded string, `Output` itself is not a `String`). The whole adapter was written
+    against a fictional API shape that merely resembled the real one, not a stale version of it.
+    `2.3.5` is the closest real version to what the code already assumed (same
+    `LlamaModel(String, ModelParameters)` constructor, matching setter names for everything
+    except two the real library spells differently at that version: `setNBbatch` — a genuine typo
+    in the library itself, fixed in later versions — and `setUseMLock`). Rewrote `loadModel()`
+    and `invoke()`'s generation loop against that real API; both now compile and (per commented
+    verification below) pass the module's existing tests. **What's still not verified: actual
+    runtime correctness with a real GGUF model.** No test in this module ever constructed a real
+    `LlamaCppAdapter`/`LlamaModel` (confirmed by grep — `LlamaCppInferenceBackendTest.kt` only
+    exercises catalog/digest/file logic), so nothing here has run real inference against a loaded
+    model, on any version, ever. That's real hardware/model testing this session cannot do
+    (CLAUDE.md: "Test on real hardware — Claude tests locally; real-world testing is yours").
+    Two more, smaller, independent bugs surfaced once the dependency itself resolved: a `'when'
+    expression must be exhaustive` on `ContentBlock` in `formatPrompt()` (kernel's `ContentBlock`
+    gained a `ResourceRef` variant this file never handled — added it, rendered the same way
+    `[Image: ...]` already was); `DigestUtils.sha256Hex(file: File)` in
+    `LlamaCppInferenceBackend.kt` called an overload that doesn't exist (commons-codec only has
+    `ByteArray`/`InputStream`/`String` — fixed via `file.inputStream().use { ... }`);
+    `GbnfGrammarAndParsingTest.kt`'s `ToolDescriptor` test fixture referenced four more names that
+    were never real kernel types (`EffectKind.Query`, `Permission.ReadOnly`, `RecoveryClass.SAFE`,
+    `ToolAvailability.Everywhere`) — corrected to `EffectKind.Read`, `Permission.FS_READ`,
+    `RecoveryClass.PURE`, and a real `ToolAvailability(profiles, tier)` value. And a real KMP
+    layering bug: `GlobalModelRuntime.kt` (`commonMain`) had a `GlobalModelRuntime.Companion.create()`
+    extension function directly referencing `LlamaCppInferenceBackend`, a `jvmMain`-only class —
+    `commonMain` cannot see `jvmMain` declarations, so this could never have compiled once the
+    dependency itself resolved. Moved just that factory function into a new `jvmMain` file
+    (`GlobalModelRuntimeFactory.kt`); `GlobalModelRuntime` itself stays in `commonMain`, unchanged,
+    since it's genuinely platform-agnostic (its own doc comment: testable with mock backends).
+    Also added the missing `kotlinx-serialization-json` dependency `GbnfGrammarCompiler.kt`/
+    `ToolCallParser.kt` needed but never declared — same shape of gap as `:knowledge`'s.
+  - **`:knowledge`: the missing dependency was real, but so was a second bug next to it.**
+    `IndexingJob.kt` uses `kotlinx.datetime.Clock` and imports `kotlinx.serialization.json.
+    JsonObject` (the latter turned out unused — removed); neither `kotlinx-datetime` nor
+    `kotlinx-serialization-json` was declared in `knowledge/build.gradle.kts` (added, matching
+    the versions every other module in this repo already pins: `0.6.1`/`1.7.3`). But
+    `WorkClass.BACKGROUND` — used twice — was never a real `WorkClass` value (the real enum,
+    confirmed in `kernel/Models.kt`, is `INTERACTIVE, DEFERRED, SCHEDULED, OPPORTUNISTIC` only);
+    corrected to `WorkClass.DEFERRED`, which is RFC-0044's own worked example for indexing
+    specifically ("Deferred | WorkManager, constraints | background dispatcher | indexing,
+    compaction"). `Trigger.Every(anchor = now, intervalSeconds = intervalMinutes * 60)` also used
+    named parameters that don't exist on the real `Trigger.Every(interval: Duration, anchor:
+    Instant?)` — corrected. **Not locally re-verified end to end**: `gitsema-core-jvm` is on a
+    private GitHub Packages registry gated behind `read:packages`-scoped `GITHUB_TOKEN` (this
+    session's own token is a different credential type, scoped for git/GitHub-API operations, not
+    Maven package registry auth — same 401 the earlier link hit, confirmed not fixable from here).
+    Every real symbol these files reference was instead verified directly: cloned
+    `jsilvanus/gitsema-kotlin` (already in this session's repo scope) and diff-checked
+    `KnowledgeIndexFactory.kt`, `GitsemaKnowledgeIndex.kt`, `LocalOnlyEmbeddingProvider.kt`, and
+    `ModelAdapterEmbeddingProvider.kt` against the real, current source for every type/constructor/
+    field they use (`GitsemaSemanticIndex`, `createSqlDriver`, `SqliteMetadataStore`,
+    `SqliteFtsStore`, `FlatFileVectorStore`, `JGitRepository`, `Query`, `SearchResult`, `Match`,
+    `MatchProvenance`, `IndexCoverage`, `IndexStatus`, `EmbeddingProvider`) — all four files match
+    exactly, no further bugs found. CI (which does have working registry credentials) is this
+    fix's actual final verifier for `:knowledge`, same as it already is for CI-only paths
+    elsewhere in this repo (`androidMain`).
+  - `gradle jvmTest --continue` now clean except `:knowledge` locally (auth-only, expected;
+    verified everything checkable without registry access) — `:modelruntime` compiles and its 26
+    existing tests (`GlobalModelRuntimeTest`, `GbnfGrammarAndParsingTest`,
+    `LlamaCppInferenceBackendTest`) pass for the first time. `CrashRecoveryTest` unaffected
+    (this branch never touches `executor`).
 - **`cookbook`'s `testExceedsContextAtLongWindow` was a real calibration bug, not a test bug — now
   fixed.** RFC-0022 doesn't mandate exact constants for `CookbookEngine.computeResidentMemory()`'s
   resident-memory formula, but it does give a worked example (Qwen2.5 3B Q4_K_M, 2.0GB weights:

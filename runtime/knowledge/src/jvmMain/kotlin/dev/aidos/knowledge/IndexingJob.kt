@@ -6,7 +6,7 @@ import dev.aidos.kernel.ScheduledJobId
 import dev.aidos.kernel.Trigger
 import dev.aidos.kernel.WorkClass
 import kotlinx.datetime.Clock
-import kotlinx.serialization.json.JsonObject
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Background indexing job (Phase 4: Background indexing integration, RFC-0044).
@@ -31,7 +31,7 @@ class IndexingJob {
      * Returns a ScheduledJob configured for:
      * - OPPORTUNISTIC guarantee (no crash recovery, best-effort)
      * - Repeating trigger every N minutes (configurable, default 30)
-     * - BACKGROUND work class (does not block foreground)
+     * - DEFERRED work class (RFC-0044's own example for indexing; does not block foreground)
      * - Runs until complete or preempted
      */
     companion object {
@@ -55,11 +55,14 @@ class IndexingJob {
                 sessionId = sessionId,
                 name = "Index project $projectId",
                 trigger = Trigger.Every(
+                    interval = (intervalMinutes * 60).seconds,
                     anchor = now,
-                    intervalSeconds = intervalMinutes * 60,
                 ),
                 guaranteeClass = GuaranteeClass.OPPORTUNISTIC,  // Phase 4: best-effort, no crash recovery
-                workClass = WorkClass.BACKGROUND,  // Phase 4: doesn't block foreground
+                // RFC-0044's own work-class table names "indexing" as its DEFERRED example
+                // (WorkManager/background dispatcher, constrained) -- BACKGROUND isn't a real
+                // WorkClass value (INTERACTIVE/DEFERRED/SCHEDULED/OPPORTUNISTIC only).
+                workClass = WorkClass.DEFERRED,
                 constraintsJson = "{}",  // TODO: Phase 4 - add charging/unmetered constraints
                 enabled = true,
                 nextRunAt = now,  // Can start immediately
@@ -85,7 +88,7 @@ class IndexingJob {
                 name = "Index project $projectId (once)",
                 trigger = Trigger.At(now),
                 guaranteeClass = GuaranteeClass.OPPORTUNISTIC,
-                workClass = WorkClass.BACKGROUND,
+                workClass = WorkClass.DEFERRED,
                 enabled = true,
                 nextRunAt = now,
                 lastRunAt = null,

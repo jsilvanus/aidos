@@ -1,7 +1,8 @@
 package dev.aidos.modelruntime
 
+import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
-import de.kherud.llama.args.ModelParameters
+import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRequest
@@ -91,10 +92,10 @@ class LlamaCppAdapter(
             .setNCtx(contextSize)          // Context window size
             .setNThreads(threads)          // CPU threads for inference
             .setNGpuLayers(0)              // No GPU for now (M22+)
-            .setNBatch(512)                // Batch size for token generation
+            .setNBbatch(512)               // Batch size for token generation (real API's own typo, not this file's)
             .setLogitsAll(false)           // Don't compute logits for all tokens
             .setUseMmap(true)              // Use memory-mapped file I/O
-            .setUseMlock(false)            // Don't lock memory (avoid killing app)
+            .setUseMLock(false)            // Don't lock memory (avoid killing app)
 
         return try {
             LlamaModel(modelPath.absolutePath, params)
@@ -131,17 +132,19 @@ class LlamaCppAdapter(
                 compileToolGrammar(request.tools)
             }
 
-            // Generate response using llama-java API
-            // The generateToken method returns a completion handle with hasNext()/next()
+            // Generate response using the real de.kherud.llama API: LlamaModel.generate(prompt,
+            // InferenceParameters) returns Iterable<Output>, not a bespoke hasNext()/next()
+            // completion handle -- iterate it directly, and each Output's *text* (not the Output
+            // itself) is the token's decoded string.
             val output = buildString {
-                val completionHandle = model.generateToken(prompt)
+                val tokens = model.generate(prompt, InferenceParameters()).iterator()
                 var tokenCount = 0
-                
-                while (completionHandle.hasNext() && tokenCount < request.maxOutputTokens) {
-                    val token = completionHandle.next()
-                    append(token)
+
+                while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
+                    val token = tokens.next()
+                    append(token.text)
                     tokenCount++
-                    
+
                     if (shouldStop(toString(), request.stopConditions)) break
                 }
             }
@@ -203,6 +206,7 @@ class LlamaCppAdapter(
                         when (block) {
                             is ContentBlock.Text -> prompt.append(block.text)
                             is ContentBlock.Image -> prompt.append("[Image: ${block.mimeType}]")
+                            is ContentBlock.ResourceRef -> prompt.append("[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]")
                         }
                     }
                     prompt.append("\n")
@@ -218,6 +222,7 @@ class LlamaCppAdapter(
                         when (block) {
                             is ContentBlock.Text -> prompt.append(block.text)
                             is ContentBlock.Image -> prompt.append("[Image: ${block.mimeType}]")
+                            is ContentBlock.ResourceRef -> prompt.append("[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]")
                         }
                     }
                     prompt.append("\n")

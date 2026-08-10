@@ -11,6 +11,8 @@ kotlin {
             dependencies {
                 implementation(project(":kernel"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 // gitsema-kotlin — the retrieval core (RFC-0015, M22).
                 // JVM variant: commonMain + jvmAndroidMain + jvmMain compiled into one artifact.
                 // Published to GitHub Packages; credentials via GITHUB_TOKEN (env var, not secrets).
