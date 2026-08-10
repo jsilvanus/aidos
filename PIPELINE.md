@@ -83,7 +83,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | CLI | `runtime/cli/` — CLI frontend: create project, list sessions, send message, event stream, approve, diff, artifacts, audit. G2 end-to-end test. M10 ✅, M19/G2 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): M10's audit gap is fixed — `runtime/cli/src/jvmMain/.../Main.kt` is a real argv-parsing executable (`gradle :cli:run --args=...`), and `daemon/.../RuntimeSocketServer.kt` is a real Unix domain socket server (newline-delimited JSON, token handshake per RFC-0052/RFC-0055, `user_interactive` enforcement on grant/approve) — no longer the placeholder that printed a string and returned. `SocketRuntimeClient` (cli) is a real `RuntimeClient` wired over that socket for projects/sessions/capabilities/events/runtime-info — exactly M10's done-when surface. Diff/artifact/knowledge queries are deliberately not yet on the wire (out of M10's done-when; `Wire.kt`'s own doc comment says so) and throw a clear `UnsupportedOperationException` naming the gap if called remotely, rather than silently no-op — a real, narrow, documented gap instead of the prior undocumented total absence. Proven by `RealSocketIntegrationTest` (daemon module), which spawns the daemon as a genuine OS subprocess and drives it end-to-end over the real socket, not `MockRuntimeClient`.** |
 | Filesystem | `runtime/filesystem/` — `ResourceHandle`, read/write/list/search, `Preview.Diff`, escape guard. M12 ✅ |
 | Git | `runtime/git/` — status/diff/add/commit/branch/log/checkout on real repo; `push` UNSAFE; reconciliation. M13 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): RFC-0053's actual reconciliation protocol is now built** — `git/.../Reconciliation.kt` (`RepoFingerprint`, the five classifications, JGit-based compute/classify) and `daemon/.../GitRunReconciler.kt` (the SQL orchestration: `repo_fingerprints`/`reconciliations` read-write, content-node re-hash/`DANGLING`/`SUPERSEDED` per RFC-0053's object-class table, parked-Run termination with `FAILED(repo.mutated)`), wired into `SqliteExecutor.drive()` via a new nullable `RunReconciler` seam that gates the PENDING/INTERRUPTED→RUNNING transition — real "before any Run may start" gating, not `gitStatus()`'s live re-read standing in for it. Scoped to RFC-0053's own MVP list: "on project open" fingerprinting and filesystem watching are not wired (flagged in the class's own doc comment, not silently dropped — the former needs `api`→`git`/`executor`, a module cycle this pass didn't take on); `intent_conflicted` is always 0, honestly, since RFC-0012's Intent Graph has no live writer yet. |
-| Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅ |
+| Vault | `runtime/vault/` — API key round-trip through `vault.db`; `AnthropicAdapter` normalizes tool calls; retention policy recorded as UNKNOWN when absent. M14 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): the redaction and retention wiring the audit found missing is now real.** `SqliteSecretsVault` registers/unregisters values with an injected `Redactor` on `resolve()`/`delete()`; `AnthropicAdapter` reports a real `ProviderRetention` through the new `ModelAdapter.providerRetention` kernel property; `AgentLoopTaskRunner.writeAttempt()` redacts `output_snapshot` and writes `attempts.provider_retention_json` (UNKNOWN fallback for a remote adapter with no stated policy, null for local), wired end to end by `RuntimeCompositionRoot`. Scoped honestly: only the vault's own register/unregister and `attempts.output_snapshot` are covered — events, prompt packages, diagnostic logs, and memory entries/exports are not yet redacted (see the Part 2 audit's M14 finding for the full list). |
 | Prompt | `runtime/prompt/` — `PromptAssembler` (two-phase token budget, D22), `InstructionDiscovery` (AGENTS.md/CLAUDE.md, SHA-256 identity). 13 tests. M15 ✅ |
 | AgentLoop | `runtime/agentloop/` — full cycle: router→assemble→checkpoint→invoke→taint→execute→checkpoint; maxSteps=24; loop detection. 6 tests. M16 ✅. **Still has zero callers (2026-08-09) — and by design now, not just neglect: it holds the whole transcript in memory across its `while` loop in one suspend call, which RFC-0009 forbids for durable execution. `executor/AgentLoopTaskRunner.kt` is the actual production path for driving a Run's model-call loop (same `kernel`/`prompt` building blocks, rebuilt at the step machine's real grain); `AgentLoop.kt` remains valid for non-durable contexts, if any ever need one.** |
 | Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
@@ -1368,6 +1368,29 @@ passed (M19 ✅)**. The findings below do not support that.
   so the specific "UNKNOWN when a provider states no policy, never an assumed-benign default" rule
   has nothing implementing it to test — the one test that mentions "UNKNOWN" only checks a hardcoded
   string doesn't literally contain that word, not the actual fallback behavior.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): two of the finding's specific,
+  checkable claims are now fixed, not all six of RFC-0035's redaction boundaries.** `ModelAdapter`
+  (kernel) gained a `providerRetention: ProviderRetention?` property (`RetentionPolicy`,
+  `TrainingUse`, `recordedAt` — RFC-0026); `AnthropicAdapter` reports a real `ZERO`/`NONE` policy
+  through it (replacing the old dead `providerRetentionJson` field nothing read). `SqliteSecretsVault`
+  now takes a nullable `Redactor` and calls `.register()` in `resolve()`/`.unregister()` in `delete()`
+  — the vault-side half of the docstring's own claim, proven by a new round-trip test
+  (`VaultTest.kt`: store → resolve registers it, `redact()` masks it, `delete()` unregisters it).
+  `AgentLoopTaskRunner.writeAttempt()` now takes a `redact: (String) -> String` seam (default
+  identity, so existing callers/tests are unaffected) applied to `output_snapshot` before the
+  `INSERT`, and a `providerRetention` parameter serialized into the now-populated
+  `provider_retention_json` column with `recordedAt` stamped fresh at write time; the MODEL_CALL call
+  site passes `adapter.providerRetention ?: ProviderRetention(UNKNOWN, ...)` for every non-local
+  adapter — the specific "never assumed-benign" rule the finding named, now with 4 tests exercising
+  local (null), remote-with-no-stated-policy (UNKNOWN fallback), remote-with-a-stated-policy, and
+  redaction-applied-before-persistence. `RuntimeCompositionRoot` constructs one `Redactor` per
+  `drive()` call, registers the Anthropic key with it before the adapter is ever invoked, and passes
+  `redactor::redact` into `AgentLoopTaskRunner`. **Deliberately still not wired, named rather than
+  silently claimed done: 4 of RFC-0035's 6 redaction boundaries** — events, prompt packages,
+  diagnostic logs, and memory entries/exports never call `redact()`; only `attempts.output_snapshot`
+  (this update) and the vault's own register/unregister (this update) are covered. A secret that
+  reaches one of those other four paths without first passing through an `attempts.output_snapshot`
+  row is not caught today.
 - **M15 (Prompt construction) — PARTIALLY OVERSTATED.** Token budget derivation and the two-phase
   negotiation are both real and the negotiation is structurally, not just conventionally, bounded to
   one retry. The adoption gate itself is real, tested code in `PromptAssembler`/

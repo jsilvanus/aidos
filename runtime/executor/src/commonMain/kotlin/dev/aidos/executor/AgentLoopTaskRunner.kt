@@ -14,6 +14,8 @@ import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
@@ -25,11 +27,13 @@ import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.AssemblyRequest
 import dev.aidos.prompt.AssemblyResult
 import dev.aidos.prompt.PromptAssembler
+import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -126,6 +130,13 @@ class AgentLoopTaskRunner(
     private val assembler: PromptAssembler,
     private val broker: EffectBroker,
     private val subjectId: String = "run",
+    /**
+     * RFC-0035: redacts known secret values out of anything durably persisted. Applied to
+     * `attempts.output_snapshot` before it is written — a model's own text can echo back a
+     * secret that appeared earlier in its context. Defaults to identity so callers with no
+     * [dev.aidos.vault.Redactor] to inject (most tests) keep the pre-M14 behaviour.
+     */
+    private val redact: (String) -> String = { it },
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
@@ -214,6 +225,15 @@ class AgentLoopTaskRunner(
                     stopReason = response.stopReason.name,
                 )
             ),
+            // RFC-0026: never assumed-benign. A remote adapter that reports no policy at all
+            // (the interface's own `null` default) is UNKNOWN, not treated as ZERO/local-shaped.
+            providerRetention = if (adapter.isLocal) null else adapter.providerRetention
+                ?: ProviderRetention(
+                    policy = RetentionPolicy.UNKNOWN,
+                    statedDurationDays = null,
+                    trainingUse = TrainingUse.UNSPECIFIED,
+                    recordedAt = Instant.parse(nowIso()),
+                ),
         )
 
         // Termination (RFC-0008 "Termination" table): no tool calls, or a terminal stop reason.
@@ -480,6 +500,7 @@ class AgentLoopTaskRunner(
         tokensInput: Int?,
         tokensOutput: Int?,
         outputSnapshot: String,
+        providerRetention: ProviderRetention? = null,
     ) {
         val auditId = idGen()
         audit.write(
@@ -491,24 +512,34 @@ class AgentLoopTaskRunner(
             subjectRef = task.toolName ?: task.kind.name,
             nowIso = nowIso(),
         )
+        // RFC-0035: redact before this row is durably written -- output_snapshot is one of
+        // RFC-0035's own listed redaction boundaries, and unlike the vault this is text the
+        // model produced, so the vault's own register-on-load never sees it.
+        val redactedSnapshot = redact(outputSnapshot)
+        // RFC-0026: recordedAt is stamped fresh here, at write time -- see ProviderRetention's
+        // own doc comment for why the adapter-level value isn't reused as-is.
+        val retentionJson = providerRetention
+            ?.copy(recordedAt = Instant.parse(nowIso()))
+            ?.let { json.encodeToString(it) }
         driver.execute(
             identifier = null,
             sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, ended_at, state, " +
-                "output_snapshot, model_provider, model_version, tokens_input, tokens_output, " +
-                "recovery_class, audit_ref) VALUES (?, ?, 1, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?)",
-            parameters = 11,
+                "output_snapshot, model_provider, model_version, provider_retention_json, tokens_input, " +
+                "tokens_output, recovery_class, audit_ref) VALUES (?, ?, 1, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 12,
         ) {
             bindString(0, idGen())
             bindString(1, task.id.value)
             bindString(2, nowIso())
             bindString(3, nowIso())
-            bindString(4, outputSnapshot)
+            bindString(4, redactedSnapshot)
             bindString(5, modelProvider)
             bindString(6, modelVersion)
-            tokensInput?.let { bindLong(7, it.toLong()) } ?: bindString(7, null)
-            tokensOutput?.let { bindLong(8, it.toLong()) } ?: bindString(8, null)
-            bindString(9, recoveryClass)
-            bindString(10, auditId)
+            bindString(7, retentionJson)
+            tokensInput?.let { bindLong(8, it.toLong()) } ?: bindString(8, null)
+            tokensOutput?.let { bindLong(9, it.toLong()) } ?: bindString(9, null)
+            bindString(10, recoveryClass)
+            bindString(11, auditId)
         }
     }
 

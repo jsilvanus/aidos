@@ -18,6 +18,7 @@ import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
 import dev.aidos.vault.AnthropicAdapter
+import dev.aidos.vault.Redactor
 import java.io.File
 
 /**
@@ -95,7 +96,13 @@ class RuntimeCompositionRoot(
         broker.register(FilesystemTool())
         broker.register(GitTool(File(rootPath)))
 
-        val remoteAdapters = anthropicApiKey()?.let { key -> listOf(AnthropicAdapter(key)) } ?: emptyList()
+        // RFC-0035: registered before the adapter ever sees the key, so the very first
+        // output_snapshot that could echo it back is already covered.
+        val redactor = Redactor()
+        val remoteAdapters = anthropicApiKey()?.let { key ->
+            redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
+            listOf(AnthropicAdapter(key))
+        } ?: emptyList()
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
                 allowRemote = remoteAdapters.isNotEmpty(),
@@ -113,6 +120,7 @@ class RuntimeCompositionRoot(
             assembler = PromptAssembler(),
             broker = broker,
             subjectId = sessionId,
+            redact = redactor::redact,
         )
         val executor = SqliteExecutor(
             driver = projectDriver,

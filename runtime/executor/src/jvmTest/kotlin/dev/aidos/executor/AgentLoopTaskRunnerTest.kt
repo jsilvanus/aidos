@@ -14,6 +14,8 @@ import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
@@ -25,6 +27,7 @@ import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.PromptAssembler
@@ -76,14 +79,20 @@ class AgentLoopTaskRunnerTest {
         ) { bindString(0, triggerEventId); bindString(1, projectId); bindString(2, nowIso) }
     }
 
-    private fun fakeModel(responses: List<ModelResponse>, requestLog: MutableList<ModelRequest> = mutableListOf()): ModelAdapter {
+    private fun fakeModel(
+        responses: List<ModelResponse>,
+        requestLog: MutableList<ModelRequest> = mutableListOf(),
+        isLocalAdapter: Boolean = true,
+        retention: ProviderRetention? = null,
+    ): ModelAdapter {
         val queue = ArrayDeque(responses)
         return object : ModelAdapter {
             override val providerId = "test"
             override val modelId = "test-model"
             override val modelVersion = "1.0"
             override val contextWindow = 4096
-            override val isLocal = true
+            override val isLocal = isLocalAdapter
+            override val providerRetention = retention
             override fun supportsNativeToolCalls() = false
             override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
                 requestLog.add(request)
@@ -147,6 +156,7 @@ class AgentLoopTaskRunnerTest {
         driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
         router: InferenceRouter,
         broker: EffectBroker,
+        redact: (String) -> String = { it },
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -161,8 +171,24 @@ class AgentLoopTaskRunnerTest {
             router = router,
             assembler = PromptAssembler(),
             broker = broker,
+            redact = redact,
         ),
     )
+
+    private fun modelCallAttempt(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        runId: RunId,
+    ): Pair<String, String?> =
+        driver.executeQuery(
+            null,
+            "SELECT a.output_snapshot, a.provider_retention_json FROM tasks t " +
+                "JOIN attempts a ON a.task_id = t.id AND a.attempt_number = 1 " +
+                "WHERE t.run_id = ? AND t.kind = 'MODEL_CALL' ORDER BY t.ordinal DESC LIMIT 1",
+            mapper = { c ->
+                check(c.next().value) { "no MODEL_CALL attempt for run ${runId.value}" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!! to c.getString(1))
+            }, 1
+        ) { bindString(0, runId.value) }.value
 
     private fun runRow(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): Pair<String, String> =
         driver.executeQuery(null, "SELECT state, taint_level FROM runs WHERE id = ?",
@@ -275,5 +301,61 @@ class AgentLoopTaskRunnerTest {
 
         val (state, _) = runRow(driver, runId)
         assertEquals("FAILED", state)
+    }
+
+    @Test
+    fun `output snapshot is passed through the injected redact function before it is persisted`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse("secret-value-should-not-persist")))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker(), redact = { it.replace("secret-value-should-not-persist", "«redacted»") })
+            .drive(runId)
+
+        val (snapshot, _) = modelCallAttempt(driver, runId)
+        assertTrue(snapshot.contains("«redacted»"))
+        assertTrue(!snapshot.contains("secret-value-should-not-persist"))
+    }
+
+    @Test
+    fun `local model attempts record no provider retention`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = true)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertEquals(null, retentionJson, "no remote provider retained anything for a local model")
+    }
+
+    @Test
+    fun `remote adapter with no stated policy falls back to UNKNOWN, never an assumed-benign default`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = false, retention = null)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertTrue(retentionJson != null && retentionJson.contains("\"UNKNOWN\""))
+    }
+
+    @Test
+    fun `remote adapter's stated retention policy is recorded on the attempt`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val stated = ProviderRetention(
+            policy = RetentionPolicy.ZERO,
+            statedDurationDays = 0,
+            trainingUse = TrainingUse.NONE,
+            recordedAt = kotlinx.datetime.Instant.parse(nowIso),
+        )
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = false, retention = stated)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertTrue(retentionJson != null && retentionJson.contains("\"ZERO\""))
     }
 }
