@@ -20,10 +20,25 @@ import kotlinx.datetime.Instant
  *
  * For MVP, INTERACTIVE and DEFERRED use the same path (immediate execution).
  * SCHEDULED and OPPORTUNISTIC are placeholders for future WorkManager integration.
+ *
+ * TimerFired emission (RFC-0004): When a job with a time-based trigger (At, Every, Cron)
+ * is dispatched successfully, `onTimerFired` is called with the job. Deliberately excludes
+ * OnEvent and OnCondition triggers, which are event/condition-driven, not timer-fired — the
+ * job object carries the job ID and trigger details; the caller decides whether/how to
+ * publish this as a real event. Not yet exercised by any live caller — see PIPELINE.md's
+ * Group 1 notes. The `androidapp` module has no reason to depend on `executor`/`EventStore`.
  */
 class RuntimeClientWorkDispatcher(
     private val client: RuntimeClient,
     private val jobManager: ScheduledJobManager,
+    /**
+     * Called after a successful dispatch of a time-based timer job. Fires only when:
+     * - `client.sessions.send()` returns `RunResult.Accepted` (confirmed success), AND
+     * - `job.trigger` is Trigger.At, Trigger.Every, or Trigger.Cron (time-based).
+     * Does NOT fire for Trigger.OnEvent or Trigger.OnCondition (event/condition-driven).
+     * The caller maps the job to the actual event and publishes via EventStore.
+     */
+    private val onTimerFired: (job: ScheduledJob) -> Unit = {},
 ) : WorkDispatcher {
 
     override suspend fun dispatch(job: ScheduledJob): Boolean {
@@ -45,7 +60,11 @@ class RuntimeClientWorkDispatcher(
             val result = client.sessions.send(sessionId, message)
             val nextRunAt = computeNextRunAt(job)
             jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
-            result is RunResult.Accepted
+            val accepted = result is RunResult.Accepted
+            if (accepted && isTimerFiredTrigger(job)) {
+                onTimerFired(job)
+            }
+            accepted
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -58,7 +77,11 @@ class RuntimeClientWorkDispatcher(
             val result = client.sessions.send(sessionId, message)
             val nextRunAt = computeNextRunAt(job)
             jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
-            result is RunResult.Accepted
+            val accepted = result is RunResult.Accepted
+            if (accepted && isTimerFiredTrigger(job)) {
+                onTimerFired(job)
+            }
+            accepted
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -71,7 +94,11 @@ class RuntimeClientWorkDispatcher(
             val result = client.sessions.send(sessionId, message)
             val nextRunAt = computeNextRunAt(job)
             jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
-            result is RunResult.Accepted
+            val accepted = result is RunResult.Accepted
+            if (accepted && isTimerFiredTrigger(job)) {
+                onTimerFired(job)
+            }
+            accepted
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -84,7 +111,11 @@ class RuntimeClientWorkDispatcher(
             val result = client.sessions.send(sessionId, message)
             val nextRunAt = computeNextRunAt(job)
             jobManager.update(job.id, lastRunAt = Clock.System.now(), lastOutcome = JobOutcome.COMPLETED, nextRunAt = nextRunAt)
-            result is RunResult.Accepted
+            val accepted = result is RunResult.Accepted
+            if (accepted && isTimerFiredTrigger(job)) {
+                onTimerFired(job)
+            }
+            accepted
         } catch (e: Exception) {
             jobManager.update(job.id, lastOutcome = JobOutcome.FAILED)
             false
@@ -124,5 +155,16 @@ class RuntimeClientWorkDispatcher(
     private fun computeNextRunAt(job: ScheduledJob): Instant? {
         val next = TriggerCalculator.nextRunAt(job.trigger, job.lastRunAt)
         return next
+    }
+
+    /**
+     * Determines if a trigger is time-based (At, Every, Cron) vs event/condition-driven
+     * (OnEvent, OnCondition). Only time-based triggers fire the TimerFired event.
+     * RFC-0004's causality field distinguishes these: timer-fired is a genuine elapsed-time
+     * occurrence, while event/condition-fired has a different causal root.
+     */
+    private fun isTimerFiredTrigger(job: ScheduledJob): Boolean = when (job.trigger) {
+        is Trigger.At, is Trigger.Every, is Trigger.Cron -> true
+        is Trigger.OnEvent, is Trigger.OnCondition -> false
     }
 }
