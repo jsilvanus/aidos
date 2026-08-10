@@ -45,6 +45,33 @@ class LlamaCppInferenceBackendTest {
         }
     }
 
+    /**
+     * M20 (RFC-0022, RFC-0054, RFC-0045): the audit's Part 3 finding was that every catalog
+     * entry shipped `digest = null`, so [GlobalModelRuntime.load]'s verification had nothing
+     * pinned to compare against and could only ever re-hash the same installed file against
+     * itself. This locks in the fix -- each curated model now carries a real published SHA-256
+     * (a Hugging Face LFS blob's own `oid`) that a load-time hash can actually be checked
+     * against.
+     */
+    @Test
+    fun `catalog entries carry a pinned SHA-256 digest, not a null placeholder`() = runTest {
+        val backend = LlamaCppInferenceBackend()
+        val catalog = backend.catalog()
+
+        assertTrue(catalog.isNotEmpty())
+        catalog.forEach { model ->
+            val digest = model.digest
+            assertNotNull(digest, "${model.id}: catalog digest must be pinned, not null")
+            assertEquals(64, digest.length, "${model.id}: expected a 64-hex-char SHA-256 digest")
+            assertTrue(
+                digest.all { it.isDigit() || it in 'a'..'f' },
+                "${model.id}: digest should be lowercase hex, was $digest",
+            )
+        }
+        // Digests are per-file content hashes -- three different files must not collide.
+        assertEquals(catalog.size, catalog.map { it.digest }.distinct().size)
+    }
+
     @Test
     fun `installed returns empty when no models present`() = runTest {
         val backend = LlamaCppInferenceBackend()
