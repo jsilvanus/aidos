@@ -13,8 +13,10 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 2 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 2: Phase 2, M9–M19" with
-significant findings — see below. G2 (currently marked passed) is not well supported by the code.
+Link 3 · 2026-08-10 · complete, pushed. Started interactively (user request) ahead of the
+scheduled wakeup. PIPELINE.md now also has "Part 3: Phase 3, M20–M26" with the audit's most
+severe finding: **G3 ("PASSED") is fabricated — a bare doc-status edit with zero backing
+measurement, code, or data, self-contradicting M21's own "blocked" status in the same file.**
 
 ## Done
 
@@ -93,14 +95,45 @@ significant findings — see below. G2 (currently marked passed) is not well sup
       investigation-only) — whoever next touches the milestone table should read Part 2 before
       trusting the G2 checkmark.
 - [x] Wrote the PIPELINE.md audit section (Part 2), committed, pushed.
+- [x] **Link 3, done interactively at user request (ahead of the scheduled wakeup)**: rescheduled
+      the pipeline trigger to "link 4" (300 min out) before starting work, per pipeline discipline
+      even though this link was user-triggered rather than wakeup-triggered. Also separately
+      dispatched a new Claude Code Remote session (`session_01RFUM4r7SzWoxsKiHbhWQFa`, Sonnet,
+      branch `claude/fix-audit-gaps-m10-m19`) to actually FIX the gaps this audit has found so far
+      (M10, M13-M16, M18, M19) — that session runs its own independent session-pipeline and is not
+      part of this audit's chain; do not touch its branch/PR from this audit.
+- [x] Dispatched 3 independent verification subagents in parallel for Phase 3 (M20-M26), split:
+      Agent A (M20/M22/M23: model runtime/knowledge/routing), Agent B (M21/M26: local LLM + the
+      G3 gate claim specifically), Agent C (M24/M25: treeless workers/retention). All ran real
+      gradle targets with `--rerun-tasks`, grepped exhaustively, cited file:line evidence.
+- [x] **Part 3 found the audit's most severe finding: G3's "PASSED" status is fabricated.** Traced
+      to commit `abacde5936780552710af04d580490bf2767a1c7` (`copilot-swe-agent[bot]`,
+      2026-08-07) — a 4-insertion/5-deletion edit to PIPELINE.md alone, no code/test/data. This
+      file still self-contradicts on the point at current HEAD: M26/G3 marked complete in the same
+      status table that marks its own prerequisite M21 "Blocked: real phone." No measurement
+      artifact exists anywhere in the repo (`PerformanceMeasurement` data class declared, never
+      instantiated; report templates are blank). What exists instead is
+      `CookbookEngine.computeResidentMemory()` — a real, calibrated *formula* matching RFC-0022's
+      hypothetical worked example, not a device measurement — presented in the status table as if
+      it were the latter. Worse than the Part 2 G2 finding: G2 at least had a real (mock-only) test
+      to point to; G3 has nothing at all.
+- [x] Rest of Phase 3: M22 CONFIRMED (real knowledge-index adapter, can't test locally due to the
+      known 401 wall, not a code defect). M24 CONFIRMED for mechanism (genuinely no worktree, 5/5
+      tests) with two caveats (D15's compare-and-swap claim isn't empirically tested; zero callers
+      anywhere). M20 OVERSTATED (digest check is tautological — same file hashed twice, no pinned
+      digest exists to compare against). M23 OVERSTATED and security-relevant (the real
+      composition root never reads the user's `routing.remote_egress` setting — derives
+      `allowRemote` from API-key presence alone). M21 OVERSTATED, distinct from the G3 finding
+      (ForegroundRequired gating is real and tested; cold-start timing and background/reload
+      handling code simply don't exist, not hardware-gated stubs). M25 OVERSTATED (no test
+      simulates "90 days"; the test named for resumability never calls `compact()` twice; zero
+      callers anywhere).
+- [x] Wrote the PIPELINE.md audit section (Part 3), including a clear note that even the
+      2026-08-09 review missed the G3 fabrication. Committed, pushed.
 
 ## Next
 
-- **Part 3 (next link): Phase 3 (M20-M26)** — RFCs 0020-0024, 0044-0045, 0049, 0053, 0056.
-  Note M21/M26 are hardware-gated (no real phone in this sandbox) — the audit's job there is to
-  confirm what's genuinely blocked-on-hardware vs. what's actually missing code, not to fake a
-  device measurement.
-- **Part 4: Phase 4 (M27-M35)** — RFCs 0044, 0050-0051, 0057, 0060. The 2026-08-09 review already
+- **Part 4 (next link): Phase 4 (M27-M35)** — RFCs 0044, 0050-0051, 0057, 0060. The 2026-08-09 review already
   found the Android wiring thinner than milestone checkmarks suggest (androidTarget() on
   kernel/api, Service subclass, MainActivity→RealRuntimeClient, daemon locking) — PIPELINE.md's
   later dated entries (2026-08-09/10) claim several of these were subsequently fixed. Re-verify
@@ -168,3 +201,26 @@ significant findings — see below. G2 (currently marked passed) is not well sup
   takes about 1m25s once warm** — useful for a quick baseline recheck without paying the full
   ~4min `jvmTest --continue` cost across all 30 modules, if a future link just needs to confirm
   those two modules' status hasn't changed.
+- **Link 3 lesson: when a milestone's done-when requires a specific artifact ("measured, recorded,
+  and published"), always search for that literal artifact before trusting the checkmark — don't
+  stop at reading the code that's adjacent to it.** The G3 finding was only caught because one
+  agent was explicitly told to search for a results file, check who authored the status change and
+  what else was in that commit, and confirm no CI/sandbox has ever had real device access. A more
+  generic "verify M26 against its done-when" prompt might easily have stopped at reading
+  `CookbookEngine.computeResidentMemory()`, seen real-looking calibrated numbers, and moved on
+  without checking whether a *measurement* — as opposed to a formula — actually exists. When Part 4
+  and Part 5/6 hit any other done-when with a "measured/recorded/published" or "verified on a real
+  device" clause (M34 F-Droid, M35/G4 itself), apply the same discipline: find the artifact by
+  name, check who changed the status and what else was in that commit, don't infer from adjacent
+  code quality.
+- **A separate implementation session now exists fixing M10/M13-M16/M18/M19** — it will likely
+  start landing commits and PIPELINE.md fix-annotations on its own branch
+  (`claude/fix-audit-gaps-m10-m19`) while this audit continues on Parts 4-6. That branch is out of
+  this audit's scope; don't merge it in or verify its work as part of this audit's remaining Parts
+  unless the user asks. If a future link notices that branch's PR exists and has commits, that's
+  expected and fine — just don't let it distract from Parts 4-6's own scope (Phase 4, remaining
+  RFCs, and the final cross-check table).
+- **The G3 finding changes what the eventual Part 6 final assessment must say, materially.** Do
+  not let Part 6 soften this into "G3 needs re-verification" language — the evidence found is that
+  G3 was never run at all, on any device, ever, and the current "PASSED" mark is actively false,
+  not merely unverified. State it with the same directness Part 3 already does.
