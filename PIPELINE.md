@@ -34,17 +34,24 @@ resolution, the approval/park-resume flow) is in the "Group 2" checklist below, 
 
 **2026-08-10 · `sessions.send()` creates a real, durable Run** (`api/RunExecutor.kt` +
 `daemon/SqliteRunExecutor.kt`, branch `claude/real-runtime-client-run-executor`) — one of the two
-things the bridge unblocked. Sessions now persist too. Still does not *drive* the Run it creates —
-that needs a real `InferenceRouter`/`EffectBroker`/`CapabilityManager` composition that doesn't
-exist anywhere in the runtime yet. Full detail in the "Finish `RealRuntimeClient`" checklist item
-below, under its own dated update.
+things the bridge unblocked. Sessions now persist too. Full detail in the "Finish
+`RealRuntimeClient`" checklist item below, under its own dated update.
 
 **2026-08-10 · RFC-0005's wake-to-Run wiring is built** (`executor/Scheduler.kt`, branch
 `claude/rfc-0005-wake-to-run`) — the bridge's other unblocked item. Given a published event,
 matches subscriptions, wakes eligible `SLEEPING` sessions with a `SessionWoken` event + `PENDING`
-Run each (self-wake and causal-depth refusals audited, not silent), and does not drive the Run for
-the same reason `RunExecutor` doesn't. Wired into `SqliteRunExecutor.send()`. Full detail in the
-RFC-0005 checklist item below, under its own dated update.
+Run each (self-wake and causal-depth refusals audited, not silent). Wired into
+`SqliteRunExecutor.send()`. Full detail in the RFC-0005 checklist item below, under its own dated
+update.
+
+**2026-08-10 · the runtime composition root is built, and `sessions.send()` now drives its own Run
+inline** (`daemon/RuntimeCompositionRoot.kt`, same branch) — a real `CapabilityManager`/
+`ToolBroker` (`FilesystemTool`/`GitTool` registered) and a real `InferenceRouter`
+(`AnthropicAdapter`, keyed by `ANTHROPIC_API_KEY`). A sent message can now reach an actual model
+response, not just a `PENDING` row. Tool calls are still denied (no capability resolver for
+model-emitted `ToolCall`s yet — a deliberate, user-confirmed scope boundary, not an oversight).
+`Scheduler`-woken Runs stay un-driven, per RFC-0044's own work-class table. Full detail in the
+"Finish `RealRuntimeClient`" checklist item below, under its own dated update.
 
 | | |
 |---|---|
@@ -809,6 +816,62 @@ further down this file.
     `runtimeManagedProjectsRoot` and the other seams started. And the big one: the composition
     root (`CapabilityManager` + registered tools + `InferenceRouter`) needed to ever actually
     *drive* one of these Runs, named above.
+
+  **Update (2026-08-10, branch `claude/rfc-0005-wake-to-run`) — the composition root named above
+  is built** (`daemon/RuntimeCompositionRoot.kt`), and `sessions.send()` now drives its own Run
+  inline instead of leaving it `PENDING` forever.
+  - **Why inline, and why only the sender's own Run:** RFC-0044's "Background work classes" table
+    classifies "a Run the user just started" as **Interactive**, and Interactive's mechanism is
+    explicitly **inline** on desktop (a foreground service on MOBILE, per D24, exists to keep that
+    same inline call alive — not a different execution model). `sessions.send()` is exactly that
+    case, so `send()` is where RFC-0044 says the driving belongs. `Scheduler.wake()`-woken Runs
+    (RFC-0005, above) are deliberately left un-driven: an event-driven wake is Deferred/Scheduled/
+    Opportunistic in the same table, whose mechanism is `WorkManager`/a background dispatcher, not
+    inline — driving those here would answer the wrong table row. `drive()` itself already
+    supports the "inline but not necessarily to the end" shape: it runs to a terminal state or
+    parks on `AWAITING_APPROVAL`/`AWAITING_INPUT` and returns (RFC-0009), so inline doesn't mean
+    "blocks forever."
+  - **`RuntimeCompositionRoot.drive(...)`** composes, per call (mirroring `SqliteRunExecutor`'s own
+    style — no project-scoped state held across calls): `SqliteCapabilityManager`, `AuditLog`,
+    `ToolBroker` with `FilesystemTool()` and `GitTool(File(rootPath))` registered (`rootPath` read
+    from the project's own `projects.root_path` row via the already-open project driver),
+    `PolicyInferenceRouter` with `AnthropicAdapter` as its sole remote adapter when a key is
+    available, `PromptAssembler()`, `AgentLoopTaskRunner`, and `SqliteExecutor` — then calls
+    `.drive(runId)`.
+  - **Deliberately does not resolve capabilities for model-emitted tool calls.**
+    `AgentLoopTaskRunner` always sets `ToolCall.capabilityId = null` (its own doc comment already
+    names this a known, accepted gap), so `ToolBroker.invoke`'s step 2 denies every tool call with
+    `capability.missing` regardless of what this composition does — granting a capability nothing
+    consults would be dead code dressed as progress, not a real fix. Concretely: a driven Run can
+    reach a real model response, but any `TOOL_CALL` it emits is denied. Building the
+    `(subjectId, toolName) -> CapabilityId` resolver this needs is separate, not-yet-designed work
+    — asked the user directly rather than guessing an architecture for it, and the answer was to
+    leave it denied for this slice.
+  - **Where the model key comes from, and why not the vault:** `RuntimeCompositionRoot` takes a
+    plain `anthropicApiKey: () -> CharArray?` provider, not a `SecretsVault` lookup.
+    `SqliteSecretsVault`'s JVM key handling generates a fresh in-memory key by default (its own doc
+    comment: "the key is held in memory") — wiring live vault resolution here would either
+    silently lose previously-stored secrets across a restart or require settling a key-persistence
+    strategy, which is its own unreviewed architecture decision, not a side effect of this slice.
+    `RuntimeClientFactory` sources the key from `ANTHROPIC_API_KEY` for now. No key configured
+    means `remoteAdapters` is empty and `PolicyInferenceRouter` reports every `MODEL_CALL`
+    `UnavailableOffline` — confirmed (by reading both `AnthropicAdapter.invoke`, which wraps its
+    network call in `runCatching`, and `AgentLoopTaskRunner`'s own `UnavailableOffline` branch)
+    that this fails just the one task cleanly, not the whole `drive()` call or `send()` itself.
+  - **`daemon/build.gradle.kts` gained five new dependencies**: `capability`, `filesystem`, `git`,
+    `prompt` (already there transitively via `executor`, now direct), `routing`, `vault`. Not
+    `modelruntime` — `LlamaCppAdapter` needs it, but the module doesn't compile in CI (the
+    pre-existing `de.kherud:llama-java:0.3.2` coordinate gap, tracked separately) — so this
+    composition's `localAdapters` list stays empty; `AnthropicAdapter` is the only real adapter
+    until that's fixed or a working local adapter is built.
+  - Tests: `daemon/RuntimeCompositionRootTest.kt` (drives a Run directly — no model key configured
+    reaches a clean `FAILED` state, not a thrown exception; a Run whose `projectId` has no
+    `projects` row is left `PENDING`, untouched, per D3) and a new `SqliteRunExecutorTest` case
+    (`send()` with a composition root wired drives the sender's Run to `FAILED` end-to-end through
+    the real API surface, still without needing network access in a test). `compositionRoot`
+    defaults to `null` (same "unset preserves old behavior" idiom as every other seam here), so
+    the pre-existing `SqliteRunExecutorTest` cases needed no changes. `gradle jvmTest --continue`
+    clean except the two known pre-existing red modules; `CrashRecoveryTest` green throughout.
 
   **`androidTarget()` wired on `storage`, `settings`, `identity`, `capability`, `broker`,
   `executor`** (six modules, not four — `broker` and `settings` turned out to be transitive

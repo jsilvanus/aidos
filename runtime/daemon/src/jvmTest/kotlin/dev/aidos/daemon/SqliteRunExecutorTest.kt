@@ -125,4 +125,37 @@ class SqliteRunExecutorTest {
         ) {}.value
         assertEquals(2L, runCount, "sender's own run plus the watcher's woken run")
     }
+
+    @Test
+    fun `send drives the sender's own run inline when a composition root is wired`() = runTest {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid)
+
+        // No Anthropic key configured -- the router reports every MODEL_CALL UnavailableOffline,
+        // so drive() fails that one task cleanly instead of throwing (RoutingDecision is a normal,
+        // non-throwing outcome AgentLoopTaskRunner already handles). This proves the composition
+        // root's wiring (CapabilityManager, ToolBroker with FilesystemTool/GitTool registered,
+        // PolicyInferenceRouter, PromptAssembler, AgentLoopTaskRunner, SqliteExecutor) actually
+        // runs end-to-end without needing real network access in a test.
+        val executor = SqliteRunExecutor(
+            idGen = { nextId() }, nowIso = { nowIso },
+            compositionRoot = RuntimeCompositionRoot(anthropicApiKey = { null }),
+        )
+        val result = executor.send(
+            projectDriver = driver,
+            projectId = pid,
+            sessionId = sid,
+            message = UserMessage(content = "Hello, world"),
+            platformProfile = PlatformProfile.DESKTOP,
+            deviceId = "dev-1",
+            networkAvailable = false,
+        )
+        assertIs<dev.aidos.api.RunResult.Accepted>(result)
+
+        val runState = driver.executeQuery(null, "SELECT state FROM runs WHERE id = ?",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1
+        ) { bindString(0, result.runId) }.value
+        assertEquals("FAILED", runState, "no model adapter configured -> the MODEL_CALL task fails, not the send() call")
+    }
 }
