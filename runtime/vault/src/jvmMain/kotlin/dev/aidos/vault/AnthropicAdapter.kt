@@ -4,10 +4,14 @@ import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.Turn
+import kotlinx.datetime.Clock
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -37,8 +41,10 @@ import kotlinx.serialization.json.put
  * The API key is resolved from the vault at construction time and held in a [CharArray] that
  * is zeroed on [close]. It never appears in a log, event, audit row, or prompt.
  *
- * [providerRetentionJson] is the Anthropic-stated retention policy — a claim, not a control.
- * It is recorded in `attempts.provider_retention_json` so the user can weigh it (RFC-0026).
+ * [providerRetention] is the Anthropic-stated retention policy for the API tier — a claim, not a
+ * control. It is recorded in `attempts.provider_retention_json` so the user can weigh it
+ * (RFC-0026), by whoever calls [invoke] and writes the Attempt row, not by this class itself —
+ * an adapter has no `attempts` row to write into, only a fact to report.
  */
 class AnthropicAdapter(
     private val apiKeyChars: CharArray,
@@ -51,10 +57,17 @@ class AnthropicAdapter(
     override val isLocal = false
 
     /**
-     * Anthropic's stated data retention policy for the API tier.
-     * Recorded in attempts.provider_retention_json at every call (RFC-0023).
+     * Anthropic's stated data retention policy for the API tier, per
+     * https://privacy.anthropic.com/en/policies/privacy-policy (RFC-0023). [ProviderRetention]'s
+     * own doc comment covers why [ProviderRetention.recordedAt] here is not the final, persisted
+     * timestamp.
      */
-    val providerRetentionJson: String = """{"provider":"anthropic","tier":"api","retention_days":0,"policy":"no_retention","source":"https://privacy.anthropic.com/en/policies/privacy-policy"}"""
+    override val providerRetention = ProviderRetention(
+        policy = RetentionPolicy.ZERO,
+        statedDurationDays = 0,
+        trainingUse = TrainingUse.NONE,
+        recordedAt = Clock.System.now(),
+    )
 
     private val json = Json {
         ignoreUnknownKeys = true

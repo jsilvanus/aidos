@@ -26,6 +26,13 @@ import javax.crypto.spec.SecretKeySpec
 class SqliteSecretsVault(
     dbFile: File,
     private val encryptionKey: SecretKey = generateKey(),
+    /**
+     * Registered with every value [resolve] decrypts, and unregistered on [delete] (RFC-0035:
+     * "the vault calls register on load"). Nullable so a caller that has no [Redactor] to inject
+     * (e.g. a test that only cares about the crypto round-trip) still gets the pre-M14 behavior,
+     * not a required dependency it doesn't need.
+     */
+    private val redactor: Redactor? = null,
 ) : SecretsVault {
 
     private val conn: Connection
@@ -97,23 +104,29 @@ class SqliteSecretsVault(
             stmt.setString(1, id)
             stmt.executeUpdate()
         }
+        redactor?.unregister(id)
     }
 
     override suspend fun resolve(id: SecretId): Result<CharArray> = runCatching {
-        val pair = conn.prepareStatement(
-            "SELECT ciphertext,nonce FROM secrets WHERE id=?"
+        val row = conn.prepareStatement(
+            "SELECT name,ciphertext,nonce FROM secrets WHERE id=?"
         ).use { stmt ->
             stmt.setString(1, id)
             stmt.executeQuery().use { rs ->
                 if (!rs.next()) error("secrets.not_found: $id")
-                rs.getBytes(1) to rs.getBytes(2)
+                Triple(rs.getString(1), rs.getBytes(2), rs.getBytes(3))
             }
         }
         val now = Clock.System.now().toString()
         conn.prepareStatement("UPDATE secrets SET last_used_at=? WHERE id=?").use { stmt ->
             stmt.setString(1, now); stmt.setString(2, id); stmt.executeUpdate()
         }
-        decrypt(pair.first, pair.second)
+        val value = decrypt(row.second, row.third)
+        // RFC-0035: "Every vault value is registered with the redactor at load." A copy is
+        // registered, not the array itself — resolve()'s own contract has the caller zero the
+        // returned array after use, and that must not zero the redactor's copy out from under it.
+        redactor?.register(id, row.first, value)
+        value
     }
 
     override suspend fun get(id: SecretId): Result<SecretEntry> = runCatching {

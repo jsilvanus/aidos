@@ -45,6 +45,8 @@ class SqliteExecutor(
     private val nowIso: () -> String,
     /** Pluggable task runner — real tools in integration, hard-coded tasks in tests. */
     private val taskRunner: TaskRunner,
+    /** RFC-0053's before-a-Run-starts gate. Unset preserves the pre-reconciliation behavior. */
+    private val reconciler: RunReconciler? = null,
 ) : Executor {
 
     /**
@@ -60,6 +62,15 @@ class SqliteExecutor(
 
         // Re-entrancy: already terminal → no-op.
         if (run.state.isTerminal) return
+
+        // RFC-0053: "Reconciliation runs before any Run may start on a repository with a
+        // mismatched fingerprint." A mismatch can terminate Runs other than this one too (a
+        // project-wide fact, not specific to runId) — those just find themselves already
+        // terminal on their own next drive() call, which is already a no-op per the guard above.
+        if (run.state == RunState.PENDING || run.state == RunState.INTERRUPTED) {
+            val terminated = reconciler?.reconcileBeforeRun(driver, run.projectId, runId) ?: emptySet()
+            if (runId in terminated) return
+        }
 
         // Advance PENDING or INTERRUPTED → RUNNING.
         if (run.state == RunState.PENDING || run.state == RunState.INTERRUPTED) {
