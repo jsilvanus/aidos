@@ -21,13 +21,23 @@ import dev.aidos.kernel.SessionId
  * Run via [RunCreator]. Composed here rather than living in `api` because `api` cannot depend on
  * `executor` without a module cycle — see [RunExecutor]'s own doc comment.
  *
- * **Deliberately does not call `drive()`.** Driving a Run to a model response needs a real
- * `InferenceRouter` + `PromptAssembler` + `EffectBroker` (a `CapabilityManager` with actual tools
- * registered) — none of which exist anywhere in this composition root yet. That is separate,
- * substantial follow-up work (real tool registration, real model routing), not a side effect of
- * wiring `sessions.send()`. The Run this creates is durable and `PENDING`, ready for whoever
- * builds that composition to call `SqliteExecutor.drive()` on it — nothing is lost by not driving
- * it immediately, since D3 already requires every step to be reconstructable from rows alone.
+ * **Drives the sender's own Run inline, when [compositionRoot] is wired.** RFC-0044's own
+ * "Background work classes" table classifies "a Run the user just started" as **Interactive**,
+ * and Interactive's mechanism is **inline** on desktop (a foreground service on MOBILE exists
+ * precisely to keep that same inline call alive, per D24 — it is not a different execution
+ * model). `sessions.send()` is exactly that case, so once a real composition exists to drive
+ * through, `send()` is where RFC-0044 says the driving belongs — not a background dispatcher.
+ * [compositionRoot] is nullable (unset preserves the old PENDING-only behavior) following the
+ * same seam idiom as `RealRuntimeClient`'s own `projectDbFactory`/`runExecutor` fields: a
+ * composition root is substantial enough to build and inject separately, not force through as a
+ * side effect of this class's own construction.
+ *
+ * **Sessions woken by [Scheduler.wake] on the same event are deliberately left un-driven.** An
+ * event-driven wake is not "a Run the user just started" — RFC-0044 classifies it Deferred /
+ * Scheduled / Opportunistic, whose mechanism is `WorkManager` / a background dispatcher, not
+ * inline. Driving those here would be answering a different RFC-0044 row with this one's
+ * mechanism; that dispatch is separate, already-partially-built infrastructure
+ * (`androidapp/scheduling/`), not this class's job.
  *
  * After the sending session's own Run is created, [Scheduler.wake] is called on the same
  * `UserCommand` event (RFC-0005) so any *other* session subscribed to it — a driver watching for
@@ -38,6 +48,7 @@ import dev.aidos.kernel.SessionId
 class SqliteRunExecutor(
     private val idGen: () -> String = { UuidV7Generator().next() },
     private val nowIso: () -> String,
+    private val compositionRoot: RuntimeCompositionRoot? = null,
 ) : RunExecutor {
 
     override suspend fun send(
@@ -94,6 +105,18 @@ class SqliteRunExecutor(
             platformProfile = platformProfile,
             deviceId = deviceId,
             networkAvailable = networkAvailable,
+        )
+
+        compositionRoot?.drive(
+            projectDriver = projectDriver,
+            runId = runId,
+            projectId = ProjectId(projectId),
+            sessionId = sessionId,
+            deviceId = deviceId,
+            platformProfile = platformProfile,
+            networkAvailable = networkAvailable,
+            idGen = idGen,
+            nowIso = nowIso,
         )
 
         return RunResult.Accepted(runId.value)

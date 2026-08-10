@@ -16,11 +16,12 @@ import kotlinx.datetime.Clock
  * - Storage layer: persistent project storage (done -- user.db + per-project state.db, RFC-0010,
  *   RFC-0040) and RFC-0055 per-project locking.
  * - Sessions: persisted to the project's own `sessions` table (done); `sessions.send()` creates a
- *   real, durable `runs`/`tasks` row via [SqliteRunExecutor] instead of an in-memory stub (RFC-0008,
- *   RFC-0009 -- the AgentLoop<->executor bridge, PIPELINE.md). **Not done**: actually driving a
- *   created Run to a model response -- that needs a real `InferenceRouter` + `PromptAssembler` +
- *   `EffectBroker` (a `CapabilityManager` with tools registered), none of which are composed here
- *   yet. See [SqliteRunExecutor]'s own doc comment.
+ *   real, durable `runs`/`tasks` row via [SqliteRunExecutor] (RFC-0008, RFC-0009 -- the
+ *   AgentLoop<->executor bridge, PIPELINE.md) and drives it inline through [RuntimeCompositionRoot]
+ *   -- a real `CapabilityManager`/`ToolBroker` (with `FilesystemTool`/`GitTool` registered) and a
+ *   real `InferenceRouter`. The Anthropic key comes from `ANTHROPIC_API_KEY` for now, not the
+ *   vault -- see [RuntimeCompositionRoot]'s own doc comment for why. Tool calls are still denied
+ *   (`capability.missing`): nothing resolves a capability for a model-emitted `ToolCall` yet.
  * - Capability Manager: permission enforcement
  * - Git Tool: real diff operations
  * - Knowledge Service: semantic search
@@ -45,7 +46,12 @@ object RuntimeClientFactory {
             }
             projectLocker = JvmProjectLocker()
             runtimeManagedProjectsRoot = "$home/.aidos/projects"
-            runExecutor = SqliteRunExecutor(nowIso = nowIso)
+            runExecutor = SqliteRunExecutor(
+                nowIso = nowIso,
+                compositionRoot = RuntimeCompositionRoot(
+                    anthropicApiKey = { System.getenv("ANTHROPIC_API_KEY")?.toCharArray() },
+                ),
+            )
         }
     }
 }
