@@ -44,6 +44,43 @@ class RunCreator(
         deviceId: String,
         networkAvailable: Boolean,
         maxSteps: Int = 24,
+    ): RunId = create(
+        sessionId, projectId, triggerEventId, userMessageSummary,
+        platformProfile, deviceId, networkAvailable, maxSteps,
+    )
+
+    /**
+     * Creates a Run for a session woken by an event (RFC-0005), not a direct user message.
+     * [contextSummary] fills the exact same `runs.user_message_summary` column
+     * [createForUserMessage] does — there is no separate "why did this Run start" column, and
+     * inventing one for exactly one caller would be a bigger, unreviewed schema decision than
+     * this slice should make. Named separately anyway: calling `createForUserMessage` with a
+     * synthesized wake description read as misleading at the [Scheduler] call site, even though
+     * the row shape underneath is identical.
+     */
+    fun createForEvent(
+        sessionId: SessionId,
+        projectId: ProjectId,
+        triggerEventId: EventId,
+        contextSummary: String,
+        platformProfile: PlatformProfile,
+        deviceId: String,
+        networkAvailable: Boolean,
+        maxSteps: Int = 24,
+    ): RunId = create(
+        sessionId, projectId, triggerEventId, contextSummary,
+        platformProfile, deviceId, networkAvailable, maxSteps,
+    )
+
+    private fun create(
+        sessionId: SessionId,
+        projectId: ProjectId,
+        triggerEventId: EventId,
+        summary: String,
+        platformProfile: PlatformProfile,
+        deviceId: String,
+        networkAvailable: Boolean,
+        maxSteps: Int,
     ): RunId {
         val runId = RunId(idGen())
         transacter.transaction {
@@ -59,7 +96,7 @@ class RunCreator(
                 bindString(2, projectId.value)
                 bindString(3, triggerEventId.value)
                 bindString(4, nowIso())
-                bindString(5, userMessageSummary)
+                bindString(5, summary)
                 bindLong(6, maxSteps.toLong())
                 bindString(7, platformProfile.name)
                 bindString(8, deviceId)
