@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.identity.ProjectRegistry
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.FileDiff
+import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -82,12 +83,28 @@ class RealRuntimeClient : RuntimeClient {
      */
     var runtimeManagedProjectsRoot: String? = null
 
+    /**
+     * Creates the durable Run for a user message (RFC-0008/0009), once storage is wired.
+     * Unset preserves the pre-persistence in-memory `RunSummary`/`RunResult.Accepted` stub in
+     * `sessions.send()` below. See [RunExecutor]'s own doc comment for why this is a seam rather
+     * than `RealRuntimeClient` depending on `executor` directly (a module cycle).
+     */
+    var runExecutor: RunExecutor? = null
+
+    /** Recorded on every Run for provenance (RFC-0049); no device-profile detection exists here. */
+    var platformProfile: PlatformProfile = PlatformProfile.DESKTOP
+
+    /** No network-reachability detection exists here; callers wire this once one does. */
+    var networkAvailable: Boolean = false
+
     private val instanceId: String by lazy { UuidV7Generator().next() }
 
-    // Project ids are persisted (once userDriver/projectDbFactory are wired) and must survive
-    // process restarts without colliding -- nextId()'s counter resets to 1 every construction,
-    // which is safe for the still-in-memory-only entity types below but not for this one.
+    // Project and session ids are persisted (once userDriver/projectDbFactory are wired) and must
+    // survive process restarts without colliding -- nextId()'s counter resets to 1 every
+    // construction, which is safe for the still-in-memory-only entity types below but not for
+    // these two.
     private val projectIdGen = UuidV7Generator()
+    private val sessionIdGen = UuidV7Generator()
 
     private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
 
@@ -293,13 +310,35 @@ class RealRuntimeClient : RuntimeClient {
 
     override val sessions: SessionCommands = object : SessionCommands {
         override suspend fun create(request: CreateSessionRequest): SessionResult {
-            val id = nextId()
+            val id = sessionIdGen.next()
             val now = Clock.System.now()
+            val nowIso = now.toString()
             val summary = SessionSummary(
                 id = id, projectId = request.projectId, name = request.name,
                 role = request.role, state = SessionState.CREATED,
                 createdAt = now, lastActiveAt = now, runCount = 0,
             )
+
+            // Persisted once the project's own driver is open -- unset (or the project never
+            // opened) preserves the pre-persistence in-memory-only behavior. A session needs a
+            // real row before RunExecutor can create a Run for it: runs.session_id and
+            // tasks.session_id are foreign keys onto this table.
+            _openProjectDrivers[request.projectId]?.execute(
+                identifier = null,
+                sql = "INSERT INTO sessions (id, project_id, name, role, state, created_at, " +
+                    "last_active_at, state_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                parameters = 8,
+            ) {
+                bindString(0, id)
+                bindString(1, request.projectId)
+                bindString(2, request.name)
+                bindString(3, request.role.name)
+                bindString(4, SessionState.CREATED.name)
+                bindString(5, nowIso)
+                bindString(6, nowIso)
+                bindString(7, nowIso)
+            }
+
             _sessions[id] = summary
             emit(RuntimeEvent.SessionCreated(
                 eventId = nextId(), timestamp = now, projectId = request.projectId,
@@ -309,19 +348,40 @@ class RealRuntimeClient : RuntimeClient {
         }
 
         override suspend fun send(sessionId: String, message: UserMessage): RunResult {
-            if (!_sessions.containsKey(sessionId)) {
-                return RunResult.Error("session.not_found", "Session $sessionId not found")
+            val session = _sessions[sessionId]
+                ?: return RunResult.Error("session.not_found", "Session $sessionId not found")
+
+            val executor = runExecutor
+            val driver = _openProjectDrivers[session.projectId]
+            val result = if (executor != null && driver != null) {
+                executor.send(
+                    projectDriver = driver,
+                    projectId = session.projectId,
+                    sessionId = sessionId,
+                    message = message,
+                    platformProfile = platformProfile,
+                    // instanceId already identifies this runtime instance for project locking
+                    // (RFC-0055); reusing it for RFC-0046 "which machine ran this" provenance
+                    // avoids inventing a second identifier for the same concept.
+                    deviceId = instanceId,
+                    networkAvailable = networkAvailable,
+                )
+            } else {
+                val runId = nextId()
+                _runs[runId] = RunSummary(
+                    id = runId, state = "RUNNING",
+                    startedAt = Clock.System.now(), endedAt = null, stepCount = 0,
+                )
+                RunResult.Accepted(runId)
             }
-            val runId = nextId()
-            val now = Clock.System.now()
-            val run = RunSummary(id = runId, state = "RUNNING", startedAt = now, endedAt = null, stepCount = 0)
-            _runs[runId] = run
-            val session = _sessions[sessionId]!!
-            emit(RuntimeEvent.RunStarted(
-                eventId = nextId(), timestamp = now, projectId = session.projectId,
-                sessionId = sessionId, runId = runId,
-            ))
-            return RunResult.Accepted(runId)
+
+            if (result is RunResult.Accepted) {
+                emit(RuntimeEvent.RunStarted(
+                    eventId = nextId(), timestamp = Clock.System.now(), projectId = session.projectId,
+                    sessionId = sessionId, runId = result.runId,
+                ))
+            }
+            return result
         }
 
         override suspend fun cancel(sessionId: String, runId: String) {
