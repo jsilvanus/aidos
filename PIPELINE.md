@@ -1219,18 +1219,210 @@ Independently re-derived, not copied from this file's own summary table:
   `synchronous=NORMAL`, confirmed in M1) are considered sufficient to stand in for an actual
   process-kill test — a judgment call for the project owner, not resolved here.
 
-### What this Part 1 does not cover yet
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 2: Phase 2, M9–M19)
 
-Phase 2 (M9–M19), Phase 3 (M20–M26), and Phase 4 (M27–M35) milestones are **not yet
-independently re-verified** by this audit — the summaries in this file's earlier sections (the
-Status table, the 2026-08-09 review, and its "Outstanding work" follow-ups) are the only evidence
-for those right now, and per this audit's own brief, that is exactly the kind of claim that needs
-independent grep-and-test verification, not trust. Also not yet done: the RFCs never named by
-either the original review or Part 1 (0000–0002, 0013–0014, 0017, 0020–0023, 0025–0027, 0030–0035,
-0037–0042, 0044, 0046, 0048–0057, 0060, 0099–0102) and a milestone-by-milestone cross-check table
-against `docs/mvp-roadmap.md`. No overall MVP-readiness verdict is given here — it would be
-premature given the coverage so far. Continued in later dated entries below as the audit proceeds;
-see `docs/rfc-mvp-audit-tracking.md` for live status between entries.
+Same method as Part 1: independent subagents (three this time, split by subsystem, none shown the
+others' output) re-deriving file paths, line numbers, and test counts from scratch, running every
+gradle target they could reach with `--rerun-tasks` so results reflect a real execution, not a
+cached pass. **Housekeeping first: PR #27 (baseline module fixes) merged to `main` at
+`2026-08-10T06:36:55Z` (`8e7bbb1`) between Part 1 and Part 2. `main` was merged into
+`claude/rfc-mvp-audit` (commit `36cae89`) before dispatching Part 2's agents, so this Part's
+baseline reflects it: `:modelruntime` is now genuinely green (independently re-run, not assumed);
+`:knowledge` still fails locally on the same pre-existing 401 registry-auth wall (a sandbox
+credentials gap, not a code defect — matches PR #27's own description exactly).**
+
+**This Part found the audit's most significant gaps so far — several milestones marked ✅ with no
+caveat turn out to have real, load-bearing holes.** Phase 2 is the phase that gates G2 ("create
+project → task → model → tool → commit → artifact → audit, from the CLI, in one command
+sequence"), and this file's Status table and `docs/mvp-roadmap.md` both currently mark **G2 as
+passed (M19 ✅)**. The findings below do not support that.
+
+- **M9 (Runtime API) — CONFIRMED for the core claims**, and the `RealRuntimeClient`-in-memory
+  caveat this file's own Status table still carries (near the top of this file) is now stale — the
+  wiring chain `RuntimeClientFactory → RealRuntimeClient.sessions.send() → SqliteRunExecutor →
+  RuntimeCompositionRoot → SqliteExecutor.drive()` was traced end to end and confirmed real, and
+  `daemon/main.kt` was independently confirmed to actually construct `RealRuntimeClient`, not
+  `MockRuntimeClient` (a stale comment in that file says otherwise — cosmetic, worth a fix next
+  time that file is touched). Two real gaps found, neither previously flagged: `diff.hunks()`
+  throws `UnsupportedOperationException` in **both** `MockRuntimeClient` and `RealRuntimeClient`
+  (`api/.../MockRuntimeClient.kt:201-202`, `RealRuntimeClient.kt:462-463`) and `diff.changes()`
+  hardcodes an empty `DiffSummary` in both — despite the structured-hunk *type* (`Diff.kt`) being
+  real, nothing actually computes hunks from a real diff yet. `EventFilter.types` is declared but
+  silently never consulted by either client's `matchesFilter()` (`MockRuntimeClient.kt:264-266`,
+  `RealRuntimeClient.kt:524-526`) — filtering the event stream by event type is a no-op today.
+- **M10 (CLI frontend) — OVERSTATED, no caveat in this file despite a real gap.** **No runnable CLI
+  executable exists anywhere in the repository.** `runtime/cli/` has no `application` plugin, no
+  `mainClass`, and produces only a library jar; the only `fun main()` in the relevant modules is
+  the *daemon's* (`daemon/main.kt:77`), not a CLI. `AidosCli.kt` is a plain Kotlin class meant to be
+  called from other Kotlin code (i.e., from tests), not parsed from a terminal. The transport it
+  would need over a socket doesn't exist either: `RuntimeSocketServer.start()`
+  (`daemon/.../RuntimeSocketServer.kt:36-54`) creates the socket directory, deletes any stale
+  socket file, **and then never opens a socket** — it prints `"Socket server would listen on
+  $socketPath"` and returns, with an explicit `TODO(M33): Implement actual socket server` still in
+  place. `DaemonCliIntegrationTest.kt`'s own comment says as much: *"Full socket transport is
+  deferred to Phase 4.5; this verifies the architecture is sound by using in-process
+  RuntimeClient."* Every behavior in M10's done-when (create project, list sessions, send message,
+  watch event stream, approve, `sinceSequence` gap replay) is real and tested — but only as library
+  calls against `MockRuntimeClient`/an in-process `RealRuntimeClient`, never as something a person
+  types at a terminal. `sinceSequence` gap replay itself is real, tested code
+  (`CliFrontendTest.kt:102-125`), not a gap — the gap is specifically "from the CLI" in the literal
+  sense the done-when states, and there is no caveat anywhere in this file's M10 ✅ comparable to
+  the ones it uses for other partial milestones (e.g. `RealRuntimeClient`'s prior in-memory note,
+  Voice's `NoOp`-provider note).
+- **M11 (Effect broker) — CONFIRMED for ordering and `descriptorsFor` filtering** (independently
+  read `ToolBroker.invoke()` top to bottom: tool-resolution → capability → taint-validate →
+  budget-stub → preview → audit → execute → audit, matching the claimed order exactly), **with one
+  gap not previously flagged**: `ToolBroker`'s own class docstring claims step 1 is "validate
+  arguments against the operation's JSON Schema" — **this step does not exist anywhere in
+  `invoke()`**; `descriptor.inputSchema` is set on every tool but is only ever read by
+  `AnthropicAdapter` to advertise the schema *to the model*, never read back to validate
+  `call.arguments` before execution (confirmed by grep across all of `runtime/`). RecoveryClass
+  rejection at registration is real only as a Kotlin compile-time guarantee (the field is
+  non-nullable) — `ToolBroker.register()` performs no runtime check, which the module's own test
+  file candidly documents in a comment, but which the roadmap's plain-English "a tool registered
+  without a `RecoveryClass` is rejected at registration" overstates as a runtime guard.
+- **M12 (Filesystem tool) — CONFIRMED, no new gaps found.** All four operations go through
+  `ResourceHandle`/`RelPath`, `write()` computes a real LCS-based diff, escape denial is
+  confirmed at the handle layer (`SqliteDirHandle` adds real canonicalization + prefix-confusion +
+  symlink-escape guards on top of `RelPath`'s construction-time check). 13/13 tests green.
+- **M13 (Git tool) — CONFIRMED for the seven operations and `push`'s `UNSAFE` tag; OVERSTATED for
+  reconciliation.** All seven JGit operations are real against a real repository; `push` is tagged
+  `RecoveryClass.UNSAFE` and the executor's generic `recover()` path (not broker-specific code)
+  correctly marks it `INDETERMINATE` rather than retrying, tested. **RFC-0053's actual
+  reconciliation protocol — fingerprint-mismatch detection gating Run start, a `reconciliations`
+  table with five change classifications, tracked invalidation/dangling-node/termination counts —
+  is entirely unbuilt.** `grep -rn "reconciliations|fingerprint" runtime/` returns zero hits outside
+  the schema file; the `reconciliations` table (`schema/project.sql:721-735`) is never written or
+  read anywhere. What exists is that `gitStatus()` re-opens the repo and calls JGit's own
+  `status()` fresh each time, which trivially reflects on-disk edits because JGit reads live
+  state — not because any reconciliation logic ran. The single "reconciliation" test only asserts a
+  status call after an external edit shows the file; it exercises none of RFC-0053's actual
+  protocol. M13's done-when ("Reconciliation handles the user changing the working tree outside
+  Aidos between two Aidos steps") reads as satisfied by this test but the RFC it cites specifies
+  much more than "status happens to be live."
+- **M14 (Secrets vault) — OVERSTATED.** The vault round-trip itself is real (AES-256-GCM, real
+  SQLite, `CharArray` zeroing) and `AnthropicAdapter`'s tool-call normalization is real. **But the
+  "never appears in a log, an event, an audit row, or a prompt" claim has no enforced code path
+  anywhere**: `Redactor.kt`'s own docstring claims every string crossing a persistence/transmission
+  boundary passes through `redact()`, and that "the vault calls `register` on load" — both false;
+  `grep` for any call site of `Redactor()`/`.register(`/`.redact(`/`.detect(` outside `Redactor.kt`
+  itself and its own unit test returns **zero** results anywhere in `runtime/`. No logger, audit
+  writer, or event emitter references it. **`attempts.provider_retention_json` — the specific
+  column the done-when names — is declared in schema but has no writer anywhere in the codebase.**
+  The only production writer of `attempts` rows, `AgentLoopTaskRunner.writeAttempt()`, omits the
+  column from its `INSERT` entirely; `AnthropicAdapter.providerRetentionJson` is read only by its
+  own test and by an Android presenter whose own comment admits it's showing a placeholder, not the
+  real column. There is no second provider and no `ModelAdapter`-interface-level retention field,
+  so the specific "UNKNOWN when a provider states no policy, never an assumed-benign default" rule
+  has nothing implementing it to test — the one test that mentions "UNKNOWN" only checks a hardcoded
+  string doesn't literally contain that word, not the actual fallback behavior.
+- **M15 (Prompt construction) — PARTIALLY OVERSTATED.** Token budget derivation and the two-phase
+  negotiation are both real and the negotiation is structurally, not just conventionally, bounded to
+  one retry. The adoption gate itself is real, tested code in `PromptAssembler`/
+  `InstructionDiscovery` — **but it never engages in production**, because `AgentLoopTaskRunner`
+  (the actually-wired task runner) never calls `InstructionDiscovery` and always assembles with
+  `instructionSet = null`, a gap the class's own header comment already discloses. So in the current
+  runtime, no `AGENTS.md`/`CLAUDE.md` content — adopted or not — reaches any real Run's system turn
+  today; the security fix RFC-0016's own history describes is real at the unit level but not live
+  end-to-end. **`runs.instruction_set_hash` — the specific column the done-when names — is declared
+  in schema and never written anywhere** (grepped exhaustively; the in-memory hash is computed
+  correctly but only reaches a no-op default `checkpoint` callback in the unused `AgentLoop.kt`, not
+  the wired `AgentLoopTaskRunner`).
+- **M16 (Agent loop with trust and taint) — OVERSTATED.** The step cycle and taint monotonicity are
+  real (`TrustLevel.raisedBy` is monotonic by construction, tested at both the kernel-contract and
+  executor-integration level) and egress denial under taint is real and tested. Schema/capability
+  validation being stubbed was already known (Part 1's predecessor review flagged it). **What's new:
+  "a tainted Run... escalates naming the specific untrusted content" is not implemented in the
+  production path at all.** The kernel has a field for exactly this
+  (`Run.taintSourceNodeId: ContentNodeId?`, matching schema column
+  `taint_source_node_id`), but grepping the whole tree for writers of it finds only the kernel
+  declaration and a schema-mapping test — `AgentLoopTaskRunner` never populates it, and the denial
+  message that does reach the model is a bare `DenialReason` enum name with no content named. The
+  version that does name something (the tool's name, not the actual content) exists only in the
+  confirmed-unused `agentloop/AgentLoop.kt`. RFC-0027's own MVP list names this item explicitly
+  ("Escalation events naming the specific tainting content"), so this is a real gap against the RFC
+  the milestone cites, not a generous reading of ambiguous wording. No D6 violation (model
+  confirming its own success) was found by direct search.
+- **M16b (Session memory) — CONFIRMED.** All three D33 promotion constraints are genuinely
+  schema-level `CHECK` constraints, verified by tests that attempt to bypass the store class with
+  raw SQL and confirm the database itself rejects the write — not just application discipline. No
+  `SUMMARY` kind exists anywhere. One narrow caveat: "mandatory `source_refs`" is `NOT NULL` at the
+  schema level but the stronger "never `[]`" rule is enforced only in application code
+  (`SessionMemoryStore`'s `require()`), not a `CHECK` — a raw INSERT bypassing the store class could
+  still write an empty array. 9/9 tests green, matching this file's own claimed count.
+- **M17 (Injection suite) — OVERSTATED.** The 7-test corpus is real and the payloads are genuinely
+  adversarial (DAN-style jailbreak text, fake `SYSTEM:` overrides, nested JSON injection), matching
+  the claimed 7 categories exactly. **But every test in the suite drives `agentloop.AgentLoop` — the
+  confirmed zero-caller, non-production loop — not `executor.AgentLoopTaskRunner`, the loop that
+  actually runs.** `grep` for `AgentLoopTaskRunner` inside the injection test file, and for
+  "injection" inside `executor/src/`, both return nothing. The taint mechanism the suite verifies
+  (`raisedBy` monotonicity, broker denial) is structurally shared between both loops, so the
+  protection likely extrapolates — but that is an inference, not something any test demonstrates,
+  and "a corpus of hostile content, none of which escalates authority" currently proves that claim
+  about a loop nothing in production calls.
+- **M18 (MCP, both transports) — NOT FOUND. The largest gap this audit has found.** The entire
+  module is two files and 160 lines, and implements only `ToolDescriptor` mapping from a
+  caller-supplied, already-parsed `McpServerRegistration` — nothing populates that registration from
+  a real server. **No MCP client, no transport, no protocol exists anywhere in the codebase**:
+  zero JSON-RPC, no `initialize`/`tools/list`/`tools/call` (grepped across the whole tree). **No
+  stdio transport**: `grep -rn "ProcessBuilder" runtime/` returns zero results in the entire
+  codebase — nothing anywhere spawns a subprocess, so there is no scrubbed-environment question to
+  even evaluate; the "scrubbed child environment" done-when clause has nothing to check because
+  there is no child process. **No real HTTP transport**: `mcp/build.gradle.kts` declares
+  `ktor-client-core`/`ktor-client-cio` as dependencies but `grep -rln "io.ktor" mcp/` finds zero
+  actual usage — the dependency is unused. `validateHttpEndpoint()` only string-matches a URL
+  prefix; there is no TLS handshake, no certificate validation, and the class's own doc comment
+  admits cross-host redirect refusal is "not enforced here — the HTTP client must be configured."
+  D30 (no MCP-triggered capability escalation) is technically true only because **no invocation path
+  exists at all** — there is no `invoke`/`execute` function in the module, so "an MCP server cannot
+  raise a capability request" holds the same way "a car with no engine cannot speed" holds.
+  Zero callers anywhere else in the tree — not wired into the broker, the daemon, or
+  `RuntimeCompositionRoot`. Cross-checked against RFC-0031's own MVP list (eleven items: spawn and
+  communicate, POST+SSE, certificate validation, cross-host redirect refusal, scrubbed spawn
+  environment, header-based HTTP secrets, crash/timeout/reconnection handling) — **none of the
+  eleven has any implementation**. `docs/mvp-roadmap.md`'s M18 row and this file's Status table both
+  mark this ✅ with no caveat.
+- **M19 (End-to-end, G2) — OVERSTATED, and this is the one that matters most for the gate
+  claim.** A test literally named `G2` exists and passes
+  (`CliFrontendTest.kt:147-188`, "G2 - create project to audit trail in one command sequence") —
+  but it is constructed against `MockRuntimeClient` by default, and its own comments admit the
+  mocking at every step: *"may be empty in mock, but must not throw"*, *"Mock returns empty list;
+  the important thing is the call does not throw"*, *"The mock does not simulate real tool calls;
+  G3 and beyond verify real execution."* Its final assertion — "the audit trail reconstructing it
+  afterwards" — is `assertNotNull(trail)` against `MockRuntimeClient.getAuditTrail()`, which is a
+  hardcoded `emptyList()`. No real model call, tool call, git commit, artifact, or audit-trail
+  reconstruction happens anywhere in this test, and no other test in the codebase exercises that
+  full chain against real components either — consistent with this file's own 2026-08-10 entries
+  admitting tool calls are still denied end-to-end (no capability resolver wired yet). **This file's
+  Status table and `docs/mvp-roadmap.md` both currently mark M19 ✅ and G2 passed. Given M10 (no CLI
+  executable), M18 (no MCP), and M19's own test being mock-only, that mark is not supported by the
+  code as it stands today.** This is stated as a finding, not a fix — correcting the milestone table
+  is a decision for whoever next touches `docs/mvp-roadmap.md`/this file's Status table, flagged
+  here rather than silently corrected, per this audit's own investigation-only scope.
+
+### What Part 2 means for the audit so far
+
+Part 1 found Phase 0/1 mostly solid, with one real gap (M4's audit-log silent-drop paths) among
+otherwise-confirmed milestones. **Part 2 found a different pattern: Phase 2's *individual*
+subsystems (filesystem, the broker's core ordering, taint monotonicity, session memory) are
+consistently real and well-tested, but several of the *integration and gate* claims — "from the
+CLI," "both transports," "end-to-end... with the audit trail reconstructing it" — are not, and
+G2's own done-when is the thing least supported by what was found.** This matters more than any
+single milestone because G2 is a blocking gate for Phase 3 in RFC-0099's own gate table ("any UI
+work" is blocked on G2 in the roadmap graph) and this file already treats it as passed. Whether
+that changes the plan is the project owner's call, not this audit's — but the evidence should be in
+front of them accurately before they make it.
+
+### What this audit does not cover yet
+
+Phase 3 (M20–M26) and Phase 4 (M27–M35) milestones are **not yet independently re-verified**.
+Also not yet done: the RFCs never named by the original review, Part 1, or Part 2 (0000–0002,
+0013–0014, 0017, 0020, 0022–0023 partially — M20/M21/M22 territory, 0037–0042, 0044, 0046,
+0048–0057, 0060, 0099–0102) and a milestone-by-milestone cross-check table against
+`docs/mvp-roadmap.md`. No overall MVP-readiness verdict is given here — it would be premature
+given the coverage so far, though Part 2's findings already narrow what that verdict can honestly
+say about G2. Continued in later dated entries below as the audit proceeds; see
+`docs/rfc-mvp-audit-tracking.md` for live status between entries.
 
 ---
 

@@ -13,8 +13,8 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 1 · 2026-08-10 · complete, pushed. PIPELINE.md now has "RFC/MVP Readiness Audit — 2026-08-10
-(Part 1: Phase 0/1 + re-verification of the 2026-08-09 review)".
+Link 2 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 2: Phase 2, M9–M19" with
+significant findings — see below. G2 (currently marked passed) is not well supported by the code.
 
 ## Done
 
@@ -48,14 +48,55 @@ Link 1 · 2026-08-10 · complete, pushed. PIPELINE.md now has "RFC/MVP Readiness
       nonexistent `AuditEnforcingBroker` enforcement class. This is a genuine finding the
       2026-08-09 review did not catch (RFC-0003/RFC-0037/M4 weren't in its exception list).
 - [x] Wrote the PIPELINE.md audit section (Part 1), committed, pushed.
+- [x] **Link 2: confirmed PR #27 merged** (`2026-08-10T06:36:55Z`, commit `8e7bbb1`). Merged
+      `main` into `claude/rfc-mvp-audit` (commit `36cae89`) so the audit branch's own baseline
+      reflects it, pushed. Independently re-ran `:knowledge:jvmTest :modelruntime:jvmTest
+      --continue` myself (not via subagent, this one was quick) — confirmed `:modelruntime` now
+      genuinely green (26 tests), `:knowledge` still fails on the same pre-existing 401
+      registry-auth wall (expected, sandbox-only, not a regression, matches PR #27's own
+      description).
+- [x] Dispatched 3 independent verification subagents in parallel (background, ~7 min each) for
+      Phase 2 (M9-M19), split by subsystem: Agent A (M9-M11: API/CLI/broker), Agent B (M12-M15:
+      filesystem/git/vault/prompt), Agent C (M16-M19: agent-loop/memory/injection/MCP). All ran
+      real gradle test targets with `--rerun-tasks` (not cached), grepped exhaustively, and cited
+      file:line evidence.
+- [x] **Part 2 found the audit's most significant gaps so far.** Summary of verdicts: M9
+      CONFIRMED (2 new minor gaps: diff.hunks()/diff.changes() stubbed in both clients,
+      EventFilter.types unused). M10 OVERSTATED — **no runnable CLI executable exists anywhere in
+      the repo** (no `application` plugin, no `main()`; the daemon's socket server literally never
+      opens a socket, just prints a placeholder string). M11 CONFIRMED for ordering/filtering, one
+      new gap (docstring claims JSON-Schema arg validation that doesn't exist anywhere). M12
+      CONFIRMED, no new gaps. M13 CONFIRMED for the 7 git ops, OVERSTATED for reconciliation —
+      RFC-0053's actual protocol (fingerprint detection, `reconciliations` table, 5
+      classifications) is entirely unbuilt; what exists is JGit trivially reading live state. M14
+      OVERSTATED — `Redactor` (the "never leaks to logs" mechanism) has zero call sites anywhere
+      outside its own file; `attempts.provider_retention_json` has no writer anywhere in the
+      codebase. M15 PARTIALLY OVERSTATED — the instruction-adoption security gate is real at the
+      unit level but never engages in production (`AgentLoopTaskRunner` never calls
+      `InstructionDiscovery`, self-documented gap); `runs.instruction_set_hash` never written
+      anywhere. M16 OVERSTATED — taint monotonicity real and tested, but "escalates naming the
+      specific untrusted content" has a schema column nothing in production ever writes. M16b
+      CONFIRMED — D33's 3 promotion constraints are genuinely schema-CHECK-enforced, bypass-tested.
+      M17 OVERSTATED — the 7-test injection corpus is real and adversarial but tests only the
+      confirmed-unused `agentloop.AgentLoop`, zero coverage of the actual production
+      `executor.AgentLoopTaskRunner`. **M18 NOT FOUND — the single largest gap found by this audit
+      so far.** The MCP module is 160 lines of pure descriptor-mapping; no client, no transport, no
+      protocol, no subprocess spawning anywhere in the codebase (`grep -rn "ProcessBuilder"
+      runtime/` returns zero hits total), no real HTTP client despite the ktor dependency being
+      declared, zero callers anywhere else in the tree. None of RFC-0031's 11 MVP items are
+      implemented. **M19 (G2) OVERSTATED — the test literally named "G2" runs entirely against
+      `MockRuntimeClient` and its own comments admit every step is mocked**; the "audit trail
+      reconstructing it" assertion is `assertNotNull` against a hardcoded `emptyList()`.
+- [x] **Given M10 (no CLI), M18 (no MCP), and M19 (G2 test is mock-only), the current ✅ on G2 in
+      this file's Status table and in docs/mvp-roadmap.md is not supported by the code.** Recorded
+      as a finding in PIPELINE.md's Part 2, explicitly left as a finding not a fix (audit is
+      investigation-only) — whoever next touches the milestone table should read Part 2 before
+      trusting the G2 checkmark.
+- [x] Wrote the PIPELINE.md audit section (Part 2), committed, pushed.
 
 ## Next
 
-- **Part 2 (next link): Phase 2 (M9-M19)** — RFCs 0008, 0013-0016, 0021, 0023, 0025-0027,
-  0030-0035, 0042, 0048, 0052. Same method: independent subagents grepping runtime/ + running
-  tests, don't trust this file's own claims. Suggest 2-3 agents split by subsystem (e.g. API/CLI/
-  broker; filesystem/git/vault/prompt; agent-loop/memory/injection/MCP).
-- **Part 3 (link after that): Phase 3 (M20-M26)** — RFCs 0020-0024, 0044-0045, 0049, 0053, 0056.
+- **Part 3 (next link): Phase 3 (M20-M26)** — RFCs 0020-0024, 0044-0045, 0049, 0053, 0056.
   Note M21/M26 are hardware-gated (no real phone in this sandbox) — the audit's job there is to
   confirm what's genuinely blocked-on-hardware vs. what's actually missing code, not to fake a
   device measurement.
@@ -104,3 +145,26 @@ Link 1 · 2026-08-10 · complete, pushed. PIPELINE.md now has "RFC/MVP Readiness
   (not a re-confirmation of something the 2026-08-09 review already said) — flag it prominently in
   the final assessment. It's a real security-relevant gap (RFC-0003 says every effect must audit)
   that nobody had caught before this link.
+- **Link 2 lesson: the "individual subsystem is solid, but the integration/gate claim is not" split
+  is a real pattern worth watching for in Parts 3-4, not a Phase-2-only fluke.** Filesystem, git's
+  core ops, the broker's ordering, taint monotonicity, and session memory are all genuinely solid —
+  the problems are concentrated in claims about things *composing* (CLI-as-a-program, MCP
+  transports, the G2 end-to-end chain). When verifying Phase 3/4, explicitly check not just "does
+  the subsystem's own test suite pass" but "is this subsystem actually reachable from anything a
+  user would run" — M10/M18/M19 all passed their own narrow tests while being unreachable or
+  mock-only at the level the milestone's done-when actually describes.
+- **3 parallel subagents (not 2) worked fine and found more, proportionally** — Part 2 covered 11
+  milestones with 3 agents vs. Part 1's 8 milestones-and-outstanding-items with 2; no coordination
+  problems, no overlapping findings, no agent ran out of useful things to say. Keep using 3 for
+  Parts 3/4 given their milestone counts (M20-M26 is 7, M27-M35 is 9) — split roughly in half by
+  subsystem within each phase the same way Part 2 split Phase 2.
+- **Do not soften or hide the M18/M19/G2 finding when writing the final assessment** — it is the
+  single most decision-relevant finding of the audit so far (it bears directly on whether Phase 3+
+  should be considered unblocked), and the task brief is explicit that this audit exists precisely
+  to catch this class of overstatement. State it plainly, as Part 2 already does, and let the
+  project owner decide what to do about the G2 checkmark — that decision is explicitly not this
+  audit's to make.
+- **`gradle :knowledge:jvmTest :modelruntime:jvmTest --continue` (targeted, not the full suite)
+  takes about 1m25s once warm** — useful for a quick baseline recheck without paying the full
+  ~4min `jvmTest --continue` cost across all 30 modules, if a future link just needs to confirm
+  those two modules' status hasn't changed.
