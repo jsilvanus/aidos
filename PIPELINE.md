@@ -26,13 +26,19 @@ table.** It confirms the bulk of Phases 0-3 as claimed, but found several specif
 cells overstated or understated. Read the review section before trusting a row at face value.
 
 **2026-08-09 · the AgentLoop↔executor bridge is built** (`RunCreator.kt` + `AgentLoopTaskRunner.kt`
-in `runtime/executor/`, branch `claude/agentloop-executor-bridge-k7rko2`) — the piece both prior
-session-pipeline branches found and deliberately held back from building, tracked separately per
-the user's own decision at the time. Full design and what's deliberately still deferred (schema
-validation, capability resolution, the approval/park-resume flow) is in the "Group 2" checklist
-below, under the "Finish `RealRuntimeClient`" item's cross-branch-blocker note — read that before
-picking up either of the two things it now unblocks: RFC-0005's wake-to-Run wiring, and finishing
-`RealRuntimeClient.sessions.send()` itself.
+in `runtime/executor/`, merged via PR #22) — the piece both prior session-pipeline branches found
+and deliberately held back from building, tracked separately per the user's own decision at the
+time. Full design and what's deliberately still deferred (schema validation, capability
+resolution, the approval/park-resume flow) is in the "Group 2" checklist below, under the "Finish
+`RealRuntimeClient`" item's cross-branch-blocker note.
+
+**2026-08-10 · `sessions.send()` creates a real, durable Run** (`api/RunExecutor.kt` +
+`daemon/SqliteRunExecutor.kt`, branch `claude/real-runtime-client-run-executor`) — one of the two
+things the bridge unblocked. Sessions now persist too. Still does not *drive* the Run it creates —
+that needs a real `InferenceRouter`/`EffectBroker`/`CapabilityManager` composition that doesn't
+exist anywhere in the runtime yet. Full detail in the "Finish `RealRuntimeClient`" checklist item
+below, under its own dated update. RFC-0005's wake-to-Run wiring — the bridge's other unblocked
+item — is still untouched.
 
 | | |
 |---|---|
@@ -698,6 +704,53 @@ further down this file.
   below. Session persistence (`sessions.*`) is also still in-memory — deliberately not attempted
   in this slice; deciding whether session rows should persist ahead of Run execution being real is
   a judgment call for whoever picks up the executor/capability half, not assumed here.
+
+  **Update (2026-08-09/10, branch `claude/real-runtime-client-run-executor`) — the judgment call
+  above is made: session rows now persist, and `sessions.send()` creates a real, durable Run.**
+  With the AgentLoop↔executor bridge merged (below), `RunCreator` exists to create a `runs` row
+  for a user message — the piece this note was waiting on. Done:
+  - `sessions.create()` writes a real `sessions` row when the project's driver is open (matching
+    `projects.create()`'s own pattern exactly), with `UuidV7Generator`-minted ids (a second
+    `sessionIdGen`, next to `projectIdGen` — sessions now need the same "must survive a restart
+    without colliding" property projects already got).
+  - A new seam, `RealRuntimeClient.runExecutor: RunExecutor?` (`api/RunExecutor.kt`) — `null`
+    preserves the exact pre-persistence in-memory `RunSummary`/`RunResult.Accepted` stub;
+    `sessions.send()` calls it instead when both it and the session's project driver are set.
+  - **Why a seam instead of `RealRuntimeClient` calling `executor` directly: a real module
+    cycle.** `executor` depends on `prompt`, and `prompt` depends on `api` (for `KnowledgeQuery`/
+    `KnowledgeQueries`) — so `api` → `executor` would close the loop. `RunExecutor` is a plain
+    interface `api` owns; the real implementation (`daemon/SqliteRunExecutor.kt`) is composed in
+    `daemon`, which is free to depend on `executor` directly, and injected into
+    `RuntimeClientFactory.createRuntimeClient()`'s `RealRuntimeClient` the same way
+    `projectDbFactory`/`projectLocker` already are. Worth remembering before reaching for
+    "just add the dependency" on any future `api`↔`executor` wiring — check the graph first,
+    this exact cycle will recur.
+  - `SqliteRunExecutor.send()` publishes `EventTypes.USER_COMMAND` (not the informal `'UserMessage'`
+    string test fixtures elsewhere in the codebase use as seed data — that string was never tied
+    to the RFC, `EventTypes`' own doc comment confirms the MVP line's real spelling is
+    `"UserCommand"`) then calls `RunCreator.createForUserMessage(...)`. **Deliberately does not
+    call `SqliteExecutor.drive()`.** Driving a Run to an actual model response needs a real
+    `InferenceRouter` + `PromptAssembler` + `EffectBroker` (a `CapabilityManager` with real tools
+    registered) — none of which are composed anywhere in the runtime yet; `RuntimeClientFactory`
+    only ever wires storage and locking. Building that composition (register `FilesystemTool`/
+    `GitTool` on a real `ToolBroker`, grant real capabilities, pick a real `InferenceRouter`) is
+    substantial, separate work — a runtime "composition root" that doesn't exist yet — not
+    something to force through as a side effect of this wiring. The Run this creates is durable
+    and sits `PENDING`; nothing is lost by not driving it immediately (D3's whole point is that
+    every step is reconstructable from rows, not held anywhere in memory), and whoever builds that
+    composition just needs to call `drive()` on it.
+  - Tests: `daemon/SqliteRunExecutorTest.kt` (real SQLite, asserts the event/`runs`/`tasks` rows
+    directly) and `api/RealRuntimeClientSessionTest.kt` (session persistence across a fresh driver
+    read, `RunExecutor` dispatch with a fake, the unset-seam fallback, and the unknown-session
+    error path). `CrashRecoveryTest` unaffected (this link never touches `SqliteExecutor.kt`).
+  - **Still open**: session *read* hydration (`sessions.list()`/`.get()` still only read the
+    in-memory `_sessions` map, so a session created by a prior process instance is invisible to a
+    fresh one — the mirror image of the gap `hydrateProjectSummary` closes for projects, not closed
+    here). `platformProfile`/`networkAvailable` are plain mutable vars with no real detection
+    behind them (`DESKTOP`/`false` always) — flagged, not guessed at, matching how
+    `runtimeManagedProjectsRoot` and the other seams started. And the big one: the composition
+    root (`CapabilityManager` + registered tools + `InferenceRouter`) needed to ever actually
+    *drive* one of these Runs, named above.
 
   **`androidTarget()` wired on `storage`, `settings`, `identity`, `capability`, `broker`,
   `executor`** (six modules, not four — `broker` and `settings` turned out to be transitive

@@ -12,6 +12,8 @@ kotlin {
                 implementation(project(":api"))
                 implementation(project(":cli"))
                 implementation(project(":storage"))
+                implementation(project(":identity"))
+                implementation(project(":executor"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
