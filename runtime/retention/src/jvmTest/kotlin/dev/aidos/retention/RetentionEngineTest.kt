@@ -224,23 +224,80 @@ class RetentionEngineTest {
         clearNodes()
         insertProject("p4")
         val mb = 1024L * 1024
-        // 3 nodes at 200 MB each = 600 MB. Cap = 512 MB. batchSize = 1 (one eviction per pass).
-        repeat(3) { i ->
+        // 7 nodes at 100 MB each = 700 MB. Cap = 512 MB, so overage is 188 MB -- more than any
+        // single node's 100 MB, so with batchSize = 1 (LIMIT 1 candidate fetched per pass) no
+        // single pass can close the gap: this genuinely requires a second compact() call, not
+        // just a batch big enough to evict everything needed in one shot.
+        repeat(7) { i ->
             val age = Instant.now().minus((100 - i).toLong(), ChronoUnit.DAYS).toString()
-            insertNode("resume-node-$i", "p4", 200 * mb, age)
+            insertNode("resume-node-$i", "p4", 100 * mb, age)
         }
 
         val engine = RetentionEngine(dbUrl, RetentionPolicy(
             retentionDays = 200,
             storageLimitBytes = 512 * mb,
-            batchSize = 1,  // Only one eviction per pass — tests resumability.
+            batchSize = 1,  // Only one candidate fetched per pass — forces multiple passes.
         ))
 
         val r1 = engine.compact(Instant.now())
-        assertEquals(1, r1.deletedNodes, "First pass evicts one node")
+        assertEquals(1, r1.deletedNodes, "First pass evicts one node (batchSize = 1)")
+        assertTrue(r1.needsAnotherPass, "700 MB - 100 MB = 600 MB is still over the 512 MB cap")
+        assertEquals(600 * mb, totalBytes(), "First pass must have made progress")
 
-        val afterFirstPass = totalBytes()
-        assertTrue(afterFirstPass < 600 * mb, "First pass must have made progress")
+        // The audit's Part 3 finding: this test never actually called compact() a second time,
+        // so "second pass evicts remaining" was asserted by the test's own name, not its body.
+        // A genuine second call must pick up from the oldest *remaining* row -- not redo the one
+        // already evicted -- and must converge the cap, the same way an interrupted-and-resumed
+        // real Run would (see the class doc comment's "on next invocation it resumes naturally"
+        // claim).
+        val r2 = engine.compact(Instant.now())
+        assertEquals(1, r2.deletedNodes, "Second pass evicts the next-oldest remaining node, not a repeat")
+        assertFalse(r2.needsAnotherPass, "600 MB - 100 MB = 500 MB is now within the 512 MB cap")
+        assertEquals(500 * mb, totalBytes(), "Second pass must have made further real progress")
+        assertEquals(5, countActiveNodes(), "Two distinct nodes evicted across the two passes")
+    }
+
+    /**
+     * M25's done-when headline claim: "storage per active project stays under 512 MB after 90
+     * simulated days of use." The audit's Part 3 finding was that no test actually simulated
+     * accumulation over time — the only prior coverage backdated two rows' timestamps to a single
+     * point, never a day-by-day buildup. This inserts one node per day for 120 days (30 days past
+     * the default retention window, so both age-based expiry and cap-based LRU eviction are
+     * genuinely exercised together, not just one in isolation) and asserts the exact converged
+     * state with the *default* [RetentionPolicy] — 90 days, 512 MB — not a policy tuned to make
+     * the test pass trivially.
+     */
+    @Test
+    fun `storage stays within the 512 MB cap after 120 days of simulated daily accumulation`() = runTest {
+        clearNodes()
+        insertProject("p-accum")
+        // No active session for p-accum — both expiry and cap eviction are allowed to act.
+        val mb = 1024L * 1024
+        val dailyBytes = 6 * mb
+        val totalDays = 120
+        val now = Instant.now()
+        repeat(totalDays) { day ->
+            // day 0 is the oldest (120 days old), day 119 is the newest (1 day old) — a real
+            // day-by-day accumulation, not two rows backdated to one point.
+            val age = now.minus((totalDays - day).toLong(), ChronoUnit.DAYS).toString()
+            insertNode("day-node-$day", "p-accum", dailyBytes, age)
+        }
+        assertEquals(totalDays * dailyBytes, totalBytes(), "sanity: 120 days' worth of data inserted")
+
+        // Default policy: 90-day retention, 512 MB cap (RFC-0056's own MVP numbers).
+        val engine = RetentionEngine(dbUrl)
+        val result = engine.compact(now)
+
+        // Age expiry alone removes the 30 oldest days (120 - 90): 30 * 6 MB = 180 MB freed,
+        // leaving 90 days' worth = 540 MB, still 28 MB over the 512 MB cap. LRU eviction then
+        // removes 5 more of the next-oldest days (30 MB) to close that gap. Both mechanisms
+        // must actually run in the same pass for these numbers to hold.
+        assertEquals(35, result.deletedNodes, "30 expired by age + 5 more evicted by the cap")
+        assertEquals(210 * mb, result.bytesFreed)
+        assertFalse(result.needsAnotherPass, "batchSize=500 default easily covers this in one pass")
+        assertEquals(85, countActiveNodes(), "120 - 30 (expired) - 5 (LRU) = 85 days' worth remain")
+        assertEquals(510 * mb, totalBytes())
+        assertTrue(totalBytes() <= 512 * mb, "the 512 MB ceiling must hold after 120 days of accumulation")
     }
 
     @Test

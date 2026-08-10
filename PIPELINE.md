@@ -106,7 +106,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — the curated catalog now carries real published SHA-256 digests (Hugging Face LFS blob `oid`s), and `GlobalModelRuntime.load()` verifies against the catalog's pinned value, not a second hash of the same installed file. See the Part 3 audit's M20 entry for full detail.** |
 | Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — `daemon/RuntimeCompositionRoot.kt` now reads `Settings.routingRemoteEgress` (via a new optional `userDriver`) instead of inferring `allowRemote` from API-key presence alone; `NEVER` and the default `ASK` both now correctly block automatic remote routing even with a key configured. See the Part 3 audit's M23 entry for full detail.** |
 | Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
-| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
+| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 8 tests. M25 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 testing-gap finding is fixed — a real 120-day daily-accumulation test and a genuine two-`compact()`-call resumability test now exist. The underlying design question (finer-grained resumability vs. corrected wording) is open, asked of the project owner. See the Part 3 audit's M25 entry.** |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31); PR #18 added `ScheduledJobManager`/`JobScheduler`/`TriggerCalculator` (RFC-0044 M32, 89 tests). 37+89 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ (platform-neutral logic). **Caveat (2026-08-09 review): the Android-target half is thinner than the checkmarks suggest — see "Independent codebase review" below.** |
 | Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ (logic layer only — **no real STT/TTS backend exists, only the `NoOp` providers**; hands-free is untestable end-to-end until one is wired in) |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
@@ -1804,6 +1804,22 @@ completion marker either, unlike Phase 0's; the fabricated claim was confined to
   not corrupt anything) — but "interruptible and resumes" as stated in the done-when is asserted by
   the code comment, not demonstrated by any test. Same unwired-leaf pattern as M24: zero callers
   anywhere in `runtime/` outside its own test file.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): both testing gaps fixed; the
+  design question is still open, asked of the project owner rather than picked unilaterally.**
+  `storage stays within the 512 MB cap after 120 days of simulated daily accumulation` inserts one
+  node per day for 120 days (30 days past the default 90-day window) and asserts the *exact*
+  converged state under the *default* `RetentionPolicy` — 30 days expired by age, 5 more evicted by
+  the cap, 85 days' worth (510 MB) remain — exercising age-expiry and cap-eviction together, not a
+  policy tuned to pass trivially. `compaction is resumable - second pass evicts remaining` now
+  genuinely calls `compact()` twice (7×100 MB nodes, `batchSize = 1`, so one pass's eviction can't
+  close the gap) and asserts the second call evicts the *next* remaining node and converges the cap
+  — the exact "call it a second time" the audit found missing. Both new/rewritten tests pass; see
+  `RetentionEngineTest.kt`. **Not fixed, deliberately: the underlying design question (finer-grained
+  per-row resumability vs. correcting the done-when/comment wording to "resumable at up-to-`batchSize`
+  granularity") was asked of the project owner via `AskUserQuestion` rather than picked silently, per
+  this fix session's own brief — RFC-0056's exact interruptibility guarantee is a design decision,
+  not just a testing gap. See the chat transcript for the question and, once answered, this note will
+  be updated with the resolution.**
 
 ### What Part 3 means for the audit so far
 
