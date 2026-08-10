@@ -433,12 +433,27 @@ further down this file.
   There is no unclaimed hook point to add here the way there was for the other two; building one
   would mean either modifying the flagged file directly or duplicating scheduling logic elsewhere
   to route around it. Flagged rather than pushed through, per the branch's standing rule.
+  **Fourth emission point, `TimerFired` from `RuntimeClientWorkDispatcher.dispatchXxx()`
+  — built 2026-08-10:** Unlike the other three, this is not a tool but a dispatcher of
+  scheduled jobs. Added an `onTimerFired: (job: ScheduledJob) -> Unit = {}` constructor
+  callback to `RuntimeClientWorkDispatcher` (following the same callback-not-dependency
+  pattern as `GitTool.onCommit` and `FilesystemTool.onWrite`). The callback fires in all
+  four `dispatchXxx` methods (Interactive, Deferred, Scheduled, Opportunistic) when the
+  dispatch result is `RunResult.Accepted` AND the job's trigger is time-based
+  (`Trigger.At`, `Trigger.Every`, or `Trigger.Cron`). Deliberately excludes
+  `Trigger.OnEvent` and `Trigger.OnCondition` — these are event/condition-driven, not
+  timer-fired, and calling the callback would misrepresent the causality RFC-0004's own
+  `causality` field exists to track. The `androidapp` module has no reason to depend on
+  `executor`/`EventStore`, so the caller maps the job to the real event and publishes.
+  Not yet exercised by any live caller — see PIPELINE.md's Group 1 notes. 3 new tests
+  verifying callback fires for At/Every/Cron triggers on success, doesn't fire for
+  OnEvent/OnCondition triggers, and doesn't fire on failed dispatch or when job is
+  disabled; all green.
   **Net state of RFC-0004 item 2 + emission wiring:** `ToolCompleted`, `GitCommit`,
-  `FileModified`/`FileCreated` have real, tested emission points. `TimerFired` is blocked on
-  Group 2 territory. `UserCommand`, `PermissionRequested`/`Granted`/`Denied`,
-  `SessionWoken`/`Sleeping`, `ArtifactCreated`, `Error`, and `FileDeleted` have no natural
-  emission point identified yet — none of them sit behind an operation this session found and
-  checked, unlike the four above.
+  `FileModified`/`FileCreated`, and `TimerFired` have real, tested emission points.
+  `UserCommand`, `PermissionRequested`/`Granted`/`Denied`, `SessionWoken`/`Sleeping`,
+  `ArtifactCreated`, `Error`, and `FileDeleted` have no natural emission point identified
+  yet — none of them sit behind an operation found and checked so far.
 - [x] **RFC-0005 (Scheduler) — persistence + pure matching layer done 2026-08-09; wake-to-Run
   wiring ruled out of this branch's scope by user decision, not deferred as "next link's job."**
   Checklist framing corrected first (see below), then progress made on the corrected scope:
