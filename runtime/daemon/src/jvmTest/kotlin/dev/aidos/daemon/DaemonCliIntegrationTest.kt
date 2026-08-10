@@ -9,7 +9,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * M33 Integration: Daemon + CLI working together.
+ * Daemon + CLI integration, in-process transport.
  *
  * This test demonstrates the foundation for frontends (CLI, web UI)
  * to communicate with the daemon via RuntimeClient interface (RFC-0052).
@@ -17,8 +17,11 @@ import kotlin.test.assertTrue
  * The daemon provides a RuntimeClient implementation, which the CLI
  * uses to create projects, sessions, send messages, etc.
  *
- * Full socket transport is deferred to Phase 4.5; this verifies
- * the architecture is sound by using in-process RuntimeClient.
+ * This drives `AidosCli` directly against the in-process `RealRuntimeClient` `RuntimeClientFactory`
+ * builds, which is faster than spawning a real daemon process for every case. The real socket
+ * transport (M10, RFC-0052/RFC-0055) is exercised for real in
+ * `RealSocketIntegrationTest` — a genuine subprocess, a genuine Unix domain socket, the actual
+ * `SocketRuntimeClient`/`RuntimeSocketServer` wire protocol.
  */
 class DaemonCliIntegrationTest {
 

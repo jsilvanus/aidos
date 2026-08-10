@@ -3,6 +3,7 @@ package dev.aidos.executor
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.EventId
@@ -14,6 +15,8 @@ import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
@@ -25,11 +28,14 @@ import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
+import dev.aidos.prompt.InstructionDiscovery
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
+import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -61,11 +67,12 @@ class AgentLoopTaskRunnerTest {
         projectId: String,
         sessionId: String,
         triggerEventId: String,
+        rootPath: String = Files.createTempDirectory("bridge-test-root").toFile().path,
     ) {
         driver.execute(null,
             "INSERT INTO projects (id, name, root_path, project_type, created_at, updated_at, state_updated_at) " +
-                "VALUES (?, 'test', '/', 'generic', ?, ?, ?)", 4
-        ) { bindString(0, projectId); bindString(1, nowIso); bindString(2, nowIso); bindString(3, nowIso) }
+                "VALUES (?, 'test', ?, 'generic', ?, ?, ?)", 5
+        ) { bindString(0, projectId); bindString(1, rootPath); bindString(2, nowIso); bindString(3, nowIso); bindString(4, nowIso) }
         driver.execute(null,
             "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) " +
                 "VALUES (?, ?, 'test', 'DRIVER', 'RUNNING', ?, ?, ?)", 5
@@ -76,14 +83,20 @@ class AgentLoopTaskRunnerTest {
         ) { bindString(0, triggerEventId); bindString(1, projectId); bindString(2, nowIso) }
     }
 
-    private fun fakeModel(responses: List<ModelResponse>, requestLog: MutableList<ModelRequest> = mutableListOf()): ModelAdapter {
+    private fun fakeModel(
+        responses: List<ModelResponse>,
+        requestLog: MutableList<ModelRequest> = mutableListOf(),
+        isLocalAdapter: Boolean = true,
+        retention: ProviderRetention? = null,
+    ): ModelAdapter {
         val queue = ArrayDeque(responses)
         return object : ModelAdapter {
             override val providerId = "test"
             override val modelId = "test-model"
             override val modelVersion = "1.0"
             override val contextWindow = 4096
-            override val isLocal = true
+            override val isLocal = isLocalAdapter
+            override val providerRetention = retention
             override fun supportsNativeToolCalls() = false
             override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
                 requestLog.add(request)
@@ -127,9 +140,10 @@ class AgentLoopTaskRunnerTest {
     private fun createRun(
         driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
         maxSteps: Int = 24,
+        rootPath: String = Files.createTempDirectory("bridge-test-root").toFile().path,
     ): Triple<String, String, RunId> {
         val pid = nextId(); val sid = nextId(); val eid = nextId()
-        seedProjectAndSession(driver, pid, sid, eid)
+        seedProjectAndSession(driver, pid, sid, eid, rootPath)
         val runId = RunCreator(driver, idGen = { nextId() }, nowIso = { nowIso }).createForUserMessage(
             sessionId = SessionId(sid),
             projectId = ProjectId(pid),
@@ -147,6 +161,7 @@ class AgentLoopTaskRunnerTest {
         driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
         router: InferenceRouter,
         broker: EffectBroker,
+        redact: (String) -> String = { it },
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -161,8 +176,47 @@ class AgentLoopTaskRunnerTest {
             router = router,
             assembler = PromptAssembler(),
             broker = broker,
+            redact = redact,
         ),
     )
+
+    private fun modelCallAttempt(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        runId: RunId,
+    ): Pair<String, String?> =
+        driver.executeQuery(
+            null,
+            "SELECT a.output_snapshot, a.provider_retention_json FROM tasks t " +
+                "JOIN attempts a ON a.task_id = t.id AND a.attempt_number = 1 " +
+                "WHERE t.run_id = ? AND t.kind = 'MODEL_CALL' ORDER BY t.ordinal DESC LIMIT 1",
+            mapper = { c ->
+                check(c.next().value) { "no MODEL_CALL attempt for run ${runId.value}" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!! to c.getString(1))
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun runTaintSourceNodeId(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String? =
+        driver.executeQuery(null, "SELECT taint_source_node_id FROM runs WHERE id = ?",
+            mapper = { c ->
+                check(c.next().value) { "run ${runId.value} not found" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0))
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun runInstructionSetHash(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String? =
+        driver.executeQuery(null, "SELECT instruction_set_hash FROM runs WHERE id = ?",
+            mapper = { c ->
+                check(c.next().value) { "run ${runId.value} not found" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0))
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun adoptInstructionSet(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, projectId: String, hash: String) {
+        driver.execute(null,
+            "INSERT INTO instruction_adoptions (project_id, set_hash, adopted_at, adopted_by, source_manifest) " +
+                "VALUES (?, ?, ?, 'user', '[]')", 3
+        ) { bindString(0, projectId); bindString(1, hash); bindString(2, nowIso) }
+    }
 
     private fun runRow(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): Pair<String, String> =
         driver.executeQuery(null, "SELECT state, taint_level FROM runs WHERE id = ?",
@@ -275,5 +329,196 @@ class AgentLoopTaskRunnerTest {
 
         val (state, _) = runRow(driver, runId)
         assertEquals("FAILED", state)
+    }
+
+    @Test
+    fun `output snapshot is passed through the injected redact function before it is persisted`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse("secret-value-should-not-persist")))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker(), redact = { it.replace("secret-value-should-not-persist", "«redacted»") })
+            .drive(runId)
+
+        val (snapshot, _) = modelCallAttempt(driver, runId)
+        assertTrue(snapshot.contains("«redacted»"))
+        assertTrue(!snapshot.contains("secret-value-should-not-persist"))
+    }
+
+    @Test
+    fun `local model attempts record no provider retention`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = true)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertEquals(null, retentionJson, "no remote provider retained anything for a local model")
+    }
+
+    @Test
+    fun `remote adapter with no stated policy falls back to UNKNOWN, never an assumed-benign default`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = false, retention = null)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertTrue(retentionJson != null && retentionJson.contains("\"UNKNOWN\""))
+    }
+
+    @Test
+    fun `remote adapter's stated retention policy is recorded on the attempt`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val stated = ProviderRetention(
+            policy = RetentionPolicy.ZERO,
+            statedDurationDays = 0,
+            trainingUse = TrainingUse.NONE,
+            recordedAt = kotlinx.datetime.Instant.parse(nowIso),
+        )
+        val adapter = fakeModel(listOf(endTurnResponse()), isLocalAdapter = false, retention = stated)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val (_, retentionJson) = modelCallAttempt(driver, runId)
+        assertTrue(retentionJson != null && retentionJson.contains("\"ZERO\""))
+    }
+
+    @Test
+    fun `no instruction files at the project root records a null instruction_set_hash`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver) // fresh empty temp root -- no AGENTS.md/CLAUDE.md
+        val adapter = fakeModel(listOf(endTurnResponse()))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        assertEquals(null, runInstructionSetHash(driver, runId))
+    }
+
+    @Test
+    fun `an unadopted instruction file is discovered but excluded from the system turn`() = runBlocking {
+        val driver = openDriver()
+        val root = Files.createTempDirectory("instr-test").toFile()
+        File(root, "AGENTS.md").writeText("Unapproved project instructions: do the untrusted thing")
+        val (_, _, runId) = createRun(driver, rootPath = root.path)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(endTurnResponse()), requests)
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val systemText = (requests[0].messages.first { it is Turn.System } as Turn.System).content
+        assertTrue(
+            !systemText.contains("do the untrusted thing"),
+            "an unadopted instruction set must not reach the system turn (RFC-0016)",
+        )
+        assertTrue(
+            runInstructionSetHash(driver, runId) != null,
+            "the hash is still recorded even though the set was excluded from the prompt",
+        )
+    }
+
+    @Test
+    fun `an adopted instruction file reaches the system turn and its hash is recorded on the run`() = runBlocking {
+        val driver = openDriver()
+        val root = Files.createTempDirectory("instr-test").toFile()
+        File(root, "AGENTS.md").writeText("Approved project instructions: use kotlin idioms")
+        val expectedHash = InstructionDiscovery.discover(root)!!.hash
+
+        val (pid, _, runId) = createRun(driver, rootPath = root.path)
+        adoptInstructionSet(driver, pid, expectedHash)
+
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(endTurnResponse()), requests)
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val systemText = (requests[0].messages.first { it is Turn.System } as Turn.System).content
+        assertTrue(systemText.contains("use kotlin idioms"), "an adopted instruction set must reach the system turn")
+        assertEquals(expectedHash, runInstructionSetHash(driver, runId))
+    }
+
+    /** A broker whose result queue is driven by test setup, one entry per [EffectBroker.invoke] call. */
+    private fun sequencedBroker(results: List<ToolCallResult>): EffectBroker {
+        val queue = ArrayDeque(results)
+        return object : EffectBroker {
+            override fun register(tool: Tool) {}
+            override fun descriptorsFor(s: String, p: PlatformProfile, n: Boolean) = emptyList<ToolDescriptor>()
+            override suspend fun invoke(s: String, call: ToolCall, runTaint: TrustLevel): ToolCallResult =
+                queue.removeFirst().copy(callId = call.callId)
+            override suspend fun preview(s: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+            override suspend fun cancel(callId: String) {}
+        }
+    }
+
+    private fun toolCallAttemptSnapshot(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, callId: String): String =
+        driver.executeQuery(
+            null,
+            "SELECT a.output_snapshot FROM tool_calls tc " +
+                "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
+                "WHERE tc.call_id = ?",
+            mapper = { c ->
+                check(c.next().value) { "no attempt for call $callId" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, callId) }.value
+
+    @Test
+    fun `a taint-attenuated denial names the tool call that first raised the taint`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(
+            toolCallResponse("read-untrusted-file", callId = "call-1"),
+            toolCallResponse("push-to-remote", callId = "call-2"),
+            endTurnResponse(),
+        ))
+        val broker = sequencedBroker(listOf(
+            ToolCallResult(
+                callId = "call-1", outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.Text("file contents")), trustLevel = TrustLevel.UNTRUSTED,
+            ),
+            ToolCallResult(
+                callId = "call-2", outcome = ToolOutcome.Denied(DenialReason.ATTENUATED_BY_TAINT),
+                content = listOf(ContentBlock.Text("denied: ATTENUATED_BY_TAINT")), trustLevel = TrustLevel.TRUSTED,
+            ),
+        ))
+
+        buildExecutor(driver, fakeRouter(adapter), broker).drive(runId)
+
+        val snapshot = toolCallAttemptSnapshot(driver, "call-2")
+        assertTrue(
+            snapshot.contains("read-untrusted-file"),
+            "the denial must name the tool call that actually tainted the Run, not a bare enum (RFC-0027): $snapshot",
+        )
+    }
+
+    @Test
+    fun `taint_source_node_id is recorded when the tainting result carries a content node reference`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(toolCallResponse("search-knowledge"), endTurnResponse()))
+        val broker = sequencedBroker(listOf(
+            ToolCallResult(
+                callId = "call-1", outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.ResourceRef(ContentNodeId("node-42"), sizeBytes = 128)),
+                trustLevel = TrustLevel.UNTRUSTED,
+            ),
+        ))
+
+        buildExecutor(driver, fakeRouter(adapter), broker).drive(runId)
+
+        assertEquals("node-42", runTaintSourceNodeId(driver, runId))
+    }
+
+    @Test
+    fun `taint_source_node_id stays null when the tainting result carries no content node`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        assertEquals(null, runTaintSourceNodeId(driver, runId), "Text-only content names no content node to record")
     }
 }

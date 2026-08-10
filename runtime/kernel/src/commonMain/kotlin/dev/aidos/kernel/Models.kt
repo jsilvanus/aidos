@@ -27,7 +27,35 @@ interface ModelAdapter {
     fun supportsNativeToolCalls(): Boolean
 
     suspend fun invoke(request: ModelRequest): Result<ModelResponse>
+
+    /**
+     * The provider's stated data-retention policy (RFC-0026/RFC-0023), recorded in
+     * `attempts.provider_retention_json` for every remote Attempt. Null for local models — there
+     * is no remote provider retaining anything for [isLocal] `true`. A remote adapter that omits
+     * this (or whose provider states no policy) must still report [RetentionPolicy.UNKNOWN], never
+     * an assumed-benign default — the default here is null only because "not applicable" (local)
+     * and "not yet told us" (remote, unimplemented) are different facts, and a `ModelAdapter` that
+     * doesn't override this at all is presumed local-shaped until it says otherwise.
+     */
+    val providerRetention: ProviderRetention? get() = null
 }
+
+enum class RetentionPolicy { ZERO, TRANSIENT, RETAINED, UNKNOWN }
+
+enum class TrainingUse { NONE, OPT_OUT_HONOURED, UNSPECIFIED }
+
+/**
+ * A remote provider's stated data-retention policy, as recorded at the time of one Attempt
+ * (RFC-0026). [recordedAt] is stamped fresh by the writer at persistence time, not read from a
+ * cached adapter-level value — the policy is a provider fact, but the record is per-call.
+ */
+@Serializable
+data class ProviderRetention(
+    val policy: RetentionPolicy,
+    val statedDurationDays: Int?,
+    val trainingUse: TrainingUse,
+    val recordedAt: Instant,
+)
 
 data class ModelRequest(
     val messages: List<Turn>,

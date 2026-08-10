@@ -5,15 +5,20 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
+import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
@@ -25,11 +30,16 @@ import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.AssemblyRequest
 import dev.aidos.prompt.AssemblyResult
+import dev.aidos.prompt.InstructionDiscovery
+import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
+import java.io.File
+import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -103,19 +113,22 @@ private data class StoredToolResult(
  * - **JSON Schema argument validation (RFC-0008 step 8b)** — every `tool_calls` row is written
  *   with `schema_valid = 1` unconditionally. Real validation needs a schema validator this
  *   codebase doesn't yet depend on; this bridge's job was the structural wiring, not that.
- * - **Capability resolution for a model's tool call (RFC-0008 step 8c)** — `ToolCall.capabilityId`
- *   is always `null` here, the same gap `AgentLoop.kt` already has (it never populates one
- *   either). `ToolBroker.invoke()` denies with `capability.missing` for every call until
- *   something maps "a session, a tool name" → a held `CapabilityId`; that mapping is a separate,
- *   not-yet-built subsystem, not this bridge's to invent.
+ * - ~~Capability resolution for a model's tool call (RFC-0008 step 8c)~~ **Built, M19**: see
+ *   [resolveCapability] and [dev.aidos.daemon.CapabilityResolver]. `ToolCall.capabilityId` is
+ *   resolved fresh in [executeToolCall], immediately before the call — the actual authority
+ *   decision still lives entirely in `CapabilityManager.validate()`, called next by
+ *   `ToolBroker.invoke()`; this bridge only looks up which existing grant to hand it.
  * - **The approval flow (RFC-0008 step 8d, `Task(kind = CAPABILITY_REQUEST)`, `AWAITING_APPROVAL`)**
  *   — a `RoutingDecision.RemotePendingApproval` fails the Run outright instead of parking it.
  *   Building the park/resume machinery (a `continuations` row, an event that un-parks it) is
  *   substantial and was ruled out of this link's scope deliberately, the same way RFC-0009's own
  *   MVP section defers `CHECKABLE` recovery probes.
- * - **Instruction sets (RFC-0016)** — `instructionSet` is always `null`, matching `AgentLoop.kt`'s
- *   own default; wiring `InstructionDiscovery` in is unrelated to bridging the two execution
- *   models and was left alone.
+ * - **Instruction adoption UX (RFC-0016)** — [discoverInstructionSet] reads `instruction_adoptions`
+ *   but nothing in this codebase writes to it yet, so a freshly discovered `AGENTS.md`/`CLAUDE.md`
+ *   is correctly excluded from the system turn (never adopted) and stays that way until some other
+ *   part of the system inserts an adoption row; there is no session/UI flow here that could ever
+ *   produce one. What *is* wired: discovery, the adopted/unadopted gate itself, and persisting
+ *   `runs.instruction_set_hash` — M15's actual done-when.
  */
 class AgentLoopTaskRunner(
     private val driver: SqlDriver,
@@ -126,6 +139,24 @@ class AgentLoopTaskRunner(
     private val assembler: PromptAssembler,
     private val broker: EffectBroker,
     private val subjectId: String = "run",
+    /**
+     * RFC-0035: redacts known secret values out of anything durably persisted. Applied to
+     * `attempts.output_snapshot` before it is written — a model's own text can echo back a
+     * secret that appeared earlier in its context. Defaults to identity so callers with no
+     * [dev.aidos.vault.Redactor] to inject (most tests) keep the pre-M14 behaviour.
+     */
+    private val redact: (String) -> String = { it },
+    /**
+     * RFC-0008 step 8c, M19: resolves a model-emitted [ToolCall] to a capability the subject
+     * already holds for the tool's required permission — picking the most recently issued,
+     * unexpired, unrevoked match; see [dev.aidos.daemon.CapabilityResolver]'s own doc comment
+     * for why a resolver this simple is safe (it can only under-grant: `ToolBroker.invoke()`
+     * calls `CapabilityManager.validate()` immediately after on whatever id this returns, and
+     * that call remains the actual authority decision — scope, expiry, revocation, taint
+     * attenuation). Defaults to always-null so callers with no [dev.aidos.kernel.CapabilityManager]
+     * to inject (most tests) keep the pre-M19 behaviour of every tool call being denied.
+     */
+    private val resolveCapability: suspend (subjectId: String, permission: Permission) -> CapabilityId? = { _, _ -> null },
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
@@ -157,11 +188,13 @@ class AgentLoopTaskRunner(
 
         val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
         val history = reconstructHistory(task.runId, task.ordinal)
+        val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = run.userMessageSummary,
             tools = tools,
             conversationHistory = history,
+            instructionSet = instructionSet,
         )
         val pkg = when (val ar = assembler.assemble(assemblyReq)) {
             is AssemblyResult.Ok -> ar.pkg
@@ -183,6 +216,10 @@ class AgentLoopTaskRunner(
                 }
             }
         }
+        // RFC-0016: "records which set governed the Run" -- written on every MODEL_CALL, not just
+        // the first, so a Run that spans a mid-run instruction-file edit reflects the set that
+        // actually steered its most recent turn, not a stale first-turn value.
+        updateInstructionSetHash(task.runId, pkg.instructionSetHash)
 
         val modelReq = ModelRequest(
             messages = pkg.request.messages,
@@ -214,6 +251,15 @@ class AgentLoopTaskRunner(
                     stopReason = response.stopReason.name,
                 )
             ),
+            // RFC-0026: never assumed-benign. A remote adapter that reports no policy at all
+            // (the interface's own `null` default) is UNKNOWN, not treated as ZERO/local-shaped.
+            providerRetention = if (adapter.isLocal) null else adapter.providerRetention
+                ?: ProviderRetention(
+                    policy = RetentionPolicy.UNKNOWN,
+                    statedDurationDays = null,
+                    trainingUse = TrainingUse.UNSPECIFIED,
+                    recordedAt = Instant.parse(nowIso()),
+                ),
         )
 
         // Termination (RFC-0008 "Termination" table): no tool calls, or a terminal stop reason.
@@ -267,11 +313,20 @@ class AgentLoopTaskRunner(
             ?: return TaskResult(false, "No tool_calls row for task ${task.id.value}")
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // RFC-0008 step 8c, M19: resolved fresh here, immediately before the call it gates --
+        // not carried from executeModelCall's fan-out -- so a capability revoked in between the
+        // model turn and this step is never used (D3: nothing security-relevant held across a
+        // step boundary). A tool no longer in the current catalog (descriptor == null) resolves
+        // to no capability, same as today's unconditional null -- ToolBroker denies it either way.
+        val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+            .firstOrNull { it.name == callRow.toolName }
+        val capabilityId = descriptor?.let { resolveCapability(subjectId, it.requiredPermission) }
+
         val call = ToolCall(
             callId = callRow.callId,
             toolName = callRow.toolName,
             arguments = parseJsonObject(callRow.argumentsJson),
-            capabilityId = null,
+            capabilityId = capabilityId,
         )
         // Denied/Failed outcomes are data returned to the model (RFC-0008 Security #3), not a
         // reason to fail this Task — only an actual runner-level problem (missing row, no Run)
@@ -281,7 +336,19 @@ class AgentLoopTaskRunner(
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.
         val newTaint = run.taintLevel raisedBy result.trustLevel
-        if (newTaint != run.taintLevel) updateRunTaint(task.runId, newTaint)
+        if (newTaint != run.taintLevel) {
+            updateRunTaint(task.runId, newTaint)
+            if (run.taintLevel == TrustLevel.TRUSTED) {
+                // RFC-0027 Data Model: "first node that raised the taint" -- written once, at the
+                // moment the Run first leaves TRUSTED, and only when the tainting result actually
+                // names a content node. No production tool returns ContentBlock.ResourceRef today
+                // (FilesystemTool/GitTool are Text-only), so this stays null for them -- honest
+                // absence, not a silent no-op; see this class's own doc comment for the gap.
+                result.content.filterIsInstance<ContentBlock.ResourceRef>().firstOrNull()?.let {
+                    updateTaintSourceNode(task.runId, it.nodeId)
+                }
+            }
+        }
 
         val outcomeStr = when (result.outcome) {
             is ToolOutcome.Ok -> "OK"
@@ -294,7 +361,18 @@ class AgentLoopTaskRunner(
             is ToolOutcome.Failed -> outcome.error.message
             else -> null
         }
-        val text = result.content.filterIsInstance<ContentBlock.Text>().joinToString("\n") { it.text }
+        val rawText = result.content.filterIsInstance<ContentBlock.Text>().joinToString("\n") { it.text }
+        // RFC-0027 "Escalation": a taint-attenuated denial must name which untrusted content
+        // caused it, not just report that the Run is tainted -- "the prompt is unanswerable [to a
+        // human approver] and the user will click through it" otherwise. Best available source
+        // today is the tool operation that first raised the taint (durable data, always present);
+        // a real content node (path, not just an operation name) is used instead once one exists.
+        val deniedOutcome = result.outcome as? ToolOutcome.Denied
+        val text = if (deniedOutcome != null && deniedOutcome.reason == DenialReason.ATTENUATED_BY_TAINT) {
+            rawText + " (Run is tainted by: ${taintSourceDescription(task.runId)})"
+        } else {
+            rawText
+        }
 
         updateToolCallOutcome(callRow.callId, outcomeStr)
         writeAttempt(
@@ -471,6 +549,82 @@ class AgentLoopTaskRunner(
         }
     }
 
+    private fun updateTaintSourceNode(runId: RunId, nodeId: ContentNodeId) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE runs SET taint_source_node_id = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, nodeId.value)
+            bindString(1, runId.value)
+        }
+    }
+
+    /**
+     * RFC-0027 "Escalation": which tool call first raised this Run's taint, read back from
+     * durable rows (no in-memory tracking across the Run — D3). `writeAttempt` stores the *Run's*
+     * taint level as of each TOOL_CALL, not that call's own result, so the earliest row whose
+     * stored taint differs from `TRUSTED` is exactly the call that caused the transition — every
+     * row before it was written while the Run was still `TRUSTED`.
+     */
+    private fun taintSourceDescription(runId: RunId): String =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT tc.tool_name, a.output_snapshot FROM tool_calls tc " +
+                "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
+                "WHERE tc.run_id = ? ORDER BY tc.step_index ASC",
+            mapper = { c ->
+                var found: String? = null
+                while (found == null && c.next().value) {
+                    val toolName = c.getString(0) ?: continue
+                    val snapshot = c.getString(1) ?: continue
+                    val stored = runCatching { json.decodeFromString<StoredToolResult>(snapshot) }.getOrNull()
+                    if (stored != null && stored.trustLevel != TrustLevel.TRUSTED.name) found = toolName
+                }
+                QueryResult.Value(found)
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: "unknown tool call"
+
+    /**
+     * RFC-0016: discovers AGENTS.md/CLAUDE.md at the project root and marks the set adopted iff
+     * its hash has an `instruction_adoptions` row for this project -- an unadopted set is still
+     * returned (so its hash can be recorded), but [PromptAssembler] excludes an unadopted set's
+     * text from the system turn, which is the actual security property this gates.
+     */
+    private fun discoverInstructionSet(projectId: ProjectId): InstructionSet? {
+        val rootPath = projectRootPath(projectId.value) ?: return null
+        val discovered = InstructionDiscovery.discover(File(rootPath)) ?: return null
+        return discovered.copy(adopted = isInstructionSetAdopted(projectId.value, discovered.hash))
+    }
+
+    private fun projectRootPath(projectId: String): String? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT root_path FROM projects WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, projectId) }.value
+
+    private fun isInstructionSetAdopted(projectId: String, hash: String): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT 1 FROM instruction_adoptions WHERE project_id = ? AND set_hash = ?",
+            mapper = { c -> QueryResult.Value(c.next().value) },
+            parameters = 2,
+        ) { bindString(0, projectId); bindString(1, hash) }.value
+
+    private fun updateInstructionSetHash(runId: RunId, hash: String?) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE runs SET instruction_set_hash = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, hash)
+            bindString(1, runId.value)
+        }
+    }
+
     private fun writeAttempt(
         task: Task,
         projectId: ProjectId,
@@ -480,6 +634,7 @@ class AgentLoopTaskRunner(
         tokensInput: Int?,
         tokensOutput: Int?,
         outputSnapshot: String,
+        providerRetention: ProviderRetention? = null,
     ) {
         val auditId = idGen()
         audit.write(
@@ -491,24 +646,34 @@ class AgentLoopTaskRunner(
             subjectRef = task.toolName ?: task.kind.name,
             nowIso = nowIso(),
         )
+        // RFC-0035: redact before this row is durably written -- output_snapshot is one of
+        // RFC-0035's own listed redaction boundaries, and unlike the vault this is text the
+        // model produced, so the vault's own register-on-load never sees it.
+        val redactedSnapshot = redact(outputSnapshot)
+        // RFC-0026: recordedAt is stamped fresh here, at write time -- see ProviderRetention's
+        // own doc comment for why the adapter-level value isn't reused as-is.
+        val retentionJson = providerRetention
+            ?.copy(recordedAt = Instant.parse(nowIso()))
+            ?.let { json.encodeToString(it) }
         driver.execute(
             identifier = null,
             sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, ended_at, state, " +
-                "output_snapshot, model_provider, model_version, tokens_input, tokens_output, " +
-                "recovery_class, audit_ref) VALUES (?, ?, 1, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?)",
-            parameters = 11,
+                "output_snapshot, model_provider, model_version, provider_retention_json, tokens_input, " +
+                "tokens_output, recovery_class, audit_ref) VALUES (?, ?, 1, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 12,
         ) {
             bindString(0, idGen())
             bindString(1, task.id.value)
             bindString(2, nowIso())
             bindString(3, nowIso())
-            bindString(4, outputSnapshot)
+            bindString(4, redactedSnapshot)
             bindString(5, modelProvider)
             bindString(6, modelVersion)
-            tokensInput?.let { bindLong(7, it.toLong()) } ?: bindString(7, null)
-            tokensOutput?.let { bindLong(8, it.toLong()) } ?: bindString(8, null)
-            bindString(9, recoveryClass)
-            bindString(10, auditId)
+            bindString(7, retentionJson)
+            tokensInput?.let { bindLong(8, it.toLong()) } ?: bindString(8, null)
+            tokensOutput?.let { bindLong(9, it.toLong()) } ?: bindString(9, null)
+            bindString(10, recoveryClass)
+            bindString(11, auditId)
         }
     }
 

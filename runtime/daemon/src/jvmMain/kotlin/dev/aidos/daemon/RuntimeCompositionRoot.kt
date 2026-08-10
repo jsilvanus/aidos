@@ -18,6 +18,7 @@ import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
 import dev.aidos.vault.AnthropicAdapter
+import dev.aidos.vault.Redactor
 import java.io.File
 
 /**
@@ -25,19 +26,17 @@ import java.io.File
  * AgentLoop↔executor bridge landed: a real `CapabilityManager` + `ToolBroker` with
  * `FilesystemTool`/`GitTool` registered, a real `InferenceRouter`, and the `PromptAssembler` that
  * together let [SqliteExecutor.drive] produce an actual model response instead of leaving a Run
- * `PENDING` forever.
+ * `PENDING` forever. Also constructs [GitRunReconciler] (M13, RFC-0053) and passes it to
+ * `SqliteExecutor` as its before-a-Run-starts reconciliation gate — this is the one seam in this
+ * class that isn't itself deliberately half-wired; see [GitRunReconciler]'s own doc comment for
+ * its scope.
  *
- * **Deliberately does not resolve capabilities for model-emitted tool calls.**
- * `AgentLoopTaskRunner` always sets `ToolCall.capabilityId = null` (its own doc comment names this
- * as a known, accepted gap — a `(subjectId, toolName) -> CapabilityId` resolver is a separate,
- * not-yet-designed subsystem). `ToolBroker.invoke`'s own step 2 therefore denies every tool call
- * with `capability.missing` regardless of what this class does, so no capability is granted here
- * either — granting one nothing will ever consult would just be dead code dressed up as progress.
- * The `CapabilityManager` is still constructed and passed to `ToolBroker`, because `ToolBroker`
- * needs one to exist at all (RFC-0030's `validate()` step), not because anything grants through it
- * yet. **What this means concretely: a driven Run can reach a real model response (`MODEL_CALL`),
- * but any `TOOL_CALL` it emits will be denied.** That is the honest, current state of the bridge,
- * not a bug in this composition.
+ * **Resolves capabilities for model-emitted tool calls (M19).** [CapabilityResolver] is wired into
+ * `AgentLoopTaskRunner`, closing the gap this class's own doc comment used to name here — a Run
+ * whose subject actually holds a matching, unexpired, unrevoked capability can now reach a real
+ * `TOOL_CALL` execution instead of an automatic `capability.missing` denial. This class still
+ * grants nothing itself: whatever capabilities exist for [sessionId] were issued elsewhere
+ * (RFC-0018's ordinary grant/delegate flow), before `drive()` is ever called.
  *
  * **Where the model adapter comes from:** [anthropicApiKey] is a plain provider function, not a
  * vault lookup — `SqliteSecretsVault`'s JVM key handling generates a fresh in-memory key by
@@ -92,7 +91,13 @@ class RuntimeCompositionRoot(
         broker.register(FilesystemTool())
         broker.register(GitTool(File(rootPath)))
 
-        val remoteAdapters = anthropicApiKey()?.let { key -> listOf(AnthropicAdapter(key)) } ?: emptyList()
+        // RFC-0035: registered before the adapter ever sees the key, so the very first
+        // output_snapshot that could echo it back is already covered.
+        val redactor = Redactor()
+        val remoteAdapters = anthropicApiKey()?.let { key ->
+            redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
+            listOf(AnthropicAdapter(key))
+        } ?: emptyList()
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
                 allowRemote = remoteAdapters.isNotEmpty(),
@@ -101,6 +106,7 @@ class RuntimeCompositionRoot(
             remoteAdapters = remoteAdapters,
         )
 
+        val capabilityResolver = CapabilityResolver(capabilityManager, nowIso)
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -110,6 +116,8 @@ class RuntimeCompositionRoot(
             assembler = PromptAssembler(),
             broker = broker,
             subjectId = sessionId,
+            redact = redactor::redact,
+            resolveCapability = capabilityResolver::resolve,
         )
         val executor = SqliteExecutor(
             driver = projectDriver,
@@ -118,6 +126,7 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,
+            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
         )
         executor.drive(runId)
     }
