@@ -11,6 +11,8 @@ kotlin {
             dependencies {
                 implementation(project(":kernel"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 // gitsema-kotlin — the retrieval core (RFC-0015, M22).
                 // JVM variant: commonMain + jvmAndroidMain + jvmMain compiled into one artifact.
                 // Published to GitHub Packages; credentials via GITHUB_TOKEN (env var, not secrets).
@@ -26,6 +28,10 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 // JGit test repositories.
                 implementation("org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r")
+                // KnowledgeServiceIntegrationTest exercises the real KnowledgeService/
+                // KnowledgeQueries contracts (:api) and PromptAssembler (:prompt) together.
+                implementation(project(":api"))
+                implementation(project(":prompt"))
             }
         }
 

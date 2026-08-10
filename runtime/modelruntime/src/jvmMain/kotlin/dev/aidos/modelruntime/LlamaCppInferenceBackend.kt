@@ -96,7 +96,8 @@ class LlamaCppInferenceBackend : InferenceBackend {
     override suspend fun computeDigest(modelId: String): String {
         val file = modelFile(modelId)
         return if (file.exists()) {
-            DigestUtils.sha256Hex(file)
+            // DigestUtils has no File overload -- ByteArray/InputStream/String only.
+            file.inputStream().use { DigestUtils.sha256Hex(it) }
         } else {
             ""
         }

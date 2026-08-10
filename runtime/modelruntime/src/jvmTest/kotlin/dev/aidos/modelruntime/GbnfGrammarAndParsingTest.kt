@@ -1,8 +1,10 @@
 package dev.aidos.modelruntime
 
 import dev.aidos.kernel.ToolDescriptor
+import dev.aidos.kernel.AvailabilityTier
 import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.Permission
+import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.ToolAvailability
 import kotlinx.serialization.json.JsonObject
@@ -233,10 +235,13 @@ class GbnfGrammarAndParsingTest {
             title = name,
             description = "Test tool: $name",
             inputSchema = schema,
-            effect = EffectKind.Query,
-            requiredPermission = Permission.ReadOnly,
-            recoveryClass = RecoveryClass.SAFE,
-            availability = ToolAvailability.Everywhere,
+            effect = EffectKind.Read,
+            requiredPermission = Permission.FS_READ,
+            recoveryClass = RecoveryClass.PURE,
+            availability = ToolAvailability(
+                profiles = PlatformProfile.entries.toSet(),
+                tier = AvailabilityTier.UNIVERSAL,
+            ),
         )
     }
 }
