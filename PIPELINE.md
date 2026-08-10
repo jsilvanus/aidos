@@ -37,8 +37,14 @@ resolution, the approval/park-resume flow) is in the "Group 2" checklist below, 
 things the bridge unblocked. Sessions now persist too. Still does not *drive* the Run it creates —
 that needs a real `InferenceRouter`/`EffectBroker`/`CapabilityManager` composition that doesn't
 exist anywhere in the runtime yet. Full detail in the "Finish `RealRuntimeClient`" checklist item
-below, under its own dated update. RFC-0005's wake-to-Run wiring — the bridge's other unblocked
-item — is still untouched.
+below, under its own dated update.
+
+**2026-08-10 · RFC-0005's wake-to-Run wiring is built** (`executor/Scheduler.kt`, branch
+`claude/rfc-0005-wake-to-run`) — the bridge's other unblocked item. Given a published event,
+matches subscriptions, wakes eligible `SLEEPING` sessions with a `SessionWoken` event + `PENDING`
+Run each (self-wake and causal-depth refusals audited, not silent), and does not drive the Run for
+the same reason `RunExecutor` doesn't. Wired into `SqliteRunExecutor.send()`. Full detail in the
+RFC-0005 checklist item below, under its own dated update.
 
 | | |
 |---|---|
@@ -50,7 +56,7 @@ item — is still untouched.
 | Identity | `runtime/identity/` — UUIDv7 generator (expect/actual KMP), ProjectRegistry. M2 ✅ |
 | Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅ |
 | Broker | `runtime/broker/` — `AuditLog` + `ToolBroker` 8-step invocation sequence (RFC-0030); every invocation writes an audit row naming subject, capability, and outcome. M4 ✅ |
-| Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction, crash-safe task appending via `TaskResult.appendTasks`); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset); `RunCreator` (how a Run comes to exist — `runs` row + first `MODEL_CALL` task, for a user message); `AgentLoopTaskRunner` (the AgentLoop↔executor bridge, RFC-0008: drives `MODEL_CALL`/`TOOL_CALL` Tasks one at a time, transcript reconstructed from `attempts`/`tool_calls` rows, not held in memory). M5 ✅, M6 ✅ |
+| Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction, crash-safe task appending via `TaskResult.appendTasks`); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset); `RunCreator` (how a Run comes to exist — `runs` row + first `MODEL_CALL` task, for a user message or a waking event); `AgentLoopTaskRunner` (the AgentLoop↔executor bridge, RFC-0008: drives `MODEL_CALL`/`TOOL_CALL` Tasks one at a time, transcript reconstructed from `attempts`/`tool_calls` rows, not held in memory); `Scheduler` (RFC-0005 wake-to-Run: matches a published event against subscriptions, wakes eligible `SLEEPING` sessions with a `SessionWoken` event + `PENDING` Run each, audits self-wake and causal-depth refusals). M5 ✅, M6 ✅ |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
 | Crash | `CrashRecoveryTest`: B1/B2/B3/B4 boundaries, idempotency. **G1 passed**. M8 ✅ |
 | API | `runtime/api/` — `RuntimeClient` interface, `MockRuntimeClient`, `RealRuntimeClient` (resumable event streams and structured diffs, RFC-0052 M9+), `CommitResult`. M9 ✅. **Caveat (2026-08-09 review): `RealRuntimeClient` is explicitly in-memory per its own code comment — not yet wired to `storage`/`executor`/`capability`. "Production implementation" overstates its current state; it has the right shape, not yet the real behavior.** |
@@ -555,6 +561,43 @@ further down this file.
   If PIPELINE.md's Group 1 checklist item for RFC-0005 is ever marked done in this branch, it
   means "the layer this branch owns is done," not "RFC-0005 is fully implemented" — the wake path
   is real, tracked, follow-up work, just not this branch's.
+  **Wake-to-Run wiring built 2026-08-10** (`executor/Scheduler.kt`, branch
+  `claude/rfc-0005-wake-to-run`) — the piece the note above deliberately left for a link with the
+  user's explicit go-ahead on how it relates to `RunExecutor`. By this point `RunExecutor`
+  (2026-08-10, above) had already settled "how a Run comes to exist from outside `executor`," so
+  the coordination risk flagged above no longer applied: `Scheduler` is the RFC-0005-side
+  counterpart, built after and consistent with that seam, not a second attempt at the same
+  problem. Confirmed first that `SchedulerMatcherTest`'s literal `"RunCompleted"` event type is
+  illustrative test data, not real RFC-0004 vocabulary (grepped — nothing publishes it); the real
+  mechanism per RFC-0004's own worked example is `SessionWoken`/`SessionSleeping`, which is what
+  `Scheduler` actually publishes. `Scheduler.wake(event, sourceSessionId, ...)`: runs
+  `SchedulerMatcher.match()` against the project's subscriptions, audits self-wake refusals
+  (`WakeRefused`, reason `self_wake_not_opted_in`), then for each matched session publishes a
+  `SessionWoken` event (`causedBy` = the triggering event, `causalDepth` + 1) and, in one
+  transaction, transitions the session `SLEEPING`→`RUNNING` (`WHERE state = 'SLEEPING'`, so a
+  session that stopped being `SLEEPING` between the match and this point is silently skipped, not
+  double-run — D14) and creates its `PENDING` Run via a new `RunCreator.createForEvent(...)`
+  (`RunCreator.createForUserMessage` refactored into a thin wrapper around a shared private
+  `create()`; `createForEvent` fills the same `user_message_summary` column with a synthesized
+  "Woken by \<event type\>" summary — no new column, per the same reasoning `RunExecutor` used for
+  not inventing new state). If `EventStore.MAX_CAUSAL_DEPTH` refuses the `SessionWoken` publish,
+  that's audited too (`WakeRefused`, reason `causal_depth_ceiling`) and no Run is created —
+  RFC-0005's MVP item 3, closed. Does **not** call `drive()`, same reasoning as `RunExecutor`: no
+  real `InferenceRouter`/`EffectBroker` composition exists yet to drive a Run through, and a
+  durable `PENDING` Run is correct either way (D3). Wired into the one real call site that exists
+  today: `SqliteRunExecutor.send()` now calls `scheduler.wake()` on the `UserCommand` event it
+  already publishes, `sourceSessionId = sessionId` — so any *other* session subscribed to that
+  command (not just the sender's own Run) wakes too. Needed re-adding `implementation(project(
+  ":broker"))` to `daemon/build.gradle.kts` — `executor`'s own `broker` dependency is
+  `implementation`, not `api`, so it isn't transitively visible to `daemon` for `AuditLog`.
+  `SchedulerTest.kt` (5 tests): matching subscription wakes a `SLEEPING` session with a
+  `SessionWoken` event and a `PENDING` Run; non-matching subscription does nothing; self-wake
+  refusal writes the audit row and doesn't wake; an already-`RUNNING` session isn't double-woken
+  (event still published, no Run); causal-depth-ceiling refusal writes the audit row and creates
+  no Run. Plus one `SqliteRunExecutorTest` case: sending a `UserCommand` wakes a second, unrelated
+  `SLEEPING` session subscribed to it, without the sender's own Run being duplicated. `gradle
+  jvmTest --continue` clean except the two known pre-existing red modules (`:knowledge`,
+  `:modelruntime`); `CrashRecoveryTest` stayed green throughout.
 - [x] **RFC-0024 (Resource Graph), MVP scope done — "promotion/demotion logic" was never MVP.**
   Done 2026-08-09: reading RFC-0024's own "MVP" section first showed promotion/demotion workflows
   are explicitly listed under "The MVP does not implement" — the original review's framing

@@ -88,4 +88,41 @@ class SqliteRunExecutorTest {
         ) { bindString(0, result.runId) }.value
         assertEquals("MODEL_CALL" to 0L, taskRow)
     }
+
+    @Test
+    fun `send wakes another session subscribed to UserCommand, without double-running the sender`() = runTest {
+        val driver = openDriver()
+        val pid = nextId(); val senderId = nextId(); val watcherId = nextId()
+        seedProjectAndSession(driver, pid, senderId)
+        driver.execute(null,
+            "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) " +
+                "VALUES (?, ?, 'watcher', 'DRIVER', 'SLEEPING', ?, ?, ?)", 5
+        ) { bindString(0, watcherId); bindString(1, pid); bindString(2, nowIso); bindString(3, nowIso); bindString(4, nowIso) }
+        dev.aidos.executor.SessionSubscriptionStore(driver).subscribe(
+            id = nextId(), sessionId = watcherId, topicPatterns = listOf("*"),
+            eventTypes = listOf("UserCommand"), nowIso = nowIso,
+        )
+
+        val executor = SqliteRunExecutor(idGen = { nextId() }, nowIso = { nowIso })
+        val result = executor.send(
+            projectDriver = driver,
+            projectId = pid,
+            sessionId = senderId,
+            message = UserMessage(content = "Hello, world"),
+            platformProfile = PlatformProfile.DESKTOP,
+            deviceId = "dev-1",
+            networkAvailable = false,
+        )
+        assertIs<dev.aidos.api.RunResult.Accepted>(result)
+
+        val watcherState = driver.executeQuery(null, "SELECT state FROM sessions WHERE id = ?",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1
+        ) { bindString(0, watcherId) }.value
+        assertEquals("RUNNING", watcherState)
+
+        val runCount = driver.executeQuery(null, "SELECT COUNT(*) FROM runs",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getLong(0) ?: 0L else 0L) }, 0
+        ) {}.value
+        assertEquals(2L, runCount, "sender's own run plus the watcher's woken run")
+    }
 }

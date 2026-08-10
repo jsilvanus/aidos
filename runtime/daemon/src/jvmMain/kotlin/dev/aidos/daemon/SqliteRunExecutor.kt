@@ -4,9 +4,12 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.api.RunExecutor
 import dev.aidos.api.RunResult
 import dev.aidos.api.UserMessage
+import dev.aidos.broker.AuditLog
 import dev.aidos.executor.EventStore
 import dev.aidos.executor.EventTypes
 import dev.aidos.executor.RunCreator
+import dev.aidos.executor.Scheduler
+import dev.aidos.executor.SessionSubscriptionStore
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.EventId
 import dev.aidos.kernel.PlatformProfile
@@ -25,6 +28,12 @@ import dev.aidos.kernel.SessionId
  * wiring `sessions.send()`. The Run this creates is durable and `PENDING`, ready for whoever
  * builds that composition to call `SqliteExecutor.drive()` on it — nothing is lost by not driving
  * it immediately, since D3 already requires every step to be reconstructable from rows alone.
+ *
+ * After the sending session's own Run is created, [Scheduler.wake] is called on the same
+ * `UserCommand` event (RFC-0005) so any *other* session subscribed to it — a driver watching for
+ * a particular user command, say — wakes too. `sourceSessionId = sessionId` because the sending
+ * session is who caused the publish; that's what lets [Scheduler] refuse a self-wake correctly if
+ * the sender happens to also be subscribed to its own `UserCommand`.
  */
 class SqliteRunExecutor(
     private val idGen: () -> String = { UuidV7Generator().next() },
@@ -57,7 +66,8 @@ class SqliteRunExecutor(
             return RunResult.Error("run.event_publish_failed", "Could not publish trigger event for session $sessionId")
         }
 
-        val runId = RunCreator(projectDriver, idGen, nowIso).createForUserMessage(
+        val runCreator = RunCreator(projectDriver, idGen, nowIso)
+        val runId = runCreator.createForUserMessage(
             sessionId = SessionId(sessionId),
             projectId = ProjectId(projectId),
             triggerEventId = EventId(eventId),
@@ -66,6 +76,26 @@ class SqliteRunExecutor(
             deviceId = deviceId,
             networkAvailable = networkAvailable,
         )
+
+        val eventRow = events.eventsForProject(projectId, type = EventTypes.USER_COMMAND)
+            .last { it.id == eventId }
+        Scheduler(
+            driver = projectDriver,
+            events = events,
+            subscriptions = SessionSubscriptionStore(projectDriver),
+            runCreator = runCreator,
+            audit = AuditLog(projectDriver, deviceId),
+            idGen = idGen,
+            nowIso = nowIso,
+        ).wake(
+            event = eventRow,
+            sourceSessionId = sessionId,
+            projectId = ProjectId(projectId),
+            platformProfile = platformProfile,
+            deviceId = deviceId,
+            networkAvailable = networkAvailable,
+        )
+
         return RunResult.Accepted(runId.value)
     }
 }
