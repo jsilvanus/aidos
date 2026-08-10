@@ -28,6 +28,10 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 // JGit test repositories.
                 implementation("org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r")
+                // KnowledgeServiceIntegrationTest exercises the real KnowledgeService/
+                // KnowledgeQueries contracts (:api) and PromptAssembler (:prompt) together.
+                implementation(project(":api"))
+                implementation(project(":prompt"))
             }
         }
 
