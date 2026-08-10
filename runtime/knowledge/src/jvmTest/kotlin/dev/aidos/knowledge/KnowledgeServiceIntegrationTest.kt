@@ -1,9 +1,12 @@
 package dev.aidos.knowledge
 
+import dev.aidos.api.IndexStatus
+import dev.aidos.api.IndexingProgress as ApiIndexingProgress
+import dev.aidos.api.KnowledgeItem
+import dev.aidos.api.KnowledgeQueries
 import dev.aidos.api.KnowledgeQuery
 import dev.aidos.api.KnowledgeResult
 import dev.aidos.api.KnowledgeService
-import dev.aidos.api.IndexStatus
 import dev.aidos.prompt.PromptAssembler
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -159,7 +162,7 @@ class KnowledgeServiceIntegrationTest {
     /**
      * Mock KnowledgeService for testing (Phase 5).
      */
-    private class MockKnowledgeService : KnowledgeService {
+    private class MockKnowledgeService : KnowledgeService, KnowledgeQueries {
         var lastQuery: String? = null
 
         override suspend fun search(
@@ -195,21 +198,10 @@ class KnowledgeServiceIntegrationTest {
 
         override suspend fun startIndexing(
             projectPath: String,
-            onProgress: (IndexingProgress) -> Unit,
+            onProgress: (ApiIndexingProgress) -> Unit,
         ) {
             // Mock: simulate indexing progress
-            onProgress(IndexingProgress(10, 100, 50, 0))
+            onProgress(ApiIndexingProgress(10, 100, 50, 0))
         }
     }
-
-    /**
-     * Mock KnowledgeItem for testing (Phase 5).
-     */
-    private data class KnowledgeItem(
-        val id: String,
-        val kind: String,
-        val title: String,
-        val snippet: String,
-        val score: Float,
-    )
 }
