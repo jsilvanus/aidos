@@ -19,13 +19,19 @@ object Methods {
     const val CAPABILITIES_LIST_PENDING = "capabilities.listPending"
     const val CAPABILITIES_APPROVE = "capabilities.approve"
 
+    /** RFC-0008 step 8d: resolves a Run parked on `RoutingDecision.RemotePendingApproval`. */
+    const val CAPABILITIES_APPROVE_EFFECT = "capabilities.approveEffect"
+    const val CAPABILITIES_DENY_EFFECT = "capabilities.denyEffect"
+
     const val EVENTS_SUBSCRIBE = "events.subscribe"
 
     const val RUNTIME_PING = "runtime.ping"
     const val RUNTIME_VERSION = "runtime.version"
 
     /** Methods that require the connection to be [dev.aidos.api.socket.Hello.interactive] (RFC-0055). */
-    val REQUIRES_INTERACTIVE = setOf(CAPABILITIES_GRANT, CAPABILITIES_APPROVE)
+    val REQUIRES_INTERACTIVE = setOf(
+        CAPABILITIES_GRANT, CAPABILITIES_APPROVE, CAPABILITIES_APPROVE_EFFECT, CAPABILITIES_DENY_EFFECT,
+    )
 }
 
 /**

@@ -189,6 +189,11 @@ class RuntimeCompositionRootTest {
             idGen = { nextId() }, nowIso = { nowIso },
         )
 
-        assertEquals("FAILED", runState(driver, runId.value))
+        // RFC-0008 step 8d (branch `claude/continuation-flow`): ASK now genuinely parks pending
+        // approval instead of failing outright -- the M23 fix above stopped it from routing
+        // automatically, and this fix stopped that denial from being indistinguishable from a
+        // hard failure. "denies automatic routing" is still true (no model was invoked); it just
+        // no longer means "fails the Run" the way it did when this test was written.
+        assertEquals("YIELDED", runState(driver, runId.value))
     }
 }

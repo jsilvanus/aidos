@@ -46,6 +46,10 @@ class RealRuntimeClient : RuntimeClient {
     private val _capabilities = mutableMapOf<String, CapabilitySummary>()
     private val _pendingCapabilities = mutableListOf<PendingCapabilityRequest>()
 
+    /** runId → projectId, populated in `sessions.send()`. Lets `approveEffect`/`denyEffect` open
+     *  the right project driver from a bare runId, without widening either method's signature. */
+    private val _runProjectIds = mutableMapOf<String, String>()
+
     /** Buffered events with sequence numbers for sinceSequence replay (RFC-0004). */
     private val _eventBuffer = mutableListOf<SequencedEvent>()
     private val _eventFlow = MutableSharedFlow<SequencedEvent>(extraBufferCapacity = 256)
@@ -90,6 +94,14 @@ class RealRuntimeClient : RuntimeClient {
      * than `RealRuntimeClient` depending on `executor` directly (a module cycle).
      */
     var runExecutor: RunExecutor? = null
+
+    /**
+     * Resolves a Run parked on `CAPABILITY_APPROVAL` (RFC-0008 step 8d), once storage is wired.
+     * Unset preserves the pre-wiring no-op stub `approveEffect`/`denyEffect` had before this seam
+     * existed. See [EffectApprovalGateway]'s own doc comment for why this is a seam rather than
+     * `RealRuntimeClient` depending on `executor` directly (a module cycle, same as [runExecutor]).
+     */
+    var effectApprovalGateway: EffectApprovalGateway? = null
 
     /** Recorded on every Run for provenance (RFC-0049); no device-profile detection exists here. */
     var platformProfile: PlatformProfile = PlatformProfile.DESKTOP
@@ -376,6 +388,7 @@ class RealRuntimeClient : RuntimeClient {
             }
 
             if (result is RunResult.Accepted) {
+                _runProjectIds[result.runId] = session.projectId
                 emit(RuntimeEvent.RunStarted(
                     eventId = nextId(), timestamp = Clock.System.now(), projectId = session.projectId,
                     sessionId = sessionId, runId = result.runId,
@@ -433,10 +446,27 @@ class RealRuntimeClient : RuntimeClient {
             _pendingCapabilities.removeAll { it.requestId == requestId }
         }
 
-        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult =
-            CapabilityResult.Success(nextId())
+        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult {
+            val projectId = _runProjectIds[runId]
+                ?: return CapabilityResult.Error("run.not_found", "Run $runId not found")
+            val driver = _openProjectDrivers[projectId]
+                ?: return CapabilityResult.Error("run.project_not_open", "Project for run $runId is not open")
+            val gateway = effectApprovalGateway
+                ?: return CapabilityResult.Error("run.approval_not_wired", "No effect approval gateway is wired")
+            return when (gateway.resolve(driver, runId, approved = true, denialReason = null)) {
+                is EffectResolution.Resumed -> CapabilityResult.Success(runId)
+                is EffectResolution.Denied ->
+                    CapabilityResult.Error("run.already_denied", "Run $runId was already denied")
+                is EffectResolution.NotFound ->
+                    CapabilityResult.Error("continuation.not_found", "No pending approval for run $runId")
+            }
+        }
 
-        override suspend fun denyEffect(runId: String, taskId: String, reason: String) {}
+        override suspend fun denyEffect(runId: String, taskId: String, reason: String) {
+            val projectId = _runProjectIds[runId] ?: return
+            val driver = _openProjectDrivers[projectId] ?: return
+            effectApprovalGateway?.resolve(driver, runId, approved = false, denialReason = reason)
+        }
     }
 
     override val knowledge: KnowledgeQueries = object : KnowledgeQueries {

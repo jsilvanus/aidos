@@ -205,8 +205,15 @@ class SocketRuntimeClient(
             Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_APPROVE, params).jsonObject)
         }
         override suspend fun deny(requestId: String, reason: String): Unit = notWired("capabilities.deny")
-        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult = notWired("capabilities.approveEffect")
-        override suspend fun denyEffect(runId: String, taskId: String, reason: String): Unit = notWired("capabilities.denyEffect")
+        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { put("runId", runId); put("taskId", taskId) }
+            Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_APPROVE_EFFECT, params).jsonObject)
+        }
+        override suspend fun denyEffect(runId: String, taskId: String, reason: String): Unit = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { put("runId", runId); put("taskId", taskId); put("reason", reason) }
+            call(Methods.CAPABILITIES_DENY_EFFECT, params)
+            Unit
+        }
     }
 
     override val knowledge = object : KnowledgeQueries {

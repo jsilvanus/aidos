@@ -15,11 +15,15 @@ import dev.aidos.kernel.RetryPolicy
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.RunState
 import dev.aidos.kernel.SessionId
+import dev.aidos.kernel.SuspendedOperation
 import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
 import dev.aidos.kernel.TaskKind
 import dev.aidos.kernel.TaskState
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /**
@@ -105,6 +109,47 @@ class SqliteExecutor(
                 incrementStepIndex(runId, stepIndex)
 
                 val result = taskRunner.execute(task)
+
+                // RFC-0008 step 8d: park rather than complete/fail. The task row and the
+                // continuations row land in the same transaction as the RUNNING→parked
+                // transition, so a crash between them leaves the task RUNNING with no attempt —
+                // exactly the case `recover()` already resets to PENDING and retries safely.
+                if (result.park != null) {
+                    val park = result.park
+                    inTransaction {
+                        updateTaskState(task.id, park.taskState)
+                        writeContinuation(runId, task.id, park)
+                    }
+                    updateRunState(runId, RunState.YIELDED)
+
+                    val auditId = idGen()
+                    audit.write(
+                        id = auditId,
+                        projectId = currentRun.projectId.value,
+                        kind = EventTypes.PERMISSION_REQUESTED,
+                        actorKind = "SESSION",
+                        actorId = task.sessionId.value,
+                        subjectRef = task.toolName ?: task.kind.name,
+                        nowIso = nowIso(),
+                    )
+                    events.publish(
+                        id = idGen(),
+                        projectId = currentRun.projectId.value,
+                        type = "RunStepCompleted",
+                        source = "executor",
+                        payload = buildJsonObject {
+                            put("run_id", runId.value)
+                            put("task_id", task.id.value)
+                            put("step_index", stepIndex)
+                            put("state", park.taskState.name)
+                        }.toString(),
+                        causedBy = currentRun.triggerEventId.value,
+                        causalDepth = 1,
+                        nowIso = nowIso(),
+                    )
+                    return
+                }
+
                 val newState = if (result.success) TaskState.COMPLETED else TaskState.FAILED
 
                 // The task's own completion and any follow-on Tasks it produces are one
@@ -445,6 +490,153 @@ class SqliteExecutor(
         )
     }
 
+    // ─── Continuations (RFC-0008 step 8d, RFC-0006) ────────────────────────────
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private fun suspendedOperationKind(op: SuspendedOperation): String = when (op) {
+        is SuspendedOperation.AiCall -> "AI_CALL"
+        is SuspendedOperation.ToolCall -> "TOOL_CALL"
+        is SuspendedOperation.UserPrompt -> "USER_PROMPT"
+        is SuspendedOperation.CapabilityApproval -> "CAPABILITY_APPROVAL"
+        is SuspendedOperation.ChildRun -> "CHILD_RUN"
+        is SuspendedOperation.ForegroundRequired -> "FOREGROUND_REQUIRED"
+    }
+
+    private fun correlationIdFor(op: SuspendedOperation): String? = when (op) {
+        is SuspendedOperation.AiCall -> op.requestId
+        is SuspendedOperation.ToolCall -> op.callId
+        is SuspendedOperation.UserPrompt -> op.promptId
+        is SuspendedOperation.CapabilityApproval -> op.requestId
+        is SuspendedOperation.ChildRun -> op.childRunId.value
+        is SuspendedOperation.ForegroundRequired -> null
+    }
+
+    private fun writeContinuation(runId: RunId, taskId: TaskId, park: ParkRequest) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO continuations (run_id, task_id, suspended_operation, " +
+                "operation_detail_json, correlation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            parameters = 6,
+        ) {
+            bindString(0, runId.value)
+            bindString(1, taskId.value)
+            bindString(2, suspendedOperationKind(park.suspendedOperation))
+            bindString(3, park.operationDetailJson)
+            bindString(4, correlationIdFor(park.suspendedOperation))
+            bindString(5, nowIso())
+        }
+    }
+
+    private data class ContinuationRow(
+        val taskId: TaskId,
+        val suspendedOperation: String,
+        val operationDetailJson: String,
+    )
+
+    private fun loadContinuation(runId: RunId): ContinuationRow? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT task_id, suspended_operation, operation_detail_json FROM continuations WHERE run_id = ?",
+            mapper = { c ->
+                QueryResult.Value(
+                    if (c.next().value) {
+                        ContinuationRow(
+                            taskId = TaskId(c.getString(0)!!),
+                            suspendedOperation = c.getString(1)!!,
+                            operationDetailJson = c.getString(2)!!,
+                        )
+                    } else {
+                        null
+                    }
+                )
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value
+
+    private fun deleteContinuation(runId: RunId) {
+        driver.execute(
+            identifier = null,
+            sql = "DELETE FROM continuations WHERE run_id = ?",
+            parameters = 1,
+        ) { bindString(0, runId.value) }
+    }
+
+    /** Returns [detailJson] with its `resolution` key set to [resolution], every other key kept. */
+    private fun withResolution(detailJson: String, resolution: String): String {
+        val original = json.parseToJsonElement(detailJson).jsonObject
+        return buildJsonObject {
+            original.forEach { (key, value) -> put(key, value) }
+            put("resolution", resolution)
+        }.toString()
+    }
+
+    /**
+     * Resolves a Run parked on [SuspendedOperation.CapabilityApproval] (RFC-0008 step 8d): the
+     * `RemotePendingApproval`/M23 gap this method exists to close.
+     *
+     * **Approve** flips `operation_detail_json.resolution` to `"approved"`, resets the parked task
+     * to `PENDING`, moves the Run back to `RUNNING`, and calls [drive] again. The re-executed task
+     * (`AgentLoopTaskRunner.executeModelCall`) reads the resolution back out of this same
+     * continuations row — recovery is a query, not a restored coroutine (D3) — and uses the
+     * adapter it names instead of asking [InferenceRouter] again, which would reproduce the
+     * identical `RemotePendingApproval` a second time ([RoutingPolicy] does not change mid-Run).
+     *
+     * **Deny** deletes the continuation and fails the task and the Run outright with
+     * [denialReason]; there is nothing to resume.
+     */
+    suspend fun resolveCapabilityApproval(
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+    ): CapabilityApprovalResolution {
+        val continuation = loadContinuation(runId) ?: return CapabilityApprovalResolution.NotFound(runId)
+        if (continuation.suspendedOperation != "CAPABILITY_APPROVAL") {
+            return CapabilityApprovalResolution.WrongKind(continuation.suspendedOperation)
+        }
+        val projectId = loadRun(runId)?.projectId?.value ?: ""
+
+        if (!approved) {
+            inTransaction {
+                deleteContinuation(runId)
+                updateTaskState(continuation.taskId, TaskState.FAILED)
+            }
+            updateRunState(
+                runId, RunState.FAILED,
+                AidosError(
+                    "capability.denied", ErrorClass.DENIED,
+                    "Remote approval denied by user" + (denialReason?.let { ": $it" } ?: ""),
+                ),
+            )
+            audit.write(
+                id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_DENIED,
+                actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+                nowIso = nowIso(),
+            )
+            return CapabilityApprovalResolution.Denied
+        }
+
+        inTransaction {
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE continuations SET operation_detail_json = ? WHERE run_id = ?",
+                parameters = 2,
+            ) {
+                bindString(0, withResolution(continuation.operationDetailJson, "approved"))
+                bindString(1, runId.value)
+            }
+            updateTaskState(continuation.taskId, TaskState.PENDING)
+        }
+        updateRunState(runId, RunState.RUNNING)
+        audit.write(
+            id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_GRANTED,
+            actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+            nowIso = nowIso(),
+        )
+        drive(runId)
+        return CapabilityApprovalResolution.Resumed
+    }
+
     // ─── Recovery helpers (M6) ────────────────────────────────────────────────
 
     private data class AttemptSnapshot(
@@ -576,9 +768,48 @@ data class TaskResult(
     val errorMessage: String? = null,
     /** Ignored when [success] is false — a failed task fails its Run (see `drive()`). */
     val appendTasks: List<NewTaskSpec> = emptyList(),
+    /**
+     * RFC-0008 step 8d: non-null means "park, not fail" — `drive()` writes a `continuations` row
+     * and moves the task to [ParkRequest.taskState] and the Run to `YIELDED`, instead of treating
+     * this task as either COMPLETED or FAILED. Ignored when [success] is true and non-null (a
+     * [TaskRunner] should never set both; `drive()` checks `park` first).
+     */
+    val park: ParkRequest? = null,
+)
+
+/**
+ * What a [TaskRunner] hands back to park a task instead of completing or failing it.
+ *
+ * [operationDetailJson] is the durable record a later [SqliteExecutor.resolveCapabilityApproval]
+ * (or a future equivalent for other [SuspendedOperation] kinds) reads back to resume — recovery is
+ * a query, not a restored coroutine (D3), so everything the resumed attempt needs to act
+ * differently the second time must already be in this JSON, not held anywhere in memory.
+ */
+data class ParkRequest(
+    val suspendedOperation: SuspendedOperation,
+    val operationDetailJson: String,
+    val taskState: TaskState,
 )
 
 /** Pluggable task runner — replaced by a stub in tests. */
 interface TaskRunner {
     suspend fun execute(task: Task): TaskResult
+}
+
+/** Outcome of resolving a parked Run's [SuspendedOperation.CapabilityApproval] continuation. */
+sealed interface CapabilityApprovalResolution {
+    /** Approved: the task was reset to `PENDING` and the Run re-driven. Its outcome (further
+     *  progress, completion, or a later failure) is whatever that re-drive produced — this result
+     *  only confirms the resume itself happened. */
+    data object Resumed : CapabilityApprovalResolution
+
+    /** Denied: the parked task and its Run are now `FAILED`. No re-drive occurs. */
+    data object Denied : CapabilityApprovalResolution
+
+    /** No `continuations` row exists for this Run — nothing to resolve (already resolved, the
+     *  Run never parked, or [runId] is wrong). */
+    data class NotFound(val runId: RunId) : CapabilityApprovalResolution
+
+    /** A continuation exists but is parked on a different [SuspendedOperation] kind. */
+    data class WrongKind(val actual: String) : CapabilityApprovalResolution
 }

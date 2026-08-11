@@ -6,6 +6,7 @@ import dev.aidos.broker.AuditLog
 import dev.aidos.broker.ToolBroker
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
+import dev.aidos.executor.CapabilityApprovalResolution
 import dev.aidos.executor.EventStore
 import dev.aidos.executor.SqliteExecutor
 import dev.aidos.filesystem.FilesystemTool
@@ -97,7 +98,65 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
+        buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso).drive(runId)
+    }
 
+    /**
+     * Resolves a Run parked on `CAPABILITY_APPROVAL` (RFC-0008 step 8d) — the `approve`/`deny`
+     * entry point `daemon`'s socket server and the CLI both go through. Composes the identical
+     * stack [drive] does (same router, same remote adapters resolved from the same
+     * [anthropicApiKey]) so the adapter [AgentLoopTaskRunner] resumes with is the same one
+     * [PolicyInferenceRouter] named when the Run parked, looked up again by model id rather than
+     * carried across the park (see [AgentLoopTaskRunner]'s own `resolveRemoteAdapter` doc comment
+     * for why).
+     *
+     * Takes only [runId] (plus the driver and id/time seams) — [sessionId], [projectId], and
+     * [deviceId] are read back from the `runs` row itself rather than asked of the caller. They
+     * are already durable there (the same row `drive()` wrote them to at Run creation), and a
+     * caller resolving an approval by run id alone is the natural shape for `approve <run-id>` /
+     * `deny <run-id>` at the CLI.
+     *
+     * Returns [CapabilityApprovalResolution.NotFound] (rather than throwing) when [runId] or its
+     * project's `root_path` row can't be found — the same D3-honest "do nothing observable"
+     * response [drive] gives an inconsistency like this, just surfaced as a value here since this
+     * call has a caller waiting on a result instead of a fire-and-forget Run drive.
+     */
+    suspend fun resolveApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveCapabilityApproval(runId, approved, denialReason)
+    }
+
+    private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT session_id, project_id, device_id FROM runs WHERE id = ?",
+            mapper = { c ->
+                QueryResult.Value(
+                    if (c.next().value) Triple(c.getString(0)!!, c.getString(1)!!, c.getString(2)!!) else null
+                )
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value
+
+    private fun buildExecutor(
+        projectDriver: SqlDriver,
+        sessionId: String,
+        rootPath: String,
+        deviceId: String,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
         val broker = ToolBroker(
@@ -142,8 +201,9 @@ class RuntimeCompositionRoot(
             subjectId = sessionId,
             redact = redactor::redact,
             resolveCapability = capabilityResolver::resolve,
+            resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
         )
-        val executor = SqliteExecutor(
+        return SqliteExecutor(
             driver = projectDriver,
             audit = audit,
             events = EventStore(projectDriver),
@@ -152,7 +212,6 @@ class RuntimeCompositionRoot(
             taskRunner = taskRunner,
             reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
         )
-        executor.drive(runId)
     }
 
     private fun projectRootPath(driver: SqlDriver, projectId: String): String? =
