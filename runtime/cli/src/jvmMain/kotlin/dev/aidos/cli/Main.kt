@@ -24,6 +24,7 @@ import kotlin.system.exitProcess
  *   approve <requestId>
  *   approve-run <runId>
  *   deny-run <runId> [reason]
+ *   answer-run <runId> <answer...>
  *   ping
  *   version
  * ```
@@ -128,6 +129,10 @@ private suspend fun dispatch(cli: AidosCli, command: String, args: List<String>)
             cli.denyRun(args[0], args.drop(1).joinToString(" "))
             println("denied: run ${args[0]} failed")
         }
+        "answer-run" -> {
+            requireArgs(args, 2, "answer-run <runId> <answer...>")
+            println(cli.answerRun(args[0], args.drop(1).joinToString(" ")))
+        }
         "ping" -> println(cli.ping())
         "version" -> println(cli.version())
         else -> fail("unknown command: $command (see --help)")
@@ -160,6 +165,7 @@ private fun printHelp() {
           approve <requestId>
           approve-run <runId>
           deny-run <runId> [reason]
+          answer-run <runId> <answer...>
           ping
           version
 

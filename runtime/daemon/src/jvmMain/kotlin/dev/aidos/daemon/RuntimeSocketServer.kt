@@ -201,6 +201,12 @@ class RuntimeSocketServer(
             )
             JsonObject(emptyMap())
         }
+        Methods.CAPABILITIES_ANSWER_PROMPT -> Wire.encodeCapabilityResult(
+            client.capabilities.answerPrompt(
+                params["runId"]!!.jsonPrimitive.content,
+                params["answer"]!!.jsonPrimitive.content,
+            )
+        )
         Methods.RUNTIME_PING ->
             JsonPrimitive(client.runtime.ping())
         Methods.RUNTIME_VERSION ->

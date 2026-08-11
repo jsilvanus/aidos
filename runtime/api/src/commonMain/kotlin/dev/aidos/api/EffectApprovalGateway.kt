@@ -16,6 +16,11 @@ import app.cash.sqldelight.db.SqlDriver
  */
 interface EffectApprovalGateway {
     /**
+     * Resolves `CAPABILITY_APPROVAL` or `TOOL_CALL`, whichever is actually parked — [approved]
+     * is meaningless for `USER_PROMPT` (there is no yes/no to give, only an answer), so a `false`
+     * here also reaches a parked question's decline path (see `daemon`'s `resolveAnyApproval` for
+     * the dispatch), but approving a question is [answer]'s job, not this one's.
+     *
      * [projectDriver] is the project's own already-open `state.db` driver, matching
      * [RunExecutor.send]'s own convention.
      */
@@ -24,6 +29,16 @@ interface EffectApprovalGateway {
         runId: String,
         approved: Boolean,
         denialReason: String?,
+    ): EffectResolution
+
+    /**
+     * Resolves a Run parked on `USER_PROMPT` (the model's `ask_user` tool call) with a free-text
+     * [answer]. Has no counterpart in [resolve] — a question is not a yes/no decision.
+     */
+    suspend fun answer(
+        projectDriver: SqlDriver,
+        runId: String,
+        answer: String,
     ): EffectResolution
 }
 

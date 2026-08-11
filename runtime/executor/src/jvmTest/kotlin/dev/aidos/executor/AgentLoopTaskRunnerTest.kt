@@ -39,6 +39,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -135,6 +136,17 @@ class AgentLoopTaskRunnerTest {
     private fun toolCallResponse(toolName: String, callId: String = "call-1") = ModelResponse(
         text = null,
         toolCalls = listOf(ToolCall(callId = callId, toolName = toolName, arguments = buildJsonObject {}, capabilityId = null)),
+        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+    )
+
+    private fun askUserResponse(question: String, callId: String = "call-1") = ModelResponse(
+        text = null,
+        toolCalls = listOf(
+            ToolCall(
+                callId = callId, toolName = "ask_user",
+                arguments = buildJsonObject { put("question", question) }, capabilityId = null,
+            ),
+        ),
         stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
     )
 
@@ -614,5 +626,75 @@ class AgentLoopTaskRunnerTest {
         val resolution = executor.resolveCapabilityApproval(runId, approved = true)
 
         assertTrue(resolution is CapabilityApprovalResolution.NotFound)
+    }
+
+    // ─── RFC-0008 step 8d: USER_PROMPT (`ask_user`) park/resume ────────────────
+
+    private fun toolCallTaskState(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String =
+        driver.executeQuery(null,
+            "SELECT state FROM tasks WHERE run_id = ? AND kind = 'TOOL_CALL' ORDER BY ordinal DESC LIMIT 1",
+            mapper = { c ->
+                check(c.next().value) { "no TOOL_CALL task for run ${runId.value}" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun toolCallOutcomeFor(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId, callId: String): String =
+        driver.executeQuery(null, "SELECT outcome FROM tool_calls WHERE run_id = ? AND call_id = ?",
+            mapper = { c ->
+                check(c.next().value) { "no tool_calls row for call $callId" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 2
+        ) { bindString(0, runId.value); bindString(1, callId) }.value
+
+    @Test
+    fun `the model calling ask_user parks the run instead of executing anything`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(askUserResponse("Which database should I use?"), endTurnResponse()))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        assertEquals("YIELDED", runRow(driver, runId).first, "a question parks the Run -- it is not answered by the model itself")
+        assertEquals("AWAITING_INPUT", toolCallTaskState(driver, runId))
+        assertEquals(1L, continuationCount(driver, runId))
+    }
+
+    @Test
+    fun `answering a parked ask_user call resumes with the answer as the tool result`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(askUserResponse("Which database?", callId = "ask-1"), endTurnResponse("Using Postgres")), requests)
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId)
+        assertEquals("YIELDED", runRow(driver, runId).first, "sanity: parked before resolving")
+
+        val resolution = executor.resolveUserPrompt(runId, answer = "Postgres")
+
+        assertIs<CapabilityApprovalResolution.Resumed>(resolution)
+        assertEquals("OK", toolCallOutcomeFor(driver, runId, "ask-1"))
+        assertEquals("COMPLETED", runRow(driver, runId).first)
+        assertEquals(0L, continuationCount(driver, runId), "the continuation is consumed once the resumed attempt runs")
+        // The model's *next* turn must actually see the answer, not just a bare "OK" -- the whole
+        // point of ask_user is that the reply becomes usable context.
+        val secondRequestMessages = requests[1].messages
+        assertTrue(secondRequestMessages.any { it is Turn.ToolResult && it.result.content.any { c -> c is ContentBlock.Text && c.text == "Postgres" } })
+    }
+
+    @Test
+    fun `declining a parked ask_user call fails the run without executing anything`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(askUserResponse("Which database?"), endTurnResponse()))
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId)
+
+        val resolution = executor.resolveUserPrompt(runId, answer = null, denialReason = "not now")
+
+        assertIs<CapabilityApprovalResolution.Denied>(resolution)
+        assertEquals("FAILED", runRow(driver, runId).first)
+        assertEquals("FAILED", toolCallTaskState(driver, runId))
+        assertEquals(0L, continuationCount(driver, runId))
     }
 }

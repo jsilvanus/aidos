@@ -35,7 +35,15 @@ class CapabilityResolver(
             .filter { it.permission == permission }
             .filter { it.revokedAt == null }
             .filter { val expiresAt = it.expiresAt; expiresAt == null || expiresAt > now }
-            .maxByOrNull { it.issuedAt }
+            // Tie-break on id, not just issuedAt: nowIso() has finite (often second) resolution,
+            // so two grants issued in the same tick are common -- concretely, RFC-0008 step 8d's
+            // TOOL_CALL approval flow grants a replacement capability at resume time, which can
+            // land in the same instant as the original it's replacing. issuedAt alone leaves that
+            // tie's winner to whatever order loadForSubject happens to return, which could pick
+            // the stale (still-gated) grant back up instead of the fresh one. CapabilityId wraps a
+            // UuidV7 (time-ordered, monotonic even within one instant), so it's a correct
+            // secondary key wherever issuedAt doesn't distinguish.
+            .maxWithOrNull(compareBy({ it.issuedAt }, { it.id.value }))
             ?.id
     }
 }

@@ -18,7 +18,10 @@ import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.AvailabilityTier
+import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
@@ -29,9 +32,11 @@ import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
 import dev.aidos.kernel.TaskKind
 import dev.aidos.kernel.TaskState
+import dev.aidos.kernel.ToolAvailability
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
@@ -48,7 +53,13 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * Effectively unbounded execution window — desktop profile and tests. Deliberately not the
@@ -97,6 +108,70 @@ private data class CapabilityApprovalDetail(
     val adapterModelId: String,
     val reason: String,
     val resolution: String? = null,
+)
+
+/**
+ * `continuations.operation_detail_json` for a `TOOL_CALL` park: a tool call denied specifically
+ * with [DenialReason.REQUIRES_APPROVAL] (`CapabilityConstraints.requiresApprovalPerUse`).
+ *
+ * Unlike [CapabilityApprovalDetail], resuming here needs no `resolution` flag read back by this
+ * class — [SqliteExecutor.resolveToolCallApproval]'s approve path grants a **fresh** short-lived
+ * capability (same subject/permission/scope, `requiresApprovalPerUse = false`) rather than trying
+ * to make [capabilityId] pass validation a second time; [AgentLoopTaskRunner.executeToolCall]'s
+ * existing `resolveCapability()` call already re-resolves "the most recently issued, unexpired,
+ * unrevoked match" fresh on every execution, so it picks up the new grant automatically and needs
+ * no changes for the resumed attempt to succeed. [capabilityId] here is only what the *resolver*
+ * (outside this module) needs to look up the original grant's permission/scope to attenuate from.
+ */
+@Serializable
+private data class ToolCallApprovalDetail(
+    val capabilityId: String,
+    val toolName: String,
+)
+
+/**
+ * `continuations.operation_detail_json` for a `USER_PROMPT` park: the model called the built-in
+ * `ask_user` tool (RFC-0006 `SuspendedOperation.UserPrompt`, no RFC-0011 declared-plan machinery
+ * needed — see PIPELINE.md's USER_PROMPT design note for why this shape was picked over that one).
+ *
+ * [answer] is `null` while parked. Unlike [CapabilityApprovalDetail]'s `resolution` (a fixed
+ * `"approved"`/absent signal) this carries the actual free-text reply — `executeToolCall`'s resume
+ * path reads it back and treats it as the tool's own successful result text, exactly what the
+ * model would have gotten from any other tool that returned [ToolOutcome.Ok].
+ */
+@Serializable
+private data class AskUserDetail(
+    val question: String,
+    val answer: String? = null,
+)
+
+/**
+ * `ask_user`'s descriptor. Not registered with [EffectBroker] — asking a question exercises no
+ * FS/git/shell authority, so routing it through `ToolBroker.invoke()`/`CapabilityManager.validate()`
+ * would be gating something that needs no gate. [executeToolCall] intercepts this tool name before
+ * any capability resolution is attempted; [Tools.REQUIRED_PERMISSION] is present only because
+ * [ToolDescriptor] requires one, not because it is ever checked for this tool.
+ */
+private val askUserToolDescriptor = ToolDescriptor(
+    name = "ask_user",
+    title = "Ask the user",
+    description = "Ask the user a question when you need information or a decision only they can " +
+        "provide, and wait for their reply. The Run pauses until they answer.",
+    inputSchema = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("question") { put("type", "string") }
+        }
+        put("required", buildJsonArray { add("question") })
+    },
+    effect = EffectKind.Read,
+    requiredPermission = Permission.NOTIFY,
+    recoveryClass = RecoveryClass.IDEMPOTENT,
+    availability = ToolAvailability(
+        profiles = setOf(PlatformProfile.DESKTOP, PlatformProfile.MOBILE, PlatformProfile.HEADLESS_SERVER),
+        tier = AvailabilityTier.UNIVERSAL,
+        requiresNetwork = false,
+    ),
 )
 
 /**
@@ -254,7 +329,9 @@ class AgentLoopTaskRunner(
             }
         }
 
-        val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+        // ask_user is not registered with the broker (RFC-0006 USER_PROMPT: no FS/git/shell
+        // authority to gate), so it is appended here rather than sourced from descriptorsFor().
+        val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + askUserToolDescriptor
         val history = reconstructHistory(task.runId, task.ordinal)
         val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
@@ -381,6 +458,13 @@ class AgentLoopTaskRunner(
             ?: return TaskResult(false, "No tool_calls row for task ${task.id.value}")
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // ask_user carries no FS/git/shell authority to gate, so it never reaches the broker/
+        // capability-resolution machinery below at all -- see [askUserToolDescriptor]'s own doc
+        // comment for why it isn't registered as a broker Tool in the first place.
+        if (callRow.toolName == "ask_user") {
+            return executeAskUser(task, callRow, run)
+        }
+
         // RFC-0008 step 8c, M19: resolved fresh here, immediately before the call it gates --
         // not carried from executeModelCall's fan-out -- so a capability revoked in between the
         // model turn and this step is never used (D3: nothing security-relevant held across a
@@ -398,9 +482,43 @@ class AgentLoopTaskRunner(
         )
         // Denied/Failed outcomes are data returned to the model (RFC-0008 Security #3), not a
         // reason to fail this Task — only an actual runner-level problem (missing row, no Run)
-        // does that. This matches AgentLoop.kt's own handling of the same broker call.
+        // does that. This matches AgentLoop.kt's own handling of the same broker call. The one
+        // exception is immediately below: REQUIRES_APPROVAL is not the model's problem to route
+        // around, so it parks instead of falling through to the denial-as-data path.
         val result = broker.invoke(subjectId, call, run.taintLevel)
 
+        // RFC-0008 step 8d, TOOL_CALL continuation: a human explicitly gated this specific
+        // exercise of authority (CapabilityConstraints.requiresApprovalPerUse) -- unlike every
+        // other denial reason here, feeding this back to the model as "denied, try something
+        // else" would defeat the point of the gate. Park and let a human decide instead. Nothing
+        // durable has been written yet for this attempt (no attempt row, no tool_calls.outcome,
+        // no taint update -- ToolBroker's denied() reports TRUSTED, so taint couldn't have moved
+        // anyway), so parking here is a clean no-op on everything except task/Run state.
+        val deniedForApproval = (result.outcome as? ToolOutcome.Denied)
+            ?.takeIf { it.reason == DenialReason.REQUIRES_APPROVAL }
+        if (deniedForApproval != null && capabilityId != null) {
+            return TaskResult(
+                success = true,
+                park = ParkRequest(
+                    suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
+                    operationDetailJson = json.encodeToString(
+                        ToolCallApprovalDetail(capabilityId = capabilityId.value, toolName = call.toolName),
+                    ),
+                    taskState = TaskState.AWAITING_APPROVAL,
+                ),
+            )
+        }
+
+        return finishToolCall(task, callRow, run, result)
+    }
+
+    /**
+     * The common tail of a tool call, real or synthetic: persist taint, write the outcome and
+     * attempt, and fan in to the next `MODEL_CALL` once every sibling is terminal. Shared by
+     * [executeToolCall]'s normal `broker.invoke()` path and [executeAskUser]'s resumed path (a
+     * [ToolCallResult] it constructs itself, never having gone through the broker at all).
+     */
+    private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.
         val newTaint = run.taintLevel raisedBy result.trustLevel
@@ -466,6 +584,59 @@ class AgentLoopTaskRunner(
         } else {
             TaskResult(success = true)
         }
+    }
+
+    /**
+     * RFC-0006 `USER_PROMPT`: the model called `ask_user`. Parks on first execution;
+     * [SqliteExecutor.resolveUserPrompt]'s answer path resets the task to `PENDING` and re-drives,
+     * and this re-execution finds the answer already sitting in the continuation row (recovery is
+     * a query, D3) — never calls the broker, never resolves a capability, since asking a question
+     * exercises no authority to gate in the first place.
+     */
+    private fun executeAskUser(task: Task, callRow: ToolCallRow, run: RunContext): TaskResult {
+        val answered = loadAskUserAnswer(task.runId)
+        if (answered != null) {
+            deleteAskUserContinuation(task.runId)
+            val result = ToolCallResult(
+                callId = callRow.callId,
+                outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.Text(answered)),
+                // The human's own direct reply to the model's question -- first-party input, not
+                // fetched/untrusted content (RFC-0027); does not raise taint, same as the Run's
+                // original triggering user message.
+                trustLevel = TrustLevel.TRUSTED,
+            )
+            return finishToolCall(task, callRow, run, result)
+        }
+
+        val question = parseJsonObject(callRow.argumentsJson)["question"]?.jsonPrimitive?.content ?: ""
+        return TaskResult(
+            success = true,
+            park = ParkRequest(
+                suspendedOperation = SuspendedOperation.UserPrompt(promptId = callRow.callId, question = question),
+                operationDetailJson = json.encodeToString(AskUserDetail(question = question)),
+                taskState = TaskState.AWAITING_INPUT,
+            ),
+        )
+    }
+
+    private fun loadAskUserAnswer(runId: RunId): String? {
+        val detailJson = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_detail_json FROM continuations " +
+                "WHERE run_id = ? AND suspended_operation = 'USER_PROMPT'",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: return null
+        return json.decodeFromString<AskUserDetail>(detailJson).answer
+    }
+
+    private fun deleteAskUserContinuation(runId: RunId) {
+        driver.execute(
+            identifier = null,
+            sql = "DELETE FROM continuations WHERE run_id = ?",
+            parameters = 1,
+        ) { bindString(0, runId.value) }
     }
 
     // ─── No-progress detection ───────────────────────────────────────────────
