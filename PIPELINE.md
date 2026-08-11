@@ -17,6 +17,57 @@ milestone either serves it or is cuttable.
 
 ## Status
 
+**2026-08-11 (later still) · RFC-0011 driver/worker orchestration (`claude/rfc-0011-driver-worker`,
+`session_017yU5Atvr4UszSQy7DCQmw2`) rescoped mid-session by the project owner to a single
+prerequisite bug fix — the orchestration mechanics (spawn/park/resume, DEPENDS_ON/SKIPPED, worker
+spawning, `TreelessWorker` wiring) were not attempted.** The branch handed off two entries above
+started as a full RFC-0011 attempt; while reading `SqliteCapabilityManager` to work out how
+`WorkerSpawner` would re-derive a driver's actual capability scope/budget for delegation, a
+correctness bug was found that would have made worker attenuation silently wrong, and the owner
+asked to fix only that and stop. Real, tested, and landed on this branch:
+
+- **`CapabilityScope.toJson()`/`parseScope()` — full round-trip for all eight scope variants.**
+  Before this fix, `parseCapabilityRow` reconstructed a *hard-coded* `Filesystem` scope for every
+  capability regardless of its actual type, using the entire raw `scope_json` string as the literal
+  path. `toJson()` itself only ever serialized `Filesystem`'s distinguishing field (`root`) — every
+  other variant wrote `type` (and `project_id`, where applicable) and silently dropped the rest
+  (`Git.allowedOperations`, `Shell.workingDirectory`/`allowedCommands`, `Network.allowedHosts`/etc.,
+  `Model.allowedProviders`/`allowedKinds`, `Worker.maxWorkerCount`/`allowedRoles`,
+  `Secrets.allowedSecretIds`, `Events.topicPatterns`). Any capability of a non-`Filesystem` scope,
+  reloaded from storage, came back with a corrupted scope. `parseScope()` is the new read side,
+  dispatching on the `type` discriminator `toJson()` now always writes.
+- **`Budget` — all seven dimensions round-trip, not just `modelCalls`/`steps`.** The prior link
+  (`claude/continuation-flow`, two entries below) had already fixed `parseConstraints()` existing at
+  all, but flagged `Budget`'s other five fields (`inputTokens`, `outputTokens`, `costUnits`,
+  `wallClockSeconds`, `toolInvocations`) as a known remaining gap in the *encode* side. Fixed here —
+  RFC-0028/RFC-0011's split-budget delegation depends on every dimension surviving storage, not just
+  two of seven.
+- **`delegate()` was never actually callable — a separate bug this surfaced, not introduced.** It
+  inserts a `capabilities` row whose `audit_ref` foreign-keys to `audit_log(id)`, but unlike
+  `grant()` (which calls `insertAuditRow` first), it never wrote that row — every call failed
+  `SQLITE_CONSTRAINT_FOREIGNKEY`. `insertAuditRow` gained `kind`/`actorKind` parameters (default
+  unchanged, so `grant()`'s call site and behavior are untouched) and `delegate()` now calls it with
+  `kind = "CapabilityDelegated"`, `actorKind = "SESSION"` — a delegation's actor is the delegating
+  session, not a user, so reusing `grant()`'s hard-coded `"USER"` would have misattributed the audit
+  trail RFC-0046 exists to keep accurate.
+- Tests: `CapabilityTest.kt` gained four — `Filesystem`/`Git`/`Shell` scope round-trip through
+  `grant()` → `loadForSubject()` with a fully populated `CapabilityConstraints`/`Budget`, and a
+  `delegate()` round-trip proving a split budget and a real (non-`Filesystem`-clobbered) scope both
+  survive `loadForSubject()` on the delegated subject. All green (22/22 in `:capability`), plus
+  `:broker`, `:executor`, and `:daemon` jvmTest re-run clean (no other module reaches these private
+  functions directly, but several construct `SqliteCapabilityManager` in production paths).
+  `python3 schema/check.py` green (no schema touched).
+
+**RFC-0011 itself remains unbuilt — the design work earlier in this branch's session (see the
+handoff entry immediately below) is still accurate and still the plan** for whoever picks this back
+up: `WorkerSpawner` (executor module, reads a to-be-added `worker_spawn_requests` detail table),
+`SqliteExecutor` DEPENDS_ON-aware scheduling + SKIPPED cascade + `ChildRun` park + a
+`resumeAwaitingParent` hook at Run terminal transitions, a `WorkerCommitter` seam giving
+`TreelessWorker` its first real caller, `COMPOSITE` dispatch in `AgentLoopTaskRunner`, and wiring
+through `RuntimeCompositionRoot`. None of that exists yet. What *does* now exist that it will need:
+a capability-manager layer that actually tells the truth about what scope and budget a capability
+holds when reloaded — this fix was a precondition, not a substitute.
+
 **2026-08-11 (later same day) · TOOL_CALL/USER_PROMPT parking requested (beyond MVP scope) —
 one real fix landed, the park/resume mechanism itself is designed but not built, honestly not
 attempted rather than rushed.** Requested explicitly, overriding the earlier scope call that RFC-0006
@@ -188,7 +239,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Kernel | `runtime/kernel/` compiles under `allWarningsAsErrors`, contract tests green |
 | Storage | `runtime/storage/` — bootstrap / migration runner / durability pragmas. 8 tests green |
 | Identity | `runtime/identity/` — UUIDv7 generator (expect/actual KMP), ProjectRegistry. M2 ✅ |
-| Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅ |
+| Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅. **Update (2026-08-11, branch `claude/rfc-0011-driver-worker`): scope_json/constraints_json round-trip is now real for all 8 `CapabilityScope` variants and all 7 `Budget` dimensions (previously: any non-`Filesystem` scope came back corrupted, and `Budget` lost 5 of 7 fields), and `delegate()` — previously uncallable, FK-violating on its own `audit_ref` — now actually works. See Status entry above for detail.** |
 | Broker | `runtime/broker/` — `AuditLog` + `ToolBroker` 8-step invocation sequence (RFC-0030); every invocation writes an audit row naming subject, capability, and outcome. M4 ✅ |
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction, crash-safe task appending via `TaskResult.appendTasks`); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset); `RunCreator` (how a Run comes to exist — `runs` row + first `MODEL_CALL` task, for a user message or a waking event); `AgentLoopTaskRunner` (the AgentLoop↔executor bridge, RFC-0008: drives `MODEL_CALL`/`TOOL_CALL` Tasks one at a time, transcript reconstructed from `attempts`/`tool_calls` rows, not held in memory); `Scheduler` (RFC-0005 wake-to-Run: matches a published event against subscriptions, wakes eligible `SLEEPING` sessions with a `SessionWoken` event + `PENDING` Run each, audits self-wake and causal-depth refusals). M5 ✅, M6 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`, M19): `AgentLoopTaskRunner.executeToolCall()` now resolves `ToolCall.capabilityId` via an injected `resolveCapability` seam (defaults to always-null, preserving prior behavior for tests with no `CapabilityManager`) instead of hard-coding `null`. The real implementation, `daemon/.../CapabilityResolver.kt`, was designed in discussion with the project owner before being built. Proven end-to-end (`CapabilityResolutionEndToEndTest.kt`): a real grant lets a real `ToolBroker`-mediated call actually execute; no grant still fails; a resolved-but-revoked id is still denied by the real `validate()` call, confirming that gate is independent of the resolver. See the Part 2 audit's M19 entry for full detail and what's still not covered (the mock-only CLI-level G2 test itself).** |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
@@ -2070,6 +2121,71 @@ an architecture pass read the whole corpus against them. The durable output:
 ---
 
 ## Notes for the next link
+
+**2026-08-11 (later still) — RFC-0011 driver/worker orchestration: rescoped away mid-session to a
+capability round-trip bug fix (see Status entry above). The design work done before the rescope is
+still the plan; picking this back up should start from it rather than re-deriving:**
+
+- **The mechanism**: a `COMPOSITE` task's execution creates a worker session (`role = WORKER`,
+  `parent_session_id` = driver's), delegates a caller-selected subset of the driver's held
+  capabilities via `CapabilityManager.delegate()` with `Budget.split(ways)` applied to the budget,
+  creates a child `Run` via `RunCreator.createForUserMessage` (the brief as the child's initial
+  user message), and returns `TaskResult.park(SuspendedOperation.ChildRun(childRunId,
+  childSessionId), AWAITING_INPUT)` — reusing `claude/continuation-flow`'s generic park primitive
+  exactly as `CAPABILITY_APPROVAL` does, not a new mechanism.
+- **Driving the child and resuming the parent**: this codebase has no background scheduler that
+  drives an arbitrary `PENDING` Run — every Run today is driven synchronously by whoever created
+  it. The plan was: when `SqliteExecutor.drive()` parks a task on `ChildRun`, write the parent's
+  continuation row *first*, then recursively call `drive(childRunId)` on `this` (same instance —
+  no circular-construction problem, it's a plain member-function self-call) before returning. Add
+  a `resumeAwaitingParent(childRunId)` hook, called at every point `drive()` transitions a Run to a
+  terminal state: look up a `continuations` row by `correlation_id = childRunId.value` and
+  `suspended_operation = 'CHILD_RUN'`; if found, record the outcome on the parent's task
+  (`COMPLETED`/`FAILED` — no re-execution needed, unlike `CAPABILITY_APPROVAL`'s reset-to-`PENDING`,
+  since a `COMPOSITE` task's real work — spawning — already happened before it parked), set the
+  parent Run back to `RUNNING`, and recursively `drive(parentRunId)`. Ordering matters: writing the
+  continuation *before* the recursive child-drive is what makes this correct even when the child
+  finishes synchronously inside that same call — `resumeAwaitingParent` needs the parent's
+  continuation row to already exist when the child reaches terminal state.
+- **DEPENDS_ON / SKIPPED**: `pendingTasksFor` currently just returns the lowest-ordinal `PENDING`
+  task with no dependency awareness at all. The fix is to scan `PENDING` tasks in ordinal order,
+  and for each check its `execution_edges` (`edge_kind = 'DEPENDS_ON'`, `from_node_id` = the
+  dependent task, `to_node_id` = the prerequisite — reads as "Task DEPENDS_ON Task"): any
+  `FAILED`/`SKIPPED` dependency marks *this* task `SKIPPED` (cascades — keep scanning rather than
+  stopping); any still-non-terminal dependency means blocked-not-yet (keep scanning past it, a
+  later sibling may already be runnable); all-`COMPLETED` (or none) means runnable, return it. A
+  task with zero `DEPENDS_ON` edges is vacuously runnable — matches today's no-dependency behavior
+  exactly, so this is additive, not a rewrite. `allTasksTerminal`'s existing SQL already treats
+  `SKIPPED` as terminal, and a `COMPOSITE` task's `FAILED` is written out-of-band by
+  `resumeAwaitingParent` (not through `drive()`'s normal "any failed task fails the whole Run"
+  path) — together these two already-existing pieces are *why* "the driver's Run does not fail
+  merely because a worker did" falls out for free, without new Run-level failure-suppression logic.
+- **What a COMPOSITE task needs to know before it can spawn**: a brief, which capabilities (by id)
+  to delegate, and how many ways to split the budget. None of that fits naturally as a `tasks`
+  column (kind-specific, and most `COMPOSITE`-only) — plan was a small new
+  `worker_spawn_requests(task_id PK, run_id, worker_session_name, brief, delegate_capability_ids
+  JSON, budget_ways)` table, populated via `NewTaskSpec.afterInsert` exactly the way `tool_calls`
+  rows are written today for `TOOL_CALL` tasks. Not yet added to `schema/`.
+- **Treeless isolation (RFC-0053)**: `TreelessWorker` (`runtime/worker/`) is real but has zero
+  callers. Plan was a `WorkerCommitter` seam in `executor` (mirrors the `RunReconciler` seam exactly
+  — an interface in commonMain, a real JGit-backed implementation composed in `daemon`), called from
+  `resumeAwaitingParent` when a worker Run completes, writing a commit to
+  `refs/aidos/workers/<workerSessionId>`. **Deliberately scoped down even in the original plan**:
+  `FilesystemTool`/`GitTool` are real-working-tree tools with no treeless-aware variant, and
+  building one (capturing a worker's actual tool-driven file writes as `FileChange`s instead of
+  real disk I/O) is a large separate piece — the planned first cut would have committed an outcome
+  summary, not real code diffs, and said so honestly rather than pretending otherwise.
+- **`Permission.WORKER_CREATE`**: exists in the kernel, ungranted/unchecked anywhere real today.
+  `WorkerSpawner` should check the driver session holds it before spawning (RFC-0011's own Security
+  section: "worker creation is a capability").
+- **What changed since this plan was written, relevant to whoever resumes it**: the capability
+  scope/budget round-trip this session actually fixed (Status entry above) was a real blocker this
+  plan didn't originally know about — `WorkerSpawner` needs `CapabilityManager.loadForSubject()` to
+  return the driver's *actual* scope and budget so `delegate()` can narrow them correctly; before
+  this fix, every non-`Filesystem` scope came back corrupted and `Budget` lost 5 of 7 fields on
+  reload, which would have made "attenuated capabilities" and "split budget" silently wrong. Also:
+  `delegate()` itself was completely uncallable (FK violation on its own audit row) until this
+  session's fix — anyone who tried to call it from `WorkerSpawner` before would have hit that first.
 
 **2026-08-11 (later same day) — TOOL_CALL and USER_PROMPT park/resume design, worked out but not
 built. Next link: build these for real, don't re-derive this.**

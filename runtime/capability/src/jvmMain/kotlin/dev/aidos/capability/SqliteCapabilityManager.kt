@@ -14,11 +14,16 @@ import dev.aidos.kernel.CapabilityManager
 import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.ErrorClass
+import dev.aidos.kernel.GitOperation
 import dev.aidos.kernel.GrantSource
+import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.Operation
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.RedirectPolicy
 import dev.aidos.kernel.ResourceHandle
+import dev.aidos.kernel.SecretId
+import dev.aidos.kernel.SessionRole
 import dev.aidos.kernel.SubjectKind
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.UserId
@@ -26,11 +31,17 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
@@ -137,6 +148,14 @@ class SqliteCapabilityManager(
         val auditId = AuditId(ids.next())
         val now = nowIso()
         val epoch = currentEpochOrZero(parentCap.scope.projectId())
+
+        // Was missing entirely: every delegate() call failed FK-violating on audit_ref, since
+        // nothing wrote the audit_log row it references (unlike grant(), just above, which does).
+        // delegate() was therefore never actually callable before this fix.
+        insertAuditRow(
+            auditId.value, parentCap.projectId.value, parentCap.subjectId, now,
+            kind = "CapabilityDelegated", actorKind = "SESSION",
+        )
 
         projectDriver.execute(
             identifier = null,
@@ -370,10 +389,7 @@ class SqliteCapabilityManager(
         val revocationEpoch = cursor.getLong(14) ?: 0L
         val auditRef = cursor.getString(15) ?: return null
 
-        val scope = CapabilityScope.Filesystem(
-            projectId = ProjectId(projectId),
-            rootRelativePath = scopeJson,
-        )
+        val scope = parseScope(scopeJson, ProjectId(projectId))
 
         return Capability(
             id = CapabilityId(id),
@@ -407,16 +423,23 @@ class SqliteCapabilityManager(
     )
 
     /**
-     * Inserts an audit_log row for a capability grant and returns its ID.
+     * Inserts an audit_log row for a capability grant or delegation and returns its ID.
      *
      * audit_log.sequence must be unique per project. We use the current row count + 1 as a
      * simple monotonic sequence in MVP; a dedicated sequence table is out of scope until M4.
+     *
+     * [kind]/[actorKind] default to `grant()`'s original behaviour (a user-issued grant). RFC-0011:
+     * `delegate()` calls this with `kind = "CapabilityDelegated"`, `actorKind = "SESSION"` — a
+     * delegation's actor is the delegating session, not a user, and conflating the two would
+     * misattribute the audit trail RFC-0046 exists to keep accurate.
      */
     private fun insertAuditRow(
         auditId: String,
         projectId: String,
         actorId: String,
         now: String,
+        kind: String = "CapabilityGranted",
+        actorKind: String = "USER",
     ) {
         val seq = projectDriver.executeQuery(
             identifier = null,
@@ -428,14 +451,16 @@ class SqliteCapabilityManager(
         projectDriver.execute(
             identifier = null,
             sql = "INSERT INTO audit_log (id, project_id, sequence, occurred_at, kind, " +
-                "actor_kind, actor_id, device_id) VALUES (?, ?, ?, ?, 'CapabilityGranted', 'USER', ?, 'runtime')",
-            parameters = 5,
+                "actor_kind, actor_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'runtime')",
+            parameters = 7,
         ) {
             bindString(0, auditId)
             bindString(1, projectId)
             bindLong(2, seq)
             bindString(3, now)
-            bindString(4, actorId)
+            bindString(4, kind)
+            bindString(5, actorKind)
+            bindString(6, actorId)
         }
     }
 
@@ -465,6 +490,19 @@ private fun CapabilityScope.projectId(): ProjectId? = when (this) {
     is CapabilityScope.Events -> null
 }
 
+/**
+ * RFC-0018/RFC-0011: full round-trip, all eight [CapabilityScope] variants. Until this fix, only
+ * `Filesystem` wrote its distinguishing field (`root`) — every other variant serialized `type`
+ * (and `project_id`, where applicable) only, silently dropping the rest of its data
+ * (`Git.allowedOperations`, `Shell.workingDirectory`/`allowedCommands`,
+ * `Network.allowedHosts`/etc., `Model.allowedProviders`/`allowedKinds`,
+ * `Worker.maxWorkerCount`/`allowedRoles`, `Secrets.allowedSecretIds`, `Events.topicPatterns`) —
+ * and the read side ([parseScope]) didn't exist at all: [parseCapabilityRow] reconstructed a
+ * *hard-coded* `Filesystem` scope for every capability regardless of its actual type, treating the
+ * whole JSON blob as a literal path. RFC-0011's worker capability delegation is what surfaced
+ * this: `delegate()` re-derives the parent's *actual* scope via [dev.aidos.kernel.CapabilityManager.loadForSubject],
+ * so a lossy round-trip here would silently widen or corrupt what a worker is attenuated to.
+ */
 private fun CapabilityScope.toJson(): JsonElement = buildJsonObject {
     when (this@toJson) {
         is CapabilityScope.Filesystem -> {
@@ -475,29 +513,114 @@ private fun CapabilityScope.toJson(): JsonElement = buildJsonObject {
         is CapabilityScope.Git -> {
             put("type", "git")
             put("project_id", projectId.value)
+            put("allowed_operations", buildJsonArray { allowedOperations.forEach { add(it.name) } })
         }
         is CapabilityScope.Network -> {
             put("type", "network")
+            put("allowed_hosts", buildJsonArray { allowedHosts.forEach { add(it) } })
+            allowedPorts?.let { ports -> put("allowed_ports", buildJsonArray { ports.forEach { add(it) } }) }
+            put("allow_private_addresses", allowPrivateAddresses)
+            put("follow_redirects", followRedirects.name)
+            put("max_response_bytes", maxResponseBytes)
         }
         is CapabilityScope.Model -> {
             put("type", "model")
+            allowedProviders?.let { providers -> put("allowed_providers", buildJsonArray { providers.forEach { add(it) } }) }
+            put("allowed_kinds", buildJsonArray { allowedKinds.forEach { add(it.name) } })
         }
         is CapabilityScope.Shell -> {
             put("type", "shell")
             put("project_id", projectId.value)
+            put("working_directory", workingDirectory)
+            allowedCommands?.let { cmds -> put("allowed_commands", buildJsonArray { cmds.forEach { add(it) } }) }
         }
         is CapabilityScope.Secrets -> {
             put("type", "secrets")
             put("project_id", projectId.value)
+            put("allowed_secret_ids", buildJsonArray { allowedSecretIds.forEach { add(it.value) } })
         }
         is CapabilityScope.Worker -> {
             put("type", "worker")
+            put("max_worker_count", maxWorkerCount)
+            put("allowed_roles", buildJsonArray { allowedRoles.forEach { add(it.name) } })
         }
         is CapabilityScope.Events -> {
             put("type", "events")
+            put("topic_patterns", buildJsonArray { topicPatterns.forEach { add(it) } })
         }
     }
 }
+
+/** The read side of [CapabilityScope.toJson] — dispatches on the `type` discriminator instead of
+ *  assuming `Filesystem`. [fallbackProjectId] covers the (theoretical) case of a `project_id`-
+ *  bearing variant whose JSON predates this fix and never wrote one; every capability this
+ *  codebase has ever granted or delegated shares [fallbackProjectId] with the row it came from,
+ *  so this never produces a cross-project scope. */
+private fun parseScope(json: String, fallbackProjectId: ProjectId): CapabilityScope {
+    val obj = Json.parseToJsonElement(json).jsonObject
+    fun projectIdOf() = obj["project_id"]?.jsonPrimitive?.content?.let { ProjectId(it) } ?: fallbackProjectId
+    fun strings(key: String) = obj[key]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+    return when (obj["type"]?.jsonPrimitive?.content) {
+        "git" -> CapabilityScope.Git(
+            projectId = projectIdOf(),
+            allowedOperations = strings("allowed_operations").map { GitOperation.valueOf(it) }.toSet(),
+        )
+        "network" -> CapabilityScope.Network(
+            allowedHosts = strings("allowed_hosts"),
+            allowedPorts = obj["allowed_ports"]?.jsonArray?.map { it.jsonPrimitive.int },
+            allowPrivateAddresses = obj["allow_private_addresses"]?.jsonPrimitive?.booleanOrNull ?: false,
+            followRedirects = obj["follow_redirects"]?.jsonPrimitive?.content
+                ?.let { RedirectPolicy.valueOf(it) } ?: RedirectPolicy.SAME_HOST_ONLY,
+            maxResponseBytes = obj["max_response_bytes"]?.jsonPrimitive?.longOrNull ?: (32L * 1024 * 1024),
+        )
+        "model" -> CapabilityScope.Model(
+            allowedProviders = obj["allowed_providers"]?.jsonArray?.map { it.jsonPrimitive.content },
+            allowedKinds = strings("allowed_kinds").map { ModelKind.valueOf(it) }.toSet(),
+        )
+        "shell" -> CapabilityScope.Shell(
+            projectId = projectIdOf(),
+            workingDirectory = obj["working_directory"]?.jsonPrimitive?.content ?: "",
+            allowedCommands = obj["allowed_commands"]?.jsonArray?.map { it.jsonPrimitive.content },
+        )
+        "secrets" -> CapabilityScope.Secrets(
+            projectId = projectIdOf(),
+            allowedSecretIds = strings("allowed_secret_ids").map { SecretId(it) },
+        )
+        "worker" -> CapabilityScope.Worker(
+            maxWorkerCount = obj["max_worker_count"]?.jsonPrimitive?.intOrNull ?: 0,
+            allowedRoles = strings("allowed_roles").map { SessionRole.valueOf(it) }.toSet(),
+        )
+        "events" -> CapabilityScope.Events(topicPatterns = strings("topic_patterns"))
+        // "filesystem", or a legacy row from before this fix (no "type" tag; the raw string was
+        // the whole scope_json — never valid JSON for any other variant, so this remains a safe
+        // default): treat the whole thing as a Filesystem scope, same as the pre-fix behaviour.
+        else -> CapabilityScope.Filesystem(
+            projectId = projectIdOf(),
+            rootRelativePath = obj["root"]?.jsonPrimitive?.content ?: json,
+        )
+    }
+}
+
+/** RFC-0028: all seven [Budget] dimensions, not just `modelCalls`/`steps`. */
+private fun Budget.toJson(): JsonElement = buildJsonObject {
+    modelCalls?.let { put("model_calls", it) }
+    inputTokens?.let { put("input_tokens", it) }
+    outputTokens?.let { put("output_tokens", it) }
+    costUnits?.let { put("cost_units", it) }
+    steps?.let { put("steps", it) }
+    wallClockSeconds?.let { put("wall_clock_seconds", it) }
+    toolInvocations?.let { put("tool_invocations", it) }
+}
+
+private fun parseBudget(obj: JsonObject): Budget = Budget(
+    modelCalls = obj["model_calls"]?.jsonPrimitive?.intOrNull,
+    inputTokens = obj["input_tokens"]?.jsonPrimitive?.longOrNull,
+    outputTokens = obj["output_tokens"]?.jsonPrimitive?.longOrNull,
+    costUnits = obj["cost_units"]?.jsonPrimitive?.longOrNull,
+    steps = obj["steps"]?.jsonPrimitive?.intOrNull,
+    wallClockSeconds = obj["wall_clock_seconds"]?.jsonPrimitive?.intOrNull,
+    toolInvocations = obj["tool_invocations"]?.jsonPrimitive?.intOrNull,
+)
 
 private fun CapabilityConstraints.toJson(): JsonElement = buildJsonObject {
     maxDurationSeconds?.let { put("max_duration_seconds", it) }
@@ -505,12 +628,7 @@ private fun CapabilityConstraints.toJson(): JsonElement = buildJsonObject {
     maxBytesWritten?.let { put("max_bytes_written", it) }
     if (requiresApprovalPerUse) put("requires_approval_per_use", true)
     maxExerciseCount?.let { put("max_exercise_count", it) }
-    budget?.let { b ->
-        put("budget", buildJsonObject {
-            b.modelCalls?.let { put("model_calls", it) }
-            b.steps?.let { put("steps", it) }
-        })
-    }
+    budget?.let { put("budget", it.toJson()) }
 }
 
 /**
@@ -518,9 +636,9 @@ private fun CapabilityConstraints.toJson(): JsonElement = buildJsonObject {
  * written on every grant and never parsed back anywhere (`parseCapabilityRow` constructed a bare
  * `CapabilityConstraints()` default, discarding the column it had just read). Every constraint —
  * not just `requiresApprovalPerUse` — was silently unenforced on any capability loaded back from
- * storage. Mirrors `toJson()`'s exact keys; `budget` only round-trips `modelCalls`/`steps` because
- * that's all `toJson()` currently writes (`Budget`'s other five fields are a separate, pre-existing
- * gap in the encode side, not introduced or fixed here).
+ * storage. `budget` now round-trips all seven [Budget] dimensions (RFC-0011: a delegated worker's
+ * split budget must actually carry every dimension the parent's did, not just model-call/step
+ * counts) — previously only `modelCalls`/`steps` survived a round trip.
  */
 private fun parseConstraints(json: String): CapabilityConstraints {
     val obj = Json.parseToJsonElement(json).jsonObject
@@ -530,11 +648,6 @@ private fun parseConstraints(json: String): CapabilityConstraints {
         maxBytesWritten = obj["max_bytes_written"]?.jsonPrimitive?.longOrNull,
         requiresApprovalPerUse = obj["requires_approval_per_use"]?.jsonPrimitive?.booleanOrNull ?: false,
         maxExerciseCount = obj["max_exercise_count"]?.jsonPrimitive?.intOrNull,
-        budget = obj["budget"]?.jsonObject?.let { b ->
-            Budget(
-                modelCalls = b["model_calls"]?.jsonPrimitive?.intOrNull,
-                steps = b["steps"]?.jsonPrimitive?.intOrNull,
-            )
-        },
+        budget = obj["budget"]?.jsonObject?.let { parseBudget(it) },
     )
 }
