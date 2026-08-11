@@ -17,6 +17,46 @@ milestone either serves it or is cuttable.
 
 ## Status
 
+**2026-08-11 (later still) · TOOL_CALL park/resume is now actually built** (the design two entries
+below described; this entry supersedes "designed but not built" for TOOL_CALL specifically —
+USER_PROMPT is still exactly where that entry left it, undecided and unbuilt).
+
+- `AgentLoopTaskRunner.executeToolCall()` special-cases `ToolOutcome.Denied(DenialReason.REQUIRES_APPROVAL)`:
+  parks (writes a `TOOL_CALL` continuation naming the denied `capabilityId`/`toolName`) instead of
+  falling through to the existing "denial is data returned to the model" path used for every other
+  denial reason.
+- `SqliteExecutor.resolveToolCallApproval(runId, approved, denialReason, onApprove)` — the generic
+  resolve shape (mirrors `resolveCapabilityApproval`), with an `onApprove` callback so the actual
+  capability-granting logic (which needs a `CapabilityManager` this class doesn't have) can run
+  *before* the task resets to `PENDING` and re-drives.
+- `RuntimeCompositionRoot.resolveToolCallApproval(...)` supplies that callback: parses the
+  continuation's `capabilityId`, looks up the original grant, and issues a **fresh, ~60s-lived**
+  capability with the same subject/permission/scope but `requiresApprovalPerUse = false` — per the
+  design note, no `EffectBroker`/kernel changes. `AgentLoopTaskRunner.executeToolCall`'s existing
+  `resolveCapability()` call already re-resolves fresh on every execution, so the resumed attempt
+  picks up the new grant with no other code path touched.
+- **A real, separate bug surfaced by testing this and got fixed in the same commit**:
+  `CapabilityResolver.resolve()`'s "most recently issued" tie-break used `issuedAt` alone.
+  `nowIso()` has finite resolution, so the fresh grant landing in the *same* instant as the
+  original it replaces is the normal case here, not an edge case — and `maxByOrNull` on a tie
+  returns whichever element the underlying query happened to list first, which could silently
+  resolve back to the *original*, still-gated capability. Fixed with a secondary tie-break on
+  `CapabilityId` (a `UuidV7`, monotonic even within one instant). This bug predates this work —
+  any two capabilities issued in the same tick for the same subject/permission were already
+  exposed to it — this is just the first thing that ever exercised the case.
+- `RuntimeCompositionRoot.resolveAnyApproval(...)` dispatches between `CAPABILITY_APPROVAL` and
+  `TOOL_CALL` by trying the former and falling through to the latter on
+  `CapabilityApprovalResolution.WrongKind` (returned before either resolver mutates anything, so
+  the fallthrough never double-resolves) — wired into `SqliteEffectApprovalGateway`, so the
+  existing `approve-run <runId>` / `deny-run <runId>` CLI commands work unchanged for both
+  continuation kinds; no new CLI verbs needed.
+- Tests (`CapabilityResolutionEndToEndTest.kt`, executor module — real `SqliteCapabilityManager` +
+  real `ToolBroker`, only the model adapter is fake, same convention as every other test in this
+  file): a `requiresApprovalPerUse` grant parks instead of denying-as-data; approving grants a
+  fresh capability and the *resumed* tool call really executes (proven via `tool_calls.outcome =
+  'OK'`, not just "no exception"); denying fails the Run without granting anything. `gradle jvmTest
+  --continue`: 0 failures project-wide except the pre-existing sandbox-only `:knowledge` 401.
+
 **2026-08-11 (later same day) · TOOL_CALL/USER_PROMPT parking requested (beyond MVP scope) —
 one real fix landed, the park/resume mechanism itself is designed but not built, honestly not
 attempted rather than rushed.** Requested explicitly, overriding the earlier scope call that RFC-0006
@@ -2073,6 +2113,9 @@ an architecture pass read the whole corpus against them. The durable output:
 
 **2026-08-11 (later same day) — TOOL_CALL and USER_PROMPT park/resume design, worked out but not
 built. Next link: build these for real, don't re-derive this.**
+**UPDATE (later still): TOOL_CALL is now built exactly as designed below — see the newer Status
+entry at the top of this file. The design write-up stays for context (why the fresh-grant approach,
+why not EffectBroker); USER_PROMPT below is still exactly where it was, unbuilt and undecided.**
 
 **TOOL_CALL — trigger already exists and is now live** (see the Status entry above):
 `SqliteCapabilityManager.validate()` now returns `Denied(REQUIRES_APPROVAL)` for any grant with

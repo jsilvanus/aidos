@@ -637,6 +637,66 @@ class SqliteExecutor(
         return CapabilityApprovalResolution.Resumed
     }
 
+    /**
+     * Resolves a Run parked on [SuspendedOperation.ToolCall] (RFC-0008 step 8d): a tool call
+     * denied with `DenialReason.REQUIRES_APPROVAL`.
+     *
+     * Unlike [resolveCapabilityApproval], approval here does not flip a resolution flag this
+     * class reads back later — this class has no [dev.aidos.kernel.CapabilityManager] to grant a
+     * fresh capability with, so [onApprove] is the caller's chance to do that (using the parked
+     * continuation's `operation_detail_json`, passed through unread) **before** the task resets to
+     * `PENDING` and [drive] re-executes it. `AgentLoopTaskRunner.executeToolCall`'s existing
+     * `resolveCapability()` call already re-resolves fresh on every execution, so once the caller's
+     * grant lands, the resumed attempt finds it without this class needing to know anything about
+     * capabilities at all. Deny mirrors [resolveCapabilityApproval]'s own deny path exactly.
+     */
+    suspend fun resolveToolCallApproval(
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        onApprove: suspend (operationDetailJson: String) -> Unit = {},
+    ): CapabilityApprovalResolution {
+        val continuation = loadContinuation(runId) ?: return CapabilityApprovalResolution.NotFound(runId)
+        if (continuation.suspendedOperation != "TOOL_CALL") {
+            return CapabilityApprovalResolution.WrongKind(continuation.suspendedOperation)
+        }
+        val projectId = loadRun(runId)?.projectId?.value ?: ""
+
+        if (!approved) {
+            inTransaction {
+                deleteContinuation(runId)
+                updateTaskState(continuation.taskId, TaskState.FAILED)
+            }
+            updateRunState(
+                runId, RunState.FAILED,
+                AidosError(
+                    "tool_call.denied", ErrorClass.DENIED,
+                    "Tool call denied by user" + (denialReason?.let { ": $it" } ?: ""),
+                ),
+            )
+            audit.write(
+                id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_DENIED,
+                actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+                nowIso = nowIso(),
+            )
+            return CapabilityApprovalResolution.Denied
+        }
+
+        onApprove(continuation.operationDetailJson)
+        inTransaction {
+            deleteContinuation(runId)
+            updateTaskState(continuation.taskId, TaskState.PENDING)
+        }
+        updateRunState(runId, RunState.RUNNING)
+        audit.write(
+            id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_GRANTED,
+            actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+            nowIso = nowIso(),
+        )
+        drive(runId)
+        return CapabilityApprovalResolution.Resumed
+    }
+
     // ─── Recovery helpers (M6) ────────────────────────────────────────────────
 
     private data class AttemptSnapshot(

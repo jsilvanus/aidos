@@ -15,6 +15,7 @@ import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
+import dev.aidos.kernel.UserId
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
@@ -24,6 +25,10 @@ import dev.aidos.settings.SettingsStore
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.Redactor
 import java.io.File
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * The runtime composition root PIPELINE.md has been flagging as missing since the
@@ -135,6 +140,82 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
             .resolveCapabilityApproval(runId, approved, denialReason)
+    }
+
+    /**
+     * Resolves a Run parked on `TOOL_CALL` (RFC-0008 step 8d) — a tool call denied with
+     * `DenialReason.REQUIRES_APPROVAL` (`CapabilityConstraints.requiresApprovalPerUse`).
+     *
+     * On approve, grants a **fresh, short-lived** capability rather than trying to make the
+     * original one pass `validate()` a second time — the original grant's `requiresApprovalPerUse`
+     * means every use needs approval, so mutating it would silently exempt every future call too.
+     * The fresh grant shares the original's subject/permission/scope, drops
+     * `requiresApprovalPerUse`, and expires in a minute — long enough for the one immediate
+     * re-drive this triggers, not a standing exemption. `AgentLoopTaskRunner.executeToolCall`'s
+     * existing `resolveCapability()` call already re-resolves "the most recently issued, unexpired,
+     * unrevoked match" fresh on every execution, so the resumed attempt finds the new grant with no
+     * changes needed there.
+     *
+     * Deliberately does **not** add a bypass parameter to `EffectBroker.invoke()` — that would
+     * touch `runtime/kernel/`, which is frozen at G0 (this file's own doc comment set says so
+     * throughout; see `PIPELINE.md`'s "Where everything lives" table).
+     */
+    suspend fun resolveToolCallApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
+
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
+                val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
+                val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
+                    ?: return@resolveToolCallApproval
+                capabilityManager.grant(
+                    subjectId = original.subjectId,
+                    subjectKind = original.subjectKind,
+                    permission = original.permission,
+                    scope = original.scope,
+                    constraints = original.constraints.copy(requiresApprovalPerUse = false),
+                    expiresAt = Instant.fromEpochSeconds(Instant.parse(nowIso()).epochSeconds + 60),
+                    grantedBy = UserId("user"),
+                )
+            }
+    }
+
+    /**
+     * Resolves a Run parked on **either** `CAPABILITY_APPROVAL` or `TOOL_CALL` — the single entry
+     * point [SqliteEffectApprovalGateway] actually calls, so `approve-run`/`deny-run` at the CLI
+     * work regardless of which continuation kind is waiting, without a caller needing to know
+     * which one it is up front (it can't — that's exactly what it's asking).
+     *
+     * Tries [resolveApproval] first; [CapabilityApprovalResolution.WrongKind] is returned before
+     * either resolver mutates anything (checked immediately after loading the continuation, in
+     * both `SqliteExecutor.resolveCapabilityApproval` and `resolveToolCallApproval`), so falling
+     * through to [resolveToolCallApproval] on that result is safe — never a double-resolve.
+     */
+    suspend fun resolveAnyApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val first = resolveApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        return if (first is CapabilityApprovalResolution.WrongKind) {
+            resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        } else {
+            first
+        }
     }
 
     private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =

@@ -100,6 +100,25 @@ private data class CapabilityApprovalDetail(
 )
 
 /**
+ * `continuations.operation_detail_json` for a `TOOL_CALL` park: a tool call denied specifically
+ * with [DenialReason.REQUIRES_APPROVAL] (`CapabilityConstraints.requiresApprovalPerUse`).
+ *
+ * Unlike [CapabilityApprovalDetail], resuming here needs no `resolution` flag read back by this
+ * class — [SqliteExecutor.resolveToolCallApproval]'s approve path grants a **fresh** short-lived
+ * capability (same subject/permission/scope, `requiresApprovalPerUse = false`) rather than trying
+ * to make [capabilityId] pass validation a second time; [AgentLoopTaskRunner.executeToolCall]'s
+ * existing `resolveCapability()` call already re-resolves "the most recently issued, unexpired,
+ * unrevoked match" fresh on every execution, so it picks up the new grant automatically and needs
+ * no changes for the resumed attempt to succeed. [capabilityId] here is only what the *resolver*
+ * (outside this module) needs to look up the original grant's permission/scope to attenuate from.
+ */
+@Serializable
+private data class ToolCallApprovalDetail(
+    val capabilityId: String,
+    val toolName: String,
+)
+
+/**
  * The AgentLoop↔executor bridge (RFC-0008, RFC-0009, RFC-0019): a [TaskRunner] that drives the
  * model-call loop one Task at a time instead of one suspend call at a time.
  *
@@ -398,8 +417,32 @@ class AgentLoopTaskRunner(
         )
         // Denied/Failed outcomes are data returned to the model (RFC-0008 Security #3), not a
         // reason to fail this Task — only an actual runner-level problem (missing row, no Run)
-        // does that. This matches AgentLoop.kt's own handling of the same broker call.
+        // does that. This matches AgentLoop.kt's own handling of the same broker call. The one
+        // exception is immediately below: REQUIRES_APPROVAL is not the model's problem to route
+        // around, so it parks instead of falling through to the denial-as-data path.
         val result = broker.invoke(subjectId, call, run.taintLevel)
+
+        // RFC-0008 step 8d, TOOL_CALL continuation: a human explicitly gated this specific
+        // exercise of authority (CapabilityConstraints.requiresApprovalPerUse) -- unlike every
+        // other denial reason here, feeding this back to the model as "denied, try something
+        // else" would defeat the point of the gate. Park and let a human decide instead. Nothing
+        // durable has been written yet for this attempt (no attempt row, no tool_calls.outcome,
+        // no taint update -- ToolBroker's denied() reports TRUSTED, so taint couldn't have moved
+        // anyway), so parking here is a clean no-op on everything except task/Run state.
+        val deniedForApproval = (result.outcome as? ToolOutcome.Denied)
+            ?.takeIf { it.reason == DenialReason.REQUIRES_APPROVAL }
+        if (deniedForApproval != null && capabilityId != null) {
+            return TaskResult(
+                success = true,
+                park = ParkRequest(
+                    suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
+                    operationDetailJson = json.encodeToString(
+                        ToolCallApprovalDetail(capabilityId = capabilityId.value, toolName = call.toolName),
+                    ),
+                    taskState = TaskState.AWAITING_APPROVAL,
+                ),
+            )
+        }
 
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.

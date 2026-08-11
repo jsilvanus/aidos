@@ -42,8 +42,11 @@ import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 /**
  * M19: the real authority chain end to end — a capability granted through
@@ -154,12 +157,12 @@ class CapabilityResolutionEndToEndTest {
         override suspend fun select(kind: ModelKind, context: RoutingContext) = RoutingDecision.Local(adapter)
     }
 
-    /** Same permission-match/most-recent-first shape as `daemon.CapabilityResolver` (not importable here: executor cannot depend on daemon). */
+    /** Same permission-match/most-recent-first shape as `daemon.CapabilityResolver` (not importable here: executor cannot depend on daemon), including its id tie-break for same-instant grants. */
     private fun resolver(capabilityManager: SqliteCapabilityManager): suspend (String, Permission) -> dev.aidos.kernel.CapabilityId? =
         { subjectId, permission ->
             capabilityManager.loadForSubject(subjectId)
                 .filter { it.permission == permission && it.revokedAt == null }
-                .maxByOrNull { it.issuedAt }
+                .maxWithOrNull(compareBy({ it.issuedAt }, { it.id.value }))
                 ?.id
         }
 
@@ -301,5 +304,158 @@ class CapabilityResolutionEndToEndTest {
         executor.drive(runId)
 
         assertEquals("DENIED", toolCallOutcome(driver, runId))
+    }
+
+    // ─── RFC-0008 step 8d: TOOL_CALL park/resume (requiresApprovalPerUse) ──────
+
+    private fun runState(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: dev.aidos.kernel.RunId): String =
+        driver.executeQuery(null, "SELECT state FROM runs WHERE id = ?",
+            mapper = { c -> check(c.next().value); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun toolCallTaskState(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: dev.aidos.kernel.RunId): String =
+        driver.executeQuery(null, "SELECT state FROM tasks WHERE run_id = ? AND kind = 'TOOL_CALL' ORDER BY ordinal DESC LIMIT 1",
+            mapper = { c -> check(c.next().value); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun continuationDetailJson(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: dev.aidos.kernel.RunId): Pair<String, String>? =
+        driver.executeQuery(null, "SELECT suspended_operation, operation_detail_json FROM continuations WHERE run_id = ?",
+            mapper = { c ->
+                app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0)!! to c.getString(1)!! else null)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    @Test
+    fun `a requiresApprovalPerUse grant parks the run instead of denying the model outright`() = runBlocking {
+        val driver = openDriver()
+        val (pid, sid, runId) = buildRun(driver)
+
+        val audit = AuditLog(driver)
+        val capabilityManager = SqliteCapabilityManager(driver, UuidV7Generator()) { nowIso }
+        capabilityManager.grant(
+            subjectId = sid, subjectKind = SubjectKind.SESSION, permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(pid), "/"),
+            constraints = CapabilityConstraints(requiresApprovalPerUse = true),
+            expiresAt = null, grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val broker = ToolBroker(
+            capabilityManager = capabilityManager, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            projectIdResolver = { capabilityManager.projectIdForCapability(it) ?: "" },
+        )
+        broker.register(GrantGatedTool())
+        val router = fakeRouter(fakeAdapter(listOf(toolCallResponse(), endTurnResponse())))
+        val taskRunner = AgentLoopTaskRunner(
+            driver = driver, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            router = router, assembler = PromptAssembler(), broker = broker, subjectId = sid,
+            resolveCapability = resolver(capabilityManager),
+        )
+        val executor = SqliteExecutor(
+            driver = driver, audit = audit, events = EventStore(driver), idGen = { nextId() }, nowIso = { nowIso },
+            taskRunner = taskRunner,
+        )
+
+        executor.drive(runId)
+
+        assertEquals("YIELDED", runState(driver, runId), "REQUIRES_APPROVAL must park the Run, not fail it or feed it back to the model as data")
+        assertEquals("AWAITING_APPROVAL", toolCallTaskState(driver, runId))
+        val (kind, _) = continuationDetailJson(driver, runId) ?: error("no continuation written")
+        assertEquals("TOOL_CALL", kind)
+    }
+
+    @Test
+    fun `approving a parked tool call grants a fresh capability and the resumed call really succeeds`() = runBlocking {
+        val driver = openDriver()
+        val (pid, sid, runId) = buildRun(driver)
+
+        val audit = AuditLog(driver)
+        val capabilityManager = SqliteCapabilityManager(driver, UuidV7Generator()) { nowIso }
+        val original = capabilityManager.grant(
+            subjectId = sid, subjectKind = SubjectKind.SESSION, permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(pid), "/"),
+            constraints = CapabilityConstraints(requiresApprovalPerUse = true),
+            expiresAt = null, grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val broker = ToolBroker(
+            capabilityManager = capabilityManager, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            projectIdResolver = { capabilityManager.projectIdForCapability(it) ?: "" },
+        )
+        broker.register(GrantGatedTool())
+        val router = fakeRouter(fakeAdapter(listOf(toolCallResponse(), endTurnResponse())))
+        val taskRunner = AgentLoopTaskRunner(
+            driver = driver, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            router = router, assembler = PromptAssembler(), broker = broker, subjectId = sid,
+            resolveCapability = resolver(capabilityManager),
+        )
+        val executor = SqliteExecutor(
+            driver = driver, audit = audit, events = EventStore(driver), idGen = { nextId() }, nowIso = { nowIso },
+            taskRunner = taskRunner,
+        )
+        executor.drive(runId)
+        assertEquals("YIELDED", runState(driver, runId), "sanity: parked before resolving")
+
+        // The onApprove callback is RuntimeCompositionRoot.resolveToolCallApproval's real job
+        // (daemon module, not importable here — executor cannot depend on daemon); this inlines
+        // the exact same logic against the same real SqliteCapabilityManager to prove the
+        // mechanism the daemon method wraps, without a mock standing in for it.
+        val resolution = executor.resolveToolCallApproval(runId, approved = true) { detailJson ->
+            val detail = kotlinx.serialization.json.Json.parseToJsonElement(detailJson).jsonObject
+            val originalCapId = detail["capabilityId"]!!.jsonPrimitive.content
+            val loaded = capabilityManager.loadForSubject(sid).find { it.id.value == originalCapId }
+                ?: error("original capability not found")
+            assertEquals(original.id.value, loaded.id.value, "the continuation must name the exact capability that was denied")
+            capabilityManager.grant(
+                subjectId = loaded.subjectId, subjectKind = loaded.subjectKind, permission = loaded.permission,
+                scope = loaded.scope, constraints = loaded.constraints.copy(requiresApprovalPerUse = false),
+                expiresAt = null, grantedBy = UserId("user-1"),
+            ).getOrThrow()
+        }
+
+        assertIs<CapabilityApprovalResolution.Resumed>(resolution)
+        assertEquals("OK", toolCallOutcome(driver, runId), "the resumed attempt must use the fresh grant and really execute the tool")
+        assertEquals("COMPLETED", runState(driver, runId))
+    }
+
+    @Test
+    fun `denying a parked tool call fails the run without granting anything`() = runBlocking {
+        val driver = openDriver()
+        val (pid, sid, runId) = buildRun(driver)
+
+        val audit = AuditLog(driver)
+        val capabilityManager = SqliteCapabilityManager(driver, UuidV7Generator()) { nowIso }
+        capabilityManager.grant(
+            subjectId = sid, subjectKind = SubjectKind.SESSION, permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(pid), "/"),
+            constraints = CapabilityConstraints(requiresApprovalPerUse = true),
+            expiresAt = null, grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val broker = ToolBroker(
+            capabilityManager = capabilityManager, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            projectIdResolver = { capabilityManager.projectIdForCapability(it) ?: "" },
+        )
+        broker.register(GrantGatedTool())
+        val router = fakeRouter(fakeAdapter(listOf(toolCallResponse(), endTurnResponse())))
+        val taskRunner = AgentLoopTaskRunner(
+            driver = driver, audit = audit, idGen = { nextId() }, nowIso = { nowIso },
+            router = router, assembler = PromptAssembler(), broker = broker, subjectId = sid,
+            resolveCapability = resolver(capabilityManager),
+        )
+        val executor = SqliteExecutor(
+            driver = driver, audit = audit, events = EventStore(driver), idGen = { nextId() }, nowIso = { nowIso },
+            taskRunner = taskRunner,
+        )
+        executor.drive(runId)
+
+        var onApproveCalled = false
+        val resolution = executor.resolveToolCallApproval(runId, approved = false, denialReason = "not now") {
+            onApproveCalled = true
+        }
+
+        assertIs<CapabilityApprovalResolution.Denied>(resolution)
+        assertEquals(false, onApproveCalled, "deny must never invoke the grant callback")
+        assertEquals("FAILED", runState(driver, runId))
+        assertEquals(1, capabilityManager.loadForSubject(sid).size, "no fresh capability should exist after a denial")
     }
 }

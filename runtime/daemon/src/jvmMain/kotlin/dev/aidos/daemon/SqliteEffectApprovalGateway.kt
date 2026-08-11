@@ -9,10 +9,12 @@ import dev.aidos.kernel.RunId
 
 /**
  * The real [EffectApprovalGateway] (RFC-0008 step 8d): resolves the approval via
- * [RuntimeCompositionRoot.resolveApproval]. Composed here rather than living in `api` because
- * `api` cannot depend on `executor` without a module cycle — see [EffectApprovalGateway]'s own
- * doc comment. Mirrors [SqliteRunExecutor]'s own composition style (a thin `api`-shaped wrapper
- * over a call into [RuntimeCompositionRoot]).
+ * [RuntimeCompositionRoot.resolveAnyApproval] — `CAPABILITY_APPROVAL` (M23's `RemotePendingApproval`)
+ * and `TOOL_CALL` (`DenialReason.REQUIRES_APPROVAL`) both, dispatched by whichever continuation
+ * kind is actually parked. Composed here rather than living in `api` because `api` cannot depend
+ * on `executor` without a module cycle — see [EffectApprovalGateway]'s own doc comment. Mirrors
+ * [SqliteRunExecutor]'s own composition style (a thin `api`-shaped wrapper over a call into
+ * [RuntimeCompositionRoot]).
  */
 class SqliteEffectApprovalGateway(
     private val compositionRoot: RuntimeCompositionRoot,
@@ -26,7 +28,7 @@ class SqliteEffectApprovalGateway(
         approved: Boolean,
         denialReason: String?,
     ): EffectResolution {
-        val resolution = compositionRoot.resolveApproval(
+        val resolution = compositionRoot.resolveAnyApproval(
             projectDriver = projectDriver,
             runId = RunId(runId),
             approved = approved,
