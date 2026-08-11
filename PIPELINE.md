@@ -1972,6 +1972,23 @@ an exception from its body, so no manual try/catch around it. Worth remembering 
 needs more than one statement to land together: reach for `TransacterImpl(driver)`, not
 `driver.newTransaction()` directly.
 
+**2026-08-10 — the Part 3 audit's six Phase 3 fix items are all done; PR #29
+(`claude/fix-audit-gaps-m20-m26`) is ready for review.** In order: the fabricated G3/M26 "PASSED"
+status corrected (own commit, first, before any code); M23 routing-policy wiring (settings now
+actually read, not inferred from key presence); M20 catalog digests pinned to real published
+values and the verification check decoupled from the tautological self-comparison; M25's two
+untested done-when claims given real tests, and the resumability-wording design question resolved
+by correcting the wording to match RFC-0056's own text (not a mechanism change — `AskUserQuestion`
+could not actually be posed in this non-interactive session, so the lower-risk, RFC-aligned option
+was taken and flagged for owner review rather than blocking indefinitely); M21's buildable-without-
+hardware pieces (cold-start timing, a reload-survival guard, and a real fix to a no-op `unload()`)
+built, M21 itself still correctly left BLOCKED; M24's ref update given real compare-and-swap plus a
+genuine two-thread concurrency test. `gradle jvmTest --continue` across the whole project is clean
+(zero test failures) except the pre-existing, documented, sandbox-only `:knowledge` 401. See each
+milestone's own "Update" annotation in the Part 3 audit section above for full detail and exact
+file/commit references. **Nothing here needs the project owner's resolution before merge** except
+the M25 wording-vs-mechanism note, which is flagged for review, not blocking.
+
 **A foreign key minted before its row exists is a real ordering hazard in `appendTasks`-shaped
 code, not a hypothetical one — it broke 4 of the bridge's own first tests.** `AgentLoopTaskRunner`
 mints a `TOOL_CALL` task's id itself (so it can write `tool_calls.tool_task_id` pointing at it),
