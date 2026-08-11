@@ -292,4 +292,142 @@ class CapabilityTest {
         val result = mgr.validate("session-4", cap.id, noOp, TrustLevel.UNTRUSTED)
         assertEquals(CapabilityCheckResult.Allowed, result)
     }
+
+    // ─── Scope/constraints JSON round-trip ────────────────────────────────────
+    //
+    // parseCapabilityRow used to reconstruct a hard-coded Filesystem scope (using the raw
+    // scope_json string as the path!) for every capability regardless of its real type, and an
+    // always-empty CapabilityConstraints regardless of what was stored -- silently dropping
+    // Budget down to whatever the caller's in-memory Capability object happened to hold before
+    // the round trip, never what SQLite actually has. These tests grant/delegate a capability of
+    // each scope type with a fully populated constraints/budget, reload it via loadForSubject(),
+    // and assert every field survived.
+
+    @Test
+    fun `Filesystem scope and full constraints round-trip through loadForSubject`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000200"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val budget = dev.aidos.kernel.Budget(
+            modelCalls = 3, inputTokens = 1000, outputTokens = 2000,
+            costUnits = 5000, steps = 8, wallClockSeconds = 60, toolInvocations = 4,
+        )
+        val granted = mgr.grant(
+            subjectId = "session-fs",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.FS_WRITE,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "src/tests"),
+            constraints = CapabilityConstraints(
+                maxDurationSeconds = 30, maxBytesRead = 100L, maxBytesWritten = 200L,
+                requiresApprovalPerUse = false, maxExerciseCount = 5, budget = budget,
+            ),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val reloaded = mgr.loadForSubject("session-fs").single { it.id == granted.id }
+        val scope = assertIs<CapabilityScope.Filesystem>(reloaded.scope)
+        assertEquals(ProjectId(projectId), scope.projectId)
+        assertEquals("src/tests", scope.rootRelativePath)
+        assertEquals(CapabilityConstraints(30, 100L, 200L, false, 5, budget), reloaded.constraints)
+    }
+
+    @Test
+    fun `Git scope round-trips allowedOperations`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000201"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val granted = mgr.grant(
+            subjectId = "session-git",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.GIT_WRITE,
+            scope = CapabilityScope.Git(
+                ProjectId(projectId),
+                setOf(dev.aidos.kernel.GitOperation.READ, dev.aidos.kernel.GitOperation.WRITE),
+            ),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val reloaded = mgr.loadForSubject("session-git").single { it.id == granted.id }
+        val scope = assertIs<CapabilityScope.Git>(reloaded.scope)
+        assertEquals(ProjectId(projectId), scope.projectId)
+        assertEquals(setOf(dev.aidos.kernel.GitOperation.READ, dev.aidos.kernel.GitOperation.WRITE), scope.allowedOperations)
+    }
+
+    @Test
+    fun `Shell scope round-trips workingDirectory and allowedCommands`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000202"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val granted = mgr.grant(
+            subjectId = "session-shell",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.SHELL_EXEC,
+            scope = CapabilityScope.Shell(ProjectId(projectId), "project/tests", listOf("cargo", "test")),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val reloaded = mgr.loadForSubject("session-shell").single { it.id == granted.id }
+        val scope = assertIs<CapabilityScope.Shell>(reloaded.scope)
+        assertEquals("project/tests", scope.workingDirectory)
+        assertEquals(listOf("cargo", "test"), scope.allowedCommands)
+    }
+
+    @Test
+    fun `delegated capability carries a real (not empty) scope and a split budget`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000203"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val parentBudget = dev.aidos.kernel.Budget(modelCalls = 9, costUnits = 9000, steps = 24)
+        val parent = mgr.grant(
+            subjectId = "driver-1",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.FS_WRITE,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "src"),
+            constraints = CapabilityConstraints(budget = parentBudget),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+        // allowsDelegation defaults to false on a fresh grant() -- flip it via a raw update
+        // (there is no public API for this in MVP; mirrors how other tests seed rows directly).
+        driver.execute(null, "UPDATE capabilities SET allows_delegation = 1 WHERE id = ?", 1) {
+            bindString(0, parent.id.value)
+        }
+
+        // Reload the parent the same way a real WorkerSpawner would (loadForSubject, not the
+        // in-memory `parent` reference returned by grant()) -- this is exactly the path that was
+        // broken: before this fix, the reloaded scope was always Filesystem("/") over whatever
+        // scope_json actually said, and its budget was always empty regardless of parentBudget.
+        val reloadedParent = mgr.loadForSubject("driver-1").single { it.id == parent.id }
+        val splitBudget = parentBudget.split(3)
+
+        val delegated = mgr.delegate(
+            parent = reloadedParent.id,
+            toSubjectId = "worker-1",
+            toSubjectKind = dev.aidos.kernel.SubjectKind.WORKER,
+            attenuatedScope = reloadedParent.scope,
+            attenuatedConstraints = reloadedParent.constraints.copy(budget = splitBudget),
+        ).getOrThrow()
+
+        val reloadedWorkerCap = mgr.loadForSubject("worker-1").single { it.id == delegated.id }
+        val scope = assertIs<CapabilityScope.Filesystem>(reloadedWorkerCap.scope)
+        assertEquals("src", scope.rootRelativePath)
+        assertEquals(splitBudget, reloadedWorkerCap.constraints.budget)
+    }
 }
