@@ -57,14 +57,17 @@ import java.io.File
  * **Egress policy (M23, RFC-0020/0049/0023): `allowRemote` now reflects the user's own setting,
  * not just whether a key happens to be configured.** [userDriver], when supplied, is resolved
  * through [SettingsStore] for `Settings.routingRemoteEgress`; `EgressPolicy.ALLOW` is the only
- * value that permits automatic remote routing. `NEVER` blocks it outright, and `ASK` — despite
- * its name suggesting a per-Run prompt — fails closed to the same result as `NEVER` here: no
- * per-Run approval flow exists yet (`AgentLoopTaskRunner`'s own doc comment: a
- * `RemotePendingApproval` decision fails the Run outright rather than parking it for approval),
- * so treating `ASK` as automatic-allow would silently grant exactly the approval it says it
- * requires. [userDriver] absent (e.g. most existing tests) resolves to the declared default,
- * `ASK` — conservative, matching this same fail-closed behavior rather than the old
- * key-presence-only check.
+ * value that permits automatic remote routing. `NEVER` blocks it outright and is reported as
+ * [dev.aidos.kernel.RoutingDecision.UnavailableOffline]. `ASK` — despite its name suggesting a
+ * per-Run prompt — also fails closed to "no automatic routing" today, since no per-Run approval
+ * flow is wired yet (`AgentLoopTaskRunner`'s own doc comment: a `RemotePendingApproval` decision
+ * fails the Run outright rather than parking it for approval — the `continuations` table already
+ * has a `CAPABILITY_APPROVAL` slot for this, RFC-0008 step 8d, just nothing writes to it yet).
+ * Unlike `NEVER`, though, `ASK` sets [RoutingPolicy.remoteRequiresApproval], so
+ * [PolicyInferenceRouter] reports it as [dev.aidos.kernel.RoutingDecision.RemotePendingApproval]
+ * naming the specific model that would have been used — a distinct, honest signal that approval
+ * is the missing piece, not a silent identical-to-`NEVER` denial. [userDriver] absent (e.g. most
+ * existing tests) resolves to the declared default, `ASK`.
  */
 class RuntimeCompositionRoot(
     private val anthropicApiKey: () -> CharArray? = { null },
@@ -114,9 +117,14 @@ class RuntimeCompositionRoot(
             redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
             listOf(AnthropicAdapter(key))
         } ?: emptyList()
+        val egressPolicy = resolveEgressPolicy(userDriver)
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
-                allowRemote = allowRemoteFor(resolveEgressPolicy(userDriver)),
+                allowRemote = allowRemoteFor(egressPolicy),
+                // M23: ASK denies automatically today (no per-Run approval flow is wired yet —
+                // see RoutingPolicy.remoteRequiresApproval's own doc comment), but is reported
+                // distinctly from an explicit NEVER, not silently identical to it.
+                remoteRequiresApproval = egressPolicy == EgressPolicy.ASK,
                 allowedRemoteModelIds = remoteAdapters.map { it.modelId }.toSet(),
             ),
             remoteAdapters = remoteAdapters,
