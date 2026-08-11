@@ -13,12 +13,10 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 5 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 5: remaining RFCs". Found
-the audit's first live correctness bug (not just absence/overstatement): tool-call Attempts always
-persist `recoveryClass = "IDEMPOTENT"` regardless of the tool's real declared class, so a crash
-mid-`git push` would be retried by `SqliteExecutor.recover()` — exactly what RFC-0029 exists to
-prevent. Also found RFC-0042 (egress) has no centralized enforcement and `HttpTool` has zero SSRF
-protection. Only Part 6 (final cross-check table + MVP-readiness verdict) remains.
+**Link 6 · 2026-08-10 · AUDIT COMPLETE.** PIPELINE.md now has "Part 6: final cross-check and
+MVP-readiness assessment" — the capstone. All six parts done, pushed. A PR is being opened
+following this update, and the session-pipeline chain is being stopped (the link-6 safety-net
+trigger scheduled at wake will be deleted before this turn ends). No further wakeups.
 
 ## Done
 
@@ -231,18 +229,38 @@ protection. Only Part 6 (final cross-check table + MVP-readiness verdict) remain
       user-scope registration/adoption unwired (consistent with M18), `lock_breaks` never written
       (already honestly self-flagged in the code's own comment).
 - [x] Wrote the PIPELINE.md audit section (Part 5), committed, pushed.
+- [x] Woken by scheduled trigger for link 6 (the audit's intended final link). Scheduled a
+      safety-net wakeup for link 7 first, per pipeline discipline — deleted it below once Part 6
+      completed cleanly, since the audit reached genuine completion in this same link.
+- [x] Re-orientation found `main` unchanged since the Part 5 merge — no further merge needed.
+- [x] **Wrote Part 6 — the capstone.** Synthesis only, no new subagent dispatch (per the plan —
+      Part 6 cross-checks Parts 1-5's already-gathered evidence). Read every prior Part and every
+      "Notes for the next link" section in full before drafting, per the explicit instructions
+      those notes carried. Delivered: a 5-category verdict vocabulary (CONFIRMED / PARTIAL /
+      STUB-WIRED / UNWIRED / FABRICATED, explicitly distinguishing "real code, fake dependency"
+      from "real code, no caller" from "no code, false claim"); a full M0.1-M35 cross-check table
+      citing which Part found what, including which PR#28 self-annotations correct which Part 2
+      finding; a dedicated G2/G3/G4 gate scorecard treating the three gates as three distinct
+      results, not one pattern; a standalone section for the RFC-0029 recovery-class bug (flagged
+      as the audit's single most urgent item, independent of the completeness table); a standalone
+      section for cross-cutting gaps outside any milestone (RFC-0042 egress/SSRF, RFC-0046 device
+      identity); an honest note on what's self-reported-fixed vs. independently re-verified; and a
+      final MVP-readiness verdict walking G4's literal scenario sentence clause by clause against
+      the evidence, concluding: not ready today, and the gap is specifically the last-mile wiring
+      layer (Android UI data binding, diff/commit/approval plumbing) plus G3 itself needing an
+      actual device — not a redesign of the kernel underneath, which Parts 1 and 2 found solid.
+- [x] Wrote the PIPELINE.md audit section (Part 6), committed, pushed.
+- [x] **Opened the single PR for this audit branch**, per the original task brief ("a single PR at
+      the end... more appropriate than one per link"). Deleted the link-7 safety-net trigger since
+      the chain is genuinely complete. **Stopping the session-pipeline chain — no further wakeups
+      scheduled for this audit.**
 
 ## Next
 
-- **Part 6 (final, next link): milestone-by-milestone cross-check table** (M1-M35 in one table,
-  citing which Part found what) and the honest final MVP-readiness assessment against G4. This is
-  a synthesis of Parts 1-5's already-gathered evidence, not new investigation — read ALL prior
-  "Notes for the next link" sections below before drafting, several contain explicit instructions
-  for how Part 6 must be written (don't soften G2/G3, don't imply the whole corpus is unreliable
-  when G4 was clean, consider a 4th verdict category for "real but stub-terminated", surface the
-  RFC-0029 recovery-class bug and RFC-0042 egress gap prominently since they're a different class
-  of finding than the rest). Once Part 6 is done and pushed, decide whether the audit is complete —
-  if so, open the single PR now and STOP the chain, per the original task brief.
+**None. The audit is complete.** If anyone resumes this branch later, the right next step is either
+(a) reviewing/merging the PR, or (b) — as a clearly separate, new task, not a continuation of this
+one — an independent re-verification of the two fix sessions' own self-reported work, which this
+audit explicitly did not attempt.
 
 ## Notes for the next link
 

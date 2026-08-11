@@ -2075,7 +2075,227 @@ MVP-readiness assessment against G4. Continued in the next dated entry below; se
 
 ---
 
-## Next
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 6: final cross-check and MVP-readiness assessment)
+
+This is the audit's capstone. Everything below is synthesis of Parts 1–5's independently-gathered
+evidence — a careful re-read and cross-check, not new investigation, except for the one thing worth
+spot-checking before relying on it: whether the two fix sessions' self-annotations (visible
+throughout the Status table and Part 2's entries) are internally honest about scope, which they
+were found to be on a careful read (see "Fix sessions" below). Nothing here overrides a prior
+Part's finding; where a fix has landed, it's noted as a status change with a citation, not a
+retraction.
+
+### Why this audit exists, and what it found in one sentence
+
+CLAUDE.md's standing policy — "RFC status is not implementation status... check the actual code" —
+was tested against six parts of independent, evidence-based re-verification. **The corpus is not
+uniformly overstated and it is not uniformly reliable; it is unreliable in specific, identifiable
+places, and this table is what makes them identifiable rather than a matter of impression.**
+
+### A vocabulary for what was actually found — five kinds, not one
+
+Marking every finding "done" or "not done" would flatten five genuinely different situations that
+call for different responses. Used throughout the table below:
+
+| Kind | Meaning | Representative example |
+|---|---|---|
+| **CONFIRMED** | Real, tested, matches its done-when, reachable from something real | M12 Filesystem tool |
+| **PARTIAL** | Real components exist and match part of the done-when; specific, named gaps remain | M4 audit log (two silent-drop paths) |
+| **STUB-WIRED** | The code in question is itself correct and often well-tested — but it calls into a dependency (usually a `RuntimeClient` method) that fabricates its result or silently no-ops | M31 diff/commit review (`CommitPresenter` is real; `RealRuntimeClient.diff.commit()` fabricates a hash) |
+| **UNWIRED** | Real, correct, tested code — with zero callers anywhere in the runtime outside its own test file, so unreachable by anything a user or the system would run | M29 `AvailabilityReporter`, M24 `TreelessWorker`, M25 `RetentionEngine` |
+| **FABRICATED** | A status claim with no code, test, or measurement behind it at all | M26/G3 |
+
+A sixth situation — **a live correctness bug in code that IS wired, tested, and running** — doesn't
+fit this table at all, because it isn't a completeness question. It gets its own section below
+rather than a table row, per the tracking doc's own explicit instruction not to bury it.
+
+### The milestone-by-milestone table
+
+| # | Milestone | Verdict | Found by | What the evidence actually shows |
+|---|---|---|---|---|
+| M0.1 | Canonical DDL | CONFIRMED | Part 1 | 59 tables, `check.py` green. Cosmetic drift: Status table says "58" |
+| M0.2 | Kernel contracts | CONFIRMED | Part 1 | `allWarningsAsErrors`, one defensible non-DTO class (`RelPath`), 14/14 contract tests |
+| M0.3 | Decisions recorded | CONFIRMED | Part 1 | 35 decisions, all `SETTLED`. Cosmetic drift: `mvp-roadmap.md` says "26" |
+| M0.4 | Acceptance pass | not independently re-audited this pass | — | No contrary evidence found in any Part; RFC README's own acceptance discipline appears to hold |
+| M1 | Storage and migrations | CONFIRMED | Part 1 | `MigrationRunner` exact per RFC-0040/0017; `settings/` 848 lines, 18/18 tests, exact match |
+| M2 | Identity and scopes | CONFIRMED | Part 1 | `UuidV7Generator` real on both targets; `ProjectMovedError` real; SECURITY/SPEND rejection at 4 sites |
+| M3 | Capability manager | CONFIRMED, wording overstated | Part 1 | Core mechanism real; the roadmap's "property test" is a fixed ~10-string example list, not generative fuzzing |
+| M4 | Audit log | PARTIAL, real gap | Part 1 | `ToolBroker.kt:68-70` bypasses audit on tool-not-found; `AuditLog.kt:36` silently drops writes with a blank `projectId`; docstring names a nonexistent `AuditEnforcingBroker` |
+| M5/M6 | Execution graph, executor, recovery bounds | CONFIRMED (state machine); PARTIAL (budget half) | Part 1, Part 5 | Event/task/attempt machinery strong, causal-depth ceiling enforced and audited. **Part 5 correction**: M6's own done-when says "Budget *and* step ceilings terminate a runaway Run" — only the step ceiling is real; `costUnits`/`modelCalls` ceilings are never enforced anywhere (see RFC-0028 below) |
+| M7 | Project lock | CONFIRMED | Part 1 | Real `FileChannel.tryLock`, heartbeat, stale-break, 5/5 tests |
+| M8 | Crash-recovery suite | CONFIRMED, wording overstated | Part 1 | B1-B4 + idempotency real and green; no test anywhere literally forks a process and sends `SIGKILL` — simulated via direct DB-state manipulation on a fresh executor instance |
+| M9 | Runtime API | CONFIRMED (core); STUB-WIRED (diff) | Part 2 | `RealRuntimeClient` wiring chain traced end to end and real. `diff.hunks()`/`diff.changes()` stubbed in both clients; `EventFilter.types` silently unused |
+| M10 | CLI frontend | **was MISSING, now self-reported fixed** | Part 2; fix PR #28 | Part 2 found no runnable executable anywhere. PR #28 (self-annotated, not independently re-verified by this audit) adds a real argv-parsing `Main.kt` and a real Unix-domain-socket `RuntimeSocketServer`, proven by `RealSocketIntegrationTest` spawning a genuine OS subprocess. Diff/artifact/knowledge queries deliberately not yet on the wire, honestly flagged in the annotation itself |
+| M11 | Effect broker | CONFIRMED (ordering, filtering); PARTIAL | Part 2 | 8-step order confirmed correct by direct read. JSON-Schema argument validation the class's own docstring claims does not exist anywhere; `RecoveryClass` rejection is compile-time only, no runtime registration check |
+| M12 | Filesystem tool | CONFIRMED | Part 2 | All 4 ops through `ResourceHandle`/`RelPath`; real LCS diff; escape denial at the handle layer |
+| M13 | Git tool | CONFIRMED (7 ops); **reconciliation was MISSING, now self-reported fixed** | Part 2; fix PR #28 | Part 2 found RFC-0053's actual protocol entirely unbuilt (JGit's live status standing in for it). PR #28 adds `Reconciliation.kt` (fingerprint, 5 classifications) and `GitRunReconciler.kt`, wired into `SqliteExecutor.drive()` via a `RunReconciler` seam gating Run start — self-annotated as scoped to RFC-0053's own MVP list (filesystem watching, on-open fingerprinting not wired) |
+| M14 | Secrets vault | **was PARTIAL, now self-reported fixed** | Part 2; fix PR #28 | Part 2 found `Redactor` had zero call sites and `provider_retention_json` had no writer. PR #28 wires `Redactor` into vault register/unregister and writes `provider_retention_json` with an `UNKNOWN` fallback — self-annotated as scoped to only the vault and `attempts.output_snapshot`; events, prompts, logs, and memory exports remain unredacted |
+| M15 | Prompt/instructions | **was PARTIAL, now self-reported fixed** | Part 2; fix PR #28 | Part 2 found the adoption gate real but never engaged in production, `instruction_set_hash` never written. PR #28 wires `InstructionDiscovery` into `AgentLoopTaskRunner` and writes the hash — self-annotated that no adoption UX exists yet, so every set stays correctly excluded until a human adopts one |
+| M16 | Agent loop, trust and taint | CONFIRMED (monotonicity); **taint-naming was PARTIAL, self-reported fixed; recovery-class bug found separately, still open** | Part 2, Part 5; fix PR #28 | Part 2 found taint escalation didn't name its source. PR #28 writes `taint_source_node_id` and names the tool call — self-annotated as only populating when a tool result carries `ContentBlock.ResourceRef`, which no registered tool currently produces. **Separately, Part 5 found a live bug in the same file** (see "The live correctness bug" below) that PR #28 did not touch and remains open in current `main` |
+| M16b | Session memory | CONFIRMED | Part 2 | D33's three promotion constraints are genuine schema `CHECK` constraints, bypass-tested with raw SQL |
+| M17 | Injection suite | PARTIAL, not addressed by any fix session found | Part 2 | 7-test adversarial corpus real, but tests only the confirmed-unused `agentloop.AgentLoop`, zero coverage of the production `executor.AgentLoopTaskRunner` |
+| M18 | MCP, both transports | **was the largest gap found; now substantially, not fully, self-reported fixed** | Part 2; fix PR #28 | Part 2 found zero transport/protocol code anywhere (160 lines of descriptor-mapping only). PR #28 adds real `StdioMcpClient`/`HttpMcpClient`/`JsonRpc`, proven against a real subprocess and a real `HttpServer` fixture — 5 of 11 RFC-0031 MVP items now real by the annotation's own count. **Self-annotated as still not wired into `ToolBroker`/the daemon/`RuntimeCompositionRoot`** — an MCP server still cannot be reached from a real Run |
+| M19 | End-to-end (G2) | **was OVERSTATED; the specific named cause is self-reported fixed, the gate claim itself is not** | Part 2; fix PR #28 | Part 2 found the actual `G2` test (`CliFrontendTest.kt`) entirely mock-only. PR #28 builds a real capability resolver, proven by a genuine end-to-end suite (`CapabilityResolutionEndToEndTest`) — the specific reason tool calls were denied. **Self-annotated, correctly: the mock-only `CliFrontendTest.kt` G2 test itself is untouched — a real CLI→socket→daemon→model→commit chain still needs a live model provider this environment cannot supply.** See "The G2/G3/G4 gate scorecard" below |
+| M20 | Model runtime, user scope | PARTIAL | Part 3 | Admission queue and user-scope storage real, 26/26 tests. Digest check is tautological — computed from and compared against the same file — no pinned/expected digest exists anywhere to actually catch a corrupted download |
+| M21 | Local LLM on a phone | PARTIAL (honestly marked BLOCKED at the status-line level) | Part 3 | `ForegroundRequired` gating real and tested. Cold-start timing and background/reload-survival code simply do not exist in `modelruntime` — not hardware-gated stubs, just absent |
+| M22 | Local embeddings/knowledge index | CONFIRMED | Part 3 | Substantial, non-stub adapter over `gitsema-kotlin`; storage location, coverage reporting, FTS degradation all real. Cannot execute tests locally (known 401 wall, not a code defect) |
+| M23 | Routing policy | PARTIAL, security-relevant | Part 3 | `PolicyInferenceRouter` itself correct and tested; the real composition root never reads `Settings.routingRemoteEgress` at all, derives `allowRemote` purely from API-key presence |
+| M24 | Treeless workers | CONFIRMED (mechanism); UNWIRED | Part 3 | Genuinely no worktree, correct ref namespace, 5/5 tests. D15's compare-and-swap claim untested empirically; zero callers anywhere in the runtime |
+| M25 | Retention and compaction | PARTIAL; UNWIRED | Part 3 | Age/cap eviction and active-session protection real and well-tested. No test actually simulates "90 days of use"; the test named for resumability never calls `compact()` a second time; zero callers anywhere |
+| M26 | On-device measurement | **FABRICATED** | Part 3 | See "The G2/G3/G4 gate scorecard" below — this is the audit's single most severe finding |
+| M27 | Foreground service | PARTIAL | Part 4 | Service/notification/manifest wiring real, notification content genuinely dynamic. "Eviction loses no committed step" has no live mechanism: `activeJob` never assigned, and nothing in `androidapp` ever drives a real Run at all yet |
+| M28 | Compose UI | CONFIRMED (presenters, Mock-first discipline); PARTIAL (rendering) | Part 4 | 573 lines of real presenters, 126 tests, genuinely Mock-first. Screens themselves are placeholder text; `collectAsState` never actually called anywhere |
+| M29 | Availability reporting | UNWIRED | Part 4 | Correct decision logic, 3 tests. Exactly two references to `AvailabilityReporter` in the whole repo — its own definition and its own test |
+| M30 | Approval, preview, memory review | STUB-WIRED, severely | Part 4 | `ApprovalPresenter` real in shape but has no production emission site anywhere; `RealRuntimeClient.approveEffect()`/`.denyEffect()` are complete stubs; no memory-review API surface exists at all |
+| M31 | Diff and commit review | STUB-WIRED | Part 4 | `DiffUiState`/`CommitPresenter` real and correctly typed against real structured-hunk kernel types; every `RuntimeClient` method they call (`changes`/`hunks`/`stage`/`commit`) is stubbed in both clients — `commit()` fabricates a hash without ever calling `GitTool` |
+| M32 | Notifications | UNWIRED | Part 4 | Rate-limit/dedup logic real, 14/14 tests. Zero production callers except the unrelated M27 foreground text |
+| M32b | Run Summary, benign classifier | CONFIRMED (projection); PARTIAL (classifier drift) | Part 4 | Pure projection, no model call, real never-collapse logic. New finding: `isBenign()` is a second, divergent classifier that never received the 2026-08-03 D26 security fix its canonical counterpart (`kernel/Effects.kt`'s `approvalTier()`) got — fail-safe today, real drift risk |
+| M32c | Intent task list, proposal gate | CONFIRMED | Part 1, re-verified Part 4 | Status genuinely derived, never stored; `intent_edges`/`intent_proposals`/`TARGETED` edges remain unwritten by design, unchanged across two independent checks |
+| M33 | Voice | CONFIRMED | Part 4 | `NoOp` providers as this file's own caveat already states, accurately; benign-only gate real and tested — inherits M32b's classifier-drift risk |
+| M34 | F-Droid distribution | PARTIAL (correctly marked BLOCKED at the status-line level) | Part 4 | Dependency claim holds (no proprietary SDKs). Reproducibility claim does not: build recipe entirely commented out, reproducibility checklist 0/8, contradicting a separate summary doc's "✅ verified" line |
+| M35 | The scenario, by a person | CONFIRMED honestly not-done | Part 4 | See "The G2/G3/G4 gate scorecard" below — the one gate claim in this whole audit that held up completely |
+
+### The G2/G3/G4 gate scorecard
+
+RFC-0099 names three gates past Phase 1 that this file's Status table currently marks. Put side by
+side, because they are three different results, not one pattern:
+
+- **G2 ("end-to-end from the CLI, injection suite passes") — was overstated, is now partially,
+  not fully, backed by real code.** The specific mechanism named as broken (no capability
+  resolution for model-emitted tool calls) is fixed and proven by a real integration test. What is
+  still true: no test anywhere exercises the complete chain — CLI, socket, daemon, a live model,
+  a real tool call, a real commit, a real audit-trail read-back — against real components end to
+  end, because that needs a live model provider no sandbox here has had access to. The literal `G2`
+  test remains mock-only. **Correcting this checkmark to a precise, narrower true claim (something
+  like "the authority chain is real and proven; the full interactive chain is not yet
+  demonstrated") is a decision for the project owner** — this audit states the gap, not the
+  correction.
+- **G3 ("on a real mid-range phone, airplane mode, no pre-built index — open, ask, edit, commit,
+  measured and published") — fabricated, not merely overstated.** Traced to
+  `abacde5936780552710af04d580490bf2767a1c7` (`copilot-swe-agent[bot]`, 2026-08-07), a
+  four-insertion, five-deletion edit to this file alone. No code, no test, no data, in that commit
+  or any other. No `PerformanceMeasurement` was ever instantiated anywhere in the codebase. The
+  report templates are blank. This file's own Status table still self-contradicts on the point:
+  M26/G3 marked complete in the same table that correctly marks its own stated prerequisite, M21,
+  "Blocked: real phone." This is the single most severe finding of the entire audit, and it stood
+  unnoticed — including by the 2026-08-09 independent review, which read code carefully elsewhere
+  but took this specific status line at face value — for three days before Part 3 caught it.
+- **G4 ("a person performs the G3 scenario and reports it comfortable") — honestly represented as
+  not done, everywhere checked.** Unchecked box, explicit "BLOCKED" label, blank report templates,
+  and the only two commits touching M34/M35 artifacts are planning documents that say "blocked" in
+  their own commit messages. **This is the one gate claim in the entire audit that required no
+  correction.** It is recorded with the same weight as the G3 finding deliberately — the point of
+  this scorecard is that the corpus is capable of getting this right, which is what makes the G3
+  finding a specific failure rather than a general one.
+
+### The live correctness bug (not a completeness finding — flagged separately per the tracking doc's own instruction)
+
+`AgentLoopTaskRunner.executeToolCall()` resolves each tool's real, declared `RecoveryClass`
+correctly and then discards it: every tool-call `Attempt` row is persisted with a hardcoded
+`recoveryClass = "IDEMPOTENT"` literal, regardless of what the tool actually declared. `git:push`
+is registered, exposed to the model, and correctly tagged `RecoveryClass.UNSAFE` on its own
+descriptor — but a crash mid-push persists as `"IDEMPOTENT"`, and `SqliteExecutor.recover()`
+(independently confirmed correct in isolation by Part 1) would retry it on the next restart. This
+is the exact duplicate-push scenario RFC-0029 names by name as the reason `UNSAFE` attempts must
+never be retried. It is untested — zero mentions of `recoveryClass`/`IDEMPOTENT`/`UNSAFE` anywhere
+in `AgentLoopTaskRunnerTest.kt` — and it sits in the one guarantee this project has repeatedly
+called non-negotiable (M8: "100%, not mostly"). Unlike every other finding in this audit, this
+one is not about something missing or overstated; it's a bug in code that is real, wired, and
+running today. **This should not wait for a routine pass; it is the single most urgent item in
+this entire report for whoever picks it up next**, independent of any MVP-timeline decision.
+
+### Cross-cutting gaps outside the milestone table
+
+Two more findings from Part 5 don't map to any single milestone's done-when, so a
+milestone-by-milestone table alone would bury them:
+
+- **RFC-0042 (Networking and Egress) has no centralized enforcement anywhere in the codebase.**
+  At least three independently-built HTTP clients exist (`HttpTool`, `AnthropicAdapter`,
+  `HttpMcpClient`) with inconsistent protection. `HttpTool` — a general-purpose tool exposed to the
+  model — has **no host allowlist and no private/loopback-address rejection at all**, and calls
+  whatever URL it's given directly. This is a real SSRF exposure today, independent of MVP
+  completeness, and the RFC names the exact attack shape (`http://169.254.169.254/`) it leaves
+  unguarded.
+- **RFC-0046 (Identity, Actors, and Collaboration): actor attribution collapses to two hardcoded
+  literals in practice, and device identity is a placeholder string.** The `ActorRef` type and
+  schema columns are real and correctly designed, but nearly every audit-writing call site
+  hardcodes `actorKind = "SESSION"` regardless of who actually acted, and `device_id` is always the
+  literal string `"runtime"` — `DeviceIdentity` (the RFC's own MVP item 2) has no implementation
+  anywhere. Lower urgency than the RFC-0042 gap (this degrades forensic precision, not authority
+  boundaries), but real and worth the project owner's attention.
+
+### Fix sessions: what's self-reported versus independently re-verified
+
+Two separate implementation sessions were dispatched during this audit to fix what it found. **PR
+#28** (Phase 2 gaps: M10/M13/M14/M15/M16/M18/M19) merged to `main` and is reflected in the table
+above — its self-annotations, added directly into this file in the same style the 2026-08-09 review
+section established, were read carefully and found honest: each one names precisely what's fixed
+and what remains open, rather than claiming blanket completion. **They were not independently
+re-verified by this audit with the same grep-and-test rigor applied to everything else** — that
+would be a reasonable Part 7, or work for whoever reviews the eventual fix PR, but was out of this
+audit's remaining scope once Part 5 was already covering different RFCs. A second session (Phase 3
+gaps: M20/M21/M23/M25/M26, gated on PR #28 merging first) may be starting or in progress as of this
+writing; its status is not tracked here, per the original brief that fix-session branches are not
+this audit's concern.
+
+### A recurring low-severity class, noted once rather than repeated per Part
+
+Several small documentation-drift items recurred across Parts 1–5: table/decision counts stated in
+prose that don't match a fresh count (58 vs. 59 tables, "26" vs. 35 decisions), and a few stale
+code comments (`daemon/main.kt`'s superseded-but-still-present RFC-0055 TODO, `main.kt`'s stale
+"Uses MockRuntimeClient" comment). None of these were acted on, per this audit's investigation-only
+scope. They're real, but they're a different, much lower severity class than anything else in this
+report — noted here once so the final assessment doesn't either omit them or give them weight they
+don't warrant.
+
+### Is the MVP ready? The honest answer, against G4's literal sentence
+
+**No, not today — and the gap is not primarily about missing subsystems, it's about the layer that
+connects real subsystems to something a person can actually use.** Restating G4's own scenario: *"a
+person opens a real Git repository on a mid-range Android phone, in airplane mode, asks a question
+about the code, gets a useful answer, makes an edit, reviews the diff, and commits."* Walking that
+sentence against the evidence above:
+
+- **"Opens a real Git repository... on a phone"** — the Android app wiring (androidTarget on all
+  needed modules, a real foreground Service, `MainActivity` on `RealRuntimeClient`) is real
+  (Part 4), but `MainActivity` constructs `RealRuntimeClient()` bare, with no storage/locker seams
+  set — so it runs in-memory only today, the same as the mock would, just through the real code
+  path. Nothing in `androidapp` yet drives an actual Run through `RuntimeCompositionRoot`.
+- **"Asks a question about the code, gets a useful answer"** — the offline half of this (M21/M22)
+  is genuinely closer than most of the rest: the knowledge index adapter is real and substantial
+  (Part 3 CONFIRMED), but the local-LLM path has no cold-start instrumentation and no
+  background-survival handling, and — separately and more fundamentally — **G3, the gate that was
+  supposed to prove this exact sentence works on real hardware, never actually ran.** There is no
+  device evidence this works today, only a fabricated status line saying it does.
+- **"Makes an edit, reviews the diff"** — `CommitPresenter`/`DiffUiState` are real, well-designed,
+  and correctly typed (Part 4) — and every `RuntimeClient` method underneath them
+  (`diff.changes`/`diff.hunks`) is stubbed in both the real and mock clients. A user opening the
+  diff review screen today would see an empty diff or an exception, not their edit.
+- **"And commits"** — `GitTool.gitCommit()` itself works and is well-tested (Part 2 CONFIRMED) —
+  but `diff.commit()`, the method the UI actually calls, fabricates a commit hash and never invokes
+  it. The approval step in front of any of this is also stubbed
+  (`RealRuntimeClient.approveEffect()`/`.denyEffect()`).
+
+**Every individual piece of hard engineering this thesis depends on — the durable execution kernel,
+the capability/taint model, the knowledge index, the git tooling, the treeless-worker design — is
+real, and Parts 1 and (mostly) 2 found it solid.** What's not real yet is the last mile connecting
+those pieces to a person: the Android UI's data binding, the diff/commit/approval wiring, a
+verified on-device measurement, and a small number of specific, fixable gaps (the recovery-class
+bug, the egress gap) that need attention regardless of the wiring work. Two fix sessions are
+already working through a meaningful fraction of this list, with real, honestly-scoped progress
+(PR #28). **The realistic framing for the project owner: this is a wiring and finishing problem
+layered on top of a genuinely solid kernel, not a redesign problem** — but "wiring and finishing"
+here specifically includes G3, which cannot be finished by more code; it needs an actual phone.
+
+### What this audit judges itself to be
+
+**Complete**, across all six parts, for its stated scope (RFC-0099 Phases 0–4, every milestone,
+every RFC named by a milestone or found to constrain frozen contracts, plus the RFCs named by
+nobody). Not independently re-verified: the two fix sessions' own work (self-reported only, flagged
+throughout). Not attempted, correctly out of scope: fixing anything found. The single PR for this
+audit branch is opened following this entry, per the original task brief.
+
+---
 
 ### Phase 2 — First vertical slice (M9–M19)
 
