@@ -26,7 +26,12 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -227,6 +232,20 @@ class SqliteCapabilityManager(
             return CapabilityCheckResult.Denied(DenialReason.ATTENUATED_BY_TAINT)
         }
 
+        // RFC-0008 step 8d, TOOL_CALL continuation (branch `claude/continuation-flow`, follow-up):
+        // a grant issued with requiresApprovalPerUse was silently unenforced -- every use passed
+        // validate() exactly as if the constraint didn't exist, since nothing here ever read it.
+        // This makes the constraint real again: every exercise of such a grant is denied, always
+        // -- "per use" means every use, not just the first. Nothing in this codebase issues a
+        // grant with this flag set yet (grep confirms), so this is inert until something does; the
+        // executor-side response (park for a human decision instead of returning the denial to the
+        // model as data, the way every other DenialReason here already does) is a separate,
+        // larger piece — see PIPELINE.md's "Notes for the next link" for the resume design and why
+        // it can't reuse EffectBroker.invoke() (runtime/kernel/ is frozen at G0).
+        if (cap.constraints.requiresApprovalPerUse) {
+            return CapabilityCheckResult.Denied(DenialReason.REQUIRES_APPROVAL)
+        }
+
         return CapabilityCheckResult.Allowed
     }
 
@@ -339,7 +358,6 @@ class SqliteCapabilityManager(
         val subjectId = cursor.getString(3) ?: return null
         val subjectKind = SubjectKind.valueOf(cursor.getString(4) ?: return null)
         val scopeJson = cursor.getString(5) ?: return null
-        @Suppress("UNUSED_VARIABLE")
         val constraintsJson = cursor.getString(6) ?: return null
         val issuedAt = cursor.getString(7) ?: return null
         val issuedByKind = cursor.getString(8) ?: return null
@@ -364,7 +382,7 @@ class SqliteCapabilityManager(
             subjectId = subjectId,
             subjectKind = subjectKind,
             scope = scope,
-            constraints = CapabilityConstraints(),
+            constraints = parseConstraints(constraintsJson),
             issuedAt = Instant.parse(issuedAt),
             issuedBy = when (issuedByKind) {
                 "USER" -> GrantSource.User
@@ -493,4 +511,30 @@ private fun CapabilityConstraints.toJson(): JsonElement = buildJsonObject {
             b.steps?.let { put("steps", it) }
         })
     }
+}
+
+/**
+ * The read side of [CapabilityConstraints.toJson] — until this fix, `constraints_json` was
+ * written on every grant and never parsed back anywhere (`parseCapabilityRow` constructed a bare
+ * `CapabilityConstraints()` default, discarding the column it had just read). Every constraint —
+ * not just `requiresApprovalPerUse` — was silently unenforced on any capability loaded back from
+ * storage. Mirrors `toJson()`'s exact keys; `budget` only round-trips `modelCalls`/`steps` because
+ * that's all `toJson()` currently writes (`Budget`'s other five fields are a separate, pre-existing
+ * gap in the encode side, not introduced or fixed here).
+ */
+private fun parseConstraints(json: String): CapabilityConstraints {
+    val obj = Json.parseToJsonElement(json).jsonObject
+    return CapabilityConstraints(
+        maxDurationSeconds = obj["max_duration_seconds"]?.jsonPrimitive?.intOrNull,
+        maxBytesRead = obj["max_bytes_read"]?.jsonPrimitive?.longOrNull,
+        maxBytesWritten = obj["max_bytes_written"]?.jsonPrimitive?.longOrNull,
+        requiresApprovalPerUse = obj["requires_approval_per_use"]?.jsonPrimitive?.booleanOrNull ?: false,
+        maxExerciseCount = obj["max_exercise_count"]?.jsonPrimitive?.intOrNull,
+        budget = obj["budget"]?.jsonObject?.let { b ->
+            Budget(
+                modelCalls = b["model_calls"]?.jsonPrimitive?.intOrNull,
+                steps = b["steps"]?.jsonPrimitive?.intOrNull,
+            )
+        },
+    )
 }

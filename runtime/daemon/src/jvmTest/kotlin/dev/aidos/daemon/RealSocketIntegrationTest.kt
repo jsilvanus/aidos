@@ -50,18 +50,32 @@ class RealSocketIntegrationTest {
         tempRuntimeDir.deleteRecursively()
     }
 
-    private fun startDaemon(): Path {
+    /**
+     * [anthropicApiKey] set to a non-null placeholder is enough to make [PolicyInferenceRouter]
+     * name a remote candidate adapter — `AnthropicAdapter.invoke()` (a real network call) is only
+     * ever reached once a MODEL_CALL task actually runs past routing, and every test below stops
+     * at a `RemotePendingApproval` park or its denial, never at an approval that would resume as
+     * far as invoking the adapter. That resume path (approval → the named adapter actually
+     * invoked) is exercised without a real network call in `AgentLoopTaskRunnerTest`'s
+     * `fakeModel`-based suite instead — this class's job is proving the real wire transport, not
+     * re-proving the mechanism a fake model already covers end to end.
+     */
+    private fun startDaemon(anthropicApiKey: String? = null): Path {
         val socketPath = tempRuntimeDir.toPath().resolve("aidos").resolve("runtime.sock")
         val javaBinary = Path.of(System.getProperty("java.home"), "bin", "java").toString()
         val classpath = System.getProperty("java.class.path")
 
-        val process = ProcessBuilder(
+        val builder = ProcessBuilder(
             javaBinary,
             "-Duser.home=${tempHome.path}",
             "-cp", classpath,
             "dev.aidos.daemon.MainKt",
             "--socket-path", socketPath.toString(),
-        ).redirectErrorStream(true).start()
+        ).redirectErrorStream(true)
+        if (anthropicApiKey != null) {
+            builder.environment()["ANTHROPIC_API_KEY"] = anthropicApiKey
+        }
+        val process = builder.start()
         daemonProcess = process
 
         val tokenPath = SocketPaths.defaultTokenPath(socketPath)
@@ -163,5 +177,47 @@ class RealSocketIntegrationTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `sending under ASK egress parks the run, and deny-run fails it for real over the socket`() = runBlocking {
+        // A non-null key is enough to give PolicyInferenceRouter a remote candidate to name in
+        // RemotePendingApproval -- the declared default egress policy is ASK (RuntimeCompositionRoot's
+        // own doc comment), and no Settings row overrides it for this fresh temp home.
+        val socketPath = startDaemon(anthropicApiKey = "sk-test-not-a-real-key")
+        val tokenPath = SocketPaths.defaultTokenPath(socketPath)
+        val client = SocketRuntimeClient(socketPath, tokenPath, interactive = true)
+        val cli = AidosCli(client)
+
+        val projectId = cli.createProject("approval-e2e", "")
+        val sessionId = cli.createSession(projectId, "approval-session")
+        val runId = withTimeout(10_000) { cli.sendMessage(sessionId, "hello") }
+        assertTrue(runId.isNotBlank())
+
+        // sessions.send() drives the Run inline (RuntimeCompositionRoot), so by the time
+        // sendMessage() returns over the socket, the Run has already reached RemotePendingApproval
+        // and parked -- deny-run must find a real continuation to resolve.
+        cli.denyRun(runId, "not right now")
+
+        // The continuation is deleted once resolved (not left dangling) -- a second resolution
+        // attempt against the same run must find nothing, proven here via approve-run, which
+        // (unlike deny-run) surfaces the gateway's result instead of discarding it.
+        val error = kotlin.runCatching { cli.approveRun(runId) }.exceptionOrNull()
+        assertTrue(error != null, "approving an already-denied run must fail — its continuation is gone")
+        assertTrue(
+            error!!.message?.contains("continuation.not_found") == true,
+            "expected a continuation.not_found error, got: ${error.message}",
+        )
+    }
+
+    @Test
+    fun `approving a run with no pending continuation reports an error over the socket`() = runBlocking {
+        val socketPath = startDaemon()
+        val tokenPath = SocketPaths.defaultTokenPath(socketPath)
+        val client = SocketRuntimeClient(socketPath, tokenPath, interactive = true)
+        val cli = AidosCli(client)
+
+        val error = kotlin.runCatching { cli.approveRun("no-such-run") }.exceptionOrNull()
+        assertTrue(error != null)
     }
 }

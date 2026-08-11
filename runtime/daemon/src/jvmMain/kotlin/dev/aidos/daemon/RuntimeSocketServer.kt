@@ -187,6 +187,26 @@ class RuntimeSocketServer(
             Wire.encodePendingCapabilityList(client.capabilities.listPending())
         Methods.CAPABILITIES_APPROVE ->
             Wire.encodeCapabilityResult(client.capabilities.approve(params["requestId"]!!.jsonPrimitive.content))
+        Methods.CAPABILITIES_APPROVE_EFFECT -> Wire.encodeCapabilityResult(
+            client.capabilities.approveEffect(
+                params["runId"]!!.jsonPrimitive.content,
+                params["taskId"]?.jsonPrimitive?.content ?: "",
+            )
+        )
+        Methods.CAPABILITIES_DENY_EFFECT -> {
+            client.capabilities.denyEffect(
+                params["runId"]!!.jsonPrimitive.content,
+                params["taskId"]?.jsonPrimitive?.content ?: "",
+                params["reason"]?.jsonPrimitive?.content ?: "",
+            )
+            JsonObject(emptyMap())
+        }
+        Methods.CAPABILITIES_ANSWER_PROMPT -> Wire.encodeCapabilityResult(
+            client.capabilities.answerPrompt(
+                params["runId"]!!.jsonPrimitive.content,
+                params["answer"]!!.jsonPrimitive.content,
+            )
+        )
         Methods.RUNTIME_PING ->
             JsonPrimitive(client.runtime.ping())
         Methods.RUNTIME_VERSION ->

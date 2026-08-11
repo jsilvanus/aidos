@@ -182,6 +182,34 @@ class CapabilityTest {
         assertEquals(DenialReason.CAPABILITY_REVOKED, after.reason)
     }
 
+    @Test
+    fun `validate denies a grant issued with requiresApprovalPerUse, unconditionally`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000101"
+
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val cap = mgr.grant(
+            subjectId = "session-3",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.SHELL_EXEC,
+            scope = CapabilityScope.Shell(ProjectId(projectId), "/", null),
+            constraints = CapabilityConstraints(requiresApprovalPerUse = true),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        // Every use is denied -- "per use" means every use, not just the first. A fresh, unexpired,
+        // unrevoked grant with this constraint set must never fall through to Allowed.
+        repeat(2) {
+            val result = mgr.validate("session-3", cap.id, noOp, TrustLevel.TRUSTED)
+            assertIs<CapabilityCheckResult.Denied>(result)
+            assertEquals(DenialReason.REQUIRES_APPROVAL, result.reason)
+        }
+    }
+
     // ─── 3. Taint ceiling ────────────────────────────────────────────────────
 
     @Test

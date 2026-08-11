@@ -6,6 +6,7 @@ import dev.aidos.broker.AuditLog
 import dev.aidos.broker.ToolBroker
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
+import dev.aidos.executor.CapabilityApprovalResolution
 import dev.aidos.executor.EventStore
 import dev.aidos.executor.SqliteExecutor
 import dev.aidos.filesystem.FilesystemTool
@@ -14,6 +15,7 @@ import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
+import dev.aidos.kernel.UserId
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
@@ -23,6 +25,10 @@ import dev.aidos.settings.SettingsStore
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.Redactor
 import java.io.File
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * The runtime composition root PIPELINE.md has been flagging as missing since the
@@ -97,7 +103,170 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
+        buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso).drive(runId)
+    }
 
+    /**
+     * Resolves a Run parked on `CAPABILITY_APPROVAL` (RFC-0008 step 8d) — the `approve`/`deny`
+     * entry point `daemon`'s socket server and the CLI both go through. Composes the identical
+     * stack [drive] does (same router, same remote adapters resolved from the same
+     * [anthropicApiKey]) so the adapter [AgentLoopTaskRunner] resumes with is the same one
+     * [PolicyInferenceRouter] named when the Run parked, looked up again by model id rather than
+     * carried across the park (see [AgentLoopTaskRunner]'s own `resolveRemoteAdapter` doc comment
+     * for why).
+     *
+     * Takes only [runId] (plus the driver and id/time seams) — [sessionId], [projectId], and
+     * [deviceId] are read back from the `runs` row itself rather than asked of the caller. They
+     * are already durable there (the same row `drive()` wrote them to at Run creation), and a
+     * caller resolving an approval by run id alone is the natural shape for `approve <run-id>` /
+     * `deny <run-id>` at the CLI.
+     *
+     * Returns [CapabilityApprovalResolution.NotFound] (rather than throwing) when [runId] or its
+     * project's `root_path` row can't be found — the same D3-honest "do nothing observable"
+     * response [drive] gives an inconsistency like this, just surfaced as a value here since this
+     * call has a caller waiting on a result instead of a fire-and-forget Run drive.
+     */
+    suspend fun resolveApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveCapabilityApproval(runId, approved, denialReason)
+    }
+
+    /**
+     * Resolves a Run parked on `TOOL_CALL` (RFC-0008 step 8d) — a tool call denied with
+     * `DenialReason.REQUIRES_APPROVAL` (`CapabilityConstraints.requiresApprovalPerUse`).
+     *
+     * On approve, grants a **fresh, short-lived** capability rather than trying to make the
+     * original one pass `validate()` a second time — the original grant's `requiresApprovalPerUse`
+     * means every use needs approval, so mutating it would silently exempt every future call too.
+     * The fresh grant shares the original's subject/permission/scope, drops
+     * `requiresApprovalPerUse`, and expires in a minute — long enough for the one immediate
+     * re-drive this triggers, not a standing exemption. `AgentLoopTaskRunner.executeToolCall`'s
+     * existing `resolveCapability()` call already re-resolves "the most recently issued, unexpired,
+     * unrevoked match" fresh on every execution, so the resumed attempt finds the new grant with no
+     * changes needed there.
+     *
+     * Deliberately does **not** add a bypass parameter to `EffectBroker.invoke()` — that would
+     * touch `runtime/kernel/`, which is frozen at G0 (this file's own doc comment set says so
+     * throughout; see `PIPELINE.md`'s "Where everything lives" table).
+     */
+    suspend fun resolveToolCallApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
+
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
+                val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
+                val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
+                    ?: return@resolveToolCallApproval
+                capabilityManager.grant(
+                    subjectId = original.subjectId,
+                    subjectKind = original.subjectKind,
+                    permission = original.permission,
+                    scope = original.scope,
+                    constraints = original.constraints.copy(requiresApprovalPerUse = false),
+                    expiresAt = Instant.fromEpochSeconds(Instant.parse(nowIso()).epochSeconds + 60),
+                    grantedBy = UserId("user"),
+                )
+            }
+    }
+
+    /**
+     * Resolves a Run parked on **either** `CAPABILITY_APPROVAL` or `TOOL_CALL` — the single entry
+     * point [SqliteEffectApprovalGateway] actually calls, so `approve-run`/`deny-run` at the CLI
+     * work regardless of which continuation kind is waiting, without a caller needing to know
+     * which one it is up front (it can't — that's exactly what it's asking).
+     *
+     * Tries [resolveApproval] first; [CapabilityApprovalResolution.WrongKind] is returned before
+     * either resolver mutates anything (checked immediately after loading the continuation, in
+     * both `SqliteExecutor.resolveCapabilityApproval` and `resolveToolCallApproval`), so falling
+     * through to [resolveToolCallApproval] on that result is safe — never a double-resolve.
+     */
+    suspend fun resolveAnyApproval(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        approved: Boolean,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val first = resolveApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        if (first !is CapabilityApprovalResolution.WrongKind) return first
+        val second = resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        // `deny-run` (approved = false) also reaches USER_PROMPT this way: "decline to answer" is
+        // exactly resolveUserPrompt's answer = null path. `approve-run` cannot land here for a
+        // parked question, though -- there is no yes/no to approve, only an answer to give, which
+        // needs the free-text `answer-run <runId> <answer>` CLI command (resolveUserPromptAnswer).
+        return if (second is CapabilityApprovalResolution.WrongKind && !approved) {
+            resolveUserPromptAnswer(projectDriver, runId, answer = null, denialReason, idGen, nowIso)
+        } else {
+            second
+        }
+    }
+
+    /**
+     * Resolves a Run parked on `USER_PROMPT` (RFC-0008 step 8d): the model called `ask_user` and
+     * is waiting for a reply. [answer] `null` declines (mirrors [resolveApproval]'s deny path,
+     * reachable from [resolveAnyApproval] too — see its own doc comment); non-null answers and
+     * resumes, via `answer-run <runId> <answer>` at the CLI (not `approve-run`, which has nothing
+     * to say yes or no to here).
+     */
+    suspend fun resolveUserPromptAnswer(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        answer: String?,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveUserPrompt(runId, answer, denialReason)
+    }
+
+    private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT session_id, project_id, device_id FROM runs WHERE id = ?",
+            mapper = { c ->
+                QueryResult.Value(
+                    if (c.next().value) Triple(c.getString(0)!!, c.getString(1)!!, c.getString(2)!!) else null
+                )
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value
+
+    private fun buildExecutor(
+        projectDriver: SqlDriver,
+        sessionId: String,
+        rootPath: String,
+        deviceId: String,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
         val broker = ToolBroker(
@@ -142,8 +311,9 @@ class RuntimeCompositionRoot(
             subjectId = sessionId,
             redact = redactor::redact,
             resolveCapability = capabilityResolver::resolve,
+            resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
         )
-        val executor = SqliteExecutor(
+        return SqliteExecutor(
             driver = projectDriver,
             audit = audit,
             events = EventStore(projectDriver),
@@ -152,7 +322,6 @@ class RuntimeCompositionRoot(
             taskRunner = taskRunner,
             reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
         )
-        executor.drive(runId)
     }
 
     private fun projectRootPath(driver: SqlDriver, projectId: String): String? =
