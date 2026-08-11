@@ -294,16 +294,19 @@ class RetentionEngineTest {
         // must actually run in the same pass for these numbers to hold.
         assertEquals(35, result.deletedNodes, "30 expired by age + 5 more evicted by the cap")
         assertEquals(210 * mb, result.bytesFreed)
-        assertFalse(result.needsAnotherPass, "batchSize=500 default easily covers this in one pass")
+        assertFalse(result.needsAnotherPass, "batchSize=150 default easily covers this in one pass")
         assertEquals(85, countActiveNodes(), "120 - 30 (expired) - 5 (LRU) = 85 days' worth remain")
         assertEquals(510 * mb, totalBytes())
         assertTrue(totalBytes() <= 512 * mb, "the 512 MB ceiling must hold after 120 days of accumulation")
     }
 
     @Test
-    fun `default retention policy is 90 days and 512 MB`() {
+    fun `default retention policy is 90 days, 512 MB, and a 150-row batch`() {
         val policy = RetentionPolicy()
         assertEquals(90L, policy.retentionDays)
         assertEquals(512L * 1024 * 1024, policy.storageLimitBytes)
+        // 150, not the original 500 -- tuned down with the project owner to shrink the
+        // redo-window on interruption (see RetentionPolicy's own doc comment for the cost model).
+        assertEquals(150, policy.batchSize)
     }
 }
