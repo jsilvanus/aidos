@@ -15,9 +15,16 @@ import java.time.temporal.ChronoUnit
  *    retention window are eligible for deletion.
  * 2. **512 MB storage cap** — if total `size_bytes` across content_nodes exceeds the cap, the
  *    oldest-updated items are evicted (LRU) until the cap is met.
- * 3. **Interruptible and resumable** — compaction yields on every row so that an Android
- *    execution window can interrupt it mid-pass. On next invocation it resumes naturally because
- *    the query re-runs from the oldest remaining row.
+ * 3. **Interruptible and resumable at batch granularity** (RFC-0056: "idempotent... in bounded
+ *    batches with cancellation checks") — [compact] yields on every row within a batch so an
+ *    Android execution window can cancel the coroutine mid-pass, but each phase's deletions
+ *    commit together as one batch (up to [RetentionPolicy.batchSize] rows), not per row. An
+ *    interruption mid-batch rolls that whole batch back — safe and idempotent (the next call's
+ *    query just re-selects the same still-eligible oldest rows), but it redoes up to `batchSize`
+ *    rows of work, not just the one row in flight when cancellation happened. "Resumes" means
+ *    "the next call makes further real progress from the oldest remaining row," not "resumes
+ *    mid-batch." See `RetentionEngineTest`'s `compaction is resumable` test for what this
+ *    guarantees across two real calls.
  * 4. **Active-session protection** — rows belonging to a project that has at least one active
  *    session are never evicted, regardless of age or size.
  *
