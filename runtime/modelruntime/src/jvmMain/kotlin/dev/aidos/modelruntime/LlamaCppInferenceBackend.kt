@@ -127,6 +127,15 @@ class LlamaCppInferenceBackend : InferenceBackend {
     }
 
     /**
+     * Tracks the live [LlamaCppAdapter] per loaded model so [unload] can actually free the
+     * native handle (M21, RFC-0022, RFC-0045) -- before this, [unload] was a no-op TODO and a
+     * backgrounded-then-reloaded model leaked its previous native resource instead of releasing
+     * it. [GlobalModelRuntime]'s own admission queue mutex already serializes every [load]/
+     * [unload] call site that touches this map, so a plain (non-concurrent) map is safe here.
+     */
+    private val liveAdapters = mutableMapOf<String, LlamaCppAdapter>()
+
+    /**
      * Load a model into memory (RFC-0022, RFC-0045).
      *
      * Uses llama-cpp-java JNI binding to load and run GGUF models.
@@ -149,6 +158,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
         return try {
             // M21: Load real llama.cpp model with JNI binding
             val adapter = LlamaCppAdapter(modelId, file, metadata)
+            liveAdapters[modelId] = adapter
             Result.success(adapter)
         } catch (e: Exception) {
             Result.failure(e)
@@ -156,13 +166,16 @@ class LlamaCppInferenceBackend : InferenceBackend {
     }
 
     /**
-     * Unload a model from memory.
-     * With the admission queue (RFC-0022), only one model is loaded at a time.
-     * Calls close() on the adapter if it's a LlamaCppAdapter to free native resources.
+     * Unload a model from memory (M21, RFC-0022, RFC-0045).
+     *
+     * With the admission queue (RFC-0022), only one model is loaded at a time. Calls
+     * [LlamaCppAdapter.close] to actually free the native handle -- the audit's Part 3 finding
+     * was that this was a no-op TODO, so a background/reload cycle leaked the previous native
+     * model instead of releasing it before the replacement loaded. `close()` is idempotent, so
+     * this is safe even if [GlobalModelRuntime] or a caller already closed the same adapter.
      */
     override suspend fun unload(modelId: String) {
-        // TODO: M21 — Keep track of loaded models and call close() on them
-        // For now, the adapter lifecycle is managed by GlobalModelRuntime
+        liveAdapters.remove(modelId)?.close()
     }
 
     private fun modelFile(modelId: String): File =

@@ -71,7 +71,31 @@ class LlamaCppAdapter(
     override val contextWindow = contextSize
     override val isLocal = true
 
+    /**
+     * M21 (RFC-0022, RFC-0045): wall-clock time spent inside [loadModel] -- the audit's Part 3
+     * finding was that zero cold-start timing instrumentation existed anywhere in this class, so
+     * RFC-0022's "cold start to first token under 10 seconds" number could never actually be
+     * captured even once real hardware exists. This measures model *load* specifically (mmap +
+     * llama.cpp initialization), not load-plus-first-token -- callers timing the full done-when
+     * number should add first-token latency from [invoke] on top of this. Property initializers
+     * run in declaration order, so [loadStartNanos] is guaranteed set before [model]'s
+     * initializer (which calls [loadModel]) runs.
+     */
+    private val loadStartNanos: Long = System.nanoTime()
     private val model: LlamaModel = loadModel(modelFile, contextSize, threads)
+    val coldStartMillis: Long = (System.nanoTime() - loadStartNanos) / 1_000_000
+
+    /**
+     * M21: set once [close] has freed the native model. A backgrounded Android process can have
+     * this adapter closed by [GlobalModelRuntime.unload] (memory pressure, execution window
+     * ending) while a caller still holds a reference -- [invoke] must fail cleanly afterward
+     * rather than dereference a freed native pointer, which is a crash, not a `Result.failure`.
+     * This is the reload-survival half of M21's done-when at the adapter's own boundary; the
+     * corresponding backend-level fix (actually calling [close] on unload, rather than leaking
+     * the native handle) is in [LlamaCppInferenceBackend.unload].
+     */
+    @Volatile
+    private var closed: Boolean = false
 
     /**
      * Load GGUF model using llama-cpp-java binding.
@@ -123,6 +147,15 @@ class LlamaCppAdapter(
      * Thread-safe via the global admission queue (RFC-0022).
      */
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        if (closed) {
+            // M21: the model was unloaded (backgrounded, memory pressure, execution window
+            // ended) after this adapter reference was taken but before this call arrived --
+            // a real, expected race on a phone, not a bug. Fail cleanly; GlobalModelRuntime's
+            // admission queue is the reload path (a fresh load() call gets a fresh adapter).
+            return Result.failure(
+                IllegalStateException("Model $modelId was unloaded; reload before invoking again")
+            )
+        }
         return try {
             // Convert turns to prompt text
             val prompt = formatPrompt(request.messages)
@@ -293,6 +326,8 @@ class LlamaCppAdapter(
      * Called by GlobalModelRuntime when unloading the model.
      */
     fun close() {
+        if (closed) return  // Idempotent -- GlobalModelRuntime.unload() may race a second call.
+        closed = true
         try {
             model.close()
         } catch (e: Exception) {

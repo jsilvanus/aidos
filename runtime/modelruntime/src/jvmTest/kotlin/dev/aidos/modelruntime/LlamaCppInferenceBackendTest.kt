@@ -86,6 +86,23 @@ class LlamaCppInferenceBackendTest {
         assertTrue(result.isFailure, "Loading missing model should fail")
     }
 
+    /**
+     * M21 (RFC-0022, RFC-0045): the audit's Part 3 finding was that `unload()` was a no-op TODO
+     * -- calling it never freed a native handle. This is the one piece of the fix this sandbox
+     * can actually exercise without a real GGUF file and native llama.cpp library: unloading a
+     * model that was never (or no longer) loaded must stay a safe no-op, not throw. The other
+     * half -- that a *real* load()'d adapter's native handle is genuinely freed by unload(), and
+     * that `LlamaCppAdapter.coldStartMillis`/its post-close `invoke()` guard behave correctly --
+     * needs a real model file and the native binding, which this sandbox does not have; see
+     * PIPELINE.md's M21 entry for what stays verification-only.
+     */
+    @Test
+    fun `unload is a safe no-op for a model that was never loaded`() = runTest {
+        val backend = LlamaCppInferenceBackend()
+        backend.unload("never-loaded-model")
+        backend.unload("never-loaded-model")  // and idempotent on repeat
+    }
+
     @Test
     fun `digest computation returns consistent hash`() = runTest {
         val backend = LlamaCppInferenceBackend()

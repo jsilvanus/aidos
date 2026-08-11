@@ -1778,6 +1778,24 @@ completion marker either, unlike Phase 0's; the fabricated claim was confined to
   absent. The distinction matters: M21's own status line is honest about being blocked; the
   overstatement is entirely in the downstream M26/G3 claiming to have passed anyway, using M21 as
   a stated prerequisite it does not meet.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the buildable-without-hardware
+  pieces are now built; M21 stays BLOCKED — this does not claim it complete.**
+  `LlamaCppAdapter` now measures `coldStartMillis` (wall-clock time inside `loadModel`, via
+  `System.nanoTime()` around the property that constructs the native `LlamaModel`) — a real
+  number is captured every time a model loads, once real hardware exists to load one on.
+  Reload-survival: `LlamaCppAdapter` gained a `closed` guard so `invoke()` fails cleanly
+  (`Result.failure`, not a freed-native-pointer crash) if called after the model was unloaded —
+  a real race on a backgrounded phone, not a hypothetical. `LlamaCppInferenceBackend.unload()`
+  was a no-op `TODO` (found while wiring the guard above): it now tracks live adapters and
+  actually calls `close()` on unload, so a background-then-reload cycle releases the previous
+  native handle instead of leaking it. **What remains verification-only, unchanged by this fix:**
+  the actual `coldStartMillis` number on real mid-range hardware; whether Android's process-death/
+  backgrounding behavior actually triggers this unload/reload path the way the fix assumes;
+  whether 10 seconds is actually met. One test was added
+  (`LlamaCppInferenceBackendTest`: unload-of-never-loaded-model is a safe no-op) — the only piece
+  of this fix exercisable without a real GGUF file and the native llama.cpp binding, neither of
+  which exist in this sandbox; `coldStartMillis` and the `closed`-guard's actual behavior against
+  a real `LlamaModel` are untested here for the same reason.
 - **M24 (Treeless workers) — CONFIRMED for the mechanism, two caveats.** Genuinely no worktree, no
   second checkout — `TreelessWorker` builds commits purely through JGit's object-database APIs
   (in-core `DirCache`, `ObjectInserter`), confirmed by both reading the code and an exhaustive grep
