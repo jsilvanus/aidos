@@ -17,6 +17,63 @@ milestone either serves it or is cuttable.
 
 ## Status
 
+**2026-08-11 (later still, again) · USER_PROMPT park/resume is now built too** — the project owner
+picked the standalone `ask_user` tool design (not RFC-0011's plan-approval anchor) explicitly in
+conversation, closing the last of the three "beyond MVP" continuation asks:
+
+- **`ask_user` is a synthesized `ToolDescriptor`** (`AgentLoopTaskRunner.executeModelCall`'s
+  `tools` list gets `broker.descriptorsFor(...) + askUserToolDescriptor`), **not registered with
+  `ToolBroker`** — asking a question exercises no FS/git/shell authority, so routing it through
+  `CapabilityManager.validate()` would be gating something that needs no gate.
+  `executeToolCall()` intercepts the tool name before any capability resolution is even attempted.
+- Parks with `SuspendedOperation.UserPrompt(promptId, question)`, task state `AWAITING_INPUT`
+  (not `AWAITING_APPROVAL` — a question isn't a yes/no). `SqliteExecutor.resolveUserPrompt(runId,
+  answer, denialReason)`: a non-null `answer` resumes (writes the answer into the continuation,
+  resets the task, re-drives); `null` declines (mirrors the other two continuation kinds' deny
+  path exactly — delete continuation, fail task and Run).
+- On resume, `executeToolCall` reads the answer back out of the continuation and constructs a
+  synthetic `ToolCallResult.Ok` with the answer as the tool's own text content, `TrustLevel.TRUSTED`
+  (a human's direct reply to the model's question is first-party input, not fetched/untrusted
+  content — RFC-0027 — so it does not raise Run taint, same as the Run's original triggering
+  message). Refactored the ~60-line "finish a tool call" tail (taint, outcome, attempt, fan-in)
+  out of `executeToolCall` into a shared `finishToolCall()` so both the real-broker path and this
+  synthetic one use the exact same completion logic — no second, slightly-different copy to drift.
+- **New CLI verb**: `answer-run <runId> <answer...>` — deliberately not folded into `approve-run`
+  (a question has no yes/no to approve). `deny-run` *does* reach a parked question's decline path
+  (via `RuntimeCompositionRoot.resolveAnyApproval`'s three-way fallback: `CAPABILITY_APPROVAL` →
+  `TOOL_CALL` → `USER_PROMPT`-decline-only, each tried only after the previous returns `WrongKind`,
+  which is returned before any mutation — see that method's own doc comment).
+- `EffectApprovalGateway` gained a second method, `answer(...)`, alongside `resolve(...)` —
+  extending it was fine (`runtime/api/` is not listed as frozen in this file's own "Where
+  everything lives" table; only `runtime/kernel/` is). `CapabilityCommands.answerPrompt(...)` is a
+  new method on the **`api` module's** `RuntimeClient`/`CapabilityCommands` — confirmed distinct
+  from a same-named, unrelated, genuinely-frozen `kernel.RuntimeClient`/`CapabilityCommands` pair
+  that predates `api`'s and has zero implementers left anywhere outside `runtime/kernel/` itself
+  (checked via grep before touching anything) — vestigial, not live, not touched.
+- Tests: `AgentLoopTaskRunnerTest.kt` (executor level, real SQLite, fake model — same convention as
+  every other test here) — the model calling `ask_user` parks instead of executing anything;
+  answering resumes and the model's *next* turn genuinely receives the answer as tool-result text
+  (not just "no exception"); declining fails the Run without executing anything.
+- **Deliberately not built**: a daemon-subprocess-level socket test (the pattern
+  `RealSocketIntegrationTest.kt` uses for TOOL_CALL's deny-only hermetic case). Unlike
+  `requiresApprovalPerUse`, which is a deterministic constraint checked before any model call,
+  `ask_user` is only reachable by the **model actually deciding to call it** — there is no way to
+  drive a real daemon subprocess into a parked `USER_PROMPT` state without either a real,
+  non-deterministic, network-dependent call to a live model provider, or faking the model inside
+  `RuntimeCompositionRoot` (which has no injection seam for that — by design, per its own doc
+  comment: it composes a real stack, not a test double). The executor-level tests are the
+  authoritative mechanism tests here; the wire protocol layer (`Methods.kt`,
+  `RuntimeSocketServer.kt`, `SocketRuntimeClient.kt`, CLI) is proven by the full project compiling
+  and the identical pattern already working for the other two continuation kinds, not by a
+  dedicated live test — a real, honestly-scoped gap, not a silent one.
+- `gradle jvmTest --continue`: 0 failures project-wide (79 test suites) except the pre-existing
+  sandbox-only `:knowledge` 401. `schema/check.py`: clean (untouched — no schema changes needed).
+
+**All three "beyond MVP" continuation-flow asks are now done: CAPABILITY_APPROVAL, TOOL_CALL,
+USER_PROMPT.** `CHILD_RUN` remains the one `SuspendedOperation` kind with no resolution yet — it's
+`session_017yU5Atvr4UszSQy7DCQmw2`'s job (RFC-0011, branch `claude/rfc-0011-driver-worker`), not
+this branch's.
+
 **2026-08-11 (later still) · TOOL_CALL park/resume is now actually built** (the design two entries
 below described; this entry supersedes "designed but not built" for TOOL_CALL specifically —
 USER_PROMPT is still exactly where that entry left it, undecided and unbuilt).
@@ -2165,6 +2222,13 @@ capability instead of trying to make the original one pass validate() again.**
    deny path — a human explicitly refusing a gated action is a stronger signal than an ordinary
    denial the model should route around; don't feed it back as denial-data, matching approve's own
    "prompt path, not update-path" for this same escalation).
+
+**UPDATE (2026-08-11, later still) — resolved: the project owner picked the `ask_user` tool
+candidate explicitly, and it's now built.** See the newer Status entry near the top of this file
+for what landed. RFC-0011's plan-approval USER_PROMPT (the other candidate below) was **not**
+chosen — if RFC-0011's own driver/worker cycle ends up needing a plan-approval gate, that's a
+separate design question for that work, not an extension of what `ask_user` does. Left below for
+the historical record of why two designs existed and which one won.
 
 **USER_PROMPT has no existing trigger anywhere — building it means designing one, not just wiring
 plumbing.** Two real candidates surfaced, not yet chosen between:

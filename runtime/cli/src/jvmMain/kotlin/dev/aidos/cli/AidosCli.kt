@@ -126,9 +126,27 @@ class AidosCli(private val client: RuntimeClient) {
         }
     }
 
-    /** Denies a Run parked on `CAPABILITY_APPROVAL` — fails it outright, nothing to resume. */
+    /**
+     * Denies a Run parked on `CAPABILITY_APPROVAL` or `TOOL_CALL` — fails it outright, nothing to
+     * resume. Also reaches a parked `ask_user` question's decline path (see
+     * `RuntimeCompositionRoot.resolveAnyApproval`'s own doc comment) — "no, I won't answer that"
+     * is a denial too, even though answering one is a different command ([answerRun]).
+     */
     suspend fun denyRun(runId: String, reason: String) {
         client.capabilities.denyEffect(runId, taskId = "", reason = reason)
+    }
+
+    /**
+     * Answers a Run parked on `USER_PROMPT` (RFC-0008 step 8d) — the model called `ask_user` and
+     * is waiting for a reply. Not `approveRun`: a question has no yes/no to approve, only an
+     * answer to give.
+     */
+    suspend fun answerRun(runId: String, answer: String): String {
+        val result = client.capabilities.answerPrompt(runId, answer)
+        return when (result) {
+            is CapabilityResult.Success -> "answered: run $runId resumed"
+            is CapabilityResult.Error   -> error("answer-run failed: ${result.code} — ${result.message}")
+        }
     }
 
     // ── Diff queries ───────────────────────────────────────────────────────────

@@ -211,11 +211,40 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ): CapabilityApprovalResolution {
         val first = resolveApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
-        return if (first is CapabilityApprovalResolution.WrongKind) {
-            resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        if (first !is CapabilityApprovalResolution.WrongKind) return first
+        val second = resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        // `deny-run` (approved = false) also reaches USER_PROMPT this way: "decline to answer" is
+        // exactly resolveUserPrompt's answer = null path. `approve-run` cannot land here for a
+        // parked question, though -- there is no yes/no to approve, only an answer to give, which
+        // needs the free-text `answer-run <runId> <answer>` CLI command (resolveUserPromptAnswer).
+        return if (second is CapabilityApprovalResolution.WrongKind && !approved) {
+            resolveUserPromptAnswer(projectDriver, runId, answer = null, denialReason, idGen, nowIso)
         } else {
-            first
+            second
         }
+    }
+
+    /**
+     * Resolves a Run parked on `USER_PROMPT` (RFC-0008 step 8d): the model called `ask_user` and
+     * is waiting for a reply. [answer] `null` declines (mirrors [resolveApproval]'s deny path,
+     * reachable from [resolveAnyApproval] too — see its own doc comment); non-null answers and
+     * resumes, via `answer-run <runId> <answer>` at the CLI (not `approve-run`, which has nothing
+     * to say yes or no to here).
+     */
+    suspend fun resolveUserPromptAnswer(
+        projectDriver: SqlDriver,
+        runId: RunId,
+        answer: String?,
+        denialReason: String? = null,
+        idGen: () -> String,
+        nowIso: () -> String,
+    ): CapabilityApprovalResolution {
+        val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        val rootPath = projectRootPath(projectDriver, projectId)
+            ?: return CapabilityApprovalResolution.NotFound(runId)
+        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+            .resolveUserPrompt(runId, answer, denialReason)
     }
 
     private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =

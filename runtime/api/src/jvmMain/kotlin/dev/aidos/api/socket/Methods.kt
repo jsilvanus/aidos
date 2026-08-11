@@ -23,6 +23,9 @@ object Methods {
     const val CAPABILITIES_APPROVE_EFFECT = "capabilities.approveEffect"
     const val CAPABILITIES_DENY_EFFECT = "capabilities.denyEffect"
 
+    /** RFC-0008 step 8d: answers a Run parked on `USER_PROMPT` (the model's `ask_user` call). */
+    const val CAPABILITIES_ANSWER_PROMPT = "capabilities.answerPrompt"
+
     const val EVENTS_SUBSCRIBE = "events.subscribe"
 
     const val RUNTIME_PING = "runtime.ping"
@@ -31,6 +34,7 @@ object Methods {
     /** Methods that require the connection to be [dev.aidos.api.socket.Hello.interactive] (RFC-0055). */
     val REQUIRES_INTERACTIVE = setOf(
         CAPABILITIES_GRANT, CAPABILITIES_APPROVE, CAPABILITIES_APPROVE_EFFECT, CAPABILITIES_DENY_EFFECT,
+        CAPABILITIES_ANSWER_PROMPT,
     )
 }
 

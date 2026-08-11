@@ -152,6 +152,12 @@ interface CapabilityCommands {
     suspend fun deny(requestId: String, reason: String)
     suspend fun approveEffect(runId: String, taskId: String): CapabilityResult
     suspend fun denyEffect(runId: String, taskId: String, reason: String)
+
+    /**
+     * Answers a Run parked on `USER_PROMPT` (RFC-0008 step 8d: the model called `ask_user`) with
+     * free text. Distinct from [approveEffect]/[denyEffect] — a question is not a yes/no decision.
+     */
+    suspend fun answerPrompt(runId: String, answer: String): CapabilityResult
 }
 
 data class GrantCapabilityRequest(

@@ -697,6 +697,78 @@ class SqliteExecutor(
         return CapabilityApprovalResolution.Resumed
     }
 
+    /**
+     * Resolves a Run parked on [SuspendedOperation.UserPrompt] (RFC-0008 step 8d): the model
+     * called the built-in `ask_user` tool and is waiting for a reply.
+     *
+     * There is no capability to grant and no "wrong kind of denial" here — a question either gets
+     * [answer]ed (any non-null string, however short) or is declined ([answer] `null`, mirroring
+     * [resolveCapabilityApproval]/[resolveToolCallApproval]'s deny path exactly: delete the
+     * continuation, fail the task and the Run outright). A small duplication of that deny logic
+     * rather than a forced shared abstraction across three call sites — the same tradeoff
+     * `AgentLoopTaskRunner`'s own class doc already accepts for `AgentLoop.kt`.
+     */
+    suspend fun resolveUserPrompt(
+        runId: RunId,
+        answer: String?,
+        denialReason: String? = null,
+    ): CapabilityApprovalResolution {
+        val continuation = loadContinuation(runId) ?: return CapabilityApprovalResolution.NotFound(runId)
+        if (continuation.suspendedOperation != "USER_PROMPT") {
+            return CapabilityApprovalResolution.WrongKind(continuation.suspendedOperation)
+        }
+        val projectId = loadRun(runId)?.projectId?.value ?: ""
+
+        if (answer == null) {
+            inTransaction {
+                deleteContinuation(runId)
+                updateTaskState(continuation.taskId, TaskState.FAILED)
+            }
+            updateRunState(
+                runId, RunState.FAILED,
+                AidosError(
+                    "user_prompt.declined", ErrorClass.DENIED,
+                    "Question declined by user" + (denialReason?.let { ": $it" } ?: ""),
+                ),
+            )
+            audit.write(
+                id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_DENIED,
+                actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+                nowIso = nowIso(),
+            )
+            return CapabilityApprovalResolution.Denied
+        }
+
+        inTransaction {
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE continuations SET operation_detail_json = ? WHERE run_id = ?",
+                parameters = 2,
+            ) {
+                bindString(0, withAnswer(continuation.operationDetailJson, answer))
+                bindString(1, runId.value)
+            }
+            updateTaskState(continuation.taskId, TaskState.PENDING)
+        }
+        updateRunState(runId, RunState.RUNNING)
+        audit.write(
+            id = idGen(), projectId = projectId, kind = EventTypes.PERMISSION_GRANTED,
+            actorKind = "USER", actorId = "user", subjectRef = continuation.taskId.value,
+            nowIso = nowIso(),
+        )
+        drive(runId)
+        return CapabilityApprovalResolution.Resumed
+    }
+
+    /** Returns [detailJson] with its `answer` key set to [answer], every other key kept. */
+    private fun withAnswer(detailJson: String, answer: String): String {
+        val original = json.parseToJsonElement(detailJson).jsonObject
+        return buildJsonObject {
+            original.forEach { (key, value) -> put(key, value) }
+            put("answer", answer)
+        }.toString()
+    }
+
     // ─── Recovery helpers (M6) ────────────────────────────────────────────────
 
     private data class AttemptSnapshot(

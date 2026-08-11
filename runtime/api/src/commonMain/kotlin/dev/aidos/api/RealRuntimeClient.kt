@@ -467,6 +467,22 @@ class RealRuntimeClient : RuntimeClient {
             val driver = _openProjectDrivers[projectId] ?: return
             effectApprovalGateway?.resolve(driver, runId, approved = false, denialReason = reason)
         }
+
+        override suspend fun answerPrompt(runId: String, answer: String): CapabilityResult {
+            val projectId = _runProjectIds[runId]
+                ?: return CapabilityResult.Error("run.not_found", "Run $runId not found")
+            val driver = _openProjectDrivers[projectId]
+                ?: return CapabilityResult.Error("run.project_not_open", "Project for run $runId is not open")
+            val gateway = effectApprovalGateway
+                ?: return CapabilityResult.Error("run.approval_not_wired", "No effect approval gateway is wired")
+            return when (gateway.answer(driver, runId, answer)) {
+                is EffectResolution.Resumed -> CapabilityResult.Success(runId)
+                is EffectResolution.Denied ->
+                    CapabilityResult.Error("run.already_denied", "Run $runId was already resolved")
+                is EffectResolution.NotFound ->
+                    CapabilityResult.Error("continuation.not_found", "No pending question for run $runId")
+            }
+        }
     }
 
     override val knowledge: KnowledgeQueries = object : KnowledgeQueries {

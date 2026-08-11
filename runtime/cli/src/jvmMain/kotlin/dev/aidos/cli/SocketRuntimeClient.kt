@@ -214,6 +214,10 @@ class SocketRuntimeClient(
             call(Methods.CAPABILITIES_DENY_EFFECT, params)
             Unit
         }
+        override suspend fun answerPrompt(runId: String, answer: String): CapabilityResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { put("runId", runId); put("answer", answer) }
+            Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_ANSWER_PROMPT, params).jsonObject)
+        }
     }
 
     override val knowledge = object : KnowledgeQueries {

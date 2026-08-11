@@ -43,4 +43,24 @@ class SqliteEffectApprovalGateway(
             is CapabilityApprovalResolution.WrongKind -> EffectResolution.NotFound
         }
     }
+
+    override suspend fun answer(
+        projectDriver: SqlDriver,
+        runId: String,
+        answer: String,
+    ): EffectResolution {
+        val resolution = compositionRoot.resolveUserPromptAnswer(
+            projectDriver = projectDriver,
+            runId = RunId(runId),
+            answer = answer,
+            idGen = idGen,
+            nowIso = nowIso,
+        )
+        return when (resolution) {
+            is CapabilityApprovalResolution.Resumed -> EffectResolution.Resumed
+            is CapabilityApprovalResolution.Denied -> EffectResolution.Denied
+            is CapabilityApprovalResolution.NotFound -> EffectResolution.NotFound
+            is CapabilityApprovalResolution.WrongKind -> EffectResolution.NotFound
+        }
+    }
 }
