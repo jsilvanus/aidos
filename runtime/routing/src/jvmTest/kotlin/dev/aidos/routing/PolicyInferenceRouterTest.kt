@@ -150,6 +150,46 @@ class PolicyInferenceRouterTest {
         assertIs<RoutingDecision.DisabledByPolicy>(result)
     }
 
+    // ─── M23: ASK is distinguishable from NEVER, not identical ────────────────────────────────
+
+    @Test
+    fun `remoteRequiresApproval (ASK) returns RemotePendingApproval naming the missing approval flow`() = runTest {
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = false, remoteRequiresApproval = true),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(fakeAdapter("remote-claude")),
+        )
+        val result = router.select(ModelKind.LLM, ctx())
+        val pending = assertIs<RoutingDecision.RemotePendingApproval>(result)
+        assert(pending.adapter.modelId == "remote-claude")
+        assert(pending.reason.contains("approval", ignoreCase = true)) { pending.reason }
+    }
+
+    @Test
+    fun `NEVER (allowRemote false, remoteRequiresApproval false) stays UnavailableOffline even with a remote adapter present`() = runTest {
+        // Same remote adapter available as the ASK test above -- the only difference is the
+        // policy flag -- proving the two are genuinely distinguished, not just both denied.
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = false, remoteRequiresApproval = false),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(fakeAdapter("remote-claude")),
+        )
+        val result = router.select(ModelKind.LLM, ctx())
+        assertIs<RoutingDecision.UnavailableOffline>(result)
+    }
+
+    @Test
+    fun `remoteRequiresApproval with no remote adapter at all still falls back to UnavailableOffline`() = runTest {
+        // ASK can't name an approval candidate that doesn't exist.
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = false, remoteRequiresApproval = true),
+            localAdapters = emptyList(),
+            remoteAdapters = emptyList(),
+        )
+        val result = router.select(ModelKind.LLM, ctx())
+        assertIs<RoutingDecision.UnavailableOffline>(result)
+    }
+
     @Test
     fun `MOBILE without foreground service returns ForegroundRequired`() = runTest {
         val local = fakeAdapter("local-7b")

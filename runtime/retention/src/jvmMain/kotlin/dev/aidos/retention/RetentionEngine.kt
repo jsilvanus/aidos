@@ -15,9 +15,23 @@ import java.time.temporal.ChronoUnit
  *    retention window are eligible for deletion.
  * 2. **512 MB storage cap** — if total `size_bytes` across content_nodes exceeds the cap, the
  *    oldest-updated items are evicted (LRU) until the cap is met.
- * 3. **Interruptible and resumable** — compaction yields on every row so that an Android
- *    execution window can interrupt it mid-pass. On next invocation it resumes naturally because
- *    the query re-runs from the oldest remaining row.
+ * 3. **Interruptible and resumable at batch granularity** (RFC-0056: "idempotent... in bounded
+ *    batches with cancellation checks") — [compact] yields on every row within a batch so an
+ *    Android execution window can cancel the coroutine mid-pass, but each phase's deletions
+ *    commit together as one batch (up to [RetentionPolicy.batchSize] rows), not per row. An
+ *    interruption mid-batch rolls that whole batch back — safe and idempotent (the next call's
+ *    query just re-selects the same still-eligible oldest rows), but it redoes up to `batchSize`
+ *    rows of work, not just the one row in flight when cancellation happened. "Resumes" means
+ *    "the next call makes further real progress from the oldest remaining row," not "resumes
+ *    mid-batch." See `RetentionEngineTest`'s `compaction is resumable` test for what this
+ *    guarantees across two real calls.
+ *
+ *    Per-row deletions are cheap (a single-column `UPDATE`); the real cost of a batch is its one
+ *    commit (fsync). Redoing an interrupted batch redoes cheap work, not the fsync, so the batch
+ *    size is a tuning knob between "commit overhead amortized over more rows" (bigger) and "less
+ *    wasted redo on interruption" (smaller) — not a safety/correctness tradeoff either way. The
+ *    default was discussed with and set by the project owner at 150 (down from an initial 500)
+ *    to lean toward the latter, without needing per-row commits.
  * 4. **Active-session protection** — rows belonging to a project that has at least one active
  *    session are never evicted, regardless of age or size.
  *
@@ -149,12 +163,16 @@ class RetentionEngine(
  *
  * @param retentionDays  Default 90 days — items not updated within this window are eligible.
  * @param storageLimitBytes  Default 512 MB cap per active project database.
- * @param batchSize  Max rows to process per pass — keeps each execution window bounded.
+ * @param batchSize  Max rows processed (and committed together) per pass — keeps each execution
+ *   window bounded. Also the redo-window on interruption: an in-flight batch that gets cancelled
+ *   rolls back and is redone whole on the next call. 150, not the original 500, chosen with the
+ *   project owner to shrink that redo-window; see [RetentionEngine]'s own doc comment for the
+ *   cost model (row deletes are cheap, the commit/fsync is what batching amortizes).
  */
 data class RetentionPolicy(
     val retentionDays: Long = 90L,
     val storageLimitBytes: Long = 512L * 1024 * 1024,  // 512 MB
-    val batchSize: Int = 500,
+    val batchSize: Int = 150,
 )
 
 /**

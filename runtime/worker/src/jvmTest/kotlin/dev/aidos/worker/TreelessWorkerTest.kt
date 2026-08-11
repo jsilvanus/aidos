@@ -2,10 +2,13 @@ package dev.aidos.worker
 
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.treewalk.TreeWalk
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CyclicBarrier
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -161,5 +164,68 @@ class TreelessWorkerTest {
     @Test
     fun `worker ref prefix is correct`() {
         assertEquals("refs/aidos/workers/", TreelessWorker.WORKER_REF_PREFIX)
+    }
+
+    /**
+     * M24 (RFC-0053, RFC-0049, RFC-0007, D15): the audit's Part 3 finding was that D15's "the
+     * worktree is the lock" / compare-and-swap claim had no real concurrency test — the ref
+     * update never called `setExpectedOldObjectId`, despite RFC-0007's own text stating "JGit
+     * performs a compare-and-swap on the ref... this is what allows treeless workers to commit
+     * in parallel." This spins up two real JVM threads racing to write the *same* worker ref
+     * (a retried Run, or a bug driving one worker twice — not different workers on different
+     * refs, which never contend by construction) and proves genuine parallel-safety: exactly one
+     * wins, the loser fails cleanly (not silently overwritten, not a corrupted ref), and the ref
+     * ends up pointing at exactly the winner's commit.
+     */
+    @Test
+    fun `two racers writing the same worker ref cannot silently clobber each other`() {
+        val (git, dir) = makeRepo()
+        val repo = git.repository
+        val worker = TreelessWorker(repo)
+
+        val racerCount = 2
+        val barrier = CyclicBarrier(racerCount)
+        val results = ConcurrentHashMap<Int, Any>()
+
+        val threads = (1..racerCount).map { i ->
+            Thread {
+                barrier.await()  // force both racers to call commit() at nearly the same instant
+                try {
+                    val id = worker.commit(
+                        workerId = "race-worker",
+                        parentRef = Constants.HEAD,
+                        changes = listOf(FileChange.Write("racer-$i.kt", "// racer $i".toByteArray())),
+                        authorName = "Racer $i",
+                        authorEmail = "racer$i@aidos",
+                        message = "Racer $i's commit",
+                    )
+                    results[i] = id
+                } catch (e: IllegalStateException) {
+                    results[i] = e
+                }
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join(15_000) }
+
+        assertEquals(racerCount, results.size, "Both racers must finish (no hang, no silent drop)")
+        val successes = results.values.filterIsInstance<ObjectId>()
+        val rejections = results.values.filterIsInstance<IllegalStateException>()
+
+        assertEquals(1, successes.size, "Exactly one racer must win the ref update; got: $results")
+        assertEquals(
+            1, rejections.size,
+            "Exactly one racer must be rejected by the compare-and-swap, not silently lose its " +
+                "write without an error; got: $results",
+        )
+
+        val workerRef = repo.findRef("refs/aidos/workers/race-worker")
+        assertNotNull(workerRef, "Worker ref must exist after the race")
+        assertEquals(
+            successes.single(), workerRef.objectId,
+            "Ref must point to exactly the winner's commit -- not corrupted, not the loser's",
+        )
+
+        dir.deleteRecursively()
     }
 }

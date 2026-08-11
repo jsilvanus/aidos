@@ -50,6 +50,7 @@ object RuntimeClientFactory {
                 nowIso = nowIso,
                 compositionRoot = RuntimeCompositionRoot(
                     anthropicApiKey = { System.getenv("ANTHROPIC_API_KEY")?.toCharArray() },
+                    userDriver = userDb.driver,
                 ),
             )
         }

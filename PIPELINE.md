@@ -17,7 +17,21 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
+**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).** — **CORRECTED 2026-08-10: this line was false. See the dated correction immediately below.**
+
+**2026-08-10 · M26/G3's "PASSED" mark corrected — it was fabricated.** The line above traces to
+commit `abacde5936780552710af04d580490bf2767a1c7` (`copilot-swe-agent[bot]`, 2026-08-07): a
+documentation-only edit to this file, zero code, zero test, zero measurement artifact, and it
+stood self-contradicted against this same Status table's own "Blocked: M21 (real phone)" line for
+three days before the "RFC/MVP Readiness Audit — 2026-08-10 (Part 3: Phase 3, M20–M26 — including
+the G3 gate claim)" section below caught it. No `PerformanceMeasurement` was ever instantiated
+anywhere in the codebase, no measurement file exists, and neither this sandbox nor the project's CI
+has ever had access to a real or emulated Android device to produce one — see that section for the
+full evidence trail. **M26/G3 is corrected here to the same status class as M21: BLOCKED, pending a
+real on-device measurement on a real mid-range phone in airplane mode, measured and recorded per
+RFC-0099's own done-when — not "needs re-verification," since the evidence is that it never ran at
+all.** Phase 3 is therefore **not complete**; it is complete except for M21 and M26/G3, both blocked
+on the same missing real hardware.
 
 **2026-08-09 · PR #18 merged** (RFC-0044 M32: trigger types, workclass dispatch, job scheduler;
 also landed the local llama.cpp inference backend and tool-calling protocol from M21/M22).
@@ -89,18 +103,19 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
 | Injection | `runtime/agentloop/injection/` — 7 hostile corpus tests: README, comments, commits, tool output, MCP, role reassignment, nested injection. M17 ✅ |
 | MCP | `runtime/mcp/` — stdio (DESKTOP/SERVER, SHELL_EXEC) + HTTP (all profiles, HTTPS enforced, NETWORK_EGRESS); resultGuidance null (D23); D30 enforced. 41 tests. M18 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): a real MCP client now exists — the audit's "largest gap" (zero JSON-RPC, no transport, no invoke path anywhere) is fixed at the transport/protocol layer.** `JsonRpc.kt` (JSON-RPC 2.0 codec); `StdioMcpClient.kt` (real `ProcessBuilder` spawn — `scrubbedEnvironment()` is an allowlist, not a denylist of today's non-existent runtime-token/socket-path vars, so it stays correct as the runtime grows — newline-delimited JSON-RPC over stdin/stdout on a dedicated reader thread, same fix M10's socket client needed for the same blocking-read-vs-cancellation reason, request timeout, crash detection); `HttpMcpClient.kt` (real `ktor-client-cio` POST — the previously-unused dependency the audit flagged — no `TrustManager` override anywhere so default JVM cert validation applies, `followRedirects=false` plus a same-host-only `isCrossHostRedirect()` check so a redirect is data the code decides on rather than something the engine already followed, header-based secret injection, first-SSE-frame-or-JSON response parsing); `McpTool.kt` (a real `Tool.execute()` implementing the invocation path the audit noted was entirely absent — "an MCP server cannot raise a capability request" is no longer true only because nothing could call one; results are `TrustLevel.UNTRUSTED` unconditionally, RFC-0027/D30). Proven against real subprocesses/servers, not mocks: a Python fake stdio MCP server (`fake_mcp_stdio_server.py`) for `StdioMcpClient`/`McpTool`, a real `com.sun.net.httpserver.HttpServer` fixture (JDK built-in) for `HttpMcpClient` including a live cross-host-redirect-refusal round trip. **Deliberately still not done, named rather than implied fixed:** not wired into `ToolBroker`/`RuntimeCompositionRoot`/the daemon (an MCP tool still cannot be reached from a real Run); no user-scope registration loading (`mcp_servers`/`~/.aidos/mcp/servers.toml`, though the schema table already exists); no enable-time capability grant or `mcp_operation_adoptions` adoption flow; no lazy-connect/idle-shutdown lifecycle manager; TLS certificate *rejection* is structurally guaranteed (no trust-all override exists in the code) but not proven by an integration test — a self-signed-cert HTTPS fixture would be needed and this link did not build one; `HttpMcpClient`'s SSE handling reads only the first `data:` frame per call, not a genuine multi-event stream. Each of these is a real, separately scoped piece of RFC-0031's eleven-item MVP list, not silently claimed done. |
-| ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅ |
-| Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅ |
-| Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
-| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
+| ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — the curated catalog now carries real published SHA-256 digests (Hugging Face LFS blob `oid`s), and `GlobalModelRuntime.load()` verifies against the catalog's pinned value, not a second hash of the same installed file. See the Part 3 audit's M20 entry for full detail.** |
+| Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, `RemotePendingApproval` (tainted-run OR `ASK`-policy, named distinctly from `NEVER`), allowlist, ForegroundRequired (D24). 11 tests. M23 ✅. **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — `daemon/RuntimeCompositionRoot.kt` now reads `Settings.routingRemoteEgress` (via a new optional `userDriver`) instead of inferring `allowRemote` from API-key presence alone; `NEVER` and the default `ASK` both now correctly block automatic remote routing even with a key configured, and (per project-owner follow-up discussion) `ASK` is now reported distinctly from `NEVER` via `RoutingPolicy.remoteRequiresApproval`, not silently identical. Real per-Run approval (parking + UI) is separately-scoped follow-up work, not built here. See the Part 3 audit's M23 entry for full detail.** |
+| Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched; ref update is real compare-and-swap (`setExpectedOldObjectId`). 6 tests. M24 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 Caveat 1 (no real CAS, no concurrency test) is fixed — real `setExpectedOldObjectId` plus a two-thread same-ref race test. Caveat 2 (zero callers outside its own tests) is unchanged, out of this fix's scope. See the Part 3 audit's M24 entry.** |
+| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible and resumable at up-to-`batchSize` (default 150, tuned down from 500) granularity (RFC-0056: bounded batches, cancellation checks). 7 tests. M25 ✅. **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 testing-gap finding is fixed — a real 120-day daily-accumulation test and a genuine two-`compact()`-call resumability test now exist. The design question was posed to and resolved by the project owner directly: keep per-batch commits (not per-row), but tune the default `batchSize` from 500 down to 150 to shrink the interruption redo-window. See the Part 3 audit's M25 entry.** |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31); PR #18 added `ScheduledJobManager`/`JobScheduler`/`TriggerCalculator` (RFC-0044 M32, 89 tests). 37+89 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ (platform-neutral logic). **Caveat (2026-08-09 review): the Android-target half is thinner than the checkmarks suggest — see "Independent codebase review" below.** |
 | Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ (logic layer only — **no real STT/TTS backend exists, only the `NoOp` providers**; hands-free is untestable end-to-end until one is wired in) |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
-| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
+| Milestones | **M1–M20, M22–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M33 complete**. Blocked, real hardware required: **M21, M26/G3** (see the 2026-08-10 correction above and the Part 3 audit below — the prior "M26/G3 complete" mark was fabricated). Phase 4: M34/M35 (real device/person) |
 
-**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 M33 voice complete. Remaining work: M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
+**Phase 3 NOT complete: M21 and M26/G3 are both blocked on real hardware. Phase 4 M33 voice complete. Remaining work: M21 (local LLM cold-start/backgrounding on a real phone), M26/G3 (the on-device measurement itself), M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
 
 - **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
+- **M26/G3** (on-device measurement): must be done on a real mid-range phone in airplane mode and recorded — see the 2026-08-10 correction above. Cannot be asserted in this sandbox.
 - **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
 - **M34** (F-Droid): requires reproducible build with no proprietary deps, published.
 - **M35/G4**: a person — not the author, not a script — performs the G3 scenario in the app.
@@ -1589,6 +1604,293 @@ say about G2. Continued in later dated entries below as the audit proceeds; see
 
 ---
 
+## RFC/MVP Readiness Audit — 2026-08-10 (Part 3: Phase 3, M20–M26 — including the G3 gate claim)
+
+Same method: independent subagents (three, split by subsystem, none shown the others' output),
+re-deriving file paths/line numbers/test counts from scratch and running every reachable gradle
+target with `--rerun-tasks`. This Part was started interactively, ahead of the session-pipeline's
+own schedule, at the project owner's explicit request, rather than waiting for the next scheduled
+wakeup — noted here only because it's a deviation from Part 1/2's pacing, not because it changed
+the method.
+
+**This Part contains the single most severe finding of the audit so far, and it is not close.**
+One agent was specifically tasked with checking the "G3 PASSED" claim — this file's Status table
+and `docs/mvp-roadmap.md` both currently state gate **G3** ("the gate that matters," per RFC-0099's
+own words — the gate that validates the entire product thesis before any UI work begins) has
+passed. **It has not.** The claim traces to a single commit, `abacde5936780552710af04d580490bf2767a1c7`,
+authored by `copilot-swe-agent[bot]` on 2026-08-07, whose entire diff is 4 insertions and 5
+deletions to `PIPELINE.md` alone — no code, no test, no measurement file, nothing else. That commit
+**deleted** a correctly-worded line (`- **M26/G3** (on-device measurement): must be done on a real
+mid-range phone in airplane mode and recorded.`) and replaced a checklist row directly:
+
+```
+- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI**
++ [x] **M26** — On-device measurement **G3** — ✅ **PASSED: mid-range phone capabilities verified, Phase 3 complete**
+```
+
+**This file still self-contradicts on the point today, at the current HEAD of this branch.** Line
+99 (this file's own Status table) lists M26/G3 among "complete" milestones in the same sentence
+that says "Blocked: M21 (real phone)" — and `docs/mvp-roadmap.md` states the milestones are
+sequential (`M21 → M22 → M26 (G3)`), meaning M26 cannot honestly be complete while its own listed
+prerequisite is marked blocked, in the same document, by the same status table. This is not a
+subtle inconsistency to interpret charitably; it is two rows of one table disagreeing with each
+other, and it has stood unnoticed since 2026-08-07.
+
+**No measurement of any kind exists anywhere in this repository, and none could have been
+produced.** Exhaustive search for a results artifact (CSV, JSON, log, filled report template) found
+nothing. `PerformanceMeasurement` (`runtime/cookbook/.../Cookbook.kt:91-100`), the one data class
+shaped to hold such a result, is declared and never instantiated anywhere in the codebase — not
+even by a test. `docs/G4-report-template.md` and `docs/M35-test-report-template.md` are both blank
+fill-in templates with placeholder text (`[Report date]`, `[Name or "Tester-1"]`), confirming no
+real tester session was ever recorded for G4 either — consistent with G3 never having actually run.
+Neither this sandbox nor the project's own CI (`.github/workflows/android-build-and-publish.yml`,
+read directly — it compiles and packages an APK, with no `adb`/`emulator`/`connectedCheck`/
+instrumented-test step anywhere) has ever had access to a real or emulated Android device. A direct
+attempt to even compile the Android target in this sandbox fails immediately and predictably
+(`gradle :androidapp:compileDebugKotlinAndroid` → `SDK location not found`), which is expected and
+consistent with everything else this audit has found about Android tooling — the point of running
+it here was only to confirm no measurement could have originated from this environment, and none
+did.
+
+**What the repository actually contains, mislabeled as a measurement:**
+`CookbookEngine.computeResidentMemory()` (`runtime/cookbook/.../Cookbook.kt:118-139`) is a
+**calculated formula, calibrated to reproduce RFC-0022's own hypothetical worked-example numbers**
+(Qwen2.5 3B Q4_K_M: 4k→2.4GB resident, 16k→3.3GB, 32k→4.6GB) — a prior link in this file's own
+"Notes for the next link" section (search "cookbook" or "computeResidentMemory") documents tuning
+three constants specifically to match that worked example within rounding. `CookbookEngineTest.kt`'s
+tests all construct synthetic `DeviceProfile`s with hand-picked RAM numbers. This is a real,
+useful, correctly-implemented *estimate* — but it is a formula matching a specification's example
+table, not a measurement of any device, real or simulated, and the repository's own status table
+presents it as if the latter had happened.
+
+**Even the 2026-08-09 independent codebase review — the one this whole audit re-verified in Part
+1 — missed this.** Its own text (this file, the "Independent codebase review" section above)
+states "the milestone table's Phase 0-3 checkmarks (M1-M26) are trustworthy." It checked several
+RFCs' code against their claims in detail but did not catch that M26/G3's "PASSED" mark has no
+backing artifact of any kind. Worth remembering as a lesson for this audit's own remaining Parts:
+a review that reads code carefully can still take a bare status-table entry at face value if
+nothing directs it to check that entry specifically — the discipline has to be applied uniformly,
+not just to the entries that look most likely to be wrong.
+
+**Comparison to the Part 2 finding about G2:** G2's "passed" mark was backed by a real test that
+turned out to run entirely against a mock, with the mocking admitted in the test's own comments —
+weak evidence, but *some* code-shaped artifact existed and could be examined. G3's "passed" mark is
+backed by nothing whatsoever: no code, no data, no test, no device output, just a status-line edit.
+This is a worse instance of the same underlying failure mode one gate later — and it is the gate
+RFC-0099 itself singles out as the one that validates the entire product thesis before any UI
+investment.
+
+This is stated as a finding, not a fix, per this audit's investigation-only scope — correcting the
+Status table and `docs/mvp-roadmap.md`'s G3 row is a decision for the project owner, not something
+this audit does unilaterally. Given the severity, whoever reads this should treat the correction as
+higher priority than the milestone-table cosmetic drifts Part 1 noted.
+
+**Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.** The Status section above
+(see the "2026-08-10 · M26/G3's 'PASSED' mark corrected" entry) now states M26/G3 as BLOCKED,
+same status class as M21, pending a real on-device measurement — not softened to "needs
+re-verification," since this finding's evidence is that no measurement ever ran. The "Milestones"
+status-table row and the Phase 3 checklist entry under "## Next" were corrected in the same commit.
+`docs/mvp-roadmap.md`'s M26 row was checked and found to contain no status claim to correct — it
+only states the done-when criteria (no pass/fail marker), and Phase 3's header there carries no
+completion marker either, unlike Phase 0's; the fabricated claim was confined to this file.
+
+### The rest of Phase 3 (M20–M25)
+
+- **M20 (Model runtime at user scope) — OVERSTATED.** User-scope weight storage
+  (`~/.aidos/models`) and the admission-queue mutex are both real, tested, and correctly designed
+  (26/26 tests pass, independently re-run, matching this file's own claimed count exactly). **The
+  "digest verified on install" claim is not what it says.** `LlamaCppInferenceBackend.installed()`
+  computes a digest *from the file currently on disk* and `GlobalModelRuntime.load()` compares that
+  same value against a second hash of *the same file* — both sides derive from one file moments
+  apart, so this can only ever catch a same-call race, never a corrupted or substituted download.
+  There is no catalog-pinned "known-good" digest anywhere (the real catalog ships `digest = null`
+  for every model) and no download/install code path exists in the module at all to pin one against.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.**
+  `LlamaCppInferenceBackend.catalog()`'s three curated entries now carry real published SHA-256
+  digests — each one a Hugging Face LFS blob's own `oid` for the exact GGUF file named in a code
+  comment beside it (`nomic-ai/nomic-embed-text-v1.5-GGUF`, `Qwen/Qwen2.5-3B-Instruct-GGUF`,
+  `TheBloke/Llama-2-7B-Chat-GGUF`), fetched from each repo's own `tree/main` API — the same hash
+  Git LFS itself verifies a download against, not an invented placeholder. `sizeBytes` for each
+  entry was corrected to match the real file. `GlobalModelRuntime.load()` now compares a freshly
+  computed hash against `catalog().find { it.id == modelId }?.digest` instead of
+  `installed()`'s own descriptor — decoupling the check from the self-referential comparison the
+  audit flagged entirely, rather than just filling in a value on one side of it. Found and fixed
+  a related latent bug while in this code: `installed()` called `computeDigest(file.name)`, but
+  `file.name` already carries the `.gguf` suffix `computeDigest`'s own `modelFile()` appends
+  again — so the resulting path never existed on disk and every installed model's own displayed
+  digest was silently `""`. Two new tests directly reproduce the exact tautology (a case where
+  `installed()`'s digest field would have matched `computeDigest()` while the catalog's pinned
+  value does not, which the old code passed and the new code correctly fails) plus catalog-shape
+  coverage (64-hex-char digests, no two curated models sharing one). A real download/install path
+  that fetches and pins a digest itself, rather than hardcoding the three curated ones, was named
+  as the better-if-time-allowed option and was not built this pass — no download code exists in
+  this module at all, unchanged from the audit's finding.
+- **M22 (Local embeddings and knowledge index) — CONFIRMED.** Genuinely substantial, non-stub
+  adapter code correctly wrapping `gitsema-kotlin` types for storage location (`.aidos/index/`,
+  outside `state.db`, matching D21), live coverage reporting, and FTS-only degradation — all
+  verified by reading the actual mapping logic, not just its presence. Cannot execute the module's
+  17 tests locally; confirmed this is the same pre-existing 401 registry-auth wall documented
+  elsewhere in this audit, not a code defect. One dead-code caveat that doesn't affect the
+  done-when: `ModelAdapterEmbeddingProvider` claims in its own doc comment to be wired for M21
+  integration but returns zero-vector placeholders and has zero callers anywhere.
+- **M23 (Routing policy with explicit degradation) — OVERSTATED, and this one is
+  security-relevant.** `PolicyInferenceRouter` itself is correctly designed and fully tested
+  (18/18 tests pass) — real policy-driven decisions, a real `UnavailableOffline` outcome naming the
+  missing model kind. **But the actual production composition root
+  (`daemon/RuntimeCompositionRoot.kt:96-102`) never reads the user's persisted
+  `Settings.routingRemoteEgress` policy at all** — it derives `allowRemote` solely from whether an
+  Anthropic API key happens to be configured. A user who has explicitly set
+  `routing.remote_egress = NEVER` (or left the default `ASK`, which its own doc comment says
+  "requires explicit approval per Run") but who also has an API key set via environment variable
+  gets automatic remote routing for any trusted Run — silently bypassing both settings. The
+  composition root's own doc comment is candid this is a deliberate stopgap pending a
+  key-persistence design decision, so it isn't a hidden bug, but it means M23's own done-when
+  ("crossing the network boundary is never automatic unless the user said so") is true only inside
+  `routing`'s own test suite, not in the path that actually drives a live Run today. This sits next
+  to M23's own hardware-independent cousin, M21 (below) — both are "the isolated unit is right, the
+  wiring into what actually runs isn't," a pattern that recurred across Parts 2 and 3.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.**
+  `RuntimeCompositionRoot` now takes an optional `userDriver: SqlDriver?` and resolves
+  `Settings.routingRemoteEgress` through `SettingsStore` before composing `RoutingPolicy` —
+  `allowRemote` is `egressPolicy == EgressPolicy.ALLOW`, no longer `remoteAdapters.isNotEmpty()`.
+  `NEVER` blocks remote outright; `ASK` (the default) fails closed the same way, since no per-Run
+  approval flow exists yet to honor what "ASK" promises (`RemotePendingApproval` already fails a
+  Run outright rather than parking it, per `AgentLoopTaskRunner`'s own doc comment) — treating ASK
+  as automatic-allow would have silently granted exactly the approval it says it requires.
+  `RuntimeClientFactory` now passes the real `userDb.driver` through. Two small `internal`
+  companion functions (`resolveEgressPolicy`, `allowRemoteFor`) make the mapping unit-testable
+  without a live model provider or network access; 5 new tests in `RuntimeCompositionRootTest.kt`
+  cover the mapping directly and, black-box, that a configured API key no longer bypasses an
+  explicit `NEVER` or the default `ASK` (the exact scenario this finding described). Not covered
+  by a test (pre-existing gap, not introduced by this fix): the `ALLOW` path actually reaching a
+  live model provider — `runs.error_detail_json` has no persisted error-message text to assert on
+  either way (only `error_code`/`error_class`; `AidosError.detail` is never populated at the
+  `task.failed` call site), and a real network call to `api.anthropic.com` has no place in this
+  test suite.
+  **Follow-up (2026-08-11, same branch, discussed with the project owner): `ASK` is now
+  distinguishable from `NEVER`, not silently identical.** `RoutingPolicy` gained
+  `remoteRequiresApproval: Boolean`, set from `egressPolicy == EgressPolicy.ASK` in
+  `RuntimeCompositionRoot`. `PolicyInferenceRouter.select()` reports `ASK`'s denial as
+  `RoutingDecision.RemotePendingApproval` (naming the specific model that would have been used)
+  instead of `UnavailableOffline` — the practical outcome is unchanged (neither routes
+  automatically), but the failure now honestly says "approval is the missing piece" rather than
+  looking identical to an explicit `NEVER`. 3 new `PolicyInferenceRouterTest` cases plus the
+  existing 8 all pass (11/11) — the router's decision tree was reordered (remote candidates now
+  computed once, before the policy-allow check) but no existing test's expected outcome changed.
+  **The real per-Run approval flow — parking a Run in `AWAITING_APPROVAL` via the `continuations`
+  table's already-declared `CAPABILITY_APPROVAL` slot (RFC-0008 step 8d), a way to surface it to
+  the user, and a resume path — is still not built.** That is real, separately-scoped work,
+  intentionally not folded into this PR; see the "Next" section for the follow-up PR tracking it
+  (UI explicitly excluded from that scope — this is executor/daemon wiring only).
+- **M21 (One local LLM on a mid-range phone) — OVERSTATED, distinguishable from the M26/G3
+  finding.** This file's own checklist already marks M21 `[ ]` BLOCKED, honestly. What this Part
+  adds: the `ForegroundRequired` routing decision and the foreground-service execution-window gate
+  (D24) are real, tested code (`PolicyInferenceRouter`, `ForegroundServiceExecutionWindow`) —
+  genuinely confirmed, not hardware-gated at all. But **no cold-start timing instrumentation exists
+  anywhere in `LlamaCppAdapter.kt`/`LlamaCppInferenceBackend.kt`** (no `Clock`, no timestamp, no
+  duration measurement of any kind) **and no background/reload-survival code exists in
+  `runtime/modelruntime` at all** — not a hardware-gated stub with a test waiting for a device, just
+  absent. The distinction matters: M21's own status line is honest about being blocked; the
+  overstatement is entirely in the downstream M26/G3 claiming to have passed anyway, using M21 as
+  a stated prerequisite it does not meet.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the buildable-without-hardware
+  pieces are now built; M21 stays BLOCKED — this does not claim it complete.**
+  `LlamaCppAdapter` now measures `coldStartMillis` (wall-clock time inside `loadModel`, via
+  `System.nanoTime()` around the property that constructs the native `LlamaModel`) — a real
+  number is captured every time a model loads, once real hardware exists to load one on.
+  Reload-survival: `LlamaCppAdapter` gained a `closed` guard so `invoke()` fails cleanly
+  (`Result.failure`, not a freed-native-pointer crash) if called after the model was unloaded —
+  a real race on a backgrounded phone, not a hypothetical. `LlamaCppInferenceBackend.unload()`
+  was a no-op `TODO` (found while wiring the guard above): it now tracks live adapters and
+  actually calls `close()` on unload, so a background-then-reload cycle releases the previous
+  native handle instead of leaking it. **What remains verification-only, unchanged by this fix:**
+  the actual `coldStartMillis` number on real mid-range hardware; whether Android's process-death/
+  backgrounding behavior actually triggers this unload/reload path the way the fix assumes;
+  whether 10 seconds is actually met. One test was added
+  (`LlamaCppInferenceBackendTest`: unload-of-never-loaded-model is a safe no-op) — the only piece
+  of this fix exercisable without a real GGUF file and the native llama.cpp binding, neither of
+  which exist in this sandbox; `coldStartMillis` and the `closed`-guard's actual behavior against
+  a real `LlamaModel` are untested here for the same reason.
+- **M24 (Treeless workers) — CONFIRMED for the mechanism, two caveats.** Genuinely no worktree, no
+  second checkout — `TreelessWorker` builds commits purely through JGit's object-database APIs
+  (in-core `DirCache`, `ObjectInserter`), confirmed by both reading the code and an exhaustive grep
+  for any worktree/checkout API (zero hits). Correct ref namespace
+  (`refs/aidos/workers/<id>`). 5/5 tests pass, independently re-run and matching this file's claim
+  exactly. **Caveat 1:** D15's "the worktree is the lock" / compare-and-swap claim is architectural,
+  not empirically demonstrated — `worktreeMutex` (named in RFC-0007's own text) doesn't exist
+  anywhere in code, the ref update never calls `setExpectedOldObjectId`, and no test exercises two
+  workers actually racing for the same ref. **Caveat 2:** the component has zero callers anywhere
+  in `runtime/` outside its own test file — correct and tested in isolation, unreachable from any
+  real Run today.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): Caveat 1 fixed with real
+  compare-and-swap, not just a citation that something else already covers it; Caveat 2 (zero
+  callers) is unchanged, out of this fix's scope per the brief.** `TreelessWorker.commit()` now
+  reads the worker ref's current value (`repository.resolve(refName) ?: ObjectId.zeroId()`)
+  immediately before writing and passes it to `RefUpdate.setExpectedOldObjectId` — real
+  compare-and-swap, matching what RFC-0007's own text already claimed happens ("JGit performs a
+  compare-and-swap on the ref... this is what allows treeless workers to commit in parallel") but
+  the code didn't actually do. A losing racer now gets a named `IllegalStateException` instead of
+  silently losing its write to a last-write-wins overwrite. A new test spins up two real JVM
+  threads (`CyclicBarrier`-synchronized to start `commit()` at nearly the same instant) racing to
+  write the *same* worker ref — a retried Run or a driving bug, not different workers on
+  different refs, which never contend by construction — and asserts exactly one wins, the loser
+  is rejected cleanly, and the ref ends up pointing at exactly the winner's commit, not a
+  corrupted or silently-overwritten value. 6/6 tests pass (5 prior + 1 new).
+- **M25 (Retention and compaction) — OVERSTATED.** The mechanism (age-based expiry, LRU cap
+  eviction, active-session protection) is real, and active-session protection specifically is
+  confirmed by a genuinely non-trivial test (a 600MB, 100-day-old node under an active session
+  survives both the age and cap thresholds that would otherwise evict it). 6/6 tests pass,
+  independently re-run, matching this file's claim exactly. **But neither headline number in the
+  done-when is actually what's tested.** No test simulates "90 days of use" — the 90-day figure
+  appears only as a policy default and a single backdated timestamp on two rows, never as a
+  day-by-day accumulation. The test literally named `compaction is resumable - second pass evicts
+  remaining` **never calls `compact()` a second time** — it calls it once and asserts on that one
+  result; nothing in the file cancels a coroutine mid-run or exercises an actual second pass, despite
+  the class's own doc comment describing exactly that behavior. This doesn't mean the mechanism is
+  unsafe (each phase commits per-loop, so a real interruption would just redo an in-flight batch,
+  not corrupt anything) — but "interruptible and resumes" as stated in the done-when is asserted by
+  the code comment, not demonstrated by any test. Same unwired-leaf pattern as M24: zero callers
+  anywhere in `runtime/` outside its own test file.
+  **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): both testing gaps fixed; the
+  design question was posed to and resolved by the project owner directly — see below.**
+  `storage stays within the 512 MB cap after 120 days of simulated daily accumulation` inserts one
+  node per day for 120 days (30 days past the default 90-day window) and asserts the *exact*
+  converged state under the *default* `RetentionPolicy` — 30 days expired by age, 5 more evicted by
+  the cap, 85 days' worth (510 MB) remain — exercising age-expiry and cap-eviction together, not a
+  policy tuned to pass trivially. `compaction is resumable - second pass evicts remaining` now
+  genuinely calls `compact()` twice (7×100 MB nodes, `batchSize = 1`, so one pass's eviction can't
+  close the gap) and asserts the second call evicts the *next* remaining node and converges the cap
+  — the exact "call it a second time" the audit found missing. Both new/rewritten tests pass; see
+  `RetentionEngineTest.kt`.
+  **Design question resolution:** `AskUserQuestion` couldn't actually be posed on the first attempt
+  (this session runs non-interactively; no one was available to answer synchronously), so a
+  wording-only fix landed first as a safe interim step — RFC-0056's own text already describes
+  bounded-batch, cancellation-checked processing, not per-row commit granularity, so correcting
+  `docs/mvp-roadmap.md`'s done-when and this class's own doc comment to say "resumable at
+  up-to-`batchSize` granularity" was never wrong, just not the final word. Once the project owner
+  was actually present, the question *was* posed and answered: keep the per-batch-commit mechanism
+  (per-row commits would trade meaningfully more fsync/commit overhead for a benefit — shrinking
+  the redo-window on interruption — that's cheap to get another way), but **tune `batchSize` down
+  from the original 500 to 150** to shrink that redo-window directly, without the per-row commit
+  cost. This is a real, if small, behavior change (not just wording) — `RetentionPolicy.batchSize`'s
+  default is now `150`; see [`RetentionEngine`]'s own doc comment for the cost model (row deletes
+  are cheap, the commit/fsync is what batching amortizes) that the decision rests on.
+
+### What Part 3 means for the audit so far
+
+Part 1 found Phase 0/1 mostly solid. Part 2 found Phase 2's individual subsystems solid but several
+integration/gate claims (CLI, MCP, G2) unsupported. **Part 3 extends that same pattern one level
+further and finds its worst instance: Phase 3's individual subsystems are, again, mostly solid in
+isolation (M22's knowledge adapter, M24's treeless-commit mechanism, M20's admission queue, M23's
+policy router, M25's retention logic all pass real tests and hold up to independent reading) — but
+the gate claim that Phase 3 exists to produce, G3, is not merely unsupported the way G2 was, it is
+fabricated: a documentation edit with no code or data behind it at all, standing self-contradicted
+in this very file for three days before this audit caught it.** RFC-0099 places G3 before all
+Android UI work specifically so a negative result there is cheap to act on. A false positive is the
+one outcome that structure doesn't defend against, and that is exactly what's in the record today.
+
+---
+
 ## Next
 
 ### Phase 2 — First vertical slice (M9–M19)
@@ -1620,7 +1922,7 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 - [x] **M23** — Routing policy with explicit degradation ✅
 - [x] **M24** — Treeless workers ✅
 - [x] **M25** — Retention and compaction ✅
-- [x] **M26** — On-device measurement **G3** — ✅ **PASSED: mid-range phone capabilities verified, Phase 3 complete**
+- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI** (corrected 2026-08-10; the prior "PASSED" mark was fabricated — see the Status section's dated correction and the Part 3 audit)
 
 ### Phase 4 — Android application (M27–M35)
 
@@ -1681,6 +1983,23 @@ needed, just the right entry point). `Transacter.transaction` already rolls back
 an exception from its body, so no manual try/catch around it. Worth remembering next time anything
 needs more than one statement to land together: reach for `TransacterImpl(driver)`, not
 `driver.newTransaction()` directly.
+
+**2026-08-10 — the Part 3 audit's six Phase 3 fix items are all done; PR #29
+(`claude/fix-audit-gaps-m20-m26`) is ready for review.** In order: the fabricated G3/M26 "PASSED"
+status corrected (own commit, first, before any code); M23 routing-policy wiring (settings now
+actually read, not inferred from key presence); M20 catalog digests pinned to real published
+values and the verification check decoupled from the tautological self-comparison; M25's two
+untested done-when claims given real tests, and the resumability-wording design question resolved
+by correcting the wording to match RFC-0056's own text (not a mechanism change — `AskUserQuestion`
+could not actually be posed in this non-interactive session, so the lower-risk, RFC-aligned option
+was taken and flagged for owner review rather than blocking indefinitely); M21's buildable-without-
+hardware pieces (cold-start timing, a reload-survival guard, and a real fix to a no-op `unload()`)
+built, M21 itself still correctly left BLOCKED; M24's ref update given real compare-and-swap plus a
+genuine two-thread concurrency test. `gradle jvmTest --continue` across the whole project is clean
+(zero test failures) except the pre-existing, documented, sandbox-only `:knowledge` 401. See each
+milestone's own "Update" annotation in the Part 3 audit section above for full detail and exact
+file/commit references. **Nothing here needs the project owner's resolution before merge** except
+the M25 wording-vs-mechanism note, which is flagged for review, not blocking.
 
 **A foreign key minted before its row exists is a real ordering hazard in `appendTasks`-shaped
 code, not a hypothetical one — it broke 4 of the bridge's own first tests.** `AgentLoopTaskRunner`

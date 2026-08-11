@@ -10,6 +10,7 @@ import org.eclipse.jgit.lib.FileMode
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.ObjectInserter
 import org.eclipse.jgit.lib.PersonIdent
+import org.eclipse.jgit.lib.RefUpdate
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevWalk
 
@@ -28,7 +29,16 @@ import org.eclipse.jgit.revwalk.RevWalk
  * 5. The worker ref (`refs/aidos/workers/<id>`) is updated to point to the new commit.
  *
  * The worktree is the lock (D15): because there is no worktree, there is no possibility of
- * two workers writing the same path concurrently. The ref update is the locking mechanism.
+ * two workers writing the same path concurrently. The ref update is the locking mechanism —
+ * genuinely, not just by convention: [commit] reads the worker ref's current value immediately
+ * before updating it and passes that as [RefUpdate.setExpectedOldObjectId], the real compare-
+ * and-swap RFC-0007 itself describes ("JGit performs a compare-and-swap on the ref... this is
+ * what allows treeless workers to commit in parallel," RFC-0007 D15/table). Two calls racing for
+ * the *same* [workerId] — a retried Run, a bug driving one worker twice — cannot silently
+ * clobber each other: the loser's expected-old no longer matches what's actually on the ref by
+ * the time it updates, so JGit rejects it (`RefUpdate.Result.LOCK_FAILURE` or `REJECTED`) instead
+ * of a last-write-wins overwrite, and [commit] turns that into a named exception rather than
+ * silently returning a commit id that isn't what the ref points to.
  *
  * Security: worker commits land on `refs/aidos/workers/<id>`, never directly on `main` or any
  * user branch. A user must explicitly review and merge the commit (RFC-0032).
@@ -125,11 +135,24 @@ class TreelessWorker(private val repository: Repository) {
             val newCommitId = inserter.insert(commitBuilder)
             inserter.flush()
 
-            // Update the worker ref.
+            // Update the worker ref via a real compare-and-swap (RFC-0007, D15) — read the ref's
+            // current value immediately before writing, and require it to still hold that value
+            // at write time. ObjectId.zeroId() is JGit's own convention for "this ref must not
+            // exist yet"; repository.resolve() already returns null for that case.
             val refName = "$WORKER_REF_PREFIX$workerId"
+            val expectedOld = repository.resolve(refName) ?: ObjectId.zeroId()
             val refUpdate = repository.updateRef(refName)
+            refUpdate.setExpectedOldObjectId(expectedOld)
             refUpdate.setNewObjectId(newCommitId)
-            refUpdate.update()
+            val result = refUpdate.update()
+            check(
+                result == RefUpdate.Result.NEW ||
+                    result == RefUpdate.Result.FAST_FORWARD ||
+                    result == RefUpdate.Result.FORCED
+            ) {
+                "Worker ref $refName was updated concurrently — expected $expectedOld, " +
+                    "update result was $result (RFC-0007 compare-and-swap rejected this write)"
+            }
 
             return newCommitId
         } finally {

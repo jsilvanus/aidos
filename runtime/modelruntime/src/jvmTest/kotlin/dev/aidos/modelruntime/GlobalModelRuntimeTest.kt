@@ -123,6 +123,58 @@ class GlobalModelRuntimeTest {
         assertTrue(result.isSuccess)
     }
 
+    // ─── M20: verification compares against the catalog's pinned digest, not a second hash of
+    // the same installed file (the audit's Part 3 finding — see LlamaCppInferenceBackendTest for
+    // the corresponding real-catalog coverage). ────────────────────────────────────────────────
+
+    private fun fakeBackendWithDivergentCatalog(
+        catalogDigest: String?,
+        installedDigest: String?,
+        digestFor: (String) -> String,
+    ): InferenceBackend = object : InferenceBackend {
+        private val deletedModels = mutableSetOf<String>()
+        override suspend fun catalog() = listOf(descriptor("test-7b", digest = catalogDigest))
+        override suspend fun installed() =
+            if ("test-7b" in deletedModels) emptyList() else listOf(descriptor("test-7b", digest = installedDigest))
+        override suspend fun computeDigest(modelId: String) = digestFor(modelId)
+        override suspend fun delete(modelId: String) { deletedModels.add(modelId) }
+        override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(fakeAdapter)
+        override suspend fun unload(modelId: String) {}
+    }
+
+    @Test
+    fun `load succeeds when the actual file matches the catalog digest, even if installed() reports a different value`() = runTest {
+        // Pre-M20-fix, this exact case was untestable as a distinct scenario: the check compared
+        // installed()'s own digest field against computeDigest() of the same file, so the two
+        // were definitionally equal (or the file didn't exist). Now the catalog is the source of
+        // truth -- installed()'s own (differing, e.g. stale-cache) digest field must not matter.
+        val backend = fakeBackendWithDivergentCatalog(
+            catalogDigest = "catalog-pinned-hash",
+            installedDigest = "stale-installed-field",
+            digestFor = { "catalog-pinned-hash" },
+        )
+        val runtime = GlobalModelRuntime(backend)
+        assertTrue(runtime.load("test-7b").isSuccess)
+    }
+
+    @Test
+    fun `load fails against the catalog digest even when installed()'s own digest field would have matched`() = runTest {
+        // This is the exact tautology the audit flagged: installed()'s digest field is computed
+        // from the same file computeDigest() re-hashes, so the two always agreed with each other
+        // regardless of whether the file actually matches anything known-good. A real corrupted/
+        // substituted download must now be caught by comparing against the catalog instead.
+        val backend = fakeBackendWithDivergentCatalog(
+            catalogDigest = "catalog-pinned-hash",
+            installedDigest = "actual-file-hash",
+            digestFor = { "actual-file-hash" },
+        )
+        val runtime = GlobalModelRuntime(backend)
+        val result = runtime.load("test-7b")
+        assertTrue(result.isFailure)
+        assertIs<DigestMismatchException>(result.exceptionOrNull())
+        assertTrue(backend.installed().isEmpty(), "mismatched weights must be deleted")
+    }
+
     @Test
     fun `unload removes model from loaded list`() = runTest {
         val backend = fakeBackend(listOf(descriptor("test-7b")))
