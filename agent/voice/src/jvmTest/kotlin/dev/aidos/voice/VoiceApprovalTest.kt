@@ -9,12 +9,15 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
-import kotlinx.coroutines.runBlocking
 
 /**
- * Tests for M33 voice support (RFC-0057).
+ * Tests for M33 voice summary and approval handling (RFC-0057).
+ *
+ * Split from the original VoiceTest.kt (RFC-0103): SpokenSummaryGenerator and
+ * VoiceApprovalHandler depend on agent/androidapp's execution-graph and settings types, so they
+ * live in agent/voice. The STT/TTS provider tests moved to engine/voice/VoiceProvidersTest.kt.
  */
-class VoiceTest {
+class VoiceApprovalTest {
 
     @Test
     fun `SpokenSummaryGenerator creates deterministic output`() {
@@ -29,13 +32,13 @@ class VoiceTest {
             )
         )
         val summary = RunSummaryComputer.compute(rows, RunStatus.COMPLETED)
-        
+
         val spoken = SpokenSummaryGenerator.generate(summary, "test-project", "test-session")
-        
+
         // Verify it is deterministic (same input = same output)
         val spoken2 = SpokenSummaryGenerator.generate(summary, "test-project", "test-session")
         assertEquals(spoken, spoken2, "Spoken summary must be deterministic")
-        
+
         // Verify it contains runtime-owned fields, no model prose
         assertTrue(spoken.contains("test-project"), "Should contain project name")
         assertFalse(spoken.contains("model-generated"), "Should not contain model prose")
@@ -57,9 +60,9 @@ class VoiceTest {
             )
         )
         val summary = RunSummaryComputer.compute(rows, RunStatus.RUNNING)
-        
+
         val spoken = SpokenSummaryGenerator.generate(summary, "test-project", "test-session")
-        
+
         assertTrue(spoken.contains("thing") || spoken.contains("need"), "Should mention pending items")
         assertTrue(spoken.contains("approve") || spoken.contains("skip"), "Should prompt for response")
     }
@@ -276,21 +279,10 @@ class VoiceTest {
         )
 
         val prompt = VoiceApprovalHandler.generateVoiceApprovalPrompt(row)
-        
+
         // Should contain only runtime-owned fields, not file content or model output
         assertTrue(prompt.isNotEmpty(), "Prompt should not be empty")
         assertFalse(prompt.contains("../"), "Prompt should not contain file paths from repository")
         assertTrue(prompt.contains("approve") || prompt.contains("skip"), "Should give voice options")
-    }
-
-    @Test
-    fun `STT and TTS providers exist (even if no-op for MVP)`() {
-        val stt = NoOpSttProvider()
-        val tts = NoOpTtsProvider()
-        
-        runBlocking {
-            assertFalse(stt.isAvailable(), "No-op STT provider should report not available")
-            assertFalse(tts.isAvailable(), "No-op TTS provider should report not available")
-        }
     }
 }

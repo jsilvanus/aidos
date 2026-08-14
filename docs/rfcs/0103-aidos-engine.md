@@ -96,9 +96,10 @@ per platform (RFC-0050, RFC-0055). Aidos Engine repeats that shape rather than f
 serving straight into an Android app module:
 
 - **Aidos Engine Core** is a platform-agnostic KMP module — `modelruntime`, `models`,
-  `downloads`, `huggingface`, `cookbook`, and `voice`, moved out of `agent/` into their own
-  `engine/` Gradle project rather than merged into an Android module. It has no Android or UI
-  dependency,
+  `downloads`, `huggingface`, `cookbook`, and the STT/TTS provider interfaces (`SttProvider`,
+  `TtsProvider` — the model-serving half of the original `voice` module; see below), moved out of
+  `agent/` into their own `engine/` Gradle project rather than merged into an Android module. It
+  has no Android or UI dependency,
   and it exposes model loading, inference, and the admission/eviction policy through one
   interface, the same way `RuntimeClient` is the seam RFC-0052 defines for the main runtime.
 - **Aidos Engine** (the Android app) hosts Aidos Engine Core in-process inside its foreground
@@ -134,6 +135,14 @@ serving straight into an Android app module:
   be the same type Aidos SDK deserializes into on the Agent side; a vendored copy would let the
   two silently drift. `agent/` and `engine/` still share no *service* module, and neither depends
   on the other's build.
+- The original `voice` module does not move to `engine/` as one piece, and an earlier draft of
+  this RFC was wrong to list it as one of the six that do. Only its model-serving surface —
+  `SttProvider`/`TtsProvider` — is Engine's concern. `SpokenSummaryGenerator` (renders a Run
+  summary as spoken text, explicitly "no model call") and `VoiceApprovalHandler` (voice-based
+  capability approval, RFC-0057) both depend directly on `agent/androidapp`'s execution-graph
+  types and on `agent/settings`, which is `agent/`'s own application code and a *service*
+  module — not something `engine/` can depend on under this RFC's boundary at all, unlike
+  `kernel`. They stay in `agent/voice`; `engine/voice` keeps only the provider interfaces.
 
 ### Aidos SDK: one client implementation
 
