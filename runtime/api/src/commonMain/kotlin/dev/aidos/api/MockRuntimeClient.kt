@@ -184,6 +184,9 @@ class MockRuntimeClient : RuntimeClient {
             CapabilityResult.Success(nextId())
 
         override suspend fun denyEffect(runId: String, taskId: String, reason: String) {}
+
+        override suspend fun answerPrompt(runId: String, answer: String): CapabilityResult =
+            CapabilityResult.Success(nextId())
     }
 
     override val knowledge: KnowledgeQueries = object : KnowledgeQueries {

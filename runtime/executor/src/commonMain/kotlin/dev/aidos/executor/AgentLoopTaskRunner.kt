@@ -12,23 +12,31 @@ import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.AvailabilityTier
+import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.SuspendedOperation
 import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
 import dev.aidos.kernel.TaskKind
+import dev.aidos.kernel.TaskState
+import dev.aidos.kernel.ToolAvailability
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.TrustLevel
@@ -45,7 +53,13 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * Effectively unbounded execution window — desktop profile and tests. Deliberately not the
@@ -76,6 +90,88 @@ private data class StoredToolResult(
     val detail: String?, // DenialReason name, or an error message — meaning depends on outcome
     val text: String, // concatenated ContentBlock.Text content (MVP: text-only replay, see below)
     val trustLevel: String,
+)
+
+/**
+ * `continuations.operation_detail_json` for a `CAPABILITY_APPROVAL` park (RFC-0008 step 8d).
+ *
+ * [adapterModelId] is a model id, not a [ModelAdapter] instance — an adapter has behaviour
+ * (`invoke()`), so it cannot round-trip through JSON; storing the id and re-resolving it via
+ * [AgentLoopTaskRunner]'s injected `resolveRemoteAdapter` on resume is what keeps this durable
+ * (D3) instead of relying on anything held in memory across the park. [resolution] is `null`
+ * while parked and becomes `"approved"` once `SqliteExecutor.resolveCapabilityApproval` resolves
+ * it — a denial deletes the row outright rather than writing `"denied"` here, since there is
+ * nothing left to resume.
+ */
+@Serializable
+private data class CapabilityApprovalDetail(
+    val adapterModelId: String,
+    val reason: String,
+    val resolution: String? = null,
+)
+
+/**
+ * `continuations.operation_detail_json` for a `TOOL_CALL` park: a tool call denied specifically
+ * with [DenialReason.REQUIRES_APPROVAL] (`CapabilityConstraints.requiresApprovalPerUse`).
+ *
+ * Unlike [CapabilityApprovalDetail], resuming here needs no `resolution` flag read back by this
+ * class — [SqliteExecutor.resolveToolCallApproval]'s approve path grants a **fresh** short-lived
+ * capability (same subject/permission/scope, `requiresApprovalPerUse = false`) rather than trying
+ * to make [capabilityId] pass validation a second time; [AgentLoopTaskRunner.executeToolCall]'s
+ * existing `resolveCapability()` call already re-resolves "the most recently issued, unexpired,
+ * unrevoked match" fresh on every execution, so it picks up the new grant automatically and needs
+ * no changes for the resumed attempt to succeed. [capabilityId] here is only what the *resolver*
+ * (outside this module) needs to look up the original grant's permission/scope to attenuate from.
+ */
+@Serializable
+private data class ToolCallApprovalDetail(
+    val capabilityId: String,
+    val toolName: String,
+)
+
+/**
+ * `continuations.operation_detail_json` for a `USER_PROMPT` park: the model called the built-in
+ * `ask_user` tool (RFC-0006 `SuspendedOperation.UserPrompt`, no RFC-0011 declared-plan machinery
+ * needed — see PIPELINE.md's USER_PROMPT design note for why this shape was picked over that one).
+ *
+ * [answer] is `null` while parked. Unlike [CapabilityApprovalDetail]'s `resolution` (a fixed
+ * `"approved"`/absent signal) this carries the actual free-text reply — `executeToolCall`'s resume
+ * path reads it back and treats it as the tool's own successful result text, exactly what the
+ * model would have gotten from any other tool that returned [ToolOutcome.Ok].
+ */
+@Serializable
+private data class AskUserDetail(
+    val question: String,
+    val answer: String? = null,
+)
+
+/**
+ * `ask_user`'s descriptor. Not registered with [EffectBroker] — asking a question exercises no
+ * FS/git/shell authority, so routing it through `ToolBroker.invoke()`/`CapabilityManager.validate()`
+ * would be gating something that needs no gate. [executeToolCall] intercepts this tool name before
+ * any capability resolution is attempted; [Tools.REQUIRED_PERMISSION] is present only because
+ * [ToolDescriptor] requires one, not because it is ever checked for this tool.
+ */
+private val askUserToolDescriptor = ToolDescriptor(
+    name = "ask_user",
+    title = "Ask the user",
+    description = "Ask the user a question when you need information or a decision only they can " +
+        "provide, and wait for their reply. The Run pauses until they answer.",
+    inputSchema = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("question") { put("type", "string") }
+        }
+        put("required", buildJsonArray { add("question") })
+    },
+    effect = EffectKind.Read,
+    requiredPermission = Permission.NOTIFY,
+    recoveryClass = RecoveryClass.IDEMPOTENT,
+    availability = ToolAvailability(
+        profiles = setOf(PlatformProfile.DESKTOP, PlatformProfile.MOBILE, PlatformProfile.HEADLESS_SERVER),
+        tier = AvailabilityTier.UNIVERSAL,
+        requiresNetwork = false,
+    ),
 )
 
 /**
@@ -118,11 +214,23 @@ private data class StoredToolResult(
  *   resolved fresh in [executeToolCall], immediately before the call — the actual authority
  *   decision still lives entirely in `CapabilityManager.validate()`, called next by
  *   `ToolBroker.invoke()`; this bridge only looks up which existing grant to hand it.
- * - **The approval flow (RFC-0008 step 8d, `Task(kind = CAPABILITY_REQUEST)`, `AWAITING_APPROVAL`)**
- *   — a `RoutingDecision.RemotePendingApproval` fails the Run outright instead of parking it.
- *   Building the park/resume machinery (a `continuations` row, an event that un-parks it) is
- *   substantial and was ruled out of this link's scope deliberately, the same way RFC-0009's own
- *   MVP section defers `CHECKABLE` recovery probes.
+ * - ~~The approval flow (RFC-0008 step 8d, `AWAITING_APPROVAL`)~~ **Built, `claude/continuation-flow`**:
+ *   a `RoutingDecision.RemotePendingApproval` now parks — see [executeModelCall]'s
+ *   `CapabilityApprovalDetail` branch and [SqliteExecutor.resolveCapabilityApproval] (the
+ *   approve/deny entry point). `RoutingDecision.ForegroundRequired` still fails the task outright,
+ *   deliberately: its own resume signal is "the foreground service becomes active," which needs
+ *   real Android `Service`/`RuntimeServiceHost` lifecycle wiring (M27) this bridge does not have
+ *   access to — parking it now would produce a Run stuck `YIELDED` forever with no way to un-park,
+ *   which is worse than today's honest failure. Flagged, not silently left half-done.
+ * - **`CHILD_RUN` parking (RFC-0006 driver/worker fan-out)** — `Task.awaitingRunId` and
+ *   `SuspendedOperation.ChildRun` exist in `kernel`, and the generic park primitive this class now
+ *   uses for `CAPABILITY_APPROVAL` (`TaskResult.park`, `SqliteExecutor`'s continuations handling)
+ *   would work for it too, but nothing anywhere spawns a child Run yet — RFC-0011's driver/worker
+ *   workflow is a separate, larger feature with no existing call site to wire parking into. Out of
+ *   this link's scope; tracked in `PIPELINE.md`, not silently absent.
+ * - **`TOOL_CALL`/`USER_PROMPT` parking** — RFC-0006's own MVP section defers "full
+ *   continuation-based resumption for all operation types"; these two are legitimately future
+ *   work, not a gap this bridge should be manufacturing work to close.
  * - **Instruction adoption UX (RFC-0016)** — [discoverInstructionSet] reads `instruction_adoptions`
  *   but nothing in this codebase writes to it yet, so a freshly discovered `AGENTS.md`/`CLAUDE.md`
  *   is correctly excluded from the system turn (never adopted) and stays that way until some other
@@ -157,6 +265,15 @@ class AgentLoopTaskRunner(
      * to inject (most tests) keep the pre-M19 behaviour of every tool call being denied.
      */
     private val resolveCapability: suspend (subjectId: String, permission: Permission) -> CapabilityId? = { _, _ -> null },
+    /**
+     * RFC-0008 step 8d: looks up a remote [ModelAdapter] by [ModelAdapter.modelId] when resuming
+     * a `CAPABILITY_APPROVAL` continuation after approval — the same adapter [InferenceRouter]
+     * named at park time, re-resolved rather than round-tripped through JSON (an adapter has
+     * behaviour). Defaults to always-null so callers with no remote adapters to inject (most
+     * tests, and any profile with no remote provider configured) never resolve an approval; the
+     * task then fails with a clear "no longer available" message instead of hanging.
+     */
+    private val resolveRemoteAdapter: (modelId: String) -> ModelAdapter? = { null },
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
@@ -168,6 +285,11 @@ class AgentLoopTaskRunner(
     private suspend fun executeModelCall(task: Task): TaskResult {
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // RFC-0008 step 8d: this task may be re-executing after a parked CAPABILITY_APPROVAL was
+        // just approved. Recovery is a query (D3) -- the continuations row, not anything held in
+        // memory across the park, is what says "use this adapter, skip the router this once."
+        // router.select() is a pure function of RoutingPolicy + RoutingContext (neither changes
+        // mid-Run), so calling it again here would reproduce the identical RemotePendingApproval.
         val routingCtx = RoutingContext(
             profile = run.platformProfile,
             networkAvailable = run.networkAvailable,
@@ -175,18 +297,41 @@ class AgentLoopTaskRunner(
             runTaint = run.taintLevel,
             executionWindow = UnboundedWindow,
         )
-        val decision = router.select(ModelKind.LLM, routingCtx)
-        val adapter = when (decision) {
-            is RoutingDecision.Local -> decision.adapter
-            is RoutingDecision.RemoteApproved -> decision.adapter
-            is RoutingDecision.RemotePendingApproval ->
-                return TaskResult(false, "Remote approval required: ${decision.reason}")
-            is RoutingDecision.UnavailableOffline ->
-                return TaskResult(false, "Model unavailable offline: ${decision.kind}")
-            else -> return TaskResult(false, "Routing failed: $decision")
+        val approvedAdapter = loadApprovedCapabilityAdapter(task.runId)
+        val adapter: ModelAdapter = if (approvedAdapter != null) {
+            deleteContinuation(task.runId)
+            resolveRemoteAdapter(approvedAdapter)
+                ?: return TaskResult(false, "Approved model '$approvedAdapter' is no longer available")
+        } else {
+            when (val decision = router.select(ModelKind.LLM, routingCtx)) {
+                is RoutingDecision.Local -> decision.adapter
+                is RoutingDecision.RemoteApproved -> decision.adapter
+                is RoutingDecision.RemotePendingApproval ->
+                    return TaskResult(
+                        success = true,
+                        park = ParkRequest(
+                            suspendedOperation = SuspendedOperation.CapabilityApproval(
+                                requestId = task.runId.value,
+                                permission = Permission.NETWORK_EGRESS,
+                            ),
+                            operationDetailJson = json.encodeToString(
+                                CapabilityApprovalDetail(
+                                    adapterModelId = decision.adapter.modelId,
+                                    reason = decision.reason,
+                                ),
+                            ),
+                            taskState = TaskState.AWAITING_APPROVAL,
+                        ),
+                    )
+                is RoutingDecision.UnavailableOffline ->
+                    return TaskResult(false, "Model unavailable offline: ${decision.kind}")
+                else -> return TaskResult(false, "Routing failed: $decision")
+            }
         }
 
-        val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+        // ask_user is not registered with the broker (RFC-0006 USER_PROMPT: no FS/git/shell
+        // authority to gate), so it is appended here rather than sourced from descriptorsFor().
+        val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + askUserToolDescriptor
         val history = reconstructHistory(task.runId, task.ordinal)
         val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
@@ -313,6 +458,13 @@ class AgentLoopTaskRunner(
             ?: return TaskResult(false, "No tool_calls row for task ${task.id.value}")
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // ask_user carries no FS/git/shell authority to gate, so it never reaches the broker/
+        // capability-resolution machinery below at all -- see [askUserToolDescriptor]'s own doc
+        // comment for why it isn't registered as a broker Tool in the first place.
+        if (callRow.toolName == "ask_user") {
+            return executeAskUser(task, callRow, run)
+        }
+
         // RFC-0008 step 8c, M19: resolved fresh here, immediately before the call it gates --
         // not carried from executeModelCall's fan-out -- so a capability revoked in between the
         // model turn and this step is never used (D3: nothing security-relevant held across a
@@ -330,9 +482,43 @@ class AgentLoopTaskRunner(
         )
         // Denied/Failed outcomes are data returned to the model (RFC-0008 Security #3), not a
         // reason to fail this Task — only an actual runner-level problem (missing row, no Run)
-        // does that. This matches AgentLoop.kt's own handling of the same broker call.
+        // does that. This matches AgentLoop.kt's own handling of the same broker call. The one
+        // exception is immediately below: REQUIRES_APPROVAL is not the model's problem to route
+        // around, so it parks instead of falling through to the denial-as-data path.
         val result = broker.invoke(subjectId, call, run.taintLevel)
 
+        // RFC-0008 step 8d, TOOL_CALL continuation: a human explicitly gated this specific
+        // exercise of authority (CapabilityConstraints.requiresApprovalPerUse) -- unlike every
+        // other denial reason here, feeding this back to the model as "denied, try something
+        // else" would defeat the point of the gate. Park and let a human decide instead. Nothing
+        // durable has been written yet for this attempt (no attempt row, no tool_calls.outcome,
+        // no taint update -- ToolBroker's denied() reports TRUSTED, so taint couldn't have moved
+        // anyway), so parking here is a clean no-op on everything except task/Run state.
+        val deniedForApproval = (result.outcome as? ToolOutcome.Denied)
+            ?.takeIf { it.reason == DenialReason.REQUIRES_APPROVAL }
+        if (deniedForApproval != null && capabilityId != null) {
+            return TaskResult(
+                success = true,
+                park = ParkRequest(
+                    suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
+                    operationDetailJson = json.encodeToString(
+                        ToolCallApprovalDetail(capabilityId = capabilityId.value, toolName = call.toolName),
+                    ),
+                    taskState = TaskState.AWAITING_APPROVAL,
+                ),
+            )
+        }
+
+        return finishToolCall(task, callRow, run, result)
+    }
+
+    /**
+     * The common tail of a tool call, real or synthetic: persist taint, write the outcome and
+     * attempt, and fan in to the next `MODEL_CALL` once every sibling is terminal. Shared by
+     * [executeToolCall]'s normal `broker.invoke()` path and [executeAskUser]'s resumed path (a
+     * [ToolCallResult] it constructs itself, never having gone through the broker at all).
+     */
+    private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.
         val newTaint = run.taintLevel raisedBy result.trustLevel
@@ -398,6 +584,59 @@ class AgentLoopTaskRunner(
         } else {
             TaskResult(success = true)
         }
+    }
+
+    /**
+     * RFC-0006 `USER_PROMPT`: the model called `ask_user`. Parks on first execution;
+     * [SqliteExecutor.resolveUserPrompt]'s answer path resets the task to `PENDING` and re-drives,
+     * and this re-execution finds the answer already sitting in the continuation row (recovery is
+     * a query, D3) — never calls the broker, never resolves a capability, since asking a question
+     * exercises no authority to gate in the first place.
+     */
+    private fun executeAskUser(task: Task, callRow: ToolCallRow, run: RunContext): TaskResult {
+        val answered = loadAskUserAnswer(task.runId)
+        if (answered != null) {
+            deleteAskUserContinuation(task.runId)
+            val result = ToolCallResult(
+                callId = callRow.callId,
+                outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.Text(answered)),
+                // The human's own direct reply to the model's question -- first-party input, not
+                // fetched/untrusted content (RFC-0027); does not raise taint, same as the Run's
+                // original triggering user message.
+                trustLevel = TrustLevel.TRUSTED,
+            )
+            return finishToolCall(task, callRow, run, result)
+        }
+
+        val question = parseJsonObject(callRow.argumentsJson)["question"]?.jsonPrimitive?.content ?: ""
+        return TaskResult(
+            success = true,
+            park = ParkRequest(
+                suspendedOperation = SuspendedOperation.UserPrompt(promptId = callRow.callId, question = question),
+                operationDetailJson = json.encodeToString(AskUserDetail(question = question)),
+                taskState = TaskState.AWAITING_INPUT,
+            ),
+        )
+    }
+
+    private fun loadAskUserAnswer(runId: RunId): String? {
+        val detailJson = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_detail_json FROM continuations " +
+                "WHERE run_id = ? AND suspended_operation = 'USER_PROMPT'",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: return null
+        return json.decodeFromString<AskUserDetail>(detailJson).answer
+    }
+
+    private fun deleteAskUserContinuation(runId: RunId) {
+        driver.execute(
+            identifier = null,
+            sql = "DELETE FROM continuations WHERE run_id = ?",
+            parameters = 1,
+        ) { bindString(0, runId.value) }
     }
 
     // ─── No-progress detection ───────────────────────────────────────────────
@@ -537,6 +776,32 @@ class AgentLoopTaskRunner(
             },
             parameters = 1,
         ) { bindString(0, runId.value) }.value
+
+    /**
+     * Returns the parked [CapabilityApprovalDetail.adapterModelId] if [runId] has a
+     * `CAPABILITY_APPROVAL` continuation whose `resolution` is `"approved"` — null while still
+     * parked (`resolution == null`), and null when there is no continuation at all (the normal
+     * case for every task that never hit `RemotePendingApproval`).
+     */
+    private fun loadApprovedCapabilityAdapter(runId: RunId): String? {
+        val detailJson = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_detail_json FROM continuations " +
+                "WHERE run_id = ? AND suspended_operation = 'CAPABILITY_APPROVAL'",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: return null
+        val detail = json.decodeFromString<CapabilityApprovalDetail>(detailJson)
+        return detail.adapterModelId.takeIf { detail.resolution == "approved" }
+    }
+
+    private fun deleteContinuation(runId: RunId) {
+        driver.execute(
+            identifier = null,
+            sql = "DELETE FROM continuations WHERE run_id = ?",
+            parameters = 1,
+        ) { bindString(0, runId.value) }
+    }
 
     private fun updateRunTaint(runId: RunId, taint: TrustLevel) {
         driver.execute(

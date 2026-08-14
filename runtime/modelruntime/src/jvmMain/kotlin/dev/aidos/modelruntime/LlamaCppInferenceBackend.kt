@@ -28,7 +28,15 @@ class LlamaCppInferenceBackend : InferenceBackend {
 
     /**
      * Catalog of known-good GGUF models (RFC-0022 curated set).
-     * Each model has a digest for content-addressed storage and verification.
+     *
+     * M20 (RFC-0022, RFC-0054, RFC-0045): each entry's [ModelDescriptor.digest] is the real
+     * SHA-256 published by the model's own Hugging Face repository (its LFS pointer's `oid`,
+     * the same hash Git LFS itself verifies a download against) for the exact file named below —
+     * not a placeholder. [GlobalModelRuntime.load] compares an installed file's freshly computed
+     * hash against *this* pinned value, not a second hash of the same file, so a corrupted or
+     * substituted download is actually detectable. Re-derive by fetching
+     * `https://huggingface.co/api/models/<repo>/tree/main` and reading the matching file's
+     * `lfs.oid` if a catalog entry ever needs to point at a different quantization or revision.
      */
     override suspend fun catalog(): List<ModelDescriptor> = listOf(
         ModelDescriptor(
@@ -38,8 +46,9 @@ class LlamaCppInferenceBackend : InferenceBackend {
             providerId = "huggingface",
             isLocal = true,
             contextWindow = 2048,
-            sizeBytes = 274_877_906L, // 262 MB Q4_0
-            digest = null, // Would be set from catalog metadata
+            // nomic-ai/nomic-embed-text-v1.5-GGUF, nomic-embed-text-v1.5.Q4_0.gguf
+            sizeBytes = 77_802_880L, // 74 MB Q4_0
+            digest = "8d88b9d579f2dcce28f65de1ad3946453adc281d7b784f2a75afe25158136d44",
         ),
         ModelDescriptor(
             id = "qwen2.5-3b-instruct-q4_k_m",
@@ -48,8 +57,9 @@ class LlamaCppInferenceBackend : InferenceBackend {
             providerId = "huggingface",
             isLocal = true,
             contextWindow = 32768,
-            sizeBytes = 2_147_483_648L, // 2 GB Q4_K_M
-            digest = null,
+            // Qwen/Qwen2.5-3B-Instruct-GGUF, qwen2.5-3b-instruct-q4_k_m.gguf
+            sizeBytes = 2_104_932_768L, // 2.1 GB Q4_K_M
+            digest = "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
         ),
         ModelDescriptor(
             id = "llama-2-7b-chat-q4_k_m",
@@ -58,8 +68,9 @@ class LlamaCppInferenceBackend : InferenceBackend {
             providerId = "huggingface",
             isLocal = true,
             contextWindow = 4096,
-            sizeBytes = 3_865_470_976L, // 3.6 GB Q4_K_M
-            digest = null,
+            // TheBloke/Llama-2-7B-Chat-GGUF, llama-2-7b-chat.Q4_K_M.gguf
+            sizeBytes = 4_081_004_224L, // 3.8 GB Q4_K_M
+            digest = "08a5566d61d7cb6b420c3e4387a39e0078e1f2fe5f055f3a03887385304d4bfa",
         ),
     )
 
@@ -74,7 +85,11 @@ class LlamaCppInferenceBackend : InferenceBackend {
             if (!file.isFile || !file.name.endsWith(".gguf")) return@mapNotNull null
 
             val metadata = GgufLoader.loadMetadata(file) ?: return@mapNotNull null
-            val digest = computeDigest(file.name)
+            // modelId has no ".gguf" suffix (see modelFile()) -- file.name already carries it,
+            // so passing file.name here (pre-M20-fix) built "<name>.gguf.gguf", which never
+            // existed on disk, and computeDigest() silently returned "" for every installed
+            // model. file.nameWithoutExtension is the correct modelId.
+            val digest = computeDigest(file.nameWithoutExtension)
 
             ModelDescriptor(
                 id = file.nameWithoutExtension,
@@ -112,6 +127,15 @@ class LlamaCppInferenceBackend : InferenceBackend {
     }
 
     /**
+     * Tracks the live [LlamaCppAdapter] per loaded model so [unload] can actually free the
+     * native handle (M21, RFC-0022, RFC-0045) -- before this, [unload] was a no-op TODO and a
+     * backgrounded-then-reloaded model leaked its previous native resource instead of releasing
+     * it. [GlobalModelRuntime]'s own admission queue mutex already serializes every [load]/
+     * [unload] call site that touches this map, so a plain (non-concurrent) map is safe here.
+     */
+    private val liveAdapters = mutableMapOf<String, LlamaCppAdapter>()
+
+    /**
      * Load a model into memory (RFC-0022, RFC-0045).
      *
      * Uses llama-cpp-java JNI binding to load and run GGUF models.
@@ -134,6 +158,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
         return try {
             // M21: Load real llama.cpp model with JNI binding
             val adapter = LlamaCppAdapter(modelId, file, metadata)
+            liveAdapters[modelId] = adapter
             Result.success(adapter)
         } catch (e: Exception) {
             Result.failure(e)
@@ -141,13 +166,16 @@ class LlamaCppInferenceBackend : InferenceBackend {
     }
 
     /**
-     * Unload a model from memory.
-     * With the admission queue (RFC-0022), only one model is loaded at a time.
-     * Calls close() on the adapter if it's a LlamaCppAdapter to free native resources.
+     * Unload a model from memory (M21, RFC-0022, RFC-0045).
+     *
+     * With the admission queue (RFC-0022), only one model is loaded at a time. Calls
+     * [LlamaCppAdapter.close] to actually free the native handle -- the audit's Part 3 finding
+     * was that this was a no-op TODO, so a background/reload cycle leaked the previous native
+     * model instead of releasing it before the replacement loaded. `close()` is idempotent, so
+     * this is safe even if [GlobalModelRuntime] or a caller already closed the same adapter.
      */
     override suspend fun unload(modelId: String) {
-        // TODO: M21 — Keep track of loaded models and call close() on them
-        // For now, the adapter lifecycle is managed by GlobalModelRuntime
+        liveAdapters.remove(modelId)?.close()
     }
 
     private fun modelFile(modelId: String): File =

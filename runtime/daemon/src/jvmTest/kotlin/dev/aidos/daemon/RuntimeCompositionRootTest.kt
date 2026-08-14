@@ -7,12 +7,19 @@ import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SessionId
+import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingSetByKind
+import dev.aidos.settings.SettingsWriter
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
 import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * [RuntimeCompositionRoot]: composes a real `CapabilityManager`/`ToolBroker` (with
@@ -29,6 +36,12 @@ class RuntimeCompositionRootTest {
     private fun openDriver() = run {
         val root = Files.createTempDirectory("composition-root-test").toFile()
         AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
+            as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+    }
+
+    private fun openUserDriver() = run {
+        val root = Files.createTempDirectory("composition-root-user-test").toFile()
+        AidosStorage.openUser(DesktopPaths.userDb(root.path), "test-1.0") { nowIso }.driver
             as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
     }
 
@@ -106,5 +119,81 @@ class RuntimeCompositionRootTest {
         )
 
         assertEquals("PENDING", runState(driver, runId.value), "nothing lost (D3) -- left exactly as RunCreator made it")
+    }
+
+    // ─── M23: routing.remote_egress is actually read, not inferred from key presence ──────────
+
+    @Test
+    fun `allowRemoteFor maps only ALLOW to true`() {
+        assertTrue(RuntimeCompositionRoot.allowRemoteFor(EgressPolicy.ALLOW))
+        assertFalse(RuntimeCompositionRoot.allowRemoteFor(EgressPolicy.NEVER))
+        assertFalse(
+            RuntimeCompositionRoot.allowRemoteFor(EgressPolicy.ASK),
+            "ASK fails closed until a per-Run approval flow exists -- see the class's own doc comment",
+        )
+    }
+
+    @Test
+    fun `resolveEgressPolicy reads the persisted user-scope setting, not a hard-coded default`() {
+        val userDriver = openUserDriver()
+        SettingsWriter(userDriver).writeUser(
+            Settings.routingRemoteEgress, JsonPrimitive("ALLOW"), SettingSetByKind.USER, nowIso,
+        )
+        assertEquals(EgressPolicy.ALLOW, RuntimeCompositionRoot.resolveEgressPolicy(userDriver))
+    }
+
+    @Test
+    fun `resolveEgressPolicy falls back to the declared default (ASK) with no userDriver`() {
+        assertEquals(EgressPolicy.ASK, RuntimeCompositionRoot.resolveEgressPolicy(null))
+        assertEquals(Settings.routingRemoteEgress.default, RuntimeCompositionRoot.resolveEgressPolicy(null))
+    }
+
+    @Test
+    fun `drive() denies automatic remote routing when the user set NEVER, even with a key configured`() = runTest {
+        val driver = openDriver()
+        val userDriver = openUserDriver()
+        SettingsWriter(userDriver).writeUser(
+            Settings.routingRemoteEgress, JsonPrimitive("NEVER"), SettingSetByKind.USER, nowIso,
+        )
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid)
+        val runId = createRun(driver, pid, sid)
+
+        // A key IS configured here -- before the M23 fix this alone made allowRemote true
+        // regardless of the user's own NEVER setting (the exact gap the audit's Part 3 flagged).
+        RuntimeCompositionRoot(anthropicApiKey = { "fake-key".toCharArray() }, userDriver = userDriver).drive(
+            projectDriver = driver, runId = runId, projectId = ProjectId(pid), sessionId = sid,
+            deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = false,
+            idGen = { nextId() }, nowIso = { nowIso },
+        )
+
+        // No local model and remote denied by policy -- UnavailableOffline, decided by the router
+        // before any network call, so this stays fast and network-independent.
+        assertEquals("FAILED", runState(driver, runId.value))
+    }
+
+    @Test
+    fun `drive() denies automatic remote routing under the default ASK policy, with no settings written at all`() = runTest {
+        val driver = openDriver()
+        val userDriver = openUserDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid)
+        val runId = createRun(driver, pid, sid)
+
+        // Nothing written to userDriver -- resolves to the declared default, ASK. Before the M23
+        // fix, a configured key alone was sufficient for automatic remote routing even under this
+        // default, silently bypassing what "ASK requires explicit approval per Run" promises.
+        RuntimeCompositionRoot(anthropicApiKey = { "fake-key".toCharArray() }, userDriver = userDriver).drive(
+            projectDriver = driver, runId = runId, projectId = ProjectId(pid), sessionId = sid,
+            deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = false,
+            idGen = { nextId() }, nowIso = { nowIso },
+        )
+
+        // RFC-0008 step 8d (branch `claude/continuation-flow`): ASK now genuinely parks pending
+        // approval instead of failing outright -- the M23 fix above stopped it from routing
+        // automatically, and this fix stopped that denial from being indistinguishable from a
+        // hard failure. "denies automatic routing" is still true (no model was invoked); it just
+        // no longer means "fails the Run" the way it did when this test was written.
+        assertEquals("YIELDED", runState(driver, runId.value))
     }
 }

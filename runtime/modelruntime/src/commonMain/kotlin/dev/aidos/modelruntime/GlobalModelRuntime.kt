@@ -51,20 +51,28 @@ class GlobalModelRuntime(
             // Re-check inside the lock — another load may have completed while we waited.
             loadedModels[modelId]?.let { return@withLock Result.success(it) }
 
-            val descriptor = backend.installed().find { it.id == modelId }
+            backend.installed().find { it.id == modelId }
                 ?: return@withLock Result.failure(
                     IllegalStateException("Model $modelId is not installed")
                 )
 
-            // Verify digest before loading into memory (RFC-0022).
-            descriptor.digest?.let { expectedDigest ->
+            // Verify digest before loading into memory (RFC-0022, M20).
+            //
+            // The expected digest comes from the catalog -- the known-good value pinned ahead of
+            // any download -- never from installed()'s own descriptor. installed() computes its
+            // digest from the file currently on disk, so comparing against it would only ever
+            // re-hash the same bytes twice: a same-call race detector, not a corruption/
+            // substitution check. Comparing against the catalog's independently-sourced value is
+            // what actually lets a mismatch mean something (see DigestMismatchException).
+            val catalogDigest = backend.catalog().find { it.id == modelId }?.digest
+            if (catalogDigest != null) {
                 val actualDigest = backend.computeDigest(modelId)
-                if (actualDigest != expectedDigest) {
+                if (actualDigest != catalogDigest) {
                     backend.delete(modelId)
                     return@withLock Result.failure(
                         DigestMismatchException(
                             modelId = modelId,
-                            expected = expectedDigest,
+                            expected = catalogDigest,
                             actual = actualDigest,
                         )
                     )

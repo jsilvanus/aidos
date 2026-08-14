@@ -17,7 +17,269 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).**
+**2026-08-11 (later still, again) · USER_PROMPT park/resume is now built too** — the project owner
+picked the standalone `ask_user` tool design (not RFC-0011's plan-approval anchor) explicitly in
+conversation, closing the last of the three "beyond MVP" continuation asks:
+
+- **`ask_user` is a synthesized `ToolDescriptor`** (`AgentLoopTaskRunner.executeModelCall`'s
+  `tools` list gets `broker.descriptorsFor(...) + askUserToolDescriptor`), **not registered with
+  `ToolBroker`** — asking a question exercises no FS/git/shell authority, so routing it through
+  `CapabilityManager.validate()` would be gating something that needs no gate.
+  `executeToolCall()` intercepts the tool name before any capability resolution is even attempted.
+- Parks with `SuspendedOperation.UserPrompt(promptId, question)`, task state `AWAITING_INPUT`
+  (not `AWAITING_APPROVAL` — a question isn't a yes/no). `SqliteExecutor.resolveUserPrompt(runId,
+  answer, denialReason)`: a non-null `answer` resumes (writes the answer into the continuation,
+  resets the task, re-drives); `null` declines (mirrors the other two continuation kinds' deny
+  path exactly — delete continuation, fail task and Run).
+- On resume, `executeToolCall` reads the answer back out of the continuation and constructs a
+  synthetic `ToolCallResult.Ok` with the answer as the tool's own text content, `TrustLevel.TRUSTED`
+  (a human's direct reply to the model's question is first-party input, not fetched/untrusted
+  content — RFC-0027 — so it does not raise Run taint, same as the Run's original triggering
+  message). Refactored the ~60-line "finish a tool call" tail (taint, outcome, attempt, fan-in)
+  out of `executeToolCall` into a shared `finishToolCall()` so both the real-broker path and this
+  synthetic one use the exact same completion logic — no second, slightly-different copy to drift.
+- **New CLI verb**: `answer-run <runId> <answer...>` — deliberately not folded into `approve-run`
+  (a question has no yes/no to approve). `deny-run` *does* reach a parked question's decline path
+  (via `RuntimeCompositionRoot.resolveAnyApproval`'s three-way fallback: `CAPABILITY_APPROVAL` →
+  `TOOL_CALL` → `USER_PROMPT`-decline-only, each tried only after the previous returns `WrongKind`,
+  which is returned before any mutation — see that method's own doc comment).
+- `EffectApprovalGateway` gained a second method, `answer(...)`, alongside `resolve(...)` —
+  extending it was fine (`runtime/api/` is not listed as frozen in this file's own "Where
+  everything lives" table; only `runtime/kernel/` is). `CapabilityCommands.answerPrompt(...)` is a
+  new method on the **`api` module's** `RuntimeClient`/`CapabilityCommands` — confirmed distinct
+  from a same-named, unrelated, genuinely-frozen `kernel.RuntimeClient`/`CapabilityCommands` pair
+  that predates `api`'s and has zero implementers left anywhere outside `runtime/kernel/` itself
+  (checked via grep before touching anything) — vestigial, not live, not touched.
+- Tests: `AgentLoopTaskRunnerTest.kt` (executor level, real SQLite, fake model — same convention as
+  every other test here) — the model calling `ask_user` parks instead of executing anything;
+  answering resumes and the model's *next* turn genuinely receives the answer as tool-result text
+  (not just "no exception"); declining fails the Run without executing anything.
+- **Deliberately not built**: a daemon-subprocess-level socket test (the pattern
+  `RealSocketIntegrationTest.kt` uses for TOOL_CALL's deny-only hermetic case). Unlike
+  `requiresApprovalPerUse`, which is a deterministic constraint checked before any model call,
+  `ask_user` is only reachable by the **model actually deciding to call it** — there is no way to
+  drive a real daemon subprocess into a parked `USER_PROMPT` state without either a real,
+  non-deterministic, network-dependent call to a live model provider, or faking the model inside
+  `RuntimeCompositionRoot` (which has no injection seam for that — by design, per its own doc
+  comment: it composes a real stack, not a test double). The executor-level tests are the
+  authoritative mechanism tests here; the wire protocol layer (`Methods.kt`,
+  `RuntimeSocketServer.kt`, `SocketRuntimeClient.kt`, CLI) is proven by the full project compiling
+  and the identical pattern already working for the other two continuation kinds, not by a
+  dedicated live test — a real, honestly-scoped gap, not a silent one.
+- `gradle jvmTest --continue`: 0 failures project-wide (79 test suites) except the pre-existing
+  sandbox-only `:knowledge` 401. `schema/check.py`: clean (untouched — no schema changes needed).
+
+**All three "beyond MVP" continuation-flow asks are now done: CAPABILITY_APPROVAL, TOOL_CALL,
+USER_PROMPT.** `CHILD_RUN` remains the one `SuspendedOperation` kind with no resolution yet — it's
+`session_017yU5Atvr4UszSQy7DCQmw2`'s job (RFC-0011, branch `claude/rfc-0011-driver-worker`), not
+this branch's.
+
+**2026-08-11 (later still) · TOOL_CALL park/resume is now actually built** (the design two entries
+below described; this entry supersedes "designed but not built" for TOOL_CALL specifically —
+USER_PROMPT is still exactly where that entry left it, undecided and unbuilt).
+
+- `AgentLoopTaskRunner.executeToolCall()` special-cases `ToolOutcome.Denied(DenialReason.REQUIRES_APPROVAL)`:
+  parks (writes a `TOOL_CALL` continuation naming the denied `capabilityId`/`toolName`) instead of
+  falling through to the existing "denial is data returned to the model" path used for every other
+  denial reason.
+- `SqliteExecutor.resolveToolCallApproval(runId, approved, denialReason, onApprove)` — the generic
+  resolve shape (mirrors `resolveCapabilityApproval`), with an `onApprove` callback so the actual
+  capability-granting logic (which needs a `CapabilityManager` this class doesn't have) can run
+  *before* the task resets to `PENDING` and re-drives.
+- `RuntimeCompositionRoot.resolveToolCallApproval(...)` supplies that callback: parses the
+  continuation's `capabilityId`, looks up the original grant, and issues a **fresh, ~60s-lived**
+  capability with the same subject/permission/scope but `requiresApprovalPerUse = false` — per the
+  design note, no `EffectBroker`/kernel changes. `AgentLoopTaskRunner.executeToolCall`'s existing
+  `resolveCapability()` call already re-resolves fresh on every execution, so the resumed attempt
+  picks up the new grant with no other code path touched.
+- **A real, separate bug surfaced by testing this and got fixed in the same commit**:
+  `CapabilityResolver.resolve()`'s "most recently issued" tie-break used `issuedAt` alone.
+  `nowIso()` has finite resolution, so the fresh grant landing in the *same* instant as the
+  original it replaces is the normal case here, not an edge case — and `maxByOrNull` on a tie
+  returns whichever element the underlying query happened to list first, which could silently
+  resolve back to the *original*, still-gated capability. Fixed with a secondary tie-break on
+  `CapabilityId` (a `UuidV7`, monotonic even within one instant). This bug predates this work —
+  any two capabilities issued in the same tick for the same subject/permission were already
+  exposed to it — this is just the first thing that ever exercised the case.
+- `RuntimeCompositionRoot.resolveAnyApproval(...)` dispatches between `CAPABILITY_APPROVAL` and
+  `TOOL_CALL` by trying the former and falling through to the latter on
+  `CapabilityApprovalResolution.WrongKind` (returned before either resolver mutates anything, so
+  the fallthrough never double-resolves) — wired into `SqliteEffectApprovalGateway`, so the
+  existing `approve-run <runId>` / `deny-run <runId>` CLI commands work unchanged for both
+  continuation kinds; no new CLI verbs needed.
+- Tests (`CapabilityResolutionEndToEndTest.kt`, executor module — real `SqliteCapabilityManager` +
+  real `ToolBroker`, only the model adapter is fake, same convention as every other test in this
+  file): a `requiresApprovalPerUse` grant parks instead of denying-as-data; approving grants a
+  fresh capability and the *resumed* tool call really executes (proven via `tool_calls.outcome =
+  'OK'`, not just "no exception"); denying fails the Run without granting anything. `gradle jvmTest
+  --continue`: 0 failures project-wide except the pre-existing sandbox-only `:knowledge` 401.
+
+**2026-08-11 (later still) · RFC-0011 driver/worker orchestration (`claude/rfc-0011-driver-worker`,
+`session_017yU5Atvr4UszSQy7DCQmw2`) rescoped mid-session by the project owner to a single
+prerequisite bug fix — the orchestration mechanics (spawn/park/resume, DEPENDS_ON/SKIPPED, worker
+spawning, `TreelessWorker` wiring) were not attempted.** The branch handed off two entries above
+started as a full RFC-0011 attempt; while reading `SqliteCapabilityManager` to work out how
+`WorkerSpawner` would re-derive a driver's actual capability scope/budget for delegation, a
+correctness bug was found that would have made worker attenuation silently wrong, and the owner
+asked to fix only that and stop. Real, tested, and landed on this branch:
+
+- **`CapabilityScope.toJson()`/`parseScope()` — full round-trip for all eight scope variants.**
+  Before this fix, `parseCapabilityRow` reconstructed a *hard-coded* `Filesystem` scope for every
+  capability regardless of its actual type, using the entire raw `scope_json` string as the literal
+  path. `toJson()` itself only ever serialized `Filesystem`'s distinguishing field (`root`) — every
+  other variant wrote `type` (and `project_id`, where applicable) and silently dropped the rest
+  (`Git.allowedOperations`, `Shell.workingDirectory`/`allowedCommands`, `Network.allowedHosts`/etc.,
+  `Model.allowedProviders`/`allowedKinds`, `Worker.maxWorkerCount`/`allowedRoles`,
+  `Secrets.allowedSecretIds`, `Events.topicPatterns`). Any capability of a non-`Filesystem` scope,
+  reloaded from storage, came back with a corrupted scope. `parseScope()` is the new read side,
+  dispatching on the `type` discriminator `toJson()` now always writes.
+- **`Budget` — all seven dimensions round-trip, not just `modelCalls`/`steps`.** The prior link
+  (`claude/continuation-flow`, two entries below) had already fixed `parseConstraints()` existing at
+  all, but flagged `Budget`'s other five fields (`inputTokens`, `outputTokens`, `costUnits`,
+  `wallClockSeconds`, `toolInvocations`) as a known remaining gap in the *encode* side. Fixed here —
+  RFC-0028/RFC-0011's split-budget delegation depends on every dimension surviving storage, not just
+  two of seven.
+- **`delegate()` was never actually callable — a separate bug this surfaced, not introduced.** It
+  inserts a `capabilities` row whose `audit_ref` foreign-keys to `audit_log(id)`, but unlike
+  `grant()` (which calls `insertAuditRow` first), it never wrote that row — every call failed
+  `SQLITE_CONSTRAINT_FOREIGNKEY`. `insertAuditRow` gained `kind`/`actorKind` parameters (default
+  unchanged, so `grant()`'s call site and behavior are untouched) and `delegate()` now calls it with
+  `kind = "CapabilityDelegated"`, `actorKind = "SESSION"` — a delegation's actor is the delegating
+  session, not a user, so reusing `grant()`'s hard-coded `"USER"` would have misattributed the audit
+  trail RFC-0046 exists to keep accurate.
+- Tests: `CapabilityTest.kt` gained four — `Filesystem`/`Git`/`Shell` scope round-trip through
+  `grant()` → `loadForSubject()` with a fully populated `CapabilityConstraints`/`Budget`, and a
+  `delegate()` round-trip proving a split budget and a real (non-`Filesystem`-clobbered) scope both
+  survive `loadForSubject()` on the delegated subject. All green (22/22 in `:capability`), plus
+  `:broker`, `:executor`, and `:daemon` jvmTest re-run clean (no other module reaches these private
+  functions directly, but several construct `SqliteCapabilityManager` in production paths).
+  `python3 schema/check.py` green (no schema touched).
+
+**RFC-0011 itself remains unbuilt — the design work earlier in this branch's session (see the
+handoff entry immediately below) is still accurate and still the plan** for whoever picks this back
+up: `WorkerSpawner` (executor module, reads a to-be-added `worker_spawn_requests` detail table),
+`SqliteExecutor` DEPENDS_ON-aware scheduling + SKIPPED cascade + `ChildRun` park + a
+`resumeAwaitingParent` hook at Run terminal transitions, a `WorkerCommitter` seam giving
+`TreelessWorker` its first real caller, `COMPOSITE` dispatch in `AgentLoopTaskRunner`, and wiring
+through `RuntimeCompositionRoot`. None of that exists yet. What *does* now exist that it will need:
+a capability-manager layer that actually tells the truth about what scope and budget a capability
+holds when reloaded — this fix was a precondition, not a substitute.
+
+**2026-08-11 (later same day) · TOOL_CALL/USER_PROMPT parking requested (beyond MVP scope) —
+one real fix landed, the park/resume mechanism itself is designed but not built, honestly not
+attempted rather than rushed.** Requested explicitly, overriding the earlier scope call that RFC-0006
+correctly excludes these from MVP. Time available before this was picked up was too short (an
+already-scheduled pipeline wakeup) to build either mechanism to the standard the rest of this file
+holds — no mocks, real tests, real done-when — so nothing half-built was left in its place. What
+actually landed, real and tested:
+
+- **`SqliteCapabilityManager.validate()` now enforces `CapabilityConstraints.requiresApprovalPerUse`**
+  (`runtime/capability/.../SqliteCapabilityManager.kt`) — previously declared in the kernel data
+  model and written to `constraints_json` on every grant, but never read back or checked; a grant
+  issued with it set behaved identically to one without. Now denies with `DenialReason.REQUIRES_APPROVAL`
+  unconditionally, every use. Inert today (grep confirms nothing in this codebase sets the flag
+  true yet), so this is zero behavior change until something does.
+- **Fixed the actual reason that check couldn't work: `parseCapabilityRow` never parsed
+  `constraints_json` at all.** It read the column, then discarded it and constructed
+  `CapabilityConstraints()` — the all-defaults constructor — regardless of what was actually
+  granted. Every constraint (not just `requiresApprovalPerUse`) was silently unenforced on any
+  capability loaded back from storage post-grant. Added `parseConstraints()`, the missing read side
+  of the existing (write-only) `toJson()`. `budget` only round-trips `modelCalls`/`steps` because
+  that's all `toJson()` currently writes — `Budget`'s other five fields are a separate, pre-existing
+  gap in the *encode* side, not touched here.
+- Test: `CapabilityTest.kt` — a grant with `requiresApprovalPerUse = true` is denied twice in a row
+  (proves "per use" really means every use, not just the first — and proves the round trip, since
+  the old bug would have silently passed this test with `Allowed`).
+
+**The park/resume mechanism itself — what TOOL_CALL and USER_PROMPT actually need — is designed,
+not built. See "Notes for the next link" for the full design**, including why the obvious approach
+(mirror `CAPABILITY_APPROVAL`'s "bypass the gate on resume" pattern by adding a parameter to
+`EffectBroker.invoke()`) doesn't work: `runtime/kernel/` is frozen at G0 (this file's own "Where
+everything lives" table), and that interface lives there.
+
+**2026-08-11 · RFC-0011 (driver/worker orchestration, `docs/rfcs/0011-sessions.md`) handed to a
+separate session** (`session_017yU5Atvr4UszSQy7DCQmw2`, branch will be `claude/rfc-0011-driver-worker`
+once it starts pushing) — substantially larger than a single link: spawning a worker, attenuated
+capability delegation (RFC-0018), budget splitting (RFC-0028, `Budget.split()` already exists and is
+tested but has zero callers), and treeless isolation (RFC-0053, `TreelessWorker` already built, M24,
+also zero callers outside its own tests) all need to come together for the first time. `CHILD_RUN`
+parking (the kernel types already exist — `Task.awaitingRunId`, `SuspendedOperation.ChildRun`) is
+this feature's problem to solve using the same generic `TaskResult.park` primitive
+`claude/continuation-flow` built, not a separate piece of work.
+
+**2026-08-11 · RFC-0008 step 8d: continuation flow (CAPABILITY_APPROVAL park/resume) is built —
+branch `claude/continuation-flow`, PR not yet open (see "PR" note below).** The gap PR #29's M23
+follow-up exposed — `AgentLoopTaskRunner.executeModelCall()` failing a Run outright on
+`RoutingDecision.RemotePendingApproval` instead of parking it — is fixed:
+
+- `SqliteExecutor` (`runtime/executor/`) gained a generic park primitive (`TaskResult.park`,
+  `ParkRequest`) — a `TaskRunner` can now hand back "park, don't complete/fail," and `drive()`
+  writes a real `continuations` row, moves the task to `AWAITING_APPROVAL`/`AWAITING_INPUT`, and
+  yields the Run, instead of the only two outcomes it had before (COMPLETED/FAILED).
+- `resolveCapabilityApproval(runId, approved, denialReason)` is the resolution entry point:
+  approve flips the continuation's `resolution` to `"approved"`, resets the task to `PENDING`, and
+  re-drives the Run — the resumed `executeModelCall` reads the resolution back out of the same row
+  (recovery is a query, D3) and uses the adapter [`RoutingDecision.RemotePendingApproval`] named,
+  skipping `PolicyInferenceRouter.select()` this once (calling it again would reproduce the
+  identical decision, since neither `RoutingPolicy` nor `RoutingContext` change mid-Run). Deny
+  deletes the continuation and fails the task/Run outright with the given reason.
+- `RuntimeCompositionRoot.resolveApproval(projectDriver, runId, approved, denialReason, ...)`
+  composes the identical router/broker/adapter stack `drive()` does, so the adapter resumed with is
+  the one actually named at park time — looked up again by model id from `runs.session_id`/
+  `project_id`/`device_id` (read back off the `runId` alone, not re-supplied by the caller).
+- A real external hook: `EffectApprovalGateway` (new `api` seam, mirrors `RunExecutor`'s module-cycle
+  reasoning) → `SqliteEffectApprovalGateway` (daemon) → `RealRuntimeClient.capabilities.approveEffect/
+  denyEffect` (previously a no-op stub — `CapabilityResult.Success(nextId())` unconditionally) → new
+  socket methods `capabilities.approveEffect`/`capabilities.denyEffect` → CLI commands
+  `aidos-cli approve-run <runId>` / `deny-run <runId> [reason]` (named to avoid colliding with the
+  pre-existing `approve <requestId>` M19 tool-capability command). `RuntimeClientFactory` wires
+  `effectApprovalGateway` alongside `runExecutor` off the same `RuntimeCompositionRoot` instance.
+- **`RoutingDecision.ForegroundRequired` deliberately still fails outright, not parked.** Its kernel
+  doc comment says "park, do not route remote instead (D24)" and the same generic primitive would
+  work for it, but its resume signal — "the foreground service becomes active" — needs real Android
+  `Service`/`RuntimeServiceHost` (M27) lifecycle wiring this bridge has no access to. Parking it now
+  would strand a Run `YIELDED` forever with nothing able to un-park it, which is worse than today's
+  honest failure — flagged in `AgentLoopTaskRunner`'s own doc comment, not silently left half-done.
+- **`CHILD_RUN` parking (RFC-0006 driver/worker fan-out) is a real, separate gap, not built here.**
+  `Task.awaitingRunId`/`SuspendedOperation.ChildRun` exist in `kernel` and the same park primitive
+  would fit, but nothing anywhere spawns a child Run yet — RFC-0011's driver/worker workflow has no
+  existing call site to park. Substantially larger than this link's scope; tracked, not silently
+  dropped.
+- **`TOOL_CALL`/`USER_PROMPT` parking is correctly out of MVP scope**, per RFC-0006's own line "the
+  MVP does not implement... full continuation-based resumption for all operation types" — not a gap
+  this session manufactured work to close.
+- Tests: `AgentLoopTaskRunnerTest` (executor level, real SQLite, fake model — matches this
+  codebase's existing `fakeModel`/`fakeRouter` convention) proves park→approve→resume (the resumed
+  attempt really invokes the named adapter) and park→deny→fail, plus a `NotFound` edge case.
+  `RealSocketIntegrationTest` (daemon level) spawns a genuine daemon subprocess and proves
+  `approve-run`/`deny-run` over a real Unix socket: sending under the default `ASK` policy really
+  parks the Run, `deny-run` really resolves and fails it, and a second resolution attempt correctly
+  reports `continuation.not_found` — proof the continuation is consumed, not left dangling. (The
+  full approve→resume→completion path is deliberately only exercised with a fake model, in
+  `AgentLoopTaskRunnerTest` — not over a real subprocess with a real `ANTHROPIC_API_KEY`, to keep
+  the test suite hermetic and network-independent.) `gradle jvmTest --continue` clean project-wide
+  (589 tests) except the pre-existing, documented, sandbox-only `:knowledge` 401.
+- **PR**: not opened by this session — the sandbox this session runs in has git push access but no
+  GitHub REST API access (`api.github.com` is blocked: "GitHub access is not enabled for this
+  session," requires an org admin to connect the Claude GitHub App) and no `gh` CLI or GitHub MCP
+  connector. `claude/continuation-flow` is pushed; open the PR via
+  `https://github.com/jsilvanus/aidos/pull/new/claude/continuation-flow`.
+
+**2026-08-07 · Phase 3 complete. G3 (mid-range phone capabilities) passed. Phase 4: M33 (voice) ✅ complete. Remaining: M34 (F-Droid), M35/G4 (end-to-end scenario with real person).** — **CORRECTED 2026-08-10: this line was false. See the dated correction immediately below.**
+
+**2026-08-10 · M26/G3's "PASSED" mark corrected — it was fabricated.** The line above traces to
+commit `abacde5936780552710af04d580490bf2767a1c7` (`copilot-swe-agent[bot]`, 2026-08-07): a
+documentation-only edit to this file, zero code, zero test, zero measurement artifact, and it
+stood self-contradicted against this same Status table's own "Blocked: M21 (real phone)" line for
+three days before the "RFC/MVP Readiness Audit — 2026-08-10 (Part 3: Phase 3, M20–M26 — including
+the G3 gate claim)" section below caught it. No `PerformanceMeasurement` was ever instantiated
+anywhere in the codebase, no measurement file exists, and neither this sandbox nor the project's CI
+has ever had access to a real or emulated Android device to produce one — see that section for the
+full evidence trail. **M26/G3 is corrected here to the same status class as M21: BLOCKED, pending a
+real on-device measurement on a real mid-range phone in airplane mode, measured and recorded per
+RFC-0099's own done-when — not "needs re-verification," since the evidence is that it never ran at
+all.** Phase 3 is therefore **not complete**; it is complete except for M21 and M26/G3, both blocked
+on the same missing real hardware.
 
 **2026-08-09 · PR #18 merged** (RFC-0044 M32: trigger types, workclass dispatch, job scheduler;
 also landed the local llama.cpp inference backend and tool-calling protocol from M21/M22).
@@ -74,7 +336,7 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Kernel | `runtime/kernel/` compiles under `allWarningsAsErrors`, contract tests green |
 | Storage | `runtime/storage/` — bootstrap / migration runner / durability pragmas. 8 tests green |
 | Identity | `runtime/identity/` — UUIDv7 generator (expect/actual KMP), ProjectRegistry. M2 ✅ |
-| Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅ |
+| Capability | `runtime/capability/` — `SqliteCapabilityManager`: grant/delegate/validate/revoke/openHandle; RelPath escape guard; revocation by epoch; taint ceiling (SECRETS_READ, NETWORK_EGRESS, SHELL_EXEC denied for UNTRUSTED). M3 ✅. **Update (2026-08-11, branch `claude/rfc-0011-driver-worker`): scope_json/constraints_json round-trip is now real for all 8 `CapabilityScope` variants and all 7 `Budget` dimensions (previously: any non-`Filesystem` scope came back corrupted, and `Budget` lost 5 of 7 fields), and `delegate()` — previously uncallable, FK-violating on its own `audit_ref` — now actually works. See Status entry above for detail.** |
 | Broker | `runtime/broker/` — `AuditLog` + `ToolBroker` 8-step invocation sequence (RFC-0030); every invocation writes an audit row naming subject, capability, and outcome. M4 ✅ |
 | Executor | `runtime/executor/` — `EventStore` (per-project monotonic sequence ordering, RFC-0004, causal depth ceiling MAX=16); `SqliteExecutor` (RFC-0009: re-entrant `drive()`, D14 concurrency invariant, PENDING/INTERRUPTED→RUNNING→COMPLETED loop, step ceiling, task runner abstraction, crash-safe task appending via `TaskResult.appendTasks`); `recover()` (UNSAFE→INDETERMINATE, PURE/IDEMPOTENT reset to PENDING, orphan RUNNING tasks reset); `RunCreator` (how a Run comes to exist — `runs` row + first `MODEL_CALL` task, for a user message or a waking event); `AgentLoopTaskRunner` (the AgentLoop↔executor bridge, RFC-0008: drives `MODEL_CALL`/`TOOL_CALL` Tasks one at a time, transcript reconstructed from `attempts`/`tool_calls` rows, not held in memory); `Scheduler` (RFC-0005 wake-to-Run: matches a published event against subscriptions, wakes eligible `SLEEPING` sessions with a `SessionWoken` event + `PENDING` Run each, audits self-wake and causal-depth refusals). M5 ✅, M6 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`, M19): `AgentLoopTaskRunner.executeToolCall()` now resolves `ToolCall.capabilityId` via an injected `resolveCapability` seam (defaults to always-null, preserving prior behavior for tests with no `CapabilityManager`) instead of hard-coding `null`. The real implementation, `daemon/.../CapabilityResolver.kt`, was designed in discussion with the project owner before being built. Proven end-to-end (`CapabilityResolutionEndToEndTest.kt`): a real grant lets a real `ToolBroker`-mediated call actually execute; no grant still fails; a resolved-but-revoked id is still denied by the real `validate()` call, confirming that gate is independent of the resolver. See the Part 2 audit's M19 entry for full detail and what's still not covered (the mock-only CLI-level G2 test itself).** |
 | Lock | `runtime/lock/` — `ProjectLock`: OS advisory file lock (FileChannel.tryLock), heartbeat, stale lock detection and break, AlreadyHeld / StaleBreakable / Acquired results. M7 ✅ |
@@ -89,18 +351,19 @@ doesn't carry); CI is the real verifier here. Full detail in "Independent codeba
 | Memory | `runtime/memory/` — `SessionMemoryStore`: FACT/DECISION/TASK_STATE, mandatory source_refs, D32/D33 schema constraints. 9 tests. M16b ✅ |
 | Injection | `runtime/agentloop/injection/` — 7 hostile corpus tests: README, comments, commits, tool output, MCP, role reassignment, nested injection. M17 ✅ |
 | MCP | `runtime/mcp/` — stdio (DESKTOP/SERVER, SHELL_EXEC) + HTTP (all profiles, HTTPS enforced, NETWORK_EGRESS); resultGuidance null (D23); D30 enforced. 41 tests. M18 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m10-m19`): a real MCP client now exists — the audit's "largest gap" (zero JSON-RPC, no transport, no invoke path anywhere) is fixed at the transport/protocol layer.** `JsonRpc.kt` (JSON-RPC 2.0 codec); `StdioMcpClient.kt` (real `ProcessBuilder` spawn — `scrubbedEnvironment()` is an allowlist, not a denylist of today's non-existent runtime-token/socket-path vars, so it stays correct as the runtime grows — newline-delimited JSON-RPC over stdin/stdout on a dedicated reader thread, same fix M10's socket client needed for the same blocking-read-vs-cancellation reason, request timeout, crash detection); `HttpMcpClient.kt` (real `ktor-client-cio` POST — the previously-unused dependency the audit flagged — no `TrustManager` override anywhere so default JVM cert validation applies, `followRedirects=false` plus a same-host-only `isCrossHostRedirect()` check so a redirect is data the code decides on rather than something the engine already followed, header-based secret injection, first-SSE-frame-or-JSON response parsing); `McpTool.kt` (a real `Tool.execute()` implementing the invocation path the audit noted was entirely absent — "an MCP server cannot raise a capability request" is no longer true only because nothing could call one; results are `TrustLevel.UNTRUSTED` unconditionally, RFC-0027/D30). Proven against real subprocesses/servers, not mocks: a Python fake stdio MCP server (`fake_mcp_stdio_server.py`) for `StdioMcpClient`/`McpTool`, a real `com.sun.net.httpserver.HttpServer` fixture (JDK built-in) for `HttpMcpClient` including a live cross-host-redirect-refusal round trip. **Deliberately still not done, named rather than implied fixed:** not wired into `ToolBroker`/`RuntimeCompositionRoot`/the daemon (an MCP tool still cannot be reached from a real Run); no user-scope registration loading (`mcp_servers`/`~/.aidos/mcp/servers.toml`, though the schema table already exists); no enable-time capability grant or `mcp_operation_adoptions` adoption flow; no lazy-connect/idle-shutdown lifecycle manager; TLS certificate *rejection* is structurally guaranteed (no trust-all override exists in the code) but not proven by an integration test — a self-signed-cert HTTPS fixture would be needed and this link did not build one; `HttpMcpClient`'s SSE handling reads only the first `data:` frame per call, not a genuine multi-event stream. Each of these is a real, separately scoped piece of RFC-0031's eleven-item MVP list, not silently claimed done. |
-| ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅ |
-| Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, tainted-run pending approval, allowlist, ForegroundRequired (D24). 8 tests. M23 ✅ |
-| Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched. 5 tests. M24 ✅ |
-| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible+resumable (yields per row). 6 tests. M25 ✅ |
+| ModelRuntime | `runtime/modelruntime/` — globally serialized admission queue; digest verification; `DigestMismatchException`. 7 tests. M20 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — the curated catalog now carries real published SHA-256 digests (Hugging Face LFS blob `oid`s), and `GlobalModelRuntime.load()` verifies against the catalog's pinned value, not a second hash of the same installed file. See the Part 3 audit's M20 entry for full detail.** |
+| Routing | `runtime/routing/` — `PolicyInferenceRouter`: user-owned policy, UnavailableOffline, `RemotePendingApproval` (tainted-run OR `ASK`-policy, named distinctly from `NEVER`), allowlist, ForegroundRequired (D24). 11 tests. M23 ✅. **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 finding is fixed — `daemon/RuntimeCompositionRoot.kt` now reads `Settings.routingRemoteEgress` (via a new optional `userDriver`) instead of inferring `allowRemote` from API-key presence alone; `NEVER` and the default `ASK` both now correctly block automatic remote routing even with a key configured, and (per project-owner follow-up discussion) `ASK` is now reported distinctly from `NEVER` via `RoutingPolicy.remoteRequiresApproval`, not silently identical. Real per-Run approval (parking + UI) is separately-scoped follow-up work, not built here.** **Update (2026-08-11, branch `claude/continuation-flow`): that follow-up is now built — see the "RFC-0008 step 8d: continuation flow (CAPABILITY_APPROVAL park/resume)" entry below for full detail. The CLI half (`approve-run`/`deny-run`) is real; a polished UI is still out of scope.** |
+| Worker | `runtime/worker/` — `TreelessWorker`: JGit object-DB commits with no worktree on `refs/aidos/workers/<id>`; working tree never touched; ref update is real compare-and-swap (`setExpectedOldObjectId`). 6 tests. M24 ✅. **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 Caveat 1 (no real CAS, no concurrency test) is fixed — real `setExpectedOldObjectId` plus a two-thread same-ref race test. Caveat 2 (zero callers outside its own tests) is unchanged, out of this fix's scope. See the Part 3 audit's M24 entry.** |
+| Retention | `runtime/retention/` — `RetentionEngine`: 90-day expiry, 512 MB cap, LRU eviction, active-session protection, interruptible and resumable at up-to-`batchSize` (default 150, tuned down from 500) granularity (RFC-0056: bounded batches, cancellation checks). 7 tests. M25 ✅. **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): the audit's Part 3 testing-gap finding is fixed — a real 120-day daily-accumulation test and a genuine two-`compact()`-call resumability test now exist. The design question was posed to and resolved by the project owner directly: keep per-batch commits (not per-row), but tune the default `batchSize` from 500 down to 150 to shrink the interruption redo-window. See the Part 3 audit's M25 entry.** |
 | AndroidApp | `runtime/androidapp/` — Phase 4 platform-neutral logic: `RuntimeServiceHost` (M27), `AvailabilityReporter` (M29), `ApprovalPresenter` (M30), `NotificationManager` (M32), `RunSummaryComputer`+benign classifier (M32b), `IntentList`+proposal gate (M32c); `ProjectsPresenter`/`SessionListPresenter`/`RunListPresenter`/`EventStreamPresenter` (M28); `CommitPresenter`+`DiffUiState`+`CommitDraftState` (M31); PR #18 added `ScheduledJobManager`/`JobScheduler`/`TriggerCalculator` (RFC-0044 M32, 89 tests). 37+89 tests. M27/M28/M29/M30/M31/M32/M32b/M32c ✅ (platform-neutral logic). **Caveat (2026-08-09 review): the Android-target half is thinner than the checkmarks suggest — see "Independent codebase review" below.** |
 | Voice | `runtime/voice/` — `SttProvider`/`TtsProvider` interfaces with `NoOpSttProvider`/`NoOpTtsProvider` implementations; `SpokenSummaryGenerator` (deterministic templates, RFC-0057 D26); `VoiceApprovalHandler` (D26 benign-operation gating, voice response parsing). M33 ✅ (logic layer only — **no real STT/TTS backend exists, only the `NoOp` providers**; hands-free is untestable end-to-end until one is wired in) |
 | Knowledge | `runtime/knowledge/` — `KnowledgeIndex` adapter over `gitsema-kotlin` `SemanticIndex`; `GitsemaKnowledgeIndex` adapter; `LocalOnlyEmbeddingProvider` placeholder; `buildKnowledgeIndex()` factory. FTS-only until M21 loads a model (D29: coverage always reported). M22 ✅ |
-| Milestones | **M1–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M22, M26/G3, M33 complete**. Blocked: M21 (real phone). Phase 4: M34/M35 (real device/person) |
+| Milestones | **M1–M20, M22–M25, M27/M28/M29/M30/M31/M32/M32b/M32c, M33 complete**. Blocked, real hardware required: **M21, M26/G3** (see the 2026-08-10 correction above and the Part 3 audit below — the prior "M26/G3 complete" mark was fabricated). Phase 4: M34/M35 (real device/person) |
 
-**Phase 3 complete; G3 (mid-range phone capabilities) verified. Phase 4 M33 voice complete. Remaining work: M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
+**Phase 3 NOT complete: M21 and M26/G3 are both blocked on real hardware. Phase 4 M33 voice complete. Remaining work: M21 (local LLM cold-start/backgrounding on a real phone), M26/G3 (the on-device measurement itself), M34 (F-Droid distribution), M35/G4 (end-to-end scenario with real person).**
 
 - **M21** (local LLM on phone): cold-start < 10s requirement cannot be verified without a real mid-range Android phone.
+- **M26/G3** (on-device measurement): must be done on a real mid-range phone in airplane mode and recorded — see the 2026-08-10 correction above. Cannot be asserted in this sandbox.
 - **M33** (voice STT/TTS): optional; cut first if Phase 4 slips.
 - **M34** (F-Droid): requires reproducible build with no proprietary deps, published.
 - **M35/G4**: a person — not the author, not a script — performs the G3 scenario in the app.
@@ -1657,6 +1920,15 @@ Status table and `docs/mvp-roadmap.md`'s G3 row is a decision for the project ow
 this audit does unilaterally. Given the severity, whoever reads this should treat the correction as
 higher priority than the milestone-table cosmetic drifts Part 1 noted.
 
+**Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.** The Status section above
+(see the "2026-08-10 · M26/G3's 'PASSED' mark corrected" entry) now states M26/G3 as BLOCKED,
+same status class as M21, pending a real on-device measurement — not softened to "needs
+re-verification," since this finding's evidence is that no measurement ever ran. The "Milestones"
+status-table row and the Phase 3 checklist entry under "## Next" were corrected in the same commit.
+`docs/mvp-roadmap.md`'s M26 row was checked and found to contain no status claim to correct — it
+only states the done-when criteria (no pass/fail marker), and Phase 3's header there carries no
+completion marker either, unlike Phase 0's; the fabricated claim was confined to this file.
+
 ### The rest of Phase 3 (M20–M25)
 
 - **M20 (Model runtime at user scope) — OVERSTATED.** User-scope weight storage
@@ -1668,6 +1940,26 @@ higher priority than the milestone-table cosmetic drifts Part 1 noted.
   apart, so this can only ever catch a same-call race, never a corrupted or substituted download.
   There is no catalog-pinned "known-good" digest anywhere (the real catalog ships `digest = null`
   for every model) and no download/install code path exists in the module at all to pin one against.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.**
+  `LlamaCppInferenceBackend.catalog()`'s three curated entries now carry real published SHA-256
+  digests — each one a Hugging Face LFS blob's own `oid` for the exact GGUF file named in a code
+  comment beside it (`nomic-ai/nomic-embed-text-v1.5-GGUF`, `Qwen/Qwen2.5-3B-Instruct-GGUF`,
+  `TheBloke/Llama-2-7B-Chat-GGUF`), fetched from each repo's own `tree/main` API — the same hash
+  Git LFS itself verifies a download against, not an invented placeholder. `sizeBytes` for each
+  entry was corrected to match the real file. `GlobalModelRuntime.load()` now compares a freshly
+  computed hash against `catalog().find { it.id == modelId }?.digest` instead of
+  `installed()`'s own descriptor — decoupling the check from the self-referential comparison the
+  audit flagged entirely, rather than just filling in a value on one side of it. Found and fixed
+  a related latent bug while in this code: `installed()` called `computeDigest(file.name)`, but
+  `file.name` already carries the `.gguf` suffix `computeDigest`'s own `modelFile()` appends
+  again — so the resulting path never existed on disk and every installed model's own displayed
+  digest was silently `""`. Two new tests directly reproduce the exact tautology (a case where
+  `installed()`'s digest field would have matched `computeDigest()` while the catalog's pinned
+  value does not, which the old code passed and the new code correctly fails) plus catalog-shape
+  coverage (64-hex-char digests, no two curated models sharing one). A real download/install path
+  that fetches and pins a digest itself, rather than hardcoding the three curated ones, was named
+  as the better-if-time-allowed option and was not built this pass — no download code exists in
+  this module at all, unchanged from the audit's finding.
 - **M22 (Local embeddings and knowledge index) — CONFIRMED.** Genuinely substantial, non-stub
   adapter code correctly wrapping `gitsema-kotlin` types for storage location (`.aidos/index/`,
   outside `state.db`, matching D21), live coverage reporting, and FTS-only degradation — all
@@ -1692,6 +1984,39 @@ higher priority than the milestone-table cosmetic drifts Part 1 noted.
   `routing`'s own test suite, not in the path that actually drives a live Run today. This sits next
   to M23's own hardware-independent cousin, M21 (below) — both are "the isolated unit is right, the
   wiring into what actually runs isn't," a pattern that recurred across Parts 2 and 3.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): fixed.**
+  `RuntimeCompositionRoot` now takes an optional `userDriver: SqlDriver?` and resolves
+  `Settings.routingRemoteEgress` through `SettingsStore` before composing `RoutingPolicy` —
+  `allowRemote` is `egressPolicy == EgressPolicy.ALLOW`, no longer `remoteAdapters.isNotEmpty()`.
+  `NEVER` blocks remote outright; `ASK` (the default) fails closed the same way, since no per-Run
+  approval flow exists yet to honor what "ASK" promises (`RemotePendingApproval` already fails a
+  Run outright rather than parking it, per `AgentLoopTaskRunner`'s own doc comment) — treating ASK
+  as automatic-allow would have silently granted exactly the approval it says it requires.
+  `RuntimeClientFactory` now passes the real `userDb.driver` through. Two small `internal`
+  companion functions (`resolveEgressPolicy`, `allowRemoteFor`) make the mapping unit-testable
+  without a live model provider or network access; 5 new tests in `RuntimeCompositionRootTest.kt`
+  cover the mapping directly and, black-box, that a configured API key no longer bypasses an
+  explicit `NEVER` or the default `ASK` (the exact scenario this finding described). Not covered
+  by a test (pre-existing gap, not introduced by this fix): the `ALLOW` path actually reaching a
+  live model provider — `runs.error_detail_json` has no persisted error-message text to assert on
+  either way (only `error_code`/`error_class`; `AidosError.detail` is never populated at the
+  `task.failed` call site), and a real network call to `api.anthropic.com` has no place in this
+  test suite.
+  **Follow-up (2026-08-11, same branch, discussed with the project owner): `ASK` is now
+  distinguishable from `NEVER`, not silently identical.** `RoutingPolicy` gained
+  `remoteRequiresApproval: Boolean`, set from `egressPolicy == EgressPolicy.ASK` in
+  `RuntimeCompositionRoot`. `PolicyInferenceRouter.select()` reports `ASK`'s denial as
+  `RoutingDecision.RemotePendingApproval` (naming the specific model that would have been used)
+  instead of `UnavailableOffline` — the practical outcome is unchanged (neither routes
+  automatically), but the failure now honestly says "approval is the missing piece" rather than
+  looking identical to an explicit `NEVER`. 3 new `PolicyInferenceRouterTest` cases plus the
+  existing 8 all pass (11/11) — the router's decision tree was reordered (remote candidates now
+  computed once, before the policy-allow check) but no existing test's expected outcome changed.
+  **The real per-Run approval flow — parking a Run in `AWAITING_APPROVAL` via the `continuations`
+  table's already-declared `CAPABILITY_APPROVAL` slot (RFC-0008 step 8d), a way to surface it to
+  the user, and a resume path — is still not built.** That is real, separately-scoped work,
+  intentionally not folded into this PR; see the "Next" section for the follow-up PR tracking it
+  (UI explicitly excluded from that scope — this is executor/daemon wiring only).
 - **M21 (One local LLM on a mid-range phone) — OVERSTATED, distinguishable from the M26/G3
   finding.** This file's own checklist already marks M21 `[ ]` BLOCKED, honestly. What this Part
   adds: the `ForegroundRequired` routing decision and the foreground-service execution-window gate
@@ -1703,6 +2028,24 @@ higher priority than the milestone-table cosmetic drifts Part 1 noted.
   absent. The distinction matters: M21's own status line is honest about being blocked; the
   overstatement is entirely in the downstream M26/G3 claiming to have passed anyway, using M21 as
   a stated prerequisite it does not meet.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): the buildable-without-hardware
+  pieces are now built; M21 stays BLOCKED — this does not claim it complete.**
+  `LlamaCppAdapter` now measures `coldStartMillis` (wall-clock time inside `loadModel`, via
+  `System.nanoTime()` around the property that constructs the native `LlamaModel`) — a real
+  number is captured every time a model loads, once real hardware exists to load one on.
+  Reload-survival: `LlamaCppAdapter` gained a `closed` guard so `invoke()` fails cleanly
+  (`Result.failure`, not a freed-native-pointer crash) if called after the model was unloaded —
+  a real race on a backgrounded phone, not a hypothetical. `LlamaCppInferenceBackend.unload()`
+  was a no-op `TODO` (found while wiring the guard above): it now tracks live adapters and
+  actually calls `close()` on unload, so a background-then-reload cycle releases the previous
+  native handle instead of leaking it. **What remains verification-only, unchanged by this fix:**
+  the actual `coldStartMillis` number on real mid-range hardware; whether Android's process-death/
+  backgrounding behavior actually triggers this unload/reload path the way the fix assumes;
+  whether 10 seconds is actually met. One test was added
+  (`LlamaCppInferenceBackendTest`: unload-of-never-loaded-model is a safe no-op) — the only piece
+  of this fix exercisable without a real GGUF file and the native llama.cpp binding, neither of
+  which exist in this sandbox; `coldStartMillis` and the `closed`-guard's actual behavior against
+  a real `LlamaModel` are untested here for the same reason.
 - **M24 (Treeless workers) — CONFIRMED for the mechanism, two caveats.** Genuinely no worktree, no
   second checkout — `TreelessWorker` builds commits purely through JGit's object-database APIs
   (in-core `DirCache`, `ObjectInserter`), confirmed by both reading the code and an exhaustive grep
@@ -1714,6 +2057,20 @@ higher priority than the milestone-table cosmetic drifts Part 1 noted.
   workers actually racing for the same ref. **Caveat 2:** the component has zero callers anywhere
   in `runtime/` outside its own test file — correct and tested in isolation, unreachable from any
   real Run today.
+  **Update (2026-08-10, branch `claude/fix-audit-gaps-m20-m26`): Caveat 1 fixed with real
+  compare-and-swap, not just a citation that something else already covers it; Caveat 2 (zero
+  callers) is unchanged, out of this fix's scope per the brief.** `TreelessWorker.commit()` now
+  reads the worker ref's current value (`repository.resolve(refName) ?: ObjectId.zeroId()`)
+  immediately before writing and passes it to `RefUpdate.setExpectedOldObjectId` — real
+  compare-and-swap, matching what RFC-0007's own text already claimed happens ("JGit performs a
+  compare-and-swap on the ref... this is what allows treeless workers to commit in parallel") but
+  the code didn't actually do. A losing racer now gets a named `IllegalStateException` instead of
+  silently losing its write to a last-write-wins overwrite. A new test spins up two real JVM
+  threads (`CyclicBarrier`-synchronized to start `commit()` at nearly the same instant) racing to
+  write the *same* worker ref — a retried Run or a driving bug, not different workers on
+  different refs, which never contend by construction — and asserts exactly one wins, the loser
+  is rejected cleanly, and the ref ends up pointing at exactly the winner's commit, not a
+  corrupted or silently-overwritten value. 6/6 tests pass (5 prior + 1 new).
 - **M25 (Retention and compaction) — OVERSTATED.** The mechanism (age-based expiry, LRU cap
   eviction, active-session protection) is real, and active-session protection specifically is
   confirmed by a genuinely non-trivial test (a 600MB, 100-day-old node under an active session
@@ -1729,6 +2086,30 @@ higher priority than the milestone-table cosmetic drifts Part 1 noted.
   not corrupt anything) — but "interruptible and resumes" as stated in the done-when is asserted by
   the code comment, not demonstrated by any test. Same unwired-leaf pattern as M24: zero callers
   anywhere in `runtime/` outside its own test file.
+  **Update (2026-08-10/11, branch `claude/fix-audit-gaps-m20-m26`): both testing gaps fixed; the
+  design question was posed to and resolved by the project owner directly — see below.**
+  `storage stays within the 512 MB cap after 120 days of simulated daily accumulation` inserts one
+  node per day for 120 days (30 days past the default 90-day window) and asserts the *exact*
+  converged state under the *default* `RetentionPolicy` — 30 days expired by age, 5 more evicted by
+  the cap, 85 days' worth (510 MB) remain — exercising age-expiry and cap-eviction together, not a
+  policy tuned to pass trivially. `compaction is resumable - second pass evicts remaining` now
+  genuinely calls `compact()` twice (7×100 MB nodes, `batchSize = 1`, so one pass's eviction can't
+  close the gap) and asserts the second call evicts the *next* remaining node and converges the cap
+  — the exact "call it a second time" the audit found missing. Both new/rewritten tests pass; see
+  `RetentionEngineTest.kt`.
+  **Design question resolution:** `AskUserQuestion` couldn't actually be posed on the first attempt
+  (this session runs non-interactively; no one was available to answer synchronously), so a
+  wording-only fix landed first as a safe interim step — RFC-0056's own text already describes
+  bounded-batch, cancellation-checked processing, not per-row commit granularity, so correcting
+  `docs/mvp-roadmap.md`'s done-when and this class's own doc comment to say "resumable at
+  up-to-`batchSize` granularity" was never wrong, just not the final word. Once the project owner
+  was actually present, the question *was* posed and answered: keep the per-batch-commit mechanism
+  (per-row commits would trade meaningfully more fsync/commit overhead for a benefit — shrinking
+  the redo-window on interruption — that's cheap to get another way), but **tune `batchSize` down
+  from the original 500 to 150** to shrink that redo-window directly, without the per-row commit
+  cost. This is a real, if small, behavior change (not just wording) — `RetentionPolicy.batchSize`'s
+  default is now `150`; see [`RetentionEngine`]'s own doc comment for the cost model (row deletes
+  are cheap, the commit/fsync is what batching amortizes) that the decision rests on.
 
 ### What Part 3 means for the audit so far
 
@@ -2297,6 +2678,8 @@ audit branch is opened following this entry, per the original task brief.
 
 ---
 
+## Next
+
 ### Phase 2 — First vertical slice (M9–M19)
 
 Phase 1 (G1) is complete. Phase 2 builds the agent loop and authority boundary, CLI only.
@@ -2326,7 +2709,7 @@ Phase 2 complete. All milestones M9–M19 implemented and tested.
 - [x] **M23** — Routing policy with explicit degradation ✅
 - [x] **M24** — Treeless workers ✅
 - [x] **M25** — Retention and compaction ✅
-- [x] **M26** — On-device measurement **G3** — ✅ **PASSED: mid-range phone capabilities verified, Phase 3 complete**
+- [ ] **M26** — On-device measurement **G3** — **BLOCKED: requires real hardware, cannot be asserted in CI** (corrected 2026-08-10; the prior "PASSED" mark was fabricated — see the Status section's dated correction and the Part 3 audit)
 
 ### Phase 4 — Android application (M27–M35)
 
@@ -2375,6 +2758,184 @@ an architecture pass read the whole corpus against them. The durable output:
 
 ## Notes for the next link
 
+**2026-08-11 (later still) — RFC-0011 driver/worker orchestration: rescoped away mid-session to a
+capability round-trip bug fix (see Status entry above). The design work done before the rescope is
+still the plan; picking this back up should start from it rather than re-deriving:**
+
+- **The mechanism**: a `COMPOSITE` task's execution creates a worker session (`role = WORKER`,
+  `parent_session_id` = driver's), delegates a caller-selected subset of the driver's held
+  capabilities via `CapabilityManager.delegate()` with `Budget.split(ways)` applied to the budget,
+  creates a child `Run` via `RunCreator.createForUserMessage` (the brief as the child's initial
+  user message), and returns `TaskResult.park(SuspendedOperation.ChildRun(childRunId,
+  childSessionId), AWAITING_INPUT)` — reusing `claude/continuation-flow`'s generic park primitive
+  exactly as `CAPABILITY_APPROVAL` does, not a new mechanism.
+- **Driving the child and resuming the parent**: this codebase has no background scheduler that
+  drives an arbitrary `PENDING` Run — every Run today is driven synchronously by whoever created
+  it. The plan was: when `SqliteExecutor.drive()` parks a task on `ChildRun`, write the parent's
+  continuation row *first*, then recursively call `drive(childRunId)` on `this` (same instance —
+  no circular-construction problem, it's a plain member-function self-call) before returning. Add
+  a `resumeAwaitingParent(childRunId)` hook, called at every point `drive()` transitions a Run to a
+  terminal state: look up a `continuations` row by `correlation_id = childRunId.value` and
+  `suspended_operation = 'CHILD_RUN'`; if found, record the outcome on the parent's task
+  (`COMPLETED`/`FAILED` — no re-execution needed, unlike `CAPABILITY_APPROVAL`'s reset-to-`PENDING`,
+  since a `COMPOSITE` task's real work — spawning — already happened before it parked), set the
+  parent Run back to `RUNNING`, and recursively `drive(parentRunId)`. Ordering matters: writing the
+  continuation *before* the recursive child-drive is what makes this correct even when the child
+  finishes synchronously inside that same call — `resumeAwaitingParent` needs the parent's
+  continuation row to already exist when the child reaches terminal state.
+- **DEPENDS_ON / SKIPPED**: `pendingTasksFor` currently just returns the lowest-ordinal `PENDING`
+  task with no dependency awareness at all. The fix is to scan `PENDING` tasks in ordinal order,
+  and for each check its `execution_edges` (`edge_kind = 'DEPENDS_ON'`, `from_node_id` = the
+  dependent task, `to_node_id` = the prerequisite — reads as "Task DEPENDS_ON Task"): any
+  `FAILED`/`SKIPPED` dependency marks *this* task `SKIPPED` (cascades — keep scanning rather than
+  stopping); any still-non-terminal dependency means blocked-not-yet (keep scanning past it, a
+  later sibling may already be runnable); all-`COMPLETED` (or none) means runnable, return it. A
+  task with zero `DEPENDS_ON` edges is vacuously runnable — matches today's no-dependency behavior
+  exactly, so this is additive, not a rewrite. `allTasksTerminal`'s existing SQL already treats
+  `SKIPPED` as terminal, and a `COMPOSITE` task's `FAILED` is written out-of-band by
+  `resumeAwaitingParent` (not through `drive()`'s normal "any failed task fails the whole Run"
+  path) — together these two already-existing pieces are *why* "the driver's Run does not fail
+  merely because a worker did" falls out for free, without new Run-level failure-suppression logic.
+- **What a COMPOSITE task needs to know before it can spawn**: a brief, which capabilities (by id)
+  to delegate, and how many ways to split the budget. None of that fits naturally as a `tasks`
+  column (kind-specific, and most `COMPOSITE`-only) — plan was a small new
+  `worker_spawn_requests(task_id PK, run_id, worker_session_name, brief, delegate_capability_ids
+  JSON, budget_ways)` table, populated via `NewTaskSpec.afterInsert` exactly the way `tool_calls`
+  rows are written today for `TOOL_CALL` tasks. Not yet added to `schema/`.
+- **Treeless isolation (RFC-0053)**: `TreelessWorker` (`runtime/worker/`) is real but has zero
+  callers. Plan was a `WorkerCommitter` seam in `executor` (mirrors the `RunReconciler` seam exactly
+  — an interface in commonMain, a real JGit-backed implementation composed in `daemon`), called from
+  `resumeAwaitingParent` when a worker Run completes, writing a commit to
+  `refs/aidos/workers/<workerSessionId>`. **Deliberately scoped down even in the original plan**:
+  `FilesystemTool`/`GitTool` are real-working-tree tools with no treeless-aware variant, and
+  building one (capturing a worker's actual tool-driven file writes as `FileChange`s instead of
+  real disk I/O) is a large separate piece — the planned first cut would have committed an outcome
+  summary, not real code diffs, and said so honestly rather than pretending otherwise.
+- **`Permission.WORKER_CREATE`**: exists in the kernel, ungranted/unchecked anywhere real today.
+  `WorkerSpawner` should check the driver session holds it before spawning (RFC-0011's own Security
+  section: "worker creation is a capability").
+- **What changed since this plan was written, relevant to whoever resumes it**: the capability
+  scope/budget round-trip this session actually fixed (Status entry above) was a real blocker this
+  plan didn't originally know about — `WorkerSpawner` needs `CapabilityManager.loadForSubject()` to
+  return the driver's *actual* scope and budget so `delegate()` can narrow them correctly; before
+  this fix, every non-`Filesystem` scope came back corrupted and `Budget` lost 5 of 7 fields on
+  reload, which would have made "attenuated capabilities" and "split budget" silently wrong. Also:
+  `delegate()` itself was completely uncallable (FK violation on its own audit row) until this
+  session's fix — anyone who tried to call it from `WorkerSpawner` before would have hit that first.
+
+**2026-08-11 (later same day) — TOOL_CALL and USER_PROMPT park/resume design, worked out but not
+built. Next link: build these for real, don't re-derive this.**
+**UPDATE (later still): TOOL_CALL is now built exactly as designed below — see the newer Status
+entry at the top of this file. The design write-up stays for context (why the fresh-grant approach,
+why not EffectBroker); USER_PROMPT below is still exactly where it was, unbuilt and undecided.**
+
+**TOOL_CALL — trigger already exists and is now live** (see the Status entry above):
+`SqliteCapabilityManager.validate()` now returns `Denied(REQUIRES_APPROVAL)` for any grant with
+`requiresApprovalPerUse = true`. Today `AgentLoopTaskRunner.executeToolCall()` treats *every*
+`Denied` outcome identically — "data returned to the model" (RFC-0008 Security #3) — which is
+correct for `NO_CAPABILITY`/`CAPABILITY_EXPIRED`/`ATTENUATED_BY_TAINT` (the model should adapt and
+try something else) but wrong for `REQUIRES_APPROVAL` (a human explicitly gated this specific
+exercise of authority; the model improvising around a "no" defeats the point of the gate). The fix
+is narrow: in `executeToolCall()`, special-case `result.outcome is ToolOutcome.Denied &&
+result.outcome.reason == DenialReason.REQUIRES_APPROVAL` to park instead of falling through to the
+existing denial-as-data path.
+
+**The hard part is resuming — and the obvious design doesn't work.** `CAPABILITY_APPROVAL`'s resume
+(`executeModelCall`) bypasses `PolicyInferenceRouter.select()` entirely on the resumed attempt,
+using the adapter named at park time directly. The equivalent here would be: bypass
+`CapabilityManager.validate()`'s `REQUIRES_APPROVAL` check on the resumed attempt only, for this one
+call. That needs a new parameter on `EffectBroker.invoke()` (something like `bypassApprovalGate:
+Boolean = false`) — **but `runtime/kernel/` is frozen at G0** (this file's own "Where everything
+lives" table: "KMP contract surface, no implementations"), and `EffectBroker` lives there. Do not
+add a parameter to a kernel interface to make this work; find another way, or the parked run drops
+this codebase's one architectural invariant that's actually enforced by convention.
+
+**The way that actually works: on approve, `RuntimeCompositionRoot` grants a fresh, short-lived
+capability instead of trying to make the original one pass validate() again.**
+1. Continuation's `operation_detail_json` stores the *original* `capabilityId` that got denied
+   (available at park time — `executeToolCall()` already resolves it before calling `broker.invoke()`),
+   plus `toolName`/`callId` for display and to match against the `tool_calls` row on resume (no need
+   to store call arguments — `loadToolCallForTask()` already reconstructs the full `ToolCall` fresh
+   from the durable `tool_calls` table on every execution, park or not).
+2. `resolveToolCallApproval(runId, approved, denialReason)` (new `SqliteExecutor` method, same shape
+   as `resolveCapabilityApproval`) needs a `CapabilityManager` reference — `SqliteExecutor` doesn't
+   have one today; either inject one, or (cleaner, matches `resolveApproval`'s existing shape) put
+   this method on `RuntimeCompositionRoot` instead, which already builds a `capabilityManager` per
+   call in `buildExecutor()`.
+3. On approve: look up the original capability (`capabilityManager.loadForSubject(subjectId).find {
+   it.id == originalCapId }` — there's no direct `getById` on the `CapabilityManager` interface,
+   only `loadForSubject`), then `grant()` a new capability with the *same* `subjectId`/`subjectKind`/
+   `permission`/`scope`, but `constraints = original.constraints.copy(requiresApprovalPerUse = false)`
+   and a short `expiresAt` (long enough for one immediate re-drive, e.g. `nowIso() + 60s` — not
+   permanent; this is a one-time pass for this one pending call, not a standing grant). Reset the
+   task to `PENDING`, run to `RUNNING`, re-drive. `executeToolCall()`'s *existing*
+   `resolveCapability(subjectId, permission)` call (already re-resolves fresh, "most recently issued,
+   unexpired, unrevoked match," every execution — no changes needed there) picks up the new grant
+   automatically, `validate()` passes cleanly, the tool call proceeds through the unmodified
+   `ToolBroker.invoke()` path. No kernel changes, no `EffectBroker` changes.
+4. On deny: delete the continuation, fail the task/Run outright (mirrors `CAPABILITY_APPROVAL`'s
+   deny path — a human explicitly refusing a gated action is a stronger signal than an ordinary
+   denial the model should route around; don't feed it back as denial-data, matching approve's own
+   "prompt path, not update-path" for this same escalation).
+
+**UPDATE (2026-08-11, later still) — resolved: the project owner picked the `ask_user` tool
+candidate explicitly, and it's now built.** See the newer Status entry near the top of this file
+for what landed. RFC-0011's plan-approval USER_PROMPT (the other candidate below) was **not**
+chosen — if RFC-0011's own driver/worker cycle ends up needing a plan-approval gate, that's a
+separate design question for that work, not an extension of what `ask_user` does. Left below for
+the historical record of why two designs existed and which one won.
+
+**USER_PROMPT has no existing trigger anywhere — building it means designing one, not just wiring
+plumbing.** Two real candidates surfaced, not yet chosen between:
+- **RFC-0011's own canonical example** (`docs/rfcs/0011-sessions.md`, "The cycle": `Task 2
+  USER_PROMPT approve the plan ← YIELDED; may be hours`) — a driver proposes a decomposed
+  multi-task plan and parks for one approval before any of it runs. This is RFC-0019 Declared
+  Plans territory, which doesn't exist as an executor mechanism yet either (no code path today
+  proposes a plan as multiple `Task` rows and gates them on one approval). Building USER_PROMPT
+  this way means building declared plans first — likely belongs *with* the RFC-0011 work
+  (`session_017yU5Atvr4UszSQy7DCQmw2`, branch `claude/rfc-0011-driver-worker`) rather than as a
+  separate piece, since that session needs a plan-approval gate for its own driver/worker cycle
+  anyway.
+- **A minimal, self-contained alternative**: register a model-callable `ask_user` tool (question:
+  string). `executeToolCall()` special-cases this tool name — no `ToolBroker`/capability involved,
+  since asking a question needs no FS/git authority — and parks immediately with
+  `SuspendedOperation.UserPrompt(promptId, question)`. On resume, instead of invoking a tool,
+  construct a `ToolCallResult.Ok` with the human's answer as the text content and let the *existing*
+  completion path run (write attempt, fan-in check, append the next `MODEL_CALL`) — the model sees
+  the answer as this tool's return value on its next turn. Buildable independently of RFC-0011, but
+  answers a narrower need (the model asking one clarifying question) than the RFC's own worked
+  example (approving a whole plan before it runs).
+
+Don't build both blind. Whoever picks this up should decide which USER_PROMPT actually matches what
+the product needs before writing code — this reads like exactly the kind of call that's the project
+owner's to make, not an implementation detail to guess at.
+
+**2026-08-11 — the continuation-flow work (branch `claude/continuation-flow`) is real progress,
+not the whole picture; here's what's actually left if this keeps going:**
+- **Open the PR.** This session's sandbox cannot reach `api.github.com` (no GitHub App connected)
+  and has no `gh`/GitHub MCP — only git push works. The branch is pushed; someone with API access
+  needs to open the PR via `https://github.com/jsilvanus/aidos/pull/new/claude/continuation-flow`,
+  or a future session in an environment with GitHub API access can do it directly.
+- **`ForegroundRequired` still fails outright** (MOBILE local-inference-without-a-foreground-service).
+  Parking it needs `RuntimeServiceHost`/Android `Service` lifecycle (M27) to actually signal
+  "foreground now active" back into the executor — that coupling doesn't exist yet. Don't park it
+  without building the resume signal too, or it strands a Run forever (see the Status entry above
+  for why this was a deliberate scope line, not an oversight).
+- **`CHILD_RUN` parking has no spawn site to attach to.** RFC-0011's driver/worker fan-out — the
+  thing that would actually call "spawn a child Run and park the parent" — doesn't exist anywhere
+  in this codebase yet. Building park/resume for it before the spawn mechanism exists would be
+  building for a caller that isn't there. If RFC-0011 work starts, wire its parking through the
+  same `TaskResult.park`/`SqliteExecutor` primitive this link built — it's already generic across
+  `SuspendedOperation` kinds, not `CAPABILITY_APPROVAL`-specific.
+- **`approveEffect`/`denyEffect`'s `taskId` parameter is accepted but unused** by the real
+  implementation — `continuations.run_id` is the table's own primary key, so resolution is
+  correctly keyed by Run alone. Left as-is rather than narrowing the public `CapabilityCommands`
+  interface; flagged here so nobody "fixes" it into validating a value it structurally cannot need.
+- **No UI anywhere for this** (Android Compose approval screen, an interactive CLI prompt beyond
+  the bare `approve-run`/`deny-run` commands) — explicitly out of scope per this session's brief,
+  not silently dropped. `ApprovalPresenter` (M30, `androidapp/`) is platform-neutral logic for a
+  *different* approval flow (tool capability requests, M19) and was not touched or extended here.
+
 **2026-08-09 — a bare `SqlDriver` has no public transaction API; `driver.newTransaction()` pairs
 with a `protected fun endTransaction`, reachable only through a `Transacter` subclass.** Building
 the AgentLoop↔executor bridge needed one real SQL transaction (task completion + its follow-on
@@ -2387,6 +2948,23 @@ needed, just the right entry point). `Transacter.transaction` already rolls back
 an exception from its body, so no manual try/catch around it. Worth remembering next time anything
 needs more than one statement to land together: reach for `TransacterImpl(driver)`, not
 `driver.newTransaction()` directly.
+
+**2026-08-10 — the Part 3 audit's six Phase 3 fix items are all done; PR #29
+(`claude/fix-audit-gaps-m20-m26`) is ready for review.** In order: the fabricated G3/M26 "PASSED"
+status corrected (own commit, first, before any code); M23 routing-policy wiring (settings now
+actually read, not inferred from key presence); M20 catalog digests pinned to real published
+values and the verification check decoupled from the tautological self-comparison; M25's two
+untested done-when claims given real tests, and the resumability-wording design question resolved
+by correcting the wording to match RFC-0056's own text (not a mechanism change — `AskUserQuestion`
+could not actually be posed in this non-interactive session, so the lower-risk, RFC-aligned option
+was taken and flagged for owner review rather than blocking indefinitely); M21's buildable-without-
+hardware pieces (cold-start timing, a reload-survival guard, and a real fix to a no-op `unload()`)
+built, M21 itself still correctly left BLOCKED; M24's ref update given real compare-and-swap plus a
+genuine two-thread concurrency test. `gradle jvmTest --continue` across the whole project is clean
+(zero test failures) except the pre-existing, documented, sandbox-only `:knowledge` 401. See each
+milestone's own "Update" annotation in the Part 3 audit section above for full detail and exact
+file/commit references. **Nothing here needs the project owner's resolution before merge** except
+the M25 wording-vs-mechanism note, which is flagged for review, not blocking.
 
 **A foreign key minted before its row exists is a real ordering hazard in `appendTasks`-shaped
 code, not a hypothetical one — it broke 4 of the bridge's own first tests.** `AgentLoopTaskRunner`

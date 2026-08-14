@@ -24,6 +24,16 @@ import dev.aidos.kernel.TrustLevel
 data class RoutingPolicy(
     /** If false, remote models are never selected regardless of network availability. */
     val allowRemote: Boolean = false,
+    /**
+     * M23 (RFC-0020/0049/0023): true when [allowRemote] is false specifically because the
+     * user's setting is `ASK` ("requires explicit approval per Run") rather than `NEVER`. No
+     * per-Run approval flow is wired yet (RFC-0008 step 8d — see `AgentLoopTaskRunner`'s own doc
+     * comment), so this still doesn't route automatically, but [PolicyInferenceRouter] reports it
+     * as [RoutingDecision.RemotePendingApproval] instead of [RoutingDecision.UnavailableOffline]
+     * — a distinct, honest signal ("approval is the missing piece") rather than looking identical
+     * to an explicit `NEVER`. Meaningless when [allowRemote] is true.
+     */
+    val remoteRequiresApproval: Boolean = false,
     /** Non-empty = allowlist; empty = allow any remote provider. */
     val allowedRemoteModelIds: Set<String> = emptySet(),
     /** Per-kind preferred local model ID. If null, the runtime picks the first loaded. */
@@ -34,11 +44,17 @@ data class RoutingPolicy(
  * [InferenceRouter] implementation driven by [RoutingPolicy] (RFC-0020, M23).
  *
  * Candidate resolution order:
- * 1. If a local model is loaded and matches the request, return [RoutingDecision.Local].
- * 2. If no local model exists AND allowRemote is false: [RoutingDecision.UnavailableOffline].
- * 3. If allowRemote is true and network is available: check taint and policy, then select remote.
- * 4. If taint is UNTRUSTED and the only option is egress: [RoutingDecision.RemotePendingApproval].
- * 5. MOBILE without a foreground service: [RoutingDecision.ForegroundRequired].
+ * 1. MOBILE without a foreground service: [RoutingDecision.ForegroundRequired].
+ * 2. If a local model is loaded and matches the request, return [RoutingDecision.Local].
+ * 3. If no local model exists AND allowRemote is false (NEVER, or the ASK default):
+ *    [RoutingDecision.RemotePendingApproval] naming a candidate adapter if
+ *    [RoutingPolicy.remoteRequiresApproval] (ASK) and one exists, else
+ *    [RoutingDecision.UnavailableOffline].
+ * 4. If allowRemote is true but network is unavailable: [RoutingDecision.UnavailableOffline].
+ * 5. If allowRemote is true and network is up but no candidate matches the allowlist:
+ *    [RoutingDecision.DisabledByPolicy].
+ * 6. If taint is UNTRUSTED and the only option is egress: [RoutingDecision.RemotePendingApproval].
+ * 7. Otherwise: [RoutingDecision.RemoteApproved].
  */
 class PolicyInferenceRouter(
     private val policy: RoutingPolicy,
@@ -72,22 +88,35 @@ class PolicyInferenceRouter(
             return RoutingDecision.Local(adapter)
         }
 
-        // 2. No local candidate available.
-        if (!policy.allowRemote) {
-            return RoutingDecision.UnavailableOffline(kind)
-        }
-
-        // 3. Remote, but network is unavailable.
-        if (!context.networkAvailable) {
-            return RoutingDecision.UnavailableOffline(kind)
-        }
-
-        // 4. Remote candidates — filtered by allowedRemoteModelIds (if non-empty = allowlist).
+        // 2. No local candidate available. Remote candidates — filtered by allowedRemoteModelIds
+        // (if non-empty = allowlist) — are computed once here so both the policy-denial branch
+        // below (M23: naming *which* adapter approval would be for) and the later allowed-path
+        // branches can use them.
         val remoteCandidates = remoteAdapters
             .filter { context.minimumContextWindow == null || it.contextWindow >= context.minimumContextWindow!! }
             .filter { adapter ->
                 policy.allowedRemoteModelIds.isEmpty() || adapter.modelId in policy.allowedRemoteModelIds
             }
+
+        // 3. Policy forbids remote entirely (M23: NEVER, or the ASK default).
+        if (!policy.allowRemote) {
+            val candidate = remoteCandidates.firstOrNull()
+            return if (policy.remoteRequiresApproval && candidate != null) {
+                RoutingDecision.RemotePendingApproval(
+                    adapter = candidate,
+                    reason = "Remote egress requires approval (ASK policy), but no per-Run " +
+                        "approval flow is wired yet, so this fails rather than routing " +
+                        "automatically.",
+                )
+            } else {
+                RoutingDecision.UnavailableOffline(kind)
+            }
+        }
+
+        // 4. Remote allowed by policy, but network is unavailable.
+        if (!context.networkAvailable) {
+            return RoutingDecision.UnavailableOffline(kind)
+        }
 
         if (remoteCandidates.isEmpty()) {
             return RoutingDecision.DisabledByPolicy("No allowed remote adapter available for kind $kind")

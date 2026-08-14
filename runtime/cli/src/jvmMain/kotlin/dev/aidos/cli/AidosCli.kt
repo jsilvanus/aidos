@@ -111,6 +111,44 @@ class AidosCli(private val client: RuntimeClient) {
     suspend fun listPendingCapabilities(): List<String> =
         client.capabilities.listPending().map { "${it.requestId}\t${it.permission}" }
 
+    /**
+     * Approves a Run parked on `CAPABILITY_APPROVAL` (RFC-0008 step 8d) — a Run that hit
+     * `RoutingDecision.RemotePendingApproval` under the `ASK` egress policy. `taskId` is left
+     * empty: `continuations.run_id` is the table's own primary key, so resolution is keyed by
+     * Run alone — [dev.aidos.api.CapabilityCommands.approveEffect]'s `taskId` parameter is
+     * unused by the real implementation today (see `RealRuntimeClient`'s own comment).
+     */
+    suspend fun approveRun(runId: String): String {
+        val result = client.capabilities.approveEffect(runId, taskId = "")
+        return when (result) {
+            is CapabilityResult.Success -> "approved: run $runId resumed"
+            is CapabilityResult.Error   -> error("approve-run failed: ${result.code} — ${result.message}")
+        }
+    }
+
+    /**
+     * Denies a Run parked on `CAPABILITY_APPROVAL` or `TOOL_CALL` — fails it outright, nothing to
+     * resume. Also reaches a parked `ask_user` question's decline path (see
+     * `RuntimeCompositionRoot.resolveAnyApproval`'s own doc comment) — "no, I won't answer that"
+     * is a denial too, even though answering one is a different command ([answerRun]).
+     */
+    suspend fun denyRun(runId: String, reason: String) {
+        client.capabilities.denyEffect(runId, taskId = "", reason = reason)
+    }
+
+    /**
+     * Answers a Run parked on `USER_PROMPT` (RFC-0008 step 8d) — the model called `ask_user` and
+     * is waiting for a reply. Not `approveRun`: a question has no yes/no to approve, only an
+     * answer to give.
+     */
+    suspend fun answerRun(runId: String, answer: String): String {
+        val result = client.capabilities.answerPrompt(runId, answer)
+        return when (result) {
+            is CapabilityResult.Success -> "answered: run $runId resumed"
+            is CapabilityResult.Error   -> error("answer-run failed: ${result.code} — ${result.message}")
+        }
+    }
+
     // ── Diff queries ───────────────────────────────────────────────────────────
 
     suspend fun diffChanges(projectId: String): String {

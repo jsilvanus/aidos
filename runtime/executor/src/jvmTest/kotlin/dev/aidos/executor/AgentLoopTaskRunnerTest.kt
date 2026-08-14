@@ -39,6 +39,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -88,11 +89,12 @@ class AgentLoopTaskRunnerTest {
         requestLog: MutableList<ModelRequest> = mutableListOf(),
         isLocalAdapter: Boolean = true,
         retention: ProviderRetention? = null,
+        modelId: String = "test-model",
     ): ModelAdapter {
         val queue = ArrayDeque(responses)
         return object : ModelAdapter {
             override val providerId = "test"
-            override val modelId = "test-model"
+            override val modelId = modelId
             override val modelVersion = "1.0"
             override val contextWindow = 4096
             override val isLocal = isLocalAdapter
@@ -137,6 +139,17 @@ class AgentLoopTaskRunnerTest {
         stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
     )
 
+    private fun askUserResponse(question: String, callId: String = "call-1") = ModelResponse(
+        text = null,
+        toolCalls = listOf(
+            ToolCall(
+                callId = callId, toolName = "ask_user",
+                arguments = buildJsonObject { put("question", question) }, capabilityId = null,
+            ),
+        ),
+        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+    )
+
     private fun createRun(
         driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
         maxSteps: Int = 24,
@@ -162,6 +175,7 @@ class AgentLoopTaskRunnerTest {
         router: InferenceRouter,
         broker: EffectBroker,
         redact: (String) -> String = { it },
+        resolveRemoteAdapter: (String) -> ModelAdapter? = { null },
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -177,6 +191,7 @@ class AgentLoopTaskRunnerTest {
             assembler = PromptAssembler(),
             broker = broker,
             redact = redact,
+            resolveRemoteAdapter = resolveRemoteAdapter,
         ),
     )
 
@@ -520,5 +535,166 @@ class AgentLoopTaskRunnerTest {
         buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
 
         assertEquals(null, runTaintSourceNodeId(driver, runId), "Text-only content names no content node to record")
+    }
+
+    // ─── RFC-0008 step 8d: CAPABILITY_APPROVAL park/resume ─────────────────────
+
+    private fun modelCallTaskState(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String =
+        driver.executeQuery(null,
+            "SELECT state FROM tasks WHERE run_id = ? AND kind = 'MODEL_CALL' ORDER BY ordinal DESC LIMIT 1",
+            mapper = { c ->
+                check(c.next().value) { "no MODEL_CALL task for run ${runId.value}" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun continuationCount(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): Long =
+        driver.executeQuery(null, "SELECT COUNT(*) FROM continuations WHERE run_id = ?",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getLong(0) ?: 0L else 0L) }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun pendingApprovalRouter(candidate: ModelAdapter, reason: String = "ASK policy — approval required"): InferenceRouter =
+        object : InferenceRouter {
+            override suspend fun select(kind: ModelKind, context: RoutingContext) =
+                RoutingDecision.RemotePendingApproval(candidate, reason)
+        }
+
+    @Test
+    fun `RemotePendingApproval parks the run instead of failing it`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val candidate = fakeModel(listOf(endTurnResponse()), isLocalAdapter = false, modelId = "remote-claude")
+
+        buildExecutor(driver, pendingApprovalRouter(candidate), noOpBroker()).drive(runId)
+
+        val (state, _) = runRow(driver, runId)
+        assertEquals("YIELDED", state, "a Run awaiting approval yields — it does not fail (RFC-0008 step 8d)")
+        assertEquals("AWAITING_APPROVAL", modelCallTaskState(driver, runId))
+        assertEquals(1L, continuationCount(driver, runId), "a continuations row records what the Run is parked on")
+    }
+
+    @Test
+    fun `approving a parked capability approval resumes the run using the named adapter`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val candidate = fakeModel(listOf(endTurnResponse("done")), requests, isLocalAdapter = false, modelId = "remote-claude")
+        val executor = buildExecutor(
+            driver, pendingApprovalRouter(candidate), noOpBroker(),
+            resolveRemoteAdapter = { id -> candidate.takeIf { id == "remote-claude" } },
+        )
+        executor.drive(runId)
+        assertEquals("YIELDED", runRow(driver, runId).first, "sanity: parked before resolving")
+        assertEquals(0, requests.size, "the model must not be invoked while parked")
+
+        val resolution = executor.resolveCapabilityApproval(runId, approved = true)
+
+        assertIs<CapabilityApprovalResolution.Resumed>(resolution)
+        assertEquals(1, requests.size, "approval resumes the same MODEL_CALL task, which now invokes the named adapter")
+        val (state, _) = runRow(driver, runId)
+        assertEquals("COMPLETED", state)
+        assertEquals(0L, continuationCount(driver, runId), "the continuation is consumed once the resumed attempt runs")
+    }
+
+    @Test
+    fun `denying a parked capability approval fails the run and task without invoking the model`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val candidate = fakeModel(listOf(endTurnResponse()), requests, isLocalAdapter = false, modelId = "remote-claude")
+        val executor = buildExecutor(driver, pendingApprovalRouter(candidate), noOpBroker())
+        executor.drive(runId)
+
+        val resolution = executor.resolveCapabilityApproval(runId, approved = false, denialReason = "not right now")
+
+        assertIs<CapabilityApprovalResolution.Denied>(resolution)
+        assertEquals(0, requests.size, "a denial never re-drives the task — nothing to resume")
+        val (state, _) = runRow(driver, runId)
+        assertEquals("FAILED", state)
+        assertEquals("FAILED", modelCallTaskState(driver, runId))
+        assertEquals(0L, continuationCount(driver, runId), "the continuation is deleted on denial, not left dangling")
+    }
+
+    @Test
+    fun `resolving a run with no pending continuation reports NotFound`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse()))
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId) // completes normally, never parks
+
+        val resolution = executor.resolveCapabilityApproval(runId, approved = true)
+
+        assertTrue(resolution is CapabilityApprovalResolution.NotFound)
+    }
+
+    // ─── RFC-0008 step 8d: USER_PROMPT (`ask_user`) park/resume ────────────────
+
+    private fun toolCallTaskState(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId): String =
+        driver.executeQuery(null,
+            "SELECT state FROM tasks WHERE run_id = ? AND kind = 'TOOL_CALL' ORDER BY ordinal DESC LIMIT 1",
+            mapper = { c ->
+                check(c.next().value) { "no TOOL_CALL task for run ${runId.value}" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+
+    private fun toolCallOutcomeFor(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, runId: RunId, callId: String): String =
+        driver.executeQuery(null, "SELECT outcome FROM tool_calls WHERE run_id = ? AND call_id = ?",
+            mapper = { c ->
+                check(c.next().value) { "no tool_calls row for call $callId" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 2
+        ) { bindString(0, runId.value); bindString(1, callId) }.value
+
+    @Test
+    fun `the model calling ask_user parks the run instead of executing anything`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(askUserResponse("Which database should I use?"), endTurnResponse()))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        assertEquals("YIELDED", runRow(driver, runId).first, "a question parks the Run -- it is not answered by the model itself")
+        assertEquals("AWAITING_INPUT", toolCallTaskState(driver, runId))
+        assertEquals(1L, continuationCount(driver, runId))
+    }
+
+    @Test
+    fun `answering a parked ask_user call resumes with the answer as the tool result`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(askUserResponse("Which database?", callId = "ask-1"), endTurnResponse("Using Postgres")), requests)
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId)
+        assertEquals("YIELDED", runRow(driver, runId).first, "sanity: parked before resolving")
+
+        val resolution = executor.resolveUserPrompt(runId, answer = "Postgres")
+
+        assertIs<CapabilityApprovalResolution.Resumed>(resolution)
+        assertEquals("OK", toolCallOutcomeFor(driver, runId, "ask-1"))
+        assertEquals("COMPLETED", runRow(driver, runId).first)
+        assertEquals(0L, continuationCount(driver, runId), "the continuation is consumed once the resumed attempt runs")
+        // The model's *next* turn must actually see the answer, not just a bare "OK" -- the whole
+        // point of ask_user is that the reply becomes usable context.
+        val secondRequestMessages = requests[1].messages
+        assertTrue(secondRequestMessages.any { it is Turn.ToolResult && it.result.content.any { c -> c is ContentBlock.Text && c.text == "Postgres" } })
+    }
+
+    @Test
+    fun `declining a parked ask_user call fails the run without executing anything`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(askUserResponse("Which database?"), endTurnResponse()))
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId)
+
+        val resolution = executor.resolveUserPrompt(runId, answer = null, denialReason = "not now")
+
+        assertIs<CapabilityApprovalResolution.Denied>(resolution)
+        assertEquals("FAILED", runRow(driver, runId).first)
+        assertEquals("FAILED", toolCallTaskState(driver, runId))
+        assertEquals(0L, continuationCount(driver, runId))
     }
 }
