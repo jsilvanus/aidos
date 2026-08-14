@@ -9,10 +9,12 @@ Engine**, so that multiple independent apps on one device — Aidos Agent among 
 one loaded set of models instead of each bundling and loading its own copy. Aidos Engine mirrors
 Aidos's own core/frontend split: **Aidos Engine Core** is a headless, platform-agnostic module
 with no Android or UI dependency, and the **Aidos Engine** Android app hosts it in-process inside
-a foreground service, the same shape RFC-0050 already uses for Aidos Agent hosting the runtime.
-This RFC defines that core/app boundary, the loopback transport and its authentication handshake,
-the version/capability contract, and the memory and concurrency policy for serving several
-modalities to several clients at once.
+a foreground service, the same shape RFC-0050 already uses for Aidos Agent hosting the runtime. A
+third component, **Aidos SDK**, is the one client-side implementation of the handshake and
+transport that every consuming app — Aidos Agent included — links against, rather than each app
+reimplementing the wire protocol. This RFC defines that three-way boundary, the loopback
+transport and its authentication handshake, the version/capability contract, and the memory and
+concurrency policy for serving several modalities to several clients at once.
 
 ## Motivation
 
@@ -42,11 +44,13 @@ recorded here so it isn't lost.
 2. Keep Aidos Engine Core separate from its Android hosting, mirroring the runtime/app split
    Aidos Agent already has, so the core is not Android-specific by construction.
 3. Define the transport: a Binder handshake plus loopback HTTP, OpenAI-compatible wire schema.
-4. Define the v1 trust model (signature-only) and what changes to broaden it later.
-5. Define the version and capability-negotiation contract between Engine and its clients.
-6. Define concurrency and memory policy across multiple loaded models and multiple callers.
-7. Define graceful degradation when Engine is absent or incompatible.
-8. Define Engine's ownership of its own UI (model selection, download, licensing).
+4. Define Aidos SDK as the one client-side implementation of that handshake and transport, so no
+   consuming app hand-rolls it.
+5. Define the v1 trust model (signature-only) and what changes to broaden it later.
+6. Define the version and capability-negotiation contract between Engine and its clients.
+7. Define concurrency and memory policy across multiple loaded models and multiple callers.
+8. Define graceful degradation when Engine is absent or incompatible.
+9. Define Engine's ownership of its own UI (model selection, download, licensing).
 
 ## Non-goals
 
@@ -65,6 +69,10 @@ signature-only; opening it further is Future Work and is not designed here.
 
 This RFC does not define remote or LAN exposure of the Engine. The bound port is loopback-only.
 
+This RFC does not define Aidos SDK's publishing mechanism (Maven coordinates, release cadence,
+distribution channel). Only that it exists as the single client-side implementation of the
+handshake and transport — packaging is an implementation detail.
+
 ## Design
 
 ### Two apps, one device
@@ -76,8 +84,9 @@ This RFC does not define remote or LAN exposure of the Engine. The bound port is
 - **Aidos Engine** (`fi.italeino.aidos.engine`) hosts model loading and serving — llama.cpp for
   LLM and embedding, whisper.cpp for STT (D27/D28) — behind an HTTP server bound to `127.0.0.1`.
   It runs its own foreground service, for the same reasons RFC-0050 gives for Aidos Agent's.
-- Any number of client apps, including Aidos Agent, may address one Engine instance. This is the
-  requirement driving the split: one loaded model set, several apps.
+- Any number of client apps, including Aidos Agent, may address one Engine instance through
+  **Aidos SDK** (below). This is the requirement driving the split: one loaded model set, several
+  apps.
 
 ### Core and app, mirrored from Aidos itself
 
@@ -109,6 +118,35 @@ serving straight into an Android app module:
   build, for instance — would expose the same core behind a Unix socket instead of loopback HTTP,
   exactly as RFC-0055 already does for the main runtime's DESKTOP daemon. Nothing here commits to
   building that; it falls out of the split for free if it's ever needed (Future Work).
+
+### Aidos SDK: one client implementation
+
+Every consuming app needs the same handshake, token handling, and HTTP client. Leaving that to
+each app to reimplement is exactly the risk this RFC otherwise removes — N slightly different
+copies of one wire protocol drifting out of sync is the same failure mode as N bundled copies of
+llama.cpp, just moved to the client side. **Aidos SDK** is a small Android library — not a KMP
+module; it has no reason to run anywhere Aidos Engine doesn't — that owns:
+
+- The handshake call and the Binder plumbing behind it.
+- Token storage and refresh, including re-handshaking after an Engine restart invalidates a token.
+- The loopback HTTP client for `/v1/chat/completions`, `/v1/embeddings`, and
+  `/v1/audio/transcriptions`.
+- Reading `apiVersion` and `capabilities` from the handshake response and exposing them as a
+  typed compatibility check, rather than each app parsing the response itself.
+- Detecting "Engine not installed" or "handshake failed" and surfacing it as one signal a caller
+  reacts to (see Degradation, below), including an optional deep link to install or open Aidos
+  Engine.
+
+Aidos SDK exposes this behind `ModelAdapter` implementations for LLM, embedding, and STT
+(RFC-0021), so a consuming app's routing layer treats Aidos Engine exactly like any other
+provider — the same local/remote symmetry argument Motivation makes for RFC-0021 generally. Aidos
+Agent is Aidos SDK's first consumer, not a special case baked into it: any other app on the
+device links the same library and gets identical behaviour, which is the actual "multiple apps,
+one inference engine" requirement this RFC exists to satisfy.
+
+Aidos SDK is versioned and distributed independently of both Aidos Agent and Aidos Engine, so a
+handshake or wire change ships as one SDK release every consuming app picks up, rather than as
+protocol code hand-maintained per app.
 
 ### Handshake and transport
 
@@ -165,13 +203,14 @@ attempt a wire-incompatible call. Both are needed together.
 
 ### Degradation when Engine is unavailable
 
-Aidos Agent (and any other client) treats "Engine not installed" and "handshake or version
-negotiation fails" as **local inference unavailable**, not as a hard failure — exactly how RFC-0021
-already treats "no local GGUF model downloaded" today. Routing falls back to a configured, approved
-remote provider (RFC-0023) if one exists; otherwise the affected capability is reported unavailable
-when the project opens (RFC-0049), not mid-Run. Engine's absence removes local inference, not the
-app — offline-first's actual guarantee is unaffected, since a project with no remote provider
-configured already can't do a model-needing step without a downloaded model.
+Aidos SDK surfaces "Engine not installed" and "handshake or version negotiation fails" as one
+signal — **local inference unavailable** — which every consuming app, Aidos Agent included,
+handles the same way rather than each inventing its own detection. This is exactly how RFC-0021
+already treats "no local GGUF model downloaded" today: routing falls back to a configured,
+approved remote provider (RFC-0023) if one exists; otherwise the affected capability is reported
+unavailable when the project opens (RFC-0049), not mid-Run. Engine's absence removes local
+inference, not the app — offline-first's actual guarantee is unaffected, since a project with no
+remote provider configured already can't do a model-needing step without a downloaded model.
 
 ### Engine's own UI
 
@@ -226,10 +265,12 @@ RFC-0055's lock file being "transient state on disk" rather than a durable row.
 3. Signature-`protectionLevel` handshake surface returning `{port, token, apiVersion, capabilities}`.
 4. Parallel execution across concurrent callers when the resident working set leaves memory
    headroom; a serialized queue otherwise.
-5. Aidos Agent as first client: `ModelAdapter` implementations for LLM, embedding, and STT that
-   speak this wire format, falling back to a remote provider or reporting unavailability when the
-   handshake fails or `apiVersion` is incompatible.
-6. Aidos Engine's own UI: cookbook/model browser, download manager, license/ToS acceptance,
+5. Aidos SDK: the handshake client, token/session management, the loopback HTTP client, and
+   `ModelAdapter` implementations for LLM, embedding, and STT, exposing "Engine unavailable" as
+   one signal.
+6. Aidos Agent as Aidos SDK's first consumer, falling back to a remote provider or reporting
+   unavailability when Aidos SDK reports the handshake failed or `apiVersion` is incompatible.
+7. Aidos Engine's own UI: cookbook/model browser, download manager, license/ToS acceptance,
    active-model status — calling Engine Core in-process, not through its own HTTP server.
 
 Not in MVP: vision/multimodal endpoints, third-party (cross-signature) client trust, any remote or
