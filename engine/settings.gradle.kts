@@ -26,6 +26,15 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "aidos-engine"
+
+// RFC-0103: kernel is a shared fourth root (../kernel), included here by path rather than
+// copied — same reasoning as agent/settings.gradle.kts. agent/ and engine/ still share no other
+// module; kernel is the one deliberate exception, being frozen contract types with no
+// implementation (RFC-0002/ARCHITECTURE.md: "every service depends on these; they depend on
+// none").
+include(":kernel")
+project(":kernel").projectDir = file("../kernel")
+
 include(":modelruntime")
 include(":cookbook")
 include(":huggingface")

@@ -26,7 +26,13 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "aidos-agent"
+
+// RFC-0103: kernel is a shared fourth root (../kernel), included here by path rather than
+// copied, because Aidos Engine's modules also depend on these frozen contract types (Models.kt's
+// ModelAdapter chief among them) and must not carry a second, drifting definition of them.
 include(":kernel")
+project(":kernel").projectDir = file("../kernel")
+
 include(":storage")
 include(":settings")
 include(":identity")
@@ -50,4 +56,3 @@ include(":retention")
 include(":androidapp")
 include(":knowledge")
 include(":daemon")
-include(":voice")

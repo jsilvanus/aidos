@@ -121,11 +121,19 @@ serving straight into an Android app module:
   building that; it falls out of the split for free if it's ever needed (Future Work).
 - Concretely, the repository is one monorepo with the boundary drawn at the directory level:
   `agent/` (Aidos Agent, formerly `runtime/`), `engine/` (Aidos Engine Core plus its own
-  `androidapp`), and `sdk/` (Aidos SDK) are three independent Gradle projects side by side. They
-  are not wired together as compile-time dependencies — `agent/` and `engine/` never share a
-  build graph, and `sdk/` is consumed by `agent/` (and any other client) as a library, not a
-  source dependency, matching that the two apps only ever talk over the transport this RFC
-  defines.
+  `androidapp`), and `sdk/` (Aidos SDK) are three independent Gradle projects side by side.
+  `sdk/` is consumed by `agent/` (and any other client) as a library, not a source dependency,
+  matching that the two apps only ever talk over the transport this RFC defines.
+- `agent/` and `engine/` share exactly one module at the source level: `kernel/`, pulled out as
+  its own top-level directory and included by path (`project(":kernel").projectDir =
+  file("../kernel")`) from both `agent/settings.gradle.kts` and `engine/settings.gradle.kts`,
+  rather than copied into either. This is not a violation of "no shared build graph between the
+  two apps" — it is the specific exception the architecture already names: kernel is frozen
+  contract types with no implementation, and every service depends on it while it depends on
+  none (ARCHITECTURE.md). `modelruntime` needs `ModelAdapter`/`ModelRequest`/`ModelResponse` to
+  be the same type Aidos SDK deserializes into on the Agent side; a vendored copy would let the
+  two silently drift. `agent/` and `engine/` still share no *service* module, and neither depends
+  on the other's build.
 
 ### Aidos SDK: one client implementation
 
