@@ -4,6 +4,7 @@ import dev.aidos.api.RuntimeClient
 import dev.aidos.api.socket.Methods
 import dev.aidos.api.socket.SocketPaths
 import dev.aidos.api.socket.Wire
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,7 +75,16 @@ class RuntimeSocketServer(
 
         val runScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = runScope
-        acceptJob = runScope.launch { acceptLoop(channel, runScope) }
+        // launch() schedules the accept loop but does not wait for it to actually start running
+        // -- start() would return, making the socket+token files visible, before any thread is
+        // blocked in channel.accept(). A client connecting in that window sees "Connection
+        // refused" even though bind() already succeeded (observed: RealSocketIntegrationTest,
+        // three different tests failing across independent runs, all at this exact race). The
+        // deferred is completed as the very first thing acceptLoop does, before its blocking
+        // accept() call, so awaiting it here closes the gap between "launched" and "listening".
+        val accepting = CompletableDeferred<Unit>()
+        acceptJob = runScope.launch { acceptLoop(channel, runScope, accepting) }
+        accepting.await()
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
@@ -102,7 +112,8 @@ class RuntimeSocketServer(
         runCatching { Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------")) }
     }
 
-    private suspend fun acceptLoop(channel: ServerSocketChannel, runScope: CoroutineScope) {
+    private suspend fun acceptLoop(channel: ServerSocketChannel, runScope: CoroutineScope, ready: CompletableDeferred<Unit>) {
+        ready.complete(Unit)
         while (true) {
             val connection = try {
                 channel.accept()
