@@ -1,5 +1,19 @@
 plugins {
-    id("com.android.library")
+    kotlin("multiplatform") version "2.1.0"
+    id("com.android.library") version "8.5.2"
+}
+
+kotlin {
+    androidTarget()
+
+    sourceSets {
+        androidMain.dependencies {
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+            implementation("androidx.core:core-ktx:1.10.1")
+            implementation("androidx.appcompat:appcompat:1.6.1")
+            implementation("com.squareup.okhttp3:okhttp:4.11.0")
+        }
+    }
 }
 
 android {
@@ -8,26 +22,10 @@ android {
 
     defaultConfig {
         minSdk = 26
-        targetSdk = 34
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
-}
-
-dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("androidx.core:core-ktx:1.10.1")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
-
-    testImplementation(kotlin("test"))
 }
