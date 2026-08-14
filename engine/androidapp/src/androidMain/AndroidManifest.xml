@@ -26,6 +26,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Deep link for model acquisition (RFC-0103): client apps navigate here directly
+                 rather than rendering their own download UI. Matches the navDeepLink declared on
+                 EngineRoute.ModelDetail in NavHost.kt. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aidosengine" android:host="model" />
+            </intent-filter>
         </activity>
 
         <!-- Foreground service for Engine (RFC-0103). Hosts the Engine core (model loading,
