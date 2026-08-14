@@ -6,10 +6,13 @@ Status: Draft 2026-08-14
 
 This RFC splits local model inference out of the Aidos Android app into a standalone app, **Aidos
 Engine**, so that multiple independent apps on one device — Aidos Agent among them — can share
-one loaded set of models instead of each bundling and loading its own copy. It defines the
-app boundary, the loopback transport and its authentication handshake, the version/capability
-contract, and the memory and concurrency policy for serving several modalities to several
-clients at once.
+one loaded set of models instead of each bundling and loading its own copy. Aidos Engine mirrors
+Aidos's own core/frontend split: **Aidos Engine Core** is a headless, platform-agnostic module
+with no Android or UI dependency, and the **Aidos Engine** Android app hosts it in-process inside
+a foreground service, the same shape RFC-0050 already uses for Aidos Agent hosting the runtime.
+This RFC defines that core/app boundary, the loopback transport and its authentication handshake,
+the version/capability contract, and the memory and concurrency policy for serving several
+modalities to several clients at once.
 
 ## Motivation
 
@@ -36,12 +39,14 @@ recorded here so it isn't lost.
 ## Goals
 
 1. Define Aidos Engine as a standalone app and its relationship to Aidos Agent and other clients.
-2. Define the transport: a Binder handshake plus loopback HTTP, OpenAI-compatible wire schema.
-3. Define the v1 trust model (signature-only) and what changes to broaden it later.
-4. Define the version and capability-negotiation contract between Engine and its clients.
-5. Define concurrency and memory policy across multiple loaded models and multiple callers.
-6. Define graceful degradation when Engine is absent or incompatible.
-7. Define Engine's ownership of its own UI (model selection, download, licensing).
+2. Keep Aidos Engine Core separate from its Android hosting, mirroring the runtime/app split
+   Aidos Agent already has, so the core is not Android-specific by construction.
+3. Define the transport: a Binder handshake plus loopback HTTP, OpenAI-compatible wire schema.
+4. Define the v1 trust model (signature-only) and what changes to broaden it later.
+5. Define the version and capability-negotiation contract between Engine and its clients.
+6. Define concurrency and memory policy across multiple loaded models and multiple callers.
+7. Define graceful degradation when Engine is absent or incompatible.
+8. Define Engine's ownership of its own UI (model selection, download, licensing).
 
 ## Non-goals
 
@@ -68,12 +73,42 @@ This RFC does not define remote or LAN exposure of the Engine. The bound port is
   sessions, projects, capabilities, executor, agent loop, tools, knowledge, memory, settings,
   identity, vault. It becomes a *client* of local inference the same way it is already a client
   of a remote provider (RFC-0021/0023).
-- **Aidos Engine** (`fi.italeino.aidos.engine`) hosts `modelruntime`, `models`, `downloads`,
-  `huggingface`, `cookbook`, and `voice` (STT) — llama.cpp for LLM and embedding, whisper.cpp for
-  STT (D27/D28), behind an HTTP server bound to `127.0.0.1`. It runs its own foreground service,
-  for the same reasons RFC-0050 gives for Aidos Agent's.
+- **Aidos Engine** (`fi.italeino.aidos.engine`) hosts model loading and serving — llama.cpp for
+  LLM and embedding, whisper.cpp for STT (D27/D28) — behind an HTTP server bound to `127.0.0.1`.
+  It runs its own foreground service, for the same reasons RFC-0050 gives for Aidos Agent's.
 - Any number of client apps, including Aidos Agent, may address one Engine instance. This is the
   requirement driving the split: one loaded model set, several apps.
+
+### Core and app, mirrored from Aidos itself
+
+Aidos's own architecture keeps a headless core (`runtime/`: kernel and services) separate from
+its Android hosting (`runtime/androidapp`), precisely so the same core can be hosted differently
+per platform (RFC-0050, RFC-0055). Aidos Engine repeats that shape rather than folding model
+serving straight into an Android app module:
+
+- **Aidos Engine Core** is a platform-agnostic KMP module — `modelruntime`, `models`,
+  `downloads`, `huggingface`, `cookbook`, and `voice`, moved out of `runtime/` as their own
+  Gradle project rather than merged into an Android module. It has no Android or UI dependency,
+  and it exposes model loading, inference, and the admission/eviction policy through one
+  interface, the same way `RuntimeClient` is the seam RFC-0052 defines for the main runtime.
+- **Aidos Engine** (the Android app) hosts Aidos Engine Core in-process inside its foreground
+  service — the same relationship RFC-0050 describes between Aidos Agent and the main runtime —
+  and additionally runs the loopback HTTP server and the handshake Binder surface *on top of*
+  the core, to expose it to other apps. Aidos Engine's own UI (cookbook, downloads, ToS) calls
+  the core directly in-process; it does not round-trip through its own HTTP server to talk to
+  itself.
+- This is a deliberate, narrow exception to RFC-0055's MOBILE assumption that "the runtime is
+  in-process... because MOBILE has exactly one frontend by construction." That premise holds for
+  Aidos Agent, which still has exactly one frontend. It does not hold for Aidos Engine, whose
+  entire purpose is serving several independent frontends on one device — so on MOBILE, Aidos
+  Engine legitimately takes the *daemon* shape RFC-0055 otherwise reserves for DESKTOP and
+  HEADLESS_SERVER, scoped only to this one component. Keeping Engine Core platform-agnostic is
+  what makes that possible without contradicting RFC-0055 for everything else: the exception is
+  in how Aidos Engine is hosted, not in what MOBILE means for Aidos Agent.
+- Keeping the core separate also means a future non-Android host for Aidos Engine — a desktop
+  build, for instance — would expose the same core behind a Unix socket instead of loopback HTTP,
+  exactly as RFC-0055 already does for the main runtime's DESKTOP daemon. Nothing here commits to
+  building that; it falls out of the split for free if it's ever needed (Future Work).
 
 ### Handshake and transport
 
@@ -183,16 +218,19 @@ RFC-0055's lock file being "transient state on disk" rather than a durable row.
 
 ## MVP
 
-1. Aidos Engine app: llama.cpp-backed `/v1/chat/completions` and `/v1/embeddings`, whisper.cpp-backed
-   `/v1/audio/transcriptions`, all over loopback HTTP.
-2. Signature-`protectionLevel` handshake surface returning `{port, token, apiVersion, capabilities}`.
-3. Load-on-demand with LRU eviction across the three modalities under one shared memory budget;
-   parallel execution when the budget allows it, a serialized queue otherwise.
-4. Aidos Agent as first client: `ModelAdapter` implementations for LLM, embedding, and STT that
+1. Aidos Engine Core as its own KMP module: llama.cpp-backed LLM and embedding inference,
+   whisper.cpp-backed STT, the admission queue and LRU eviction policy, and load-on-demand model
+   management — no Android dependency.
+2. Aidos Engine app: hosts Engine Core in-process in a foreground service; exposes it via
+   `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` over loopback HTTP.
+3. Signature-`protectionLevel` handshake surface returning `{port, token, apiVersion, capabilities}`.
+4. Parallel execution across concurrent callers when the resident working set leaves memory
+   headroom; a serialized queue otherwise.
+5. Aidos Agent as first client: `ModelAdapter` implementations for LLM, embedding, and STT that
    speak this wire format, falling back to a remote provider or reporting unavailability when the
    handshake fails or `apiVersion` is incompatible.
-5. Aidos Engine's own UI: cookbook/model browser, download manager, license/ToS acceptance,
-   active-model status.
+6. Aidos Engine's own UI: cookbook/model browser, download manager, license/ToS acceptance,
+   active-model status — calling Engine Core in-process, not through its own HTTP server.
 
 Not in MVP: vision/multimodal endpoints, third-party (cross-signature) client trust, any remote or
 LAN exposure of the Engine port.
