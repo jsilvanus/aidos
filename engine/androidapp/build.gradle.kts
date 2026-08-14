@@ -1,5 +1,6 @@
 plugins {
     kotlin("multiplatform")
+    kotlin("plugin.compose")
     id("com.android.application")
 }
 
@@ -15,6 +16,11 @@ kotlin {
         val jvmMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                // jvmMain has no Compose UI of its own, but the Compose Compiler Gradle plugin
+                // (kotlin.plugin.compose) runs its version check against every compilation in
+                // this module, androidTarget included — it fails hard without the runtime on
+                // the classpath even here (same workaround as agent/androidapp).
+                implementation("androidx.compose.runtime:runtime:1.6.0")
             }
         }
 
