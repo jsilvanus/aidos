@@ -14,7 +14,7 @@ This implementation provides a complete Compose UI structure for the Aidos Andro
 
 ### What Was Delivered
 
-1. **Modular Architecture** — Single `runtime/androidapp` module with clear separation:
+1. **Modular Architecture** — Single `agent/androidapp` module with clear separation:
    - `commonMain/` — Platform-neutral state machines & presenters (existing, 573 LOC)
    - `androidMain/` — Compose UI screens & navigation (NEW, ~1,500 LOC)
    - `jvmMain/` — JVM tests (existing, 634 LOC)
@@ -37,7 +37,7 @@ This implementation provides a complete Compose UI structure for the Aidos Andro
 
 To enable Android target, uncomment two lines:
 ```gradle
-// File: runtime/androidapp/build.gradle.kts
+// File: agent/androidapp/build.gradle.kts
 plugins {
     id("com.android.library")  // ← Uncomment this
 }
@@ -59,7 +59,7 @@ gradle build  # Downloads AGP 8.5.2 and all Compose dependencies
 ### Module Hierarchy
 
 ```
-runtime/
+agent/
 ├── androidapp/
 │   ├── src/commonMain/
 │   │   └── kotlin/dev/aidos/androidapp/ui/
@@ -265,7 +265,7 @@ All tested on JVM in `Phase4M28M31Tests.kt` and `Phase4Tests.kt`.
 
 ## Dependencies & Configuration
 
-### Added to `runtime/androidapp/build.gradle.kts`:
+### Added to `agent/androidapp/build.gradle.kts`:
 
 **Commented out** (waiting for Android target activation):
 
@@ -290,9 +290,9 @@ androidx.documentfile:documentfile:1.0.1
 
 ### Parent Configuration
 
-**`runtime/build.gradle.kts`**: AGP plugin declared (commented out, waiting for Google Maven)
+**`agent/build.gradle.kts`**: AGP plugin declared (commented out, waiting for Google Maven)
 
-**`runtime/settings.gradle.kts`**: Google Maven repo already configured
+**`agent/settings.gradle.kts`**: Google Maven repo already configured
 
 ---
 
@@ -371,7 +371,7 @@ Tests verify:
 
 ### Phase A: Enable Android Target (1 hour)
 
-1. Uncomment 2 lines in `runtime/androidapp/build.gradle.kts`
+1. Uncomment 2 lines in `agent/androidapp/build.gradle.kts`
 2. Uncomment dependencies in androidMain sourceSet
 3. Ensure Google Maven access (`dl.google.com`)
 4. Run `gradle build` → verify compilation
@@ -415,13 +415,13 @@ Tests verify:
 Because all business logic lives in `commonMain`:
 
 ```
-runtime/androidapp/
+agent/androidapp/
   └── commonMain/              ← All presenters here (testable, reusable)
 
-runtime/cli/                    ← Alternative frontend (CLI)
+agent/cli/                      ← Alternative frontend (CLI)
   └── uses same RuntimeClient   ← Same interface, different UI
 
-runtime/desktop/ (future)       ← Desktop frontend (hypothetical)
+agent/desktop/ (future)         ← Desktop frontend (hypothetical)
   └── uses same presenters      ← Code reuse, tested on JVM
 
 web-frontend/ (future)          ← Web frontend (hypothetical)
