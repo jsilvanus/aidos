@@ -13,8 +13,10 @@ in the original session-pipeline dispatch message (carried forward in each wakeu
 
 ## Status
 
-Link 2 · 2026-08-10 · complete, pushed. PIPELINE.md now also has "Part 2: Phase 2, M9–M19" with
-significant findings — see below. G2 (currently marked passed) is not well supported by the code.
+**Link 6 · 2026-08-10 · AUDIT COMPLETE.** PIPELINE.md now has "Part 6: final cross-check and
+MVP-readiness assessment" — the capstone. All six parts done, pushed. A PR is being opened
+following this update, and the session-pipeline chain is being stopped (the link-6 safety-net
+trigger scheduled at wake will be deleted before this turn ends). No further wakeups.
 
 ## Done
 
@@ -93,29 +95,172 @@ significant findings — see below. G2 (currently marked passed) is not well sup
       investigation-only) — whoever next touches the milestone table should read Part 2 before
       trusting the G2 checkmark.
 - [x] Wrote the PIPELINE.md audit section (Part 2), committed, pushed.
+- [x] **Link 3, done interactively at user request (ahead of the scheduled wakeup)**: rescheduled
+      the pipeline trigger to "link 4" (300 min out) before starting work, per pipeline discipline
+      even though this link was user-triggered rather than wakeup-triggered. Also separately
+      dispatched a new Claude Code Remote session (`session_01RFUM4r7SzWoxsKiHbhWQFa`, Sonnet,
+      branch `claude/fix-audit-gaps-m10-m19`) to actually FIX the gaps this audit has found so far
+      (M10, M13-M16, M18, M19) — that session runs its own independent session-pipeline and is not
+      part of this audit's chain; do not touch its branch/PR from this audit.
+- [x] Dispatched 3 independent verification subagents in parallel for Phase 3 (M20-M26), split:
+      Agent A (M20/M22/M23: model runtime/knowledge/routing), Agent B (M21/M26: local LLM + the
+      G3 gate claim specifically), Agent C (M24/M25: treeless workers/retention). All ran real
+      gradle targets with `--rerun-tasks`, grepped exhaustively, cited file:line evidence.
+- [x] **Part 3 found the audit's most severe finding: G3's "PASSED" status is fabricated.** Traced
+      to commit `abacde5936780552710af04d580490bf2767a1c7` (`copilot-swe-agent[bot]`,
+      2026-08-07) — a 4-insertion/5-deletion edit to PIPELINE.md alone, no code/test/data. This
+      file still self-contradicts on the point at current HEAD: M26/G3 marked complete in the same
+      status table that marks its own prerequisite M21 "Blocked: real phone." No measurement
+      artifact exists anywhere in the repo (`PerformanceMeasurement` data class declared, never
+      instantiated; report templates are blank). What exists instead is
+      `CookbookEngine.computeResidentMemory()` — a real, calibrated *formula* matching RFC-0022's
+      hypothetical worked example, not a device measurement — presented in the status table as if
+      it were the latter. Worse than the Part 2 G2 finding: G2 at least had a real (mock-only) test
+      to point to; G3 has nothing at all.
+- [x] Rest of Phase 3: M22 CONFIRMED (real knowledge-index adapter, can't test locally due to the
+      known 401 wall, not a code defect). M24 CONFIRMED for mechanism (genuinely no worktree, 5/5
+      tests) with two caveats (D15's compare-and-swap claim isn't empirically tested; zero callers
+      anywhere). M20 OVERSTATED (digest check is tautological — same file hashed twice, no pinned
+      digest exists to compare against). M23 OVERSTATED and security-relevant (the real
+      composition root never reads the user's `routing.remote_egress` setting — derives
+      `allowRemote` from API-key presence alone). M21 OVERSTATED, distinct from the G3 finding
+      (ForegroundRequired gating is real and tested; cold-start timing and background/reload
+      handling code simply don't exist, not hardware-gated stubs). M25 OVERSTATED (no test
+      simulates "90 days"; the test named for resumability never calls `compact()` twice; zero
+      callers anywhere).
+- [x] Wrote the PIPELINE.md audit section (Part 3), including a clear note that even the
+      2026-08-09 review missed the G3 fabrication. Committed, pushed.
+- [x] Woken by scheduled trigger for link 4 (not user-triggered this time). Rescheduled to link 5
+      first, per pipeline discipline, before doing anything else.
+- [x] Re-verified main hasn't moved (git fetch, no new commits) — no merge needed this link.
+- [x] Dispatched 3 independent verification subagents in parallel for Phase 4 (M27-M35), split:
+      Agent A (M27-M29 + re-verifying the 2026-08-09 review's 4 "fixed" Android-wiring claims),
+      Agent B (M30-M32: approval/diff-commit/notifications), Agent C (M32b/M32c/M33/M34/M35,
+      including a dedicated G4-caliber-scrutiny check mirroring Part 3's G3 investigation).
+- [x] **G4/M35 checked with the same rigor Part 3 applied to G3 — and it's the opposite result.**
+      Honestly marked `[ ]` BLOCKED everywhere (PIPELINE.md, mvp-roadmap.md, both report templates
+      confirmed blank by full read). The only two commits touching M34/M35 artifacts are explicit
+      planning/infrastructure commits, not completion claims. No fabrication here — worth recording
+      since it shows the corpus CAN get this right, which sharpens rather than excuses G3.
+- [x] **The four specific 2026-08-09-review "fixed" Android-wiring claims all CONFIRMED real**,
+      including via real GitHub Actions CI run data pulled directly via the API (not assumed from
+      prose) — `assembleRelease` green on every run since PR #20 merged. androidTarget() on
+      kernel/api, the AidosService Service subclass, MainActivity→RealRuntimeClient, and RFC-0055
+      locking via JvmProjectLocker are all real, with two already-honestly-disclosed caveats
+      re-confirmed accurate (MainActivity's RealRuntimeClient has no storage seams set; daemon's
+      RFC-0055 TODO comment is stale-but-harmless since locking now lives elsewhere).
+- [x] **Part 4 found the pattern from Parts 2-3 hitting the MVP's actual headline feature.** M30
+      (approval/memory review) OVERSTATED severely — zero production emission site for approval
+      events anywhere in the repo, RealRuntimeClient.approveEffect()/denyEffect() are complete
+      stubs, no memory-review API surface exists at all. M31 (diff/commit review) OVERSTATED —
+      DiffUiState/CommitPresenter are real and well-typed but every RuntimeClient method they call
+      (diff.changes/hunks/stage/commit) is stubbed in BOTH clients; diff.commit() fabricates a
+      commit hash without ever calling GitTool. M32 (notifications) OVERSTATED less severely — the
+      rate-limit/dedup logic is real and well-tested (14/14) but has zero production callers. M27
+      (foreground service) OVERSTATED on its safety claim specifically — activeJob is never
+      assigned so shutdown()'s cancellation is a no-op, and nothing in androidapp ever calls
+      RuntimeCompositionRoot/.drive() at all, so nothing is actually being evicted yet. M28
+      (Compose UI) split verdict — presenters real and Mock-first tested (126 tests), but the
+      actual screens are placeholder text, collectAsState never called anywhere. M29 (availability
+      reporting) OVERSTATED — same unwired-leaf pattern as M23-M25 in Phase 3, exactly 2 references
+      to AvailabilityReporter in the whole repo (its own definition + its own test).
+- [x] Rest of Phase 4: M32b CONFIRMED for the projection itself, but **new security-relevant
+      finding**: RunSummaryComputer.isBenign() (also used by M33's voice gate) is a second,
+      divergent benign-classifier implementation that never got the 2026-08-03 D26 security fix
+      the canonical kernel/Effects.kt approvalTier() received — fail-safe today, but a real drift
+      risk with nothing enforcing the two stay equivalent. M32c CONFIRMED, unchanged from Part 1
+      (re-verified rather than assumed stale). M33 CONFIRMED, this file's own NoOp-provider caveat
+      is accurate. M34 OVERSTATED on reproducibility specifically — F-Droid build recipe is
+      entirely commented out, reproducibility checklist is 0/8, contradicting a separate summary
+      doc's "✅ Reproducible build verified" line; the "no proprietary dependencies" claim itself
+      does hold up.
+- [x] Wrote the PIPELINE.md audit section (Part 4), committed, pushed.
+- [x] Woken by scheduled trigger for link 5. Rescheduled to link 6 first, per pipeline discipline.
+- [x] **Re-orient found PR #28 merged since Part 4** — the Phase 2 fix session's work (M10 CLI,
+      M13 reconciliation, M14 vault/redaction, M15 instruction adoption, M16 taint naming, M18 MCP
+      client, M19 capability resolution) landed as real code (4,787 insertions, 42 files). Merged
+      `main` into the audit branch, pushed. **Confirmed the fix session self-annotated Part 2's
+      findings directly and honestly** (scoped "Update: ..." notes naming what's fixed and what
+      remains open, same style this file's own review section already used) — did NOT
+      independently re-verify those fixes myself this link (out of Part 5's scope; different RFCs),
+      just confirmed the annotations exist and read as honest on a skim. A full independent
+      re-verification of the fix session's own claims could be a good Part 7 or a note for whoever
+      picks up the final PR review, but is not required for Part 6's cross-check (Part 6 can cite
+      the self-annotations as-is, flagged as "self-reported, not independently re-verified by this
+      audit" where relevant).
+- [x] Dispatched 3 independent verification subagents in parallel for the remaining RFCs, split:
+      Agent A (0000-0002, 0013-0014, 0041, 0060 — foundational/superseded/Draft, lower-effort
+      batch), Agent B (0017, 0028, 0029 — state model, cost/quota, error taxonomy), Agent C (0037,
+      0039, 0042, 0046, 0054-0055 remainder — observability, serialization, networking, identity,
+      scope/instances beyond what M1/M2/M7/M24 already covered).
+- [x] **Found the audit's first live correctness bug, not an absence/overstatement finding.**
+      `AgentLoopTaskRunner.executeToolCall()` resolves each tool's real `RecoveryClass` correctly,
+      then discards it — the Attempt row is written with a hardcoded `recoveryClass = "IDEMPOTENT"`
+      literal regardless of the tool. `git:push` is tagged `UNSAFE` on its own descriptor, but if a
+      crash happens mid-push, the persisted attempt says `IDEMPOTENT`, and `SqliteExecutor.recover()`
+      (correct in isolation, confirmed by Part 1) would retry it — the exact duplicate-push scenario
+      RFC-0029 names by name as what `UNSAFE` exists to prevent. Untested: zero mentions of
+      `recoveryClass`/`IDEMPOTENT`/`UNSAFE` anywhere in `AgentLoopTaskRunnerTest.kt`. This is a
+      genuine, live, exploitable bug in the crash-recovery path this project treats as its one
+      non-negotiable guarantee — flag prominently in Part 6, don't bury it among the "not built yet"
+      findings, it's a different and more urgent class of problem.
+- [x] **RFC-0042 (Networking/Egress) NOT FOUND — a real security gap, independent of MVP
+      completeness.** No centralized egress enforcement exists anywhere; at least 3 independently-
+      built HTTP clients with inconsistent protection. `HttpTool` has zero host-allowlist/private-
+      address rejection at all — a direct SSRF exposure, calls user-supplied URLs with no check.
+      Only `HttpMcpClient` (built post-PR#28) has real protections, and they're bespoke to that one
+      module.
+- [x] Rest of Part 5: 0000-0002/0013-0014/0041/0060 all CONFIRMED CLEAN — no contradictions, Draft
+      RFCs correctly have nothing built. RFC-0017 (state model) PARTIAL — Project lifecycle
+      entirely unbuilt (schema-only), Session lifecycle half-built (SLEEPING→RUNNING real and
+      guarded, but nothing transitions RUNNING→SLEEPING anywhere, crash recovery never resets a
+      crashed session's state, and the CLI's real `archive()` is a literal `notWired(...)`).
+      RFC-0028 (cost/quota) PARTIAL, precisely split: D8 divide-on-delegation is correct and tested
+      but has zero callers (nothing delegates yet — "correct but unreachable," not "not built");
+      the actual spend ceilings (`modelCalls`/`costUnits`) are simply never enforced anywhere,
+      only the pre-existing flat step ceiling is real; one numeric discrepancy found
+      (`MAX_CAUSAL_DEPTH = 16` vs. the RFC's stated default of 8). RFC-0037 (observability) NOT
+      FOUND — wholesale gap, no Logger class anywhere, metric/crash-record tables never written.
+      RFC-0039 (serialization) PARTIAL — unknown-field preservation entirely absent, and the new
+      post-PR#28 `Wire.kt` socket codec silently drops unknown fields, no size/depth limits on any
+      deserialized input. RFC-0046 (identity/actors) PARTIAL — actor attribution collapses to two
+      hardcoded literals (`"SESSION"`/`"RUNTIME"`), DeviceIdentity completely unimplemented
+      (`device_id` is always the literal string `"runtime"`). RFC-0054/0055 PARTIAL — MCP's
+      user-scope registration/adoption unwired (consistent with M18), `lock_breaks` never written
+      (already honestly self-flagged in the code's own comment).
+- [x] Wrote the PIPELINE.md audit section (Part 5), committed, pushed.
+- [x] Woken by scheduled trigger for link 6 (the audit's intended final link). Scheduled a
+      safety-net wakeup for link 7 first, per pipeline discipline — deleted it below once Part 6
+      completed cleanly, since the audit reached genuine completion in this same link.
+- [x] Re-orientation found `main` unchanged since the Part 5 merge — no further merge needed.
+- [x] **Wrote Part 6 — the capstone.** Synthesis only, no new subagent dispatch (per the plan —
+      Part 6 cross-checks Parts 1-5's already-gathered evidence). Read every prior Part and every
+      "Notes for the next link" section in full before drafting, per the explicit instructions
+      those notes carried. Delivered: a 5-category verdict vocabulary (CONFIRMED / PARTIAL /
+      STUB-WIRED / UNWIRED / FABRICATED, explicitly distinguishing "real code, fake dependency"
+      from "real code, no caller" from "no code, false claim"); a full M0.1-M35 cross-check table
+      citing which Part found what, including which PR#28 self-annotations correct which Part 2
+      finding; a dedicated G2/G3/G4 gate scorecard treating the three gates as three distinct
+      results, not one pattern; a standalone section for the RFC-0029 recovery-class bug (flagged
+      as the audit's single most urgent item, independent of the completeness table); a standalone
+      section for cross-cutting gaps outside any milestone (RFC-0042 egress/SSRF, RFC-0046 device
+      identity); an honest note on what's self-reported-fixed vs. independently re-verified; and a
+      final MVP-readiness verdict walking G4's literal scenario sentence clause by clause against
+      the evidence, concluding: not ready today, and the gap is specifically the last-mile wiring
+      layer (Android UI data binding, diff/commit/approval plumbing) plus G3 itself needing an
+      actual device — not a redesign of the kernel underneath, which Parts 1 and 2 found solid.
+- [x] Wrote the PIPELINE.md audit section (Part 6), committed, pushed.
+- [x] **Opened the single PR for this audit branch**, per the original task brief ("a single PR at
+      the end... more appropriate than one per link"). Deleted the link-7 safety-net trigger since
+      the chain is genuinely complete. **Stopping the session-pipeline chain — no further wakeups
+      scheduled for this audit.**
 
 ## Next
 
-- **Part 3 (next link): Phase 3 (M20-M26)** — RFCs 0020-0024, 0044-0045, 0049, 0053, 0056.
-  Note M21/M26 are hardware-gated (no real phone in this sandbox) — the audit's job there is to
-  confirm what's genuinely blocked-on-hardware vs. what's actually missing code, not to fake a
-  device measurement.
-- **Part 4: Phase 4 (M27-M35)** — RFCs 0044, 0050-0051, 0057, 0060. The 2026-08-09 review already
-  found the Android wiring thinner than milestone checkmarks suggest (androidTarget() on
-  kernel/api, Service subclass, MainActivity→RealRuntimeClient, daemon locking) — PIPELINE.md's
-  later dated entries (2026-08-09/10) claim several of these were subsequently fixed. Re-verify
-  those specific claims the same way Part 1 did for the RFC-0004/0005/etc. claims — do not assume
-  they're accurate just because they're detailed.
-- **Part 5: RFCs never named by any milestone or the original review** — 0000-0002 (vision/
-  principles/runtime, mostly prose — light-touch check they're not contradicted by code), 0017
-  (state model), 0028-0029 (cost/quota, error taxonomy — partially covered by M6, check the rest),
-  0037-0041 (observability, testing strategy, serialization, storage — partially covered by M1,
-  check remainder — export/import is Draft/post-MVP, confirm nothing built contradicts that), 0046
-  (identity/actors — confirm ActorRef usage), 0054-0055 (scope/instances — partially covered by
-  M1/M2/M7, check remainder), 0060 (plugin SDK — Draft, confirm nothing built).
-- **Part 6 (final): milestone-by-milestone cross-check table** (M1-M35 in one table: CONFIRMED /
-  PARTIAL / MISSING / HARDWARE-BLOCKED) and the honest final MVP-readiness assessment against G4.
-  Do this LAST, once every phase has independent evidence — not before.
+**None. The audit is complete.** If anyone resumes this branch later, the right next step is either
+(a) reviewing/merging the PR, or (b) — as a clearly separate, new task, not a continuation of this
+one — an independent re-verification of the two fix sessions' own self-reported work, which this
+audit explicitly did not attempt.
 
 ## Notes for the next link
 
@@ -168,3 +313,76 @@ significant findings — see below. G2 (currently marked passed) is not well sup
   takes about 1m25s once warm** — useful for a quick baseline recheck without paying the full
   ~4min `jvmTest --continue` cost across all 30 modules, if a future link just needs to confirm
   those two modules' status hasn't changed.
+- **Link 3 lesson: when a milestone's done-when requires a specific artifact ("measured, recorded,
+  and published"), always search for that literal artifact before trusting the checkmark — don't
+  stop at reading the code that's adjacent to it.** The G3 finding was only caught because one
+  agent was explicitly told to search for a results file, check who authored the status change and
+  what else was in that commit, and confirm no CI/sandbox has ever had real device access. A more
+  generic "verify M26 against its done-when" prompt might easily have stopped at reading
+  `CookbookEngine.computeResidentMemory()`, seen real-looking calibrated numbers, and moved on
+  without checking whether a *measurement* — as opposed to a formula — actually exists. When Part 4
+  and Part 5/6 hit any other done-when with a "measured/recorded/published" or "verified on a real
+  device" clause (M34 F-Droid, M35/G4 itself), apply the same discipline: find the artifact by
+  name, check who changed the status and what else was in that commit, don't infer from adjacent
+  code quality.
+- **A separate implementation session now exists fixing M10/M13-M16/M18/M19** — it will likely
+  start landing commits and PIPELINE.md fix-annotations on its own branch
+  (`claude/fix-audit-gaps-m10-m19`) while this audit continues on Parts 4-6. That branch is out of
+  this audit's scope; don't merge it in or verify its work as part of this audit's remaining Parts
+  unless the user asks. If a future link notices that branch's PR exists and has commits, that's
+  expected and fine — just don't let it distract from Parts 4-6's own scope (Phase 4, remaining
+  RFCs, and the final cross-check table).
+- **The G3 finding changes what the eventual Part 6 final assessment must say, materially.** Do
+  not let Part 6 soften this into "G3 needs re-verification" language — the evidence found is that
+  G3 was never run at all, on any device, ever, and the current "PASSED" mark is actively false,
+  not merely unverified. State it with the same directness Part 3 already does.
+- **Link 4 lesson: G4 came back clean, and that matters for how Part 6 should be written.** Not
+  every gate/status claim in this repo is inflated — G4/M35 was checked with the exact same
+  rigor as G3 and held up completely honest. Part 6's final assessment should show both results
+  side by side (G3 fabricated, G4 honest) rather than implying the whole corpus is unreliable —
+  the actual pattern is narrower and more specific than that, and overstating the audit's own
+  findings would be the same failure mode this audit exists to catch.
+- **Link 4 lesson: the "real subsystem, stubbed integration" pattern from Parts 2-3 is not
+  Phase-2/3-specific — it recurs at every layer, including presenter code sitting directly on top
+  of a stubbed API client.** M31 is the clearest instance yet: a well-typed, well-designed
+  presenter (`CommitPresenter`) calling a `RuntimeClient` method (`diff.commit()`) that fabricates
+  its return value. This means "the presenter has tests and they pass" is now confirmed
+  insufficient evidence at THREE layers deep (subsystem → API client → presenter) — when Part 5
+  covers any remaining subsystem, check not just the immediate caller but the next layer out too,
+  since a passing test can be validating against a stub two calls removed from anything real.
+  Consider whether Part 6's final table needs a fourth verdict category beyond
+  CONFIRMED/PARTIAL/MISSING — something like "real but stub-terminated" — since "PARTIAL" doesn't
+  quite capture "fully real code, wired to a fully fake dependency."
+- **Link 4 lesson: `RunSummaryComputer.isBenign()` vs. `kernel/Effects.kt`'s `approvalTier()` is a
+  new pattern worth watching for in Part 5 too — a security-relevant decision function duplicated
+  across a module boundary, where one copy got a fix and the other didn't.** This is distinct from
+  "real but unwired" — both copies ARE wired into something real (M32b, M33's voice gate). The risk
+  is drift, not absence. If Part 5 finds any other place a kernel-level security/trust decision
+  (taint, capability tiers, taint-ceiling checks) appears to be reimplemented rather than called
+  from its canonical location, flag it the same way.
+- **3 agents remains the right number** — Part 4 covered 9 milestones (M27-M35, counting M32b/c as
+  distinct) with 3 agents, no coordination problems, each came back with substantial independent
+  findings neither of the others touched. Continue with 3 for Part 5's ~15 remaining RFCs, split
+  roughly by RFC-number range as the tracking doc's "Next" section already suggests.
+- **Link 5 lesson: not every severe finding is the same shape, and Part 6 must not flatten them
+  into one bucket.** This audit now has at least four distinct kinds of finding: (1) fabricated
+  status with zero backing (G3), (2) real subsystems wired to stubbed/fake dependents (M10/M18/M19/
+  M30/M31/etc.), (3) real subsystems simply unwired/uncalled from anything (M24/M25/M29/AvailabilityReporter),
+  and now (4) a live correctness bug in code that IS wired, real, and tested-but-not-for-this-case
+  (the RFC-0029 recovery-class bug). Kind 4 is arguably the most urgent for the project owner
+  regardless of MVP timeline, because it's a bug in shipped, working code, not a gap in unshipped
+  work. Part 6's table and prose should distinguish these kinds explicitly, not just mark
+  everything "PARTIAL."
+- **Link 5 lesson: security-relevant gaps that aren't about MVP milestone completeness (RFC-0042's
+  egress/SSRF gap, and to a lesser extent RFC-0046's device-identity gap) deserve their own
+  visibility in Part 6, separate from the M1-M35 milestone table.** They don't map cleanly onto any
+  single milestone's done-when, so a milestone-by-milestone table alone would bury them. Consider a
+  short separate subsection in Part 6 for "cross-cutting gaps found outside the milestone table."
+- **The fix sessions are now landing real, large, honest work (PR #28 confirmed) — Part 6 should
+  acknowledge this state explicitly rather than writing the final assessment as if Parts 1-5's
+  findings are all still exactly as-found.** Where a fix session's own self-annotation directly
+  addresses something Part 2/3/4 found, Part 6 can note "since fixed, see PR #28" rather than
+  re-stating the original gap as if it's still fully open — but distinguish self-reported-fixed
+  from independently-re-verified-fixed, since this audit hasn't re-checked the fix session's own
+  claims with the same independent rigor applied to everything else. Don't let that distinction
+  get lost in the final write-up.
