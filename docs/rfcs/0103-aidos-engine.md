@@ -1,6 +1,6 @@
 # RFC-0103: Aidos Engine — Shared Local Inference Service
 
-Status: Draft 2026-08-14
+Status: Accepted 2026-08-14
 
 ## Abstract
 
@@ -90,14 +90,15 @@ handshake and transport — packaging is an implementation detail.
 
 ### Core and app, mirrored from Aidos itself
 
-Aidos's own architecture keeps a headless core (`runtime/`: kernel and services) separate from
-its Android hosting (`runtime/androidapp`), precisely so the same core can be hosted differently
+Aidos's own architecture keeps a headless core (`agent/`: kernel and services) separate from
+its Android hosting (`agent/androidapp`), precisely so the same core can be hosted differently
 per platform (RFC-0050, RFC-0055). Aidos Engine repeats that shape rather than folding model
 serving straight into an Android app module:
 
 - **Aidos Engine Core** is a platform-agnostic KMP module — `modelruntime`, `models`,
-  `downloads`, `huggingface`, `cookbook`, and `voice`, moved out of `runtime/` as their own
-  Gradle project rather than merged into an Android module. It has no Android or UI dependency,
+  `downloads`, `huggingface`, `cookbook`, and `voice`, moved out of `agent/` into their own
+  `engine/` Gradle project rather than merged into an Android module. It has no Android or UI
+  dependency,
   and it exposes model loading, inference, and the admission/eviction policy through one
   interface, the same way `RuntimeClient` is the seam RFC-0052 defines for the main runtime.
 - **Aidos Engine** (the Android app) hosts Aidos Engine Core in-process inside its foreground
@@ -118,6 +119,13 @@ serving straight into an Android app module:
   build, for instance — would expose the same core behind a Unix socket instead of loopback HTTP,
   exactly as RFC-0055 already does for the main runtime's DESKTOP daemon. Nothing here commits to
   building that; it falls out of the split for free if it's ever needed (Future Work).
+- Concretely, the repository is one monorepo with the boundary drawn at the directory level:
+  `agent/` (Aidos Agent, formerly `runtime/`), `engine/` (Aidos Engine Core plus its own
+  `androidapp`), and `sdk/` (Aidos SDK) are three independent Gradle projects side by side. They
+  are not wired together as compile-time dependencies — `agent/` and `engine/` never share a
+  build graph, and `sdk/` is consumed by `agent/` (and any other client) as a library, not a
+  source dependency, matching that the two apps only ever talk over the transport this RFC
+  defines.
 
 ### Aidos SDK: one client implementation
 
