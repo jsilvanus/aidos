@@ -6,6 +6,19 @@
         <option name="testRunner" value="CHOOSE_PER_TEST" />
         <option name="externalProjectPath" value="$PROJECT_DIR$" />
         <option name="gradleJvm" value="#GRADLE_LOCAL_JAVA_HOME" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/androidapp" />
+            <option value="$PROJECT_DIR$/cookbook" />
+            <option value="$PROJECT_DIR$/downloads" />
+            <option value="$PROJECT_DIR$/huggingface" />
+            <option value="$PROJECT_DIR$/modelruntime" />
+            <option value="$PROJECT_DIR$/models" />
+            <option value="$PROJECT_DIR$/voice" />
+            <option value="$PROJECT_DIR$/../kernel" />
+          </set>
+        </option>
       </GradleProjectSettings>
     </option>
   </component>

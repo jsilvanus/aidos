@@ -1,7 +1,7 @@
 plugins {
-    kotlin("multiplatform") version "2.1.0" apply false
-    kotlin("plugin.serialization") version "2.1.0" apply false
-    kotlin("plugin.compose") version "2.1.0" apply false
+    kotlin("multiplatform") version "2.4.10" apply false
+    kotlin("plugin.serialization") version "2.4.10" apply false
+    kotlin("plugin.compose") version "2.4.10" apply false
     // ---------------------------------------------------------------------------
     // com.android.library (AGP 8.5.x) is declared here for submodule use.
     // Requires the Google Maven repository (dl.google.com) to be reachable.
