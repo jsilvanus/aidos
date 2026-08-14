@@ -98,7 +98,7 @@ For AI-assisted development, see [CLAUDE.md](CLAUDE.md).
 yet started.
 
 Phase 0 produced three checkable artifacts rather than prose: [`schema/`](schema/) — 53 tables
-of canonical DDL, validated in CI; [`runtime/kernel/`](runtime/) — the KMP contract surface,
+of canonical DDL, validated in CI; [`agent/kernel/`](agent/) — the KMP contract surface,
 compiling with contract tests and no implementations; and
 [`docs/decisions.md`](docs/decisions.md) — 24 architecture decisions with none open. 45 of the
 62 RFCs are Accepted; what remains Draft is deliberate and listed in

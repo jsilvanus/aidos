@@ -17,7 +17,7 @@ The GitHub Actions workflow (`android-build-and-publish.yml`) automatically:
 ```bash
 # Clone the repository
 git clone https://github.com/jsilvanus/aidos.git
-cd aidos/runtime
+cd aidos/agent
 
 # Ensure you have Java 21 installed
 java -version
@@ -28,7 +28,7 @@ gradle :androidapp:assembleRelease
 
 The APK will be located at:
 ```
-runtime/androidapp/build/outputs/apk/release/androidapp-release.apk
+agent/androidapp/build/outputs/apk/release/androidapp-release.apk
 ```
 
 ## GitHub Actions Workflow Setup
@@ -138,7 +138,7 @@ After each build, the APK is also available as a GitHub Actions workflow artifac
 
 **Check build logs:**
 ```bash
-cd runtime
+cd agent
 gradle :androidapp:assembleRelease --no-daemon -i
 ```
 
@@ -166,7 +166,7 @@ gradle :androidapp:assembleRelease --no-daemon -i
 
 ### Android Configuration
 
-Located in `runtime/androidapp/build.gradle.kts`:
+Located in `agent/androidapp/build.gradle.kts`:
 
 - **Namespace:** `fi.italeino.aidos`
 - **Min SDK:** 26 (Android 8.0)
@@ -183,7 +183,7 @@ Signing keys are configured via environment variables (set by GitHub Secrets):
 
 ### Gradle Properties
 
-For local builds, you can also set signing properties in `runtime/gradle.properties`:
+For local builds, you can also set signing properties in `agent/gradle.properties`:
 ```properties
 keystore.file=/path/to/aidos-keystore.jks
 keystore.******

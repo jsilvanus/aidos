@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Core permissions for model loading and inference -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <!-- Required for foreground service (RFC-0103) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- The ongoing notification is a real UI surface (RFC-0103), not optional chrome -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Optional for voice/STT features (M33) -->
+    <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
+
+    <application
+        android:usesCleartextTraffic="false">
+
+        <!-- Main activity for Aidos Engine UI (RFC-0103) -->
+        <activity
+            android:name="fi.italeino.aidos.engine.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service for Engine (RFC-0103). Hosts the Engine core (model loading,
+             inference) in-process. TODO(RFC-0103): Binder handshake, foreground service,
+             HTTP server — not implemented yet -->
+        <service
+            android:name="fi.italeino.aidos.engine.EngineService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+    </application>
+
+</manifest>

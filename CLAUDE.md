@@ -130,14 +130,24 @@ Aidos uses RFCs to drive implementation. This means:
 │   ├── mvp-roadmap.md     # Milestones, RFCs, and done-when conditions
 │   └── ...
 ├── schema/                 # Canonical SQLite DDL (governs; RFC DDL defers to it), check.py
-├── runtime/                # Kotlin Multiplatform Gradle project — the implementation
+├── agent/                  # Aidos Agent (RFC-0103) — Kotlin Multiplatform Gradle project
 │   ├── kernel/             # Contract types only, no implementations (frozen at G0)
 │   ├── androidapp/         # Phase 4: Android app (Compose UI, foreground service host)
 │   ├── cli/                # CLI frontend
 │   └── ...                 # capability, broker, executor, storage, git, filesystem, vault,
-│                            # prompt, agentloop, mcp, modelruntime, routing, worker, retention,
-│                            # knowledge, voice, settings, identity, lock, memory, etc. — one
-│                            # module per subsystem, each with its own tests
+│                            # prompt, agentloop, mcp, routing, worker, retention, knowledge,
+│                            # settings, identity, lock, memory, daemon, etc. — one module
+│                            # per subsystem, each with its own tests
+├── engine/                 # Aidos Engine Core (RFC-0103) — Kotlin Multiplatform Gradle project
+│   ├── modelruntime/       # Model loading and inference runtime
+│   ├── cookbook/           # Model recipes and configuration
+│   ├── huggingface/        # HuggingFace model support
+│   ├── downloads/          # Model download management
+│   ├── models/             # Model abstraction layer
+│   ├── voice/              # STT/TTS voice support
+│   └── androidapp/         # Aidos Engine Android app (foreground service host)
+├── sdk/                    # Aidos SDK (RFC-0103) — Android client library
+│   └── ...                 # Single-module library for Engine client integration
 └── ...
 ```
 
@@ -147,7 +157,7 @@ Aidos uses RFCs to drive implementation. This means:
 1. **Minimal** — Do what the RFC says, no more.
 2. **Clear** — Code should be readable without excessive comments.
 3. **Tested** — New code has tests; old code isn't broken.
-4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in `runtime/kernel/`.
+4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in `agent/kernel/`.
 5. **Documented** — Public APIs have doc comments.
 
 **Comments:**
@@ -178,14 +188,18 @@ if (!session.hasCapability(capability)) {
 # Canonical DDL check — must pass before and after any schema/RFC change
 python3 schema/check.py
 
-# Build and run all module tests
-cd runtime && gradle build
+# Build and run all module tests (Aidos Agent)
+cd agent && gradle build
 
-# Run a specific module's tests
-cd runtime && gradle :executor:test
+# Run a specific module's tests (Aidos Agent)
+cd agent && gradle :executor:test
 
 # With output
-cd runtime && gradle :executor:test --info
+cd agent && gradle :executor:test --info
+
+# Aidos Engine and SDK are built similarly from their respective directories:
+# cd engine && gradle build
+# cd sdk && gradle build
 ```
 
 ### What to Test

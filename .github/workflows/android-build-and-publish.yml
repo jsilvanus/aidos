@@ -3,10 +3,10 @@ name: Build and Publish Android APK
 on:
   push:
     branches: [main, develop]
-    paths: ['runtime/**', '.github/workflows/android-build-and-publish.yml']
+    paths: ['agent/**', '.github/workflows/android-build-and-publish.yml']
   pull_request:
     branches: [main, develop]
-    paths: ['runtime/**', '.github/workflows/android-build-and-publish.yml']
+    paths: ['agent/**', '.github/workflows/android-build-and-publish.yml']
   workflow_dispatch:
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       
       - name: Set up keystore from secrets (optional)
-        working-directory: runtime
+        working-directory: agent
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -46,7 +46,7 @@ jobs:
           fi
       
       - name: Build release APK
-        working-directory: runtime
+        working-directory: agent
         env:
           KEYSTORE_FILE: ${{ github.workspace }}/aidos-keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -59,10 +59,10 @@ jobs:
         id: find-apk
         run: |
           # Find release APK
-          APK_PATH=$(find ./runtime -name "*release*.apk" -type f | head -1)
+          APK_PATH=$(find ./agent -name "*release*.apk" -type f | head -1)
           if [ -z "$APK_PATH" ]; then
             echo "❌ Error: APK not found after build"
-            find ./runtime -name "*.apk" -type f
+            find ./agent -name "*.apk" -type f
             exit 1
           fi
           
@@ -81,7 +81,7 @@ jobs:
           REGISTRY_URL: https://maven.pkg.github.com/${{ github.repository_owner }}/aidos
         run: |
           # Extract version info
-          MANIFEST_PATH="./runtime/androidapp/src/androidMain/AndroidManifest.xml"
+          MANIFEST_PATH="./agent/androidapp/src/androidMain/AndroidManifest.xml"
           BUILD_NUMBER=${{ github.run_number }}
           COMMIT_SHA=${{ github.sha }}
           
