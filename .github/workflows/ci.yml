@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    paths: ['agent/**', 'engine/**', 'kernel/**', 'sdk/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['agent/**', 'engine/**', 'kernel/**', 'sdk/**', '.github/workflows/ci.yml']
+
+jobs:
+  test-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # kernel/ is included by path from agent/settings.gradle.kts (RFC-0103), so this also
+      # compiles and tests kernel from the Agent side.
+      - name: Compile and test all Aidos Agent modules
+        working-directory: agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle jvmTest --continue --no-daemon
+
+  test-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # kernel/ is also included by path from engine/settings.gradle.kts (RFC-0103) — same
+      # module, verified independently from both roots since each is a separate Gradle build.
+      - name: Compile and test all Aidos Engine modules
+        working-directory: engine
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle jvmTest --continue --no-daemon
+
+  build-engine-androidapp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # engine/androidapp's Kotlin lives entirely in src/androidMain, which `gradle jvmTest`
+      # above does not compile (it only exercises the jvm() target). This is a debug compile
+      # check, not a release build — engine/androidapp is a scaffold (RFC-0103), not shipped yet.
+      - name: Compile Aidos Engine app (debug)
+        working-directory: engine
+        run: gradle :androidapp:assembleDebug --no-daemon
+
+  build-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # sdk/ is an Android library with no jvm() target and no tests yet (RFC-0103: the client
+      # implementation is a TODO stub) — this only checks it still compiles.
+      - name: Compile Aidos SDK (debug)
+        working-directory: sdk
+        run: gradle assembleDebug --no-daemon
