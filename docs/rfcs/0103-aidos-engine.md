@@ -53,6 +53,8 @@ recorded here so it isn't lost.
 9. Define Aidos Engine's own UI: its screens, and what it persists to support them.
 10. Define where Aidos Engine's credentials (starting with a Hugging Face token) live, and name
     the direction for whether remote-provider execution eventually moves into Aidos Engine too.
+11. Define who chooses which model serves a call — Aidos Engine or the calling app — and what a
+    client app is allowed to see and select from.
 
 ## Non-goals
 
@@ -208,6 +210,24 @@ clients needs a new authorization step in front of the handshake (consent UI, a 
 per caller, plausibly an extension of RFC-0018) — not a transport change. Deferred; see Future
 Work.
 
+**What "signature" actually checks.** This is Android's own permission-protection level, not
+anything this RFC invents: every installable APK carries a signing certificate, and a custom
+permission declared `protectionLevel="signature"` is granted by the OS, silently and without a
+user prompt, only to a caller whose *installed APK* is signed with the identical certificate as
+the app that declared the permission — not the same developer account, not the same Play Store
+listing, the same cryptographic key. Aidos Engine declares the permission; Aidos Agent (and any
+other client) requests it; `PackageManager` does the certificate comparison at install time.
+
+This has a real consequence worth naming rather than discovering later: RFC-0050 already commits
+Aidos Agent to F-Droid distribution, and F-Droid rebuilds and **re-signs** submitted apps with its
+own key by default, replacing whatever certificate the developer built with. If Aidos Engine and
+Aidos Agent are both distributed through F-Droid, whether they end up with a matching certificate
+depends on F-Droid's signing configuration for the two apps, not on anything this RFC controls —
+and if they don't match, the handshake fails for every real install while still working in local
+debug builds signed with the same development key, which is exactly the shape of bug that stays
+invisible until someone hits it in production. This needs verifying against F-Droid's actual
+signing behavior before release, not assumed.
+
 ### Version and capability contract
 
 Two mechanisms, doing different jobs:
@@ -223,6 +243,34 @@ Two mechanisms, doing different jobs:
 
 Version alone would break on every new feature; capability negotiation alone would let a client
 attempt a wire-incompatible call. Both are needed together.
+
+### Discovery and model selection
+
+**Client apps see the list and ask for a specific model; Aidos Engine does not choose on their
+behalf.** This follows directly from RFC-0020/0021, unchanged by this RFC: model *selection* is
+deliberately "user-owned policy" living in the calling app's routing layer, not something a
+provider decides. Centralizing selection inside Engine instead would mean every app sharing one
+Engine gets the same silent choice regardless of what each actually needs, and would break the
+per-attempt `model_id`/`model_version` audit trail RFC-0057/D26 already assumes the *caller* knows
+precisely because it asked for it by name.
+
+**`capabilities.models` lists the enabled set, not the configured set.** A provider sitting at
+"configured · disabled" (Aidos Engine's own UI, above) must not appear in what a client app can
+see at all — otherwise disabling something is decorative rather than real. Disabled entries exist
+only inside Aidos Engine's own UI.
+
+**Disabled is enforced twice, not once.** Excluding it from the capability list is discovery-time
+enforcement; Aidos Engine must also reject a direct request naming a disabled model or provider by
+ID, in case a client cached an identifier from before it was disabled or simply guessed one.
+Hiding something from a list and actually forbidding it are different guarantees, and this design
+does not rely on the first one doing the second one's job.
+
+**Not designed here: per-app-scoped visibility.** v1's trust model (signature-only, above) means
+every connected client currently sees the same enabled set — there is no "Aidos Agent can see
+Claude, some other app can't" yet. This is not a separate gap to solve later; it is the same
+per-caller-grant mechanism Trust model already defers to Future Work, applied one level down, from
+"can this app connect at all" to "which of the enabled models can this app see." Both should be
+designed together when that Future Work item is taken up, not before.
 
 ### Concurrency and memory policy
 
@@ -254,7 +302,8 @@ independent of any particular client, the way Ollama is independent of any one c
 Client apps never render download or licensing UI themselves; they either use a model the
 capability set already reports as available, or deep-link into Aidos Engine's own screens to
 acquire one — so `model/{modelId}` must be a real, deep-linkable destination, not just reachable
-from Home. Screens are derived from the actual questions someone opening Engine has, the same
+from Home, and so must `provider/{providerId}` for the remote case (Provider detail, below).
+Screens are derived from the actual questions someone opening Engine has, the same
 method RFC-0050 uses for Aidos Agent, and the gesture grammar is inherited rather than reinvented:
 horizontal swipe between peers, vertical scroll through a list, tap goes deeper.
 
@@ -274,19 +323,35 @@ mirroring Agent's Inbox-before-Projects: *"what's happening"* beats *"what's pos
   ⋯ 1 download in progress
 ```
 
-*Cookbook pane* — the RFC-0022 cookbook rendered as that RFC already designed it: label, kind,
-size, verdict, nothing invented here:
+*Cookbook pane* — split into two sections, because local and remote entries are not the same kind
+of thing and forcing them into one list with one status vocabulary would misrepresent both.
+**Local** carries the RFC-0022 cookbook verdict — label, kind, size, fit against *this device* —
+exactly as that RFC already designed it. **Remote** carries a configuration state instead — device
+fit is meaningless for something that runs on someone else's server:
 
 ```
-  Qwen2.5 3B · Q4_K_M · 2.0 GB          RUNS_WELL
-  Llama 3.1 8B · Q4                     WILL_NOT_FIT
-  Whisper base                          RUNS_WELL
+  Local
+    Qwen2.5 3B · Q4_K_M · 2.0 GB          RUNS_WELL
+    Llama 3.1 8B · Q4                     WILL_NOT_FIT
+    Whisper base                          RUNS_WELL
+
+  Remote
+    Anthropic · Claude                    enabled
+    OpenAI                                configured · disabled
+    Google · Gemini                       not configured
 ```
 
-**2 · Model detail / acquire.** Tap a catalogue entry: the per-context-length fit table RFC-0022
-already specifies (4k/16k/32k, verdict per row), and the model's license/terms-of-service **shown
-at the point of deciding to download**, not as a blanket EULA at first launch — consistent with
-RFC-0022's "never automatic." Download is disabled until this specific model's license is
+Three remote states, not two: **not configured** (no credential), **configured** (credential
+present and valid) but not necessarily usable, and **enabled**/**disabled** as a toggle on top of
+configured — matching RFC-0023's own example text ("Remote: Anthropic (approved), OpenAI
+(disabled)"), which this RFC hadn't carried into Engine's UI until now. A provider can be
+configured and still deliberately held back, which is a real, distinct state, not a degenerate
+case of not-configured.
+
+**2 · Model detail / acquire.** Tap a local catalogue entry: the per-context-length fit table
+RFC-0022 already specifies (4k/16k/32k, verdict per row), and the model's license/terms-of-service
+**shown at the point of deciding to download**, not as a blanket EULA at first launch — consistent
+with RFC-0022's "never automatic." Download is disabled until this specific model's license is
 accepted; acceptance is recorded once per model+version and re-shown only if the license text
 changes. Progress is resumable, per RFC-0022.
 
@@ -294,7 +359,33 @@ If the selected model needs Hugging Face authentication (gated repositories), th
 prompts for an HF token inline, right here, rather than gating the whole app behind a
 sign-in-first screen — the same "ask when it's actually needed" rule as the license itself.
 
-**3 · Storage.** RFC-0022's accounting table, verbatim — that RFC already designed the content:
+**3 · Provider detail.** Tap a remote entry — the sibling screen to Model detail, shaped around
+credentials instead of download:
+
+```
+  Anthropic
+
+  API key        ••••••••••••3f2a        [ change ]
+  Status         valid · checked 2h ago
+
+  Enabled        [ ✓ ]
+
+  Models offered
+    claude-opus       enabled
+    claude-sonnet      enabled
+    claude-haiku       disabled
+```
+
+Provider-level enable/disable is the primary control; per-model enable underneath it is a real
+refinement, not decoration — a provider can be configured and enabled while a specific expensive
+model under it stays off. The API key is entered here, at the point of the decision it's for, and
+never echoed anywhere else in the UI once stored — same handling as the license text's "ask when
+needed" rule, applied to a credential instead of a legal agreement.
+
+**4 · Storage.** RFC-0022's accounting table, verbatim — that RFC already designed the content.
+**Deliberately unchanged by the remote split above**: remote providers have no disk footprint, so
+this screen stays local-only rather than growing a "remote" section that would have nothing
+truthful to put in it.
 
 ```
   Models · 6.2 GB of 11.4 GB free
@@ -307,7 +398,7 @@ sign-in-first screen — the same "ask when it's actually needed" rule as the li
 Tap a row → remove. Manual only — RFC-0022 is explicit that Engine never deletes weights on its
 own to make room.
 
-**4 · Connected apps.** Every request into Engine already carries the bearer token minted for
+**5 · Connected apps.** Every request into Engine already carries the bearer token minted for
 that caller at handshake time — so per-app attribution costs nothing new to add, only something
 to tally instead of discard. The display name is resolved via `PackageManager` from the calling
 package the signature-permission handshake already verified, not self-reported by the client (a
@@ -327,11 +418,14 @@ token, incremented in the dispatch path. Persisted history across restarts is no
 storage that survives a restart in this RFC's MVP (see Storage, below), so "usage over the last
 week" is Future Work, not something to bundle in now.
 
-**5 · Settings.** Credential management — HF token entry/status/clear now; the natural home for
-provider credentials generally if Aidos Engine later executes remote-provider calls (see "Remote
-providers through Aidos Engine," below). Nothing else lives here in v1: no account, no sync, no
-per-app trust configuration (the trust model is signature-only and not user-configurable — Trust
-model, above).
+**6 · Settings.** Narrower than it first looks: only the Hugging Face token lives here, because HF
+authentication is infrastructure for *acquiring* local models, not itself an inference source —
+there's no "provider" to attach it to the way Anthropic or OpenAI have one. Remote-provider API
+keys deliberately do **not** live in Settings; each lives on its own Provider detail screen
+(above), for the same reason a model's license lives on that model's own detail screen and not in
+a global list — enter a credential at the point of the decision it's for. Nothing else lives here
+in v1: no account, no sync, no per-app trust configuration (the trust model is signature-only and
+not user-configurable — Trust model, above).
 
 **Deliberately absent**, mirroring RFC-0050's own table:
 
@@ -342,6 +436,7 @@ model, above).
 | Sync, cross-device usage history | D16 — nothing syncs, same as Aidos Agent |
 | Arbitrary model import (raw GGUF upload) | Bypasses the cookbook's verdict system entirely; Future Work, not a v1 screen |
 | Persisted per-app usage history | Requires storage Engine doesn't have in v1 (Storage, below); session-scoped only for now |
+| Engine-side model auto-selection ("pick the best one for me") | Selection is the calling app's job (RFC-0020/0021, unchanged); Engine executes the specific model it's asked for and never substitutes — see Discovery and model selection, below |
 
 **Notifications.** The same three kinds RFC-0050 settles for Aidos Agent (Ongoing / Needs you /
 Terminal), but Engine's Ongoing notification is bound by the Security section below: states that
@@ -377,6 +472,9 @@ that it is a separate app:
 - **License/ToS acceptance records** — per model, per version (Aidos Engine's own UI, above) — so
   a re-download or an app restart doesn't re-prompt for something already agreed to.
 - **The vault**, above.
+- **Provider configuration** — which remote providers are configured, enabled, and which of their
+  models are individually enabled underneath that (Cookbook pane and Provider detail, above) — so
+  "configured · disabled" survives an Engine restart rather than resetting to not-configured.
 
 **Deliberately not persisted in v1**: per-app usage history (session-scoped counters only, reset
 on restart — Connected apps, above); cached cookbook verdicts (cheap enough to recompute against
@@ -435,7 +533,9 @@ HandshakeResponse {
   apiVersion: Int             # strict wire-compat version
   capabilities: {
     endpoints: [String]       # e.g. ["chat.completions", "embeddings", "audio.transcriptions"]
-    models: [ModelStatus]     # resident now, and available-but-unloaded
+    models: [ModelStatus]     # the ENABLED set only (Discovery and model selection, above) —
+                               # resident, available-but-unloaded, or a reachable remote model;
+                               # "configured · disabled" never appears here
   }
 }
 ```
@@ -459,6 +559,14 @@ LicenseAcceptance {
   modelVersion: String
   acceptedAt: Instant
   licenseTextDigest: String  # re-prompt only if this changes
+}
+
+ProviderConfig {
+  providerId: String
+  vaultEntryId: String?      # null = not configured
+  enabled: Boolean           # meaningful only once configured; the toggle "configured · disabled" names
+  lastValidatedAt: Instant?
+  modelsEnabled: Set<String> # per-model overrides beneath the provider-level toggle
 }
 ```
 
@@ -487,6 +595,10 @@ nothing to persist yet.
   device owner can open — this is not the same surface the foreground-notification restriction
   governs, and showing full per-app detail there does not reintroduce the cross-app leakage that
   restriction exists to prevent.
+- A disabled model or provider is rejected at execution time, not only omitted from
+  `capabilities.models` (Discovery and model selection, above). Excluding it from discovery is a
+  convenience; the rejection is the actual security property, and holds even if a client already
+  has a cached identifier from before the model was disabled.
 
 ## MVP
 
@@ -504,28 +616,37 @@ nothing to persist yet.
 6. Aidos Agent as Aidos SDK's first consumer, falling back to a remote provider or reporting
    unavailability when Aidos SDK reports the handshake failed or `apiVersion` is incompatible.
 7. Aidos Engine's own UI, calling Engine Core in-process, not through its own HTTP server: Home
-   (status + cookbook panes), Model detail/acquire (license acceptance, HF token prompt when
-   needed), Storage, Connected apps (session-scoped usage), Settings (credential management).
+   (status pane, and the cookbook pane's **Local** section only — Remote ships with remote-provider
+   execution, below), Model detail/acquire (license acceptance, HF token prompt when needed),
+   Storage, Connected apps (session-scoped usage), Settings (HF token only in v1).
 8. The vault: Keystore-backed credential storage, generic enough to hold any provider's
    credential, with the Hugging Face token as the one credential type actually wired to a flow
    (gated-model acquisition).
 9. License-acceptance records, persisted per model+version, so acquisition doesn't re-prompt.
 
 Not in MVP: vision/multimodal endpoints, third-party (cross-signature) client trust, any remote or
-LAN exposure of the Engine port, remote-provider execution through Aidos Engine (direction named,
-not built), persisted per-app usage history.
+LAN exposure of the Engine port, persisted per-app usage history, per-app-scoped model visibility,
+and remote-provider execution through Aidos Engine together with everything that has no purpose
+without it — the Cookbook pane's Remote section, Provider detail, and `ProviderConfig` (direction
+and screens designed above, nothing built or wired).
 
 ## Future Work
 
 - Vision endpoints: multimodal `chat.completions` with image content parts, once model support and
   the memory budget above are validated against real devices.
 - Opening the handshake to differently-signed clients: per-caller consent UI, a capability-model
-  extension (RFC-0018) for per-app grants, usage/rate limiting per client.
+  extension (RFC-0018) for per-app grants, usage/rate limiting per client. The same mechanism,
+  applied one level down, is also how per-app-scoped model visibility would work — "Aidos Agent
+  can see Claude, this other app can't" — rather than every connected client seeing the same
+  enabled set as v1 does (Discovery and model selection, above). Design both together.
 - A possible convergence with RFC-0055's "paired remote runtime" Future Work, if a phone's Aidos
   Engine is ever addressed from a desktop runtime rather than only from apps on the same device.
 - Remote-provider execution through Aidos Engine (Remote providers through Aidos Engine, above):
   per-provider request/response translation, egress-policy enforcement at the point of execution,
-  and credential-sharing semantics when multiple client apps use the same stored key.
+  and credential-sharing semantics when multiple client apps use the same stored key. The Cookbook
+  pane's Remote section, Provider detail, and `ProviderConfig` (Aidos Engine's own UI, Data Model,
+  above) ship with this, not before it — a configuration screen with nothing behind it to execute
+  against is not worth building first.
 - Persisted, cross-restart per-app usage history — requires Aidos Engine to own more storage than
   the license-acceptance and vault records this RFC's MVP gives it.
 - Aidos Agent's model-selection screen (RFC-0050 amendment): Aidos Engine as default, directly-
