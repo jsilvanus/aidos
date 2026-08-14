@@ -254,16 +254,22 @@ Engine gets the same silent choice regardless of what each actually needs, and w
 per-attempt `model_id`/`model_version` audit trail RFC-0057/D26 already assumes the *caller* knows
 precisely because it asked for it by name.
 
-**`capabilities.models` lists the enabled set, not the configured set.** A provider sitting at
-"configured · disabled" (Aidos Engine's own UI, above) must not appear in what a client app can
-see at all — otherwise disabling something is decorative rather than real. Disabled entries exist
-only inside Aidos Engine's own UI.
+**`capabilities.models` lists the enabled set, not the configured set, and never anything
+unconfigured.** For local models that's Cookbook's contents; for remote models it's the union of
+every provider's *configured* models list (Provider detail, above) that are also individually
+enabled and whose provider is enabled. A model sitting at "configured · disabled," a whole
+provider that's disabled, or — the case that matters most for remote — **a model string nobody
+ever configured at all**, must not appear in what a client app can see, and a client app may never
+request one either. There is no path by which a calling app names a remote model Aidos Engine
+wasn't explicitly told about; that is what "the provider's must have models configured" (not
+free-text passthrough) actually buys.
 
-**Disabled is enforced twice, not once.** Excluding it from the capability list is discovery-time
-enforcement; Aidos Engine must also reject a direct request naming a disabled model or provider by
-ID, in case a client cached an identifier from before it was disabled or simply guessed one.
-Hiding something from a list and actually forbidding it are different guarantees, and this design
-does not rely on the first one doing the second one's job.
+**Rejection is enforced twice, not once, and covers unconfigured as well as disabled.** Excluding
+something from the capability list is discovery-time enforcement; Aidos Engine must also reject a
+direct request naming a model or provider by ID that is disabled *or was never configured*, in
+case a client cached an identifier from before it was disabled, guessed one, or simply passed
+through whatever string it was given. Hiding something from a list and actually forbidding it are
+different guarantees, and this design does not rely on the first one doing the second one's job.
 
 **Not designed here: per-app-scoped visibility.** v1's trust model (signature-only, above) means
 every connected client currently sees the same enabled set — there is no "Aidos Agent can see
@@ -348,12 +354,19 @@ configured — matching RFC-0023's own example text ("Remote: Anthropic (approve
 configured and still deliberately held back, which is a real, distinct state, not a degenerate
 case of not-configured.
 
-**2 · Model detail / acquire.** Tap a local catalogue entry: the per-context-length fit table
-RFC-0022 already specifies (4k/16k/32k, verdict per row), and the model's license/terms-of-service
-**shown at the point of deciding to download**, not as a blanket EULA at first launch — consistent
-with RFC-0022's "never automatic." Download is disabled until this specific model's license is
-accepted; acceptance is recorded once per model+version and re-shown only if the license text
-changes. Progress is resumable, per RFC-0022.
+**The Local section carries one more affordance: `+ Add from Hugging Face`.** A field to enter or
+search a Hugging Face repo directly, as a second way onto Model detail alongside browsing the
+curated list — not a second catalog, and not the "arbitrary GGUF upload" this RFC otherwise keeps
+out (below): the same fit computation, license-at-the-point-of-download, and digest verification
+apply either way. Only how the entry was found changes; what happens once you're on Model detail
+does not.
+
+**2 · Model detail / acquire.** Reached by tapping a curated entry or by naming a repo directly
+(above): the per-context-length fit table RFC-0022 already specifies (4k/16k/32k, verdict per
+row), and the model's license/terms-of-service **shown at the point of deciding to download**, not
+as a blanket EULA at first launch — consistent with RFC-0022's "never automatic." Download is
+disabled until this specific model's license is accepted; acceptance is recorded once per
+model+version and re-shown only if the license text changes. Progress is resumable, per RFC-0022.
 
 If the selected model needs Hugging Face authentication (gated repositories), the acquire flow
 prompts for an HF token inline, right here, rather than gating the whole app behind a
@@ -370,17 +383,26 @@ credentials instead of download:
 
   Enabled        [ ✓ ]
 
-  Models offered
-    claude-opus       enabled
-    claude-sonnet      enabled
-    claude-haiku       disabled
+  Configured models
+    claude-sonnet-4-5    enabled
+    claude-haiku-4-5     disabled
+    [ + add model ]
 ```
 
 Provider-level enable/disable is the primary control; per-model enable underneath it is a real
 refinement, not decoration — a provider can be configured and enabled while a specific expensive
-model under it stays off. The API key is entered here, at the point of the decision it's for, and
-never echoed anywhere else in the UI once stored — same handling as the license text's "ask when
-needed" rule, applied to a credential instead of a legal agreement.
+model under it stays off. **The configured-models list is user-built, not an Aidos-shipped
+catalog** — Aidos does not pre-populate "claude-opus, claude-sonnet, claude-haiku" the way RFC-0022
+ships a curated local list, because that list changes on the provider's schedule, not ours, and a
+stale hand-maintained copy would be worse than none. The user types the exact identifier for each
+model they want available; Aidos does not validate it against anything beyond the provider's own
+response when it's actually called. This is also the enforcement boundary for Discovery and model
+selection, below: a calling app may only request a model that appears in some provider's
+configured list here, or in the local Cookbook section above — never an arbitrary string.
+
+The API key is entered here, at the point of the decision it's for, and never echoed anywhere else
+in the UI once stored — same handling as the license text's "ask when needed" rule, applied to a
+credential instead of a legal agreement.
 
 **4 · Storage.** RFC-0022's accounting table, verbatim — that RFC already designed the content.
 **Deliberately unchanged by the remote split above**: remote providers have no disk footprint, so
@@ -434,9 +456,11 @@ not user-configurable — Trust model, above).
 | Chat / prompt surface | Engine serves, it doesn't converse — every client app's job, not Engine's |
 | Account, login | No account exists anywhere in this product (RFC-0046) |
 | Sync, cross-device usage history | D16 — nothing syncs, same as Aidos Agent |
-| Arbitrary model import (raw GGUF upload) | Bypasses the cookbook's verdict system entirely; Future Work, not a v1 screen |
+| Raw local-file GGUF sideloading | No HF metadata to compute fit against and no digest to verify against a known source — different and less safe than `+ Add from Hugging Face` (above), which stays in scope |
+| An Aidos-shipped catalog of remote provider models | Would go stale on each provider's release schedule, not ours; provider model lists are user-configured instead (Provider detail, above) |
 | Persisted per-app usage history | Requires storage Engine doesn't have in v1 (Storage, below); session-scoped only for now |
 | Engine-side model auto-selection ("pick the best one for me") | Selection is the calling app's job (RFC-0020/0021, unchanged); Engine executes the specific model it's asked for and never substitutes — see Discovery and model selection, below |
+| A calling app naming an unconfigured model | Must be a model present in the local Cookbook or some provider's configured-models list — see Discovery and model selection, below |
 
 **Notifications.** The same three kinds RFC-0050 settles for Aidos Agent (Ongoing / Needs you /
 Terminal), but Engine's Ongoing notification is bound by the Security section below: states that
@@ -563,10 +587,13 @@ LicenseAcceptance {
 
 ProviderConfig {
   providerId: String
-  vaultEntryId: String?      # null = not configured
-  enabled: Boolean           # meaningful only once configured; the toggle "configured · disabled" names
+  vaultEntryId: String?          # null = not configured
+  enabled: Boolean               # meaningful only once configured; the toggle "configured · disabled" names
   lastValidatedAt: Instant?
-  modelsEnabled: Set<String> # per-model overrides beneath the provider-level toggle
+  configuredModels: Map<String, Boolean>  # modelId -> enabled. User-entered (Provider detail,
+                                           # above), never Aidos-shipped. Key absent = not
+                                           # configured = never eligible for capabilities.models
+                                           # or a request, regardless of the value it would have had.
 }
 ```
 
@@ -595,10 +622,11 @@ nothing to persist yet.
   device owner can open — this is not the same surface the foreground-notification restriction
   governs, and showing full per-app detail there does not reintroduce the cross-app leakage that
   restriction exists to prevent.
-- A disabled model or provider is rejected at execution time, not only omitted from
-  `capabilities.models` (Discovery and model selection, above). Excluding it from discovery is a
-  convenience; the rejection is the actual security property, and holds even if a client already
-  has a cached identifier from before the model was disabled.
+- A disabled *or unconfigured* model or provider is rejected at execution time, not only omitted
+  from `capabilities.models` (Discovery and model selection, above). Excluding it from discovery is
+  a convenience; the rejection is the actual security property, and holds whether a client has a
+  cached identifier from before the model was disabled or is simply naming something no provider
+  was ever told to serve.
 
 ## MVP
 
