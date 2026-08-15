@@ -1,121 +1,111 @@
 package fi.italeino.aidos.engine.ui
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import fi.italeino.aidos.engine.approval.AppApprovalRecord
-import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import androidx.compose.ui.unit.sp
 
 /**
- * Connected apps screen (RFC-0103).
+ * Connected Apps screen (RFC-0103, Phase D).
  *
- * UI for managing which apps are approved to use Aidos Engine.
- * Shows three sections:
- * 1. Approved apps — with request count, last-active time, Revoke button
- * 2. Pending apps — first-time requests, with Approve/Deny buttons
- * 3. Denied apps — sticky denials, with Undo Deny button
+ * Which apps are currently using Aidos Engine:
+ * - List of connected apps by name
+ * - Per app: request counts by type (chat completions vs. embeddings), last-active time
+ * - Session-scoped data (resets when Aidos Engine restarts) — no historical charts needed
  *
- * Updates in real-time as the user taps approve/deny/revoke buttons.
- *
- * RFC-0103: All decisions are persistent (stored via AppApprovalStore).
- * First handshake from an unknown app triggers a notification that deep-links here.
+ * Reachable from HomeScreen menu.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectedAppsScreen(
-    viewModel: ConnectedAppsViewModel,
-    onClose: () -> Unit = {}
-) {
-    val approvals by viewModel.approvals.collectAsState(emptyList())
-    val approved = approvals.filter { it.status == AppApprovalStatus.APPROVED }
-    val pending = approvals.filter { it.status == AppApprovalStatus.PENDING }
-    val denied = approvals.filter { it.status == AppApprovalStatus.DENIED }
-    
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text(
-            "Connected Apps",
-            style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(bottom = 24.dp)
+fun ConnectedAppsScreen() {
+    val state = remember {
+        ConnectedAppsState(
+            connectedApps = listOf(
+                ConnectedApp(
+                    packageName = "com.example.aidosagent",
+                    displayName = "Aidos Agent",
+                    lastActiveMs = System.currentTimeMillis() - 5_000,
+                    requestMetrics = RequestMetrics(
+                        chatCompletions = 47,
+                        embeddings = 12,
+                        transcriptions = 0
+                    )
+                ),
+                ConnectedApp(
+                    packageName = "com.example.testapp",
+                    displayName = "Test App",
+                    lastActiveMs = System.currentTimeMillis() - 60_000,
+                    requestMetrics = RequestMetrics(
+                        chatCompletions = 5,
+                        embeddings = 0,
+                        transcriptions = 0
+                    )
+                ),
+            )
         )
-        
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            // Pending section: apps requesting access
-            if (pending.isNotEmpty()) {
-                item {
-                    SectionHeader("Requesting Access (${pending.size})")
-                }
-                items(pending) { app ->
-                    PendingAppCard(
-                        app = app,
-                        onApprove = { viewModel.approveApp(app.packageName) },
-                        onDeny = { viewModel.denyApp(app.packageName) }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("Connected Apps") })
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Session-scoped metrics (reset when Aidos Engine restarts)",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            if (state.connectedApps.isEmpty()) {
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "No apps currently connected",
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(16.dp)
                     )
                 }
-                item { Spacer(modifier = Modifier.height(16.dp)) }
-            }
-            
-            // Approved section: apps with active access
-            if (approved.isNotEmpty()) {
-                item {
-                    SectionHeader("Approved (${approved.size})")
-                }
-                items(approved) { app ->
-                    ApprovedAppCard(
-                        app = app,
-                        onRevoke = { viewModel.revokeApproval(app.packageName) }
-                    )
-                }
-                item { Spacer(modifier = Modifier.height(16.dp)) }
-            }
-            
-            // Denied section: apps user rejected
-            if (denied.isNotEmpty()) {
-                item {
-                    SectionHeader("Denied (${denied.size})")
-                }
-                items(denied) { app ->
-                    DeniedAppCard(
-                        app = app,
-                        onUndoDeny = { viewModel.undoDenyApp(app.packageName) }
-                    )
-                }
-            }
-            
-            // Empty state
-            if (approvals.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "No connected apps yet.\n\nWhen an app requests access to Aidos Engine, it will appear here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(16.dp)
-                        )
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(state.connectedApps) { app ->
+                        ConnectedAppCard(app)
                     }
                 }
             }
@@ -124,176 +114,91 @@ fun ConnectedAppsScreen(
 }
 
 @Composable
-private fun SectionHeader(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.titleMedium,
+private fun ConnectedAppCard(app: ConnectedApp) {
+    OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp)
-    )
-}
-
-@Composable
-private fun PendingAppCard(
-    app: AppApprovalRecord,
-    onApprove: () -> Unit,
-    onDeny: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp)
+            ),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Column(modifier = Modifier.padding(bottom = 12.dp)) {
-                Text(
-                    app.displayName,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    app.packageName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                )
-            }
-            
-            Text(
-                "This app wants to use Aidos Engine.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onApprove,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                ) {
-                    Text("Approve")
-                }
-                Button(
-                    onClick = onDeny,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Deny")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ApprovedAppCard(
-    app: AppApprovalRecord,
-    onRevoke: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                app.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                app.packageName,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            
-            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalAlignment = Alignment.End
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        app.displayName,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        app.packageName,
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.outline,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
                 Text(
-                    "Requests: ${app.requestCount}",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-                Text(
-                    "Last active: ${formatTime(app.lastSeenAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    formatLastActive(app.lastActiveMs),
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.outline
                 )
             }
-            
-            Button(
-                onClick = onRevoke,
-                modifier = Modifier.fillMaxWidth()
+
+            Column(
+                modifier = Modifier.padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("Revoke Access")
+                RequestMetricRow("Chat Completions", app.requestMetrics.chatCompletions)
+                if (app.requestMetrics.embeddings > 0) {
+                    RequestMetricRow("Embeddings", app.requestMetrics.embeddings)
+                }
+                if (app.requestMetrics.transcriptions > 0) {
+                    RequestMetricRow("Transcriptions", app.requestMetrics.transcriptions)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DeniedAppCard(
-    app: AppApprovalRecord,
-    onUndoDeny: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+private fun RequestMetricRow(label: String, count: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                app.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                app.packageName,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f),
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            
-            Text(
-                "Access denied",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            
-            Button(
-                onClick = onUndoDeny,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Undo Denial")
-            }
-        }
+        Text(
+            label,
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.outline
+        )
+        Text(
+            "$count",
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
-private fun formatTime(timestamp: String): String {
-    // TODO: Properly format timestamp. For now, return a friendly abbreviation.
-    return "just now"
+private fun formatLastActive(lastActiveMs: Long): String {
+    val elapsedMs = System.currentTimeMillis() - lastActiveMs
+    return when {
+        elapsedMs < 1000 -> "just now"
+        elapsedMs < 60_000 -> "${elapsedMs / 1000}s ago"
+        elapsedMs < 3600_000 -> "${elapsedMs / 60_000}m ago"
+        else -> "${elapsedMs / 3600_000}h ago"
+    }
 }
 

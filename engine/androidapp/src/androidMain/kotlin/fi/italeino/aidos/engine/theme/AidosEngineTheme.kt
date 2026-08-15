@@ -8,14 +8,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 /**
- * Material 3 color scheme for Aidos Engine (RFC-0103).
+ * Material 3 color scheme for Aidos Engine (RFC-0103, Phase D).
  *
- * Same Material 3 defaults Aidos Agent uses (fi.italeino.aidos.theme.AidosTheme) — no reason to
- * invent a different visual language for a sibling app — but with a distinct seed color, so a
- * screenshot or the recents tray tells the two apps apart at a glance. Everything else about the
- * visual language (typography, shape, component styling) stays default and identical to Agent.
+ * Warm Technical light-mode theme:
+ * - Surface: #FEF8F3 (warm beige/off-white)
+ * - Primary: #533786 (deep purple brand)
+ * - Secondary Accent: #F1916D (muted terracotta)
+ * - Containers: #F8F3EE (slightly darker beige)
+ * - Outline: #DED9D4 (soft taupe/gray)
+ *
+ * Design principles: Material 3, 8px rounded corners, Geist typography.
+ * Information-dense technical UI with high contrast purple for active states.
  */
-private val EngineSeed = Color(0xFF00696D) // teal, distinct from Agent's default Material purple
+
+private val WarmBeige = Color(0xFFFEF8F3)
+private val DeepPurple = Color(0xFF533786)
+private val MutedTerracotta = Color(0xFFF1916D)
+private val ContainerBeige = Color(0xFFF8F3EE)
+private val SoftTaupe = Color(0xFFDED9D4)
 
 @Composable
 fun AidosEngineTheme(
@@ -23,9 +33,16 @@ fun AidosEngineTheme(
     content: @Composable () -> Unit,
 ) {
     val colorScheme = if (darkTheme) {
-        darkColorScheme(primary = EngineSeed)
+        darkColorScheme(primary = DeepPurple)
     } else {
-        lightColorScheme(primary = EngineSeed)
+        lightColorScheme(
+            primary = DeepPurple,
+            secondary = MutedTerracotta,
+            tertiary = MutedTerracotta,
+            surface = WarmBeige,
+            surfaceVariant = ContainerBeige,
+            outline = SoftTaupe,
+        )
     }
 
     MaterialTheme(

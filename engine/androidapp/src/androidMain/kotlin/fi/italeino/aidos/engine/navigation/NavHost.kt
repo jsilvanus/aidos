@@ -8,15 +8,19 @@ import androidx.navigation.navDeepLink
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelDetailScreen
+import fi.italeino.aidos.engine.ui.ProviderDetailScreen
 import fi.italeino.aidos.engine.ui.SettingsScreen
 import fi.italeino.aidos.engine.ui.StorageScreen
 
 /**
- * Navigation graph for Aidos Engine (RFC-0103).
+ * Navigation graph for Aidos Engine (RFC-0103, Phase D).
  *
  * [EngineRoute.ModelDetail] is reachable both from in-app navigation (Home's Cookbook pane) and
  * as an external deep link from client apps — RFC-0103 requires this, since client apps deep-link
  * into Aidos Engine's own screens to acquire a model rather than rendering their own download UI.
+ *
+ * [EngineRoute.ProviderDetail] is reachable from the Providers pane for remote model provider
+ * configuration (API key management, enable/disable, configured models list).
  */
 @Composable
 fun EngineNavHost(
@@ -31,6 +35,9 @@ fun EngineNavHost(
                 onModelSelected = { modelId ->
                     navController.navigate(EngineRoute.ModelDetail(modelId).createRoute(modelId))
                 },
+                onProviderSelected = { providerId ->
+                    navController.navigate(EngineRoute.ProviderDetail(providerId).createRoute(providerId))
+                },
             )
         }
 
@@ -44,6 +51,13 @@ fun EngineNavHost(
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
             ModelDetailScreen(modelId = modelId)
+        }
+
+        composable(
+            EngineRoute.ProviderDetail(providerId = "{providerId}").route,
+        ) { backStackEntry ->
+            val providerId = backStackEntry.arguments?.getString("providerId") ?: return@composable
+            ProviderDetailScreen(providerId = providerId)
         }
 
         composable(EngineRoute.Storage.route) {
