@@ -29,6 +29,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+                implementation("io.ktor:ktor-server-test-host:2.3.12")
             }
         }
 
