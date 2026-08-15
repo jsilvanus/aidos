@@ -8,6 +8,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.compose.rememberNavController
 import fi.italeino.aidos.engine.navigation.EngineNavHost
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
@@ -26,7 +28,11 @@ import fi.italeino.aidos.engine.theme.AidosEngineTheme
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // Ensure edge-to-edge (RFC-0103)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // Start the Engine foreground service
         val engineIntent = Intent(this, EngineService::class.java)

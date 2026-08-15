@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AidosEngine" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Main app theme -->
+    </style>
+
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@android:color/white</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:drawable/ic_dialog_info</item>
+        <item name="postSplashScreenTheme">@style/Theme.AidosEngine</item>
+    </style>
+</resources>

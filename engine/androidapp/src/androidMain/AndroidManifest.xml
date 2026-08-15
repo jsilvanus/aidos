@@ -17,6 +17,7 @@
 
     <!-- Required for foreground service (RFC-0103) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- The ongoing notification is a real UI surface (RFC-0103), not optional chrome -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -28,12 +29,14 @@
     <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
 
     <application
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.AidosEngine">
 
         <!-- Main activity for Aidos Engine UI (RFC-0103) -->
         <activity
             android:name="fi.italeino.aidos.engine.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/Theme.App.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
