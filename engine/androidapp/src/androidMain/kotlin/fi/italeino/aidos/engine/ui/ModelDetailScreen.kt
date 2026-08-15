@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Model detail / acquire screen (RFC-0103, RFC-0022, Phase D).
+ * Model detail / acquire screen (RFC-0103, RFC-0022, Phase D/E).
  *
  * Reachable both from Home's Cookbook pane and as a deep link from client apps — RFC-0103
  * requires this route work standalone, since Aidos Agent (and any other client) deep-links here
@@ -40,10 +43,17 @@ import androidx.compose.ui.unit.sp
  * the model's license/terms-of-service at the point of deciding to download (not a blanket EULA
  * at first launch), and — if the model needs Hugging Face authentication — an inline token
  * prompt. Download is disabled until the license for this model+version is accepted.
+ *
+ * Phase E additions:
+ * - "Load Now" button to load a downloaded model into memory
+ * - "Test Chat" button to interactively test the model before full loading
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ModelDetailScreen(modelId: String) {
+fun ModelDetailScreen(
+    modelId: String,
+    onTestChatClick: ((modelId: String, modelName: String) -> Unit)? = null,
+) {
     // Sample data (will be bound to ViewModel later)
     var state by remember {
         mutableStateOf(
@@ -76,6 +86,15 @@ fun ModelDetailScreen(modelId: String) {
                 ),
                 licenseAccepted = false,
                 isDownloading = false,
+            )
+        )
+    }
+    var modelLoadingState by remember {
+        mutableStateOf(
+            ModelLoadingState(
+                modelId = modelId,
+                status = ModelLoadingStatus.NOT_LOADED,
+                estimatedMemoryMB = 2_400
             )
         )
     }
@@ -156,6 +175,25 @@ fun ModelDetailScreen(modelId: String) {
                     )
                 }
 
+                // Phase E: Test Chat button (available immediately without download)
+                Button(
+                    onClick = {
+                        onTestChatClick?.invoke(model.id, model.name)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Text(
+                        "Test Chat",
+                        color = Color.White
+                    )
+                }
+
+                // Phase E: Load to Memory button (only enabled after model is downloaded)
                 if (state.isDownloading) {
                     DownloadProgressCard(
                         DownloadProgress(
@@ -166,6 +204,62 @@ fun ModelDetailScreen(modelId: String) {
                             300
                         )
                     )
+                }
+
+                Button(
+                    onClick = {
+                        // TODO: Call GlobalModelRuntime.load() to load model to memory
+                        modelLoadingState = modelLoadingState.copy(
+                            status = ModelLoadingStatus.LOADING,
+                            loadProgress = 0
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    enabled = !state.isDownloading && modelLoadingState.status != ModelLoadingStatus.LOADING,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (modelLoadingState.status == ModelLoadingStatus.LOADED)
+                            MaterialTheme.colorScheme.tertiary
+                        else
+                            MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Text(
+                        when (modelLoadingState.status) {
+                            ModelLoadingStatus.NOT_LOADED -> "Load to Memory"
+                            ModelLoadingStatus.LOADING -> "Loading (${modelLoadingState.loadProgress}%)"
+                            ModelLoadingStatus.LOADED -> "Unload from Memory"
+                            ModelLoadingStatus.ERROR -> "Retry Load"
+                            ModelLoadingStatus.UNLOADING -> "Unloading..."
+                        },
+                        color = Color.White
+                    )
+                }
+
+                // Show loading progress for memory load
+                if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
+                    ModelLoadingProgressCard(modelLoadingState)
+                }
+
+                // Show error message if load failed
+                if (modelLoadingState.status == ModelLoadingStatus.ERROR && modelLoadingState.error != null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            modelLoadingState.error!!,
+                            modifier = Modifier.padding(12.dp),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
         }

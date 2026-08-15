@@ -227,3 +227,47 @@ data class SettingsState(
     val errorMessage: String? = null,
 )
 
+// ============================================================================
+// Test Chat Screen Models (Phase E)
+// ============================================================================
+
+data class ChatMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val role: String,  // "user" or "assistant"
+    val content: String,
+    val tokensUsed: Int? = null,
+    val generationTimeMs: Long? = null,
+)
+
+data class TestChatState(
+    val modelId: String = "",
+    val modelName: String = "",
+    val messages: List<ChatMessage> = emptyList(),
+    val inputText: String = "",
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val totalTokensUsed: Int = 0,
+    val averageTokensPerSecond: Float = 0f,
+)
+
+// ============================================================================
+// Model Loading State (Phase E)
+// ============================================================================
+
+enum class ModelLoadingStatus {
+    NOT_LOADED,      // Model not in memory
+    LOADING,         // Currently loading
+    LOADED,          // Loaded and ready
+    ERROR,           // Load failed
+    UNLOADING,       // Currently unloading
+}
+
+data class ModelLoadingState(
+    val modelId: String = "",
+    val status: ModelLoadingStatus = ModelLoadingStatus.NOT_LOADED,
+    val loadProgress: Int = 0,  // 0-100
+    val estimatedMemoryMB: Int = 0,
+    val error: String? = null,
+    val loadTimeMs: Long? = null,
+)
+
