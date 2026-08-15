@@ -173,6 +173,7 @@ data class InstalledModel(
     val sizeMB: Int,
     val lastUsedMs: Long? = null,
     val isWastedSpace: Boolean = false, // Never run + won't fit
+    val isEnabled: Boolean = true,
 )
 
 data class StorageState(

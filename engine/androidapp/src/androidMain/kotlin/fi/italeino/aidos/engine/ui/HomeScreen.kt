@@ -1,140 +1,70 @@
 package fi.italeino.aidos.engine.ui
 
+import android.content.Intent
+import android.os.Build
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import fi.italeino.aidos.engine.EngineService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Home screen showing status, cookbook, and providers (RFC-0103, Phase D).
+ * Home screen showing status and Engine control (RFC-0103, Phase D).
  *
- * Three panes with horizontal swipe between them:
- * 0. Status: what's running now (resident models, memory budget, connected apps, downloads)
- * 1. Cookbook: browsable catalog of local models with search/filters and fit scoring
- * 2. Providers: remote model providers (not a catalog, just configuration)
- *
- * Same pager pattern as Aidos Agent's HomeScreen — inherited, not reinvented.
+ * Simplified to a single Status pane with Engine On/Off toggle.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun HomeScreen(
-    onModelSelected: (modelId: String) -> Unit,
-    onProviderSelected: (providerId: String) -> Unit,
-) {
-    val pagerState = rememberPagerState(pageCount = { 3 })
-    val coroutineScope = rememberCoroutineScope()
-
+fun HomeScreen(viewModel: StatusViewModel = viewModel()) {
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            TabRow(
-                selectedTabIndex = pagerState.currentPage,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            ) {
-                Tab(
-                    selected = pagerState.currentPage == 0,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(0)
-                        }
-                    },
-                    text = { Text("Status") }
-                )
-                Tab(
-                    selected = pagerState.currentPage == 1,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(1)
-                        }
-                    },
-                    text = { Text("Cookbook") }
-                )
-                Tab(
-                    selected = pagerState.currentPage == 2,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(2)
-                        }
-                    },
-                    text = { Text("Providers") }
-                )
-            }
-
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp),
-            ) { page ->
-                when (page) {
-                    0 -> StatusPane()
-                    1 -> CookbookPane(onModelSelected)
-                    2 -> ProvidersPane(onProviderSelected)
-                    else -> Box(modifier = Modifier.fillMaxSize())
-                }
-            }
+            StatusPane(viewModel)
         }
     }
 }
 
 /**
- * Status pane: resident models, memory budget, connected apps, in-flight downloads (RFC-0103).
- *
- * What Engine is doing right now — the question someone opening Engine actually has, the same
- * way Aidos Agent's inbox answers "what needs me?".
+ * Status pane: resident models, memory budget, connected apps, and Engine Control.
  */
 @Composable
-private fun StatusPane() {
-    // Sample data (will be bound to ViewModel later)
+private fun StatusPane(viewModel: StatusViewModel) {
+    val context = LocalContext.current
+    val isEngineRunning by viewModel.isEngineRunning.collectAsState()
+    val residentModels by viewModel.residentModels.collectAsState()
+    
+    // Refresh state when entering screen
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+    }
+    
+    // Engine Control long press logic
+    var isPressing by remember { mutableStateOf(false) }
+    var pressProgress by remember { mutableStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Sample data (memory/apps still mocked for now)
     val state = remember {
         StatusPaneState(
-            residentModels = listOf(
-                ResidentModel("qwen-3b", "Qwen2.5 3B Q4", "Q4_K_M", 120_000, "Aidos Agent"),
-            ),
             memoryBudget = MemoryBudget(2_400, 4_096),
             connectedApps = listOf(
                 ConnectedAppStatus("Aidos Agent", "fi.italeino.aidos"),
-            ),
-            inProgressDownload = DownloadProgress(
-                "llama-7b",
-                "Llama 2 7B Chat Q4",
-                progressPercent = 35,
-                speedMBps = 12.5f,
-                etaSeconds = 600
             )
         )
     }
@@ -142,9 +72,129 @@ private fun StatusPane() {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        item {
+            Text(
+                "Engine Control",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 16.dp)
+            )
+        }
+
+        item {
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isEngineRunning) "Engine is ON" else "Engine is OFF",
+                            fontWeight = FontWeight.Bold,
+                            color = if (isEngineRunning) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(64.dp)
+                                .pointerInput(isEngineRunning) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            if (!isEngineRunning) {
+                                                val intent = Intent(context, EngineService::class.java)
+                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                    context.startForegroundService(intent)
+                                                } else {
+                                                    context.startService(intent)
+                                                }
+                                                // Small delay for service to start and update instance
+                                                coroutineScope.launch {
+                                                    delay(500)
+                                                    viewModel.refresh()
+                                                }
+                                            }
+                                        },
+                                        onPress = {
+                                            if (isEngineRunning) {
+                                                isPressing = true
+                                                pressProgress = 0f
+                                                val startTime = System.currentTimeMillis()
+                                                val job = coroutineScope.launch {
+                                                    while (isPressing && pressProgress < 1f) {
+                                                        val elapsed = System.currentTimeMillis() - startTime
+                                                        pressProgress = (elapsed / 5000f).coerceIn(0f, 1f)
+                                                        delay(50)
+                                                    }
+                                                    if (pressProgress >= 1f) {
+                                                        context.stopService(Intent(context, EngineService::class.java))
+                                                        isPressing = false
+                                                        pressProgress = 0f
+                                                        delay(500)
+                                                        viewModel.refresh()
+                                                    }
+                                                }
+                                                try {
+                                                    awaitRelease()
+                                                } finally {
+                                                    isPressing = false
+                                                    pressProgress = 0f
+                                                    job.cancel()
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                        ) {
+                            if (isPressing) {
+                                CircularProgressIndicator(
+                                    progress = pressProgress,
+                                    modifier = Modifier.fillMaxSize(),
+                                    color = Color(0xFFEF4444),
+                                    strokeWidth = 4.dp
+                                )
+                            }
+                            Surface(
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = if (isEngineRunning) Color(0xFF22C55E) else MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        if (isEngineRunning) "ON" else "OFF",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (isPressing) {
+                        Text(
+                            "Hold 5s to turn off...",
+                            fontSize = 11.sp,
+                            color = Color(0xFFEF4444),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Text(
                 "Resident Now",
@@ -154,8 +204,14 @@ private fun StatusPane() {
             )
         }
 
-        items(state.residentModels.size) { index ->
-            ResidentModelCard(state.residentModels[index])
+        if (residentModels.isEmpty()) {
+            item {
+                Text("No models resident", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            items(residentModels.size) { index ->
+                ResidentModelCard(residentModels[index])
+            }
         }
 
         item {
@@ -173,199 +229,10 @@ private fun StatusPane() {
                 Text(
                     state.connectedApps.joinToString(", ") { it.appName },
                     fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
-        }
-
-        if (state.inProgressDownload != null) {
-            item {
-                Text(
-                    "In Progress",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            item {
-                DownloadProgressCard(state.inProgressDownload)
-            }
-        }
-    }
-}
-
-/**
- * Cookbook pane: local models, searchable with filters and fit scoring (RFC-0103).
- *
- * High-density technical view: each model shows quantization, size, fit verdict, and
- * performance estimates (tokens/s, VRAM). Search queries hit Hugging Face; results are
- * filtered locally based on hardware fit.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CookbookPane(onModelSelected: (modelId: String) -> Unit) {
-    var state by remember {
-        mutableStateOf(
-            CookbookPaneState(
-                models = listOf(
-                    CookbookModel(
-                        "qwen-3b",
-                        "Qwen2.5 3B Instruct Q4_K_M",
-                        "LLM",
-                        "Q4_K_M",
-                        2_100,
-                        32768,
-                        ModelFitVerdict.RUNS_WELL,
-                        tokensPerSecond = 45.2f,
-                        estimatedVramMB = 2_400
-                    ),
-                    CookbookModel(
-                        "llama-7b",
-                        "Llama 2 7B Chat Q4_K_M",
-                        "LLM",
-                        "Q4_K_M",
-                        4_081,
-                        4096,
-                        ModelFitVerdict.RUNS_TIGHT,
-                        tokensPerSecond = 22.1f,
-                        estimatedVramMB = 3_800
-                    ),
-                    CookbookModel(
-                        "nomic-embed",
-                        "Nomic Embed Text v1.5",
-                        "Embedding",
-                        "Q4_0",
-                        77,
-                        2048,
-                        ModelFitVerdict.RUNS_WELL,
-                        estimatedVramMB = 300
-                    ),
-                )
-            )
-        )
-    }
-
-    var selectedFilter by remember { mutableStateOf<String?>(null) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 8.dp)
-    ) {
-        SearchBar(
-            query = state.searchQuery,
-            onQueryChange = { state = state.copy(searchQuery = it) },
-            placeholder = "Search HuggingFace...",
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            FilterChip(
-                label = { Text("All", fontSize = 10.sp) },
-                onClick = { selectedFilter = null },
-                selected = selectedFilter == null
-            )
-            FilterChip(
-                label = { Text("Perfect", fontSize = 10.sp) },
-                onClick = { selectedFilter = "RUNS_WELL" },
-                selected = selectedFilter == "RUNS_WELL"
-            )
-            FilterChip(
-                label = { Text("Tight", fontSize = 10.sp) },
-                onClick = { selectedFilter = "RUNS_TIGHT" },
-                selected = selectedFilter == "RUNS_TIGHT"
-            )
-            FilterChip(
-                label = { Text("LLM", fontSize = 10.sp) },
-                onClick = { selectedFilter = "LLM" },
-                selected = selectedFilter == "LLM"
-            )
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(state.models.size) { index ->
-                CookbookModelCard(
-                    state.models[index],
-                    onTap = { onModelSelected(state.models[index].id) }
-                )
-            }
-
-            item {
-                TextButton(
-                    onClick = { /* TODO: Show HF search dialog */ },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Text("Add from Hugging Face", modifier = Modifier.padding(start = 4.dp))
-                }
-            }
-        }
-    }
-}
-
-/**
- * Providers pane: remote model provider configuration (RFC-0103).
- *
- * NOT a catalog — just configuration. Each provider shows current status:
- * - not configured (no API key)
- * - configured but disabled
- * - enabled
- */
-@Composable
-private fun ProvidersPane(onProviderSelected: (providerId: String) -> Unit) {
-    val state = remember {
-        ProvidersPaneState(
-            providers = listOf(
-                RemoteProvider(
-                    "openai",
-                    "OpenAI",
-                    ProviderConfigStatus.ENABLED,
-                    lastCheckedMs = System.currentTimeMillis() - 3_600_000
-                ),
-                RemoteProvider(
-                    "anthropic",
-                    "Anthropic (Claude)",
-                    ProviderConfigStatus.NOT_CONFIGURED
-                ),
-                RemoteProvider(
-                    "together",
-                    "Together AI",
-                    ProviderConfigStatus.CONFIGURED_DISABLED
-                ),
-            )
-        )
-    }
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item {
-            Text(
-                "Remote Providers",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        items(state.providers.size) { index ->
-            ProviderStatusRow(
-                state.providers[index],
-                onTap = { onProviderSelected(state.providers[index].id) }
-            )
         }
     }
 }

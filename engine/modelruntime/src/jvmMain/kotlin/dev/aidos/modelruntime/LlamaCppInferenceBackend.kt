@@ -20,7 +20,10 @@ import java.io.File
  * Native crashes are bounded by the admission queue and checkpoint recovery (D27).
  */
 class LlamaCppInferenceBackend : InferenceBackend {
-    private val modelsDir = File(System.getProperty("user.home"), ".aidos/models")
+    private val modelsDir = File(
+        System.getProperty("aidos.models.dir") ?: 
+        File(System.getProperty("user.home"), ".aidos/models").absolutePath
+    )
 
     init {
         modelsDir.mkdirs()

@@ -46,19 +46,29 @@ class EngineService : LifecycleService() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
+
+        // Singleton access for UI binding (RFC-0103 Phase E)
+        private var _instance: EngineService? = null
+        val instance: EngineService? get() = _instance
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var tokenManager: TokenManager
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
-    private lateinit var modelRuntime: GlobalModelRuntime
+    
+    // Public state for UI ViewModels
+    lateinit var modelRuntime: GlobalModelRuntime
+        private set
+        
     private lateinit var approvalStore: EncryptedAppApprovalStore
     private lateinit var approvalManager: AppApprovalManager
-    private var isRunning = false
+    private var _isRunning = false
+    val isRunning: Boolean get() = _isRunning
 
     override fun onCreate() {
         super.onCreate()
+        _instance = this
         serviceScope.launch {
             try {
                 // Initialize token manager
@@ -85,10 +95,10 @@ class EngineService : LifecycleService() {
                 // Initialize Binder handshake interface with approval manager
                 binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager)
 
-                isRunning = true
+                _isRunning = true
                 updateNotification("Engine running on port $boundPort")
             } catch (e: Exception) {
-                isRunning = false
+                _isRunning = false
                 updateNotification("Engine failed: ${e.message}")
             }
         }
@@ -120,11 +130,12 @@ class EngineService : LifecycleService() {
                     }
                     
                     tokenManager.clearTokens()
-                    isRunning = false
+                    _isRunning = false
                 }
             } catch (e: Exception) {
                 // Log error, but don't throw from shutdown
             } finally {
+                _instance = null
                 serviceScope.cancel()
             }
         }

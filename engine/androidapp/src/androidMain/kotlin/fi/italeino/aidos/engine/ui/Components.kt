@@ -119,7 +119,7 @@ fun MemoryBudgetIndicator(
             Text(
                 "${(budget.percentUsed * 100).toInt()}%",
                 fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.outline
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         LinearProgressIndicator(
@@ -170,7 +170,7 @@ fun ResidentModelCard(
                     Text(
                         text = model.quantization,
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.outline
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -178,7 +178,7 @@ fun ResidentModelCard(
                 Text(
                     text = "Loaded 2m ago • ${model.connectedApp}",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
@@ -227,7 +227,7 @@ fun CookbookModelCard(
                     Text(
                         text = "${model.quantization} • ${model.kind} • ${model.sizeMB} MB",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -243,7 +243,7 @@ fun CookbookModelCard(
                         Text(
                             text = "~${model.tokensPerSecond.toInt()} t/s",
                             fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.outline,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace
                         )
                     }
@@ -251,7 +251,7 @@ fun CookbookModelCard(
                         Text(
                             text = "${model.estimatedVramMB} MB VRAM",
                             fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.outline,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace
                         )
                     }
@@ -306,7 +306,7 @@ fun ProviderStatusRow(
                     fontSize = 11.sp,
                     color = when (provider.status) {
                         ProviderConfigStatus.ENABLED -> Color(0xFF22C55E)
-                        else -> MaterialTheme.colorScheme.outline
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
             }
@@ -376,30 +376,28 @@ fun ContextFitTable(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         
-        LazyColumn {
-            items(rows) { row ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${row.contextLength}K",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.width(48.dp)
-                    )
-                    FitVerdictChip(row.verdict)
-                    Text(
-                        text = "~${row.estimatedMemoryMB} MB",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.outline,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${row.contextLength}K",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.width(48.dp)
+                )
+                FitVerdictChip(row.verdict)
+                Text(
+                    text = "~${row.estimatedMemoryMB} MB",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -530,7 +528,7 @@ fun ModelLoadingProgressCard(
                 Text(
                     text = "${loadingState.loadProgress}%",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
@@ -552,13 +550,13 @@ fun ModelLoadingProgressCard(
                 Text(
                     text = "Memory: ${loadingState.estimatedMemoryMB} MB",
                     fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (loadingState.loadTimeMs != null) {
                     Text(
                         text = "${loadingState.loadTimeMs}ms",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.outline
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -601,7 +599,7 @@ fun DownloadProgressCard(
                 Text(
                     text = "${download.progressPercent}%",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
@@ -625,14 +623,14 @@ fun DownloadProgressCard(
                         Text(
                             text = "%.1f MB/s".format(download.speedMBps),
                             fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.outline
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     if (download.etaSeconds != null) {
                         Text(
                             text = "ETA ${download.etaSeconds / 60}m",
                             fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.outline
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

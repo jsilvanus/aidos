@@ -1,29 +1,15 @@
 package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,39 +18,39 @@ import androidx.compose.ui.unit.sp
 /**
  * Connected Apps screen (RFC-0103, Phase D).
  *
- * Which apps are currently using Aidos Engine:
- * - List of connected apps by name
- * - Per app: request counts by type (chat completions vs. embeddings), last-active time
- * - Session-scoped data (resets when Aidos Engine restarts) — no historical charts needed
- *
- * Reachable from HomeScreen menu.
+ * Displays apps currently connected to Aidos Engine and those pending approval.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectedAppsScreen() {
     val state = remember {
-        ConnectedAppsState(
-            connectedApps = listOf(
-                ConnectedApp(
-                    packageName = "com.example.aidosagent",
-                    displayName = "Aidos Agent",
-                    lastActiveMs = System.currentTimeMillis() - 5_000,
-                    requestMetrics = RequestMetrics(
-                        chatCompletions = 47,
-                        embeddings = 12,
-                        transcriptions = 0
-                    )
-                ),
-                ConnectedApp(
-                    packageName = "com.example.testapp",
-                    displayName = "Test App",
-                    lastActiveMs = System.currentTimeMillis() - 60_000,
-                    requestMetrics = RequestMetrics(
-                        chatCompletions = 5,
-                        embeddings = 0,
-                        transcriptions = 0
-                    )
-                ),
+        mutableStateOf(
+            ConnectedAppsState(
+                connectedApps = listOf(
+                    ConnectedApp(
+                        packageName = "fi.italeino.aidos",
+                        displayName = "Aidos Agent",
+                        lastActiveMs = System.currentTimeMillis() - 5_000,
+                        requestMetrics = RequestMetrics(chatCompletions = 47, embeddings = 12)
+                    ),
+                    ConnectedApp(
+                        packageName = "com.example.testapp",
+                        displayName = "Test App",
+                        lastActiveMs = System.currentTimeMillis() - 60_000,
+                        requestMetrics = RequestMetrics(chatCompletions = 5)
+                    ),
+                )
+            )
+        )
+    }
+    
+    val pendingApps = remember {
+        mutableStateListOf(
+            ConnectedApp(
+                packageName = "com.unknown.app",
+                displayName = "New Assistant",
+                lastActiveMs = System.currentTimeMillis(),
+                requestMetrics = RequestMetrics()
             )
         )
     }
@@ -74,39 +60,84 @@ fun ConnectedAppsScreen() {
             TopAppBar(title = { Text("Connected Apps") })
         }
     ) { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                "Session-scoped metrics (reset when Aidos Engine restarts)",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-
-            if (state.connectedApps.isEmpty()) {
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
+            if (pendingApps.isNotEmpty()) {
+                item {
                     Text(
-                        "No apps currently connected",
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(16.dp)
+                        "Approval Pending",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEAB308) // Amber
                     )
                 }
+                items(pendingApps) { app ->
+                    PendingAppCard(
+                        app = app,
+                        onApprove = { pendingApps.remove(app); /* Add to state */ },
+                        onDeny = { pendingApps.remove(app) }
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    "Connected",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (state.value.connectedApps.isEmpty()) {
+                item {
+                    Text("No apps currently connected", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                items(state.value.connectedApps) { app ->
+                    ConnectedAppCard(app)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingAppCard(
+    app: ConnectedApp,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit
+) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(app.displayName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(app.packageName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+            
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onApprove,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E))
                 ) {
-                    items(state.connectedApps) { app ->
-                        ConnectedAppCard(app)
-                    }
+                    Text("Approve", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = onDeny,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Deny", fontSize = 12.sp, color = Color(0xFFEF4444))
                 }
             }
         }
@@ -116,79 +147,51 @@ fun ConnectedAppsScreen() {
 @Composable
 private fun ConnectedAppCard(app: ConnectedApp) {
     OutlinedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(8.dp)
-            ),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        app.displayName,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        app.packageName,
-                        fontSize = 9.sp,
-                        color = MaterialTheme.colorScheme.outline,
-                        fontFamily = FontFamily.Monospace
-                    )
+                    Text(app.displayName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(app.packageName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
                 }
-                Text(
-                    formatLastActive(app.lastActiveMs),
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.outline
-                )
+                Text(formatLastActive(app.lastActiveMs), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Column(
-                modifier = Modifier.padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                RequestMetricRow("Chat Completions", app.requestMetrics.chatCompletions)
+            Divider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+
+            Text("Usage Breakdown", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                UsageRow("Chat Completions", app.requestMetrics.chatCompletions, "qwen-3b")
                 if (app.requestMetrics.embeddings > 0) {
-                    RequestMetricRow("Embeddings", app.requestMetrics.embeddings)
-                }
-                if (app.requestMetrics.transcriptions > 0) {
-                    RequestMetricRow("Transcriptions", app.requestMetrics.transcriptions)
+                    UsageRow("Embeddings", app.requestMetrics.embeddings, "nomic-embed")
                 }
             }
+
+            Text("Last Activity", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+            Text(
+                "Completed chat request at ${formatTimestamp(app.lastActiveMs)}",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @Composable
-private fun RequestMetricRow(label: String, count: Int) {
+private fun UsageRow(label: String, count: Int, model: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(
-            label,
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.outline
-        )
-        Text(
-            "$count",
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold
-        )
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$count calls ($model)", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -202,3 +205,8 @@ private fun formatLastActive(lastActiveMs: Long): String {
     }
 }
 
+private fun formatTimestamp(ms: Long): String {
+    val date = java.util.Date(ms)
+    val sdf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+    return sdf.format(date)
+}

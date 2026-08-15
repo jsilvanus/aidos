@@ -23,7 +23,10 @@ sealed class EngineRoute(val route: String) {
     data class ProviderDetail(val providerId: String) : EngineRoute("provider/{providerId}") {
         fun createRoute(providerId: String) = "provider/$providerId"
     }
-    data object Storage : EngineRoute("storage")
+    data object Models : EngineRoute("models")
+    data class ModelConfig(val modelId: String) : EngineRoute("model_config/{modelId}") {
+        fun createRoute(modelId: String) = "model_config/$modelId"
+    }
     data object ConnectedApps : EngineRoute("connected_apps")
     data object Settings : EngineRoute("settings")
 }
