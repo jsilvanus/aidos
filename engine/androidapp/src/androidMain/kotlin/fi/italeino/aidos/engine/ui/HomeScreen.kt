@@ -28,15 +28,7 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 @Composable
 fun HomeScreen(viewModel: StatusViewModel = viewModel()) {
-    Scaffold { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-        ) {
-            StatusPane(viewModel)
-        }
-    }
+    StatusPane(viewModel)
 }
 
 /**

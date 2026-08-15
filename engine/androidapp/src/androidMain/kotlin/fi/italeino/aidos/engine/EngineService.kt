@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -171,7 +172,11 @@ class EngineService : LifecycleService() {
         // Post foreground notification (required by Android 12+)
         createNotificationChannel()
         val notification = buildNotification("Initializing...")
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         // RFC-0103: Sticky mode keeps the service running as long as Engine is needed
         // Clients hold onto the Binder connection; service restarts on crash with data loss

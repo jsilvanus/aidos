@@ -52,6 +52,7 @@ fun ModelsScreen(
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             Column {
                 TopAppBar(title = { Text("Models") })
@@ -321,7 +322,7 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
         }
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(cookbookModels) { model ->
@@ -338,13 +339,13 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
 
             item {
                 TextButton(
-                    onClick = { /* Could open a custom repo dialog */ },
+                    onClick = { /* Could open Hugging Face search or similar */ },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null)
-                    Text("Add Custom Repo", modifier = Modifier.padding(start = 4.dp))
+                    Text("Add from Hugging Face", modifier = Modifier.padding(start = 4.dp))
                 }
             }
         }
