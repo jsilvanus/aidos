@@ -46,7 +46,7 @@ recorded here so it isn't lost.
 3. Define the transport: a Binder handshake plus loopback HTTP, OpenAI-compatible wire schema.
 4. Define Aidos SDK as the one client-side implementation of that handshake and transport, so no
    consuming app hand-rolls it.
-5. Define the v1 trust model (signature-only) and what changes to broaden it later.
+5. Define the v1 trust model (approval-based) where apps request and users grant access.
 6. Define the version and capability-negotiation contract between Engine and its clients.
 7. Define concurrency and memory policy across multiple loaded models and multiple callers.
 8. Define graceful degradation when Engine is absent or incompatible.
@@ -68,8 +68,10 @@ This RFC does not change DESKTOP or HEADLESS_SERVER behaviour — RFC-0055 alrea
 This is specifically the MOBILE, app-to-app case RFC-0055 did not have, because it assumed
 MOBILE has exactly one frontend.
 
-This RFC does not open Aidos Engine to differently-signed (third-party) clients. v1 is
-signature-only; opening it further is Future Work and is not designed here.
+This RFC defines approval-based access control in v1: apps explicitly request access, users can
+approve or deny per-app grants, and the system enforces these grants. Per-app-scoped model visibility
+(e.g., "Aidos Agent can see Claude, another app cannot") remains Future Work and will be designed
+together with any further extensions to the approval model.
 
 This RFC does not define remote or LAN exposure of the Engine. The bound port is loopback-only.
 
@@ -192,41 +194,47 @@ protocol code hand-maintained per app.
   `/v1/audio/transcriptions`. This reuses the wire shape RFC-0021/0023 already need for remote
   providers, and avoids Binder's transaction-size limits on long prompts and streaming output.
 - A bare TCP socket carries no caller identity — unlike Binder, where Android tells the callee the
-  caller's UID and signature for free — so it cannot itself be gated by the OS permission system.
-  Aidos Engine therefore exposes exactly one Binder surface, a **handshake**, declared with
-  `protectionLevel="signature"`. Given the caller's OS-verified identity, it returns
-  `{port, token, apiVersion, capabilities}`. Every HTTP request after that presents the token as
-  a bearer credential. This is the direct analogue of RFC-0055's desktop connection token —
-  "written to a file readable only by the user" — adapted for Android, where no shared file
-  exists between two sandboxed apps to carry that secret.
+  caller's UID for free — so it cannot itself be gated by the OS permission system.
+  Aidos Engine therefore exposes exactly one Binder surface, a **handshake**, which uses the
+  caller's OS-verified UID and package name to determine approval status. It returns
+  `{approval_status, port, token, apiVersion, capabilities}` where `approval_status` is one of
+  `"pending"` (first request from this app; no token issued), `"approved"` (previously approved;
+  token included), or `"denied"` (user rejected; no token). Every HTTP request after that
+  (if approved) presents the token as a bearer credential. This is the direct analogue of
+  RFC-0055's desktop connection token — "written to a file readable only by the user" —
+  adapted for Android, where no shared file exists between two sandboxed apps to carry that
+  secret.
 - The port is ephemeral, chosen at Engine startup, and fetched fresh on each cold connect — never
   hardcoded, never assumed stable across Engine restarts.
 
-### Trust model (v1: signature-only)
+### Trust model (v1: approval-based)
 
-The handshake's `signature` protection level is a hard, OS-enforced gate: only apps signed with
-the same key as Aidos Engine can complete a handshake at all. Broadening this to differently-signed
-clients needs a new authorization step in front of the handshake (consent UI, a capability grant
-per caller, plausibly an extension of RFC-0018) — not a transport change. Deferred; see Future
-Work.
+Apps request access to Aidos Engine through the handshake Binder surface. On first request from
+an app, the Engine records the requesting app's package name and UID (obtained from Binder's
+`getCallingUid()`) as a pending approval request. The Engine UI surfaces these pending requests
+in the Connected Apps screen. The user can approve or deny each request.
 
-**What "signature" actually checks.** This is Android's own permission-protection level, not
-anything this RFC invents: every installable APK carries a signing certificate, and a custom
-permission declared `protectionLevel="signature"` is granted by the OS, silently and without a
-user prompt, only to a caller whose *installed APK* is signed with the identical certificate as
-the app that declared the permission — not the same developer account, not the same Play Store
-listing, the same cryptographic key. Aidos Engine declares the permission; Aidos Agent (and any
-other client) requests it; `PackageManager` does the certificate comparison at install time.
+**Approval workflow:**
+1. First handshake from a new app: Engine returns `approval_status: "pending"` and does **not**
+   return a bearer token.
+2. App handles the `pending` status and either (a) retries the handshake later (exponential
+   backoff recommended), or (b) surfaces a "waiting for approval" message to the user.
+3. User navigates to Aidos Engine app and approves or denies the request in the Connected Apps
+   screen.
+4. On next handshake from that app: Engine returns `approval_status: "approved"` and issues a
+   bearer token for HTTP requests. If denied, `approval_status: "denied"` and no token.
+5. Once approved, the app retains its approval grant for the Engine session (across multiple
+   calls). Per-session storage is sufficient for v1; persisted grants across Engine restarts are
+   Future Work.
 
-This has a real consequence worth naming rather than discovering later: RFC-0050 already commits
-Aidos Agent to F-Droid distribution, and F-Droid rebuilds and **re-signs** submitted apps with its
-own key by default, replacing whatever certificate the developer built with. If Aidos Engine and
-Aidos Agent are both distributed through F-Droid, whether they end up with a matching certificate
-depends on F-Droid's signing configuration for the two apps, not on anything this RFC controls —
-and if they don't match, the handshake fails for every real install while still working in local
-debug builds signed with the same development key, which is exactly the shape of bug that stays
-invisible until someone hits it in production. This needs verifying against F-Droid's actual
-signing behavior before release, not assumed.
+**App identity verification:** Aidos Engine obtains the calling app's UID and package name via
+Binder's `getCallingUid()` and `PackageManager.getNameForUid()`. This is OS-verified identity,
+not self-reported by the client. Display names shown in the Connected Apps screen are resolved
+from `PackageManager` using the verified package name.
+
+**No F-Droid certificate matching problem:** Unlike the prior signature-permission model,
+approval-based control is independent of APK signing certificates. Whether apps are distributed
+through F-Droid, Play Store, or sideloaded, the approval workflow is identical.
 
 ### Version and capability contract
 
@@ -271,12 +279,11 @@ case a client cached an identifier from before it was disabled, guessed one, or 
 through whatever string it was given. Hiding something from a list and actually forbidding it are
 different guarantees, and this design does not rely on the first one doing the second one's job.
 
-**Not designed here: per-app-scoped visibility.** v1's trust model (signature-only, above) means
-every connected client currently sees the same enabled set — there is no "Aidos Agent can see
-Claude, some other app can't" yet. This is not a separate gap to solve later; it is the same
-per-caller-grant mechanism Trust model already defers to Future Work, applied one level down, from
-"can this app connect at all" to "which of the enabled models can this app see." Both should be
-designed together when that Future Work item is taken up, not before.
+**Not designed here: per-app-scoped visibility.** v1's approval model allows access control at the
+"can this app connect at all" level (Trust model, above). Every connected client currently sees the
+same enabled set — there is no "Aidos Agent can see Claude, some other app can't" yet. Per-app
+model visibility ("which of the enabled models can this app see") is Future Work and will be designed
+together with any further extensions to the per-app grant mechanism.
 
 ### Concurrency and memory policy
 
@@ -420,25 +427,39 @@ truthful to put in it.
 Tap a row → remove. Manual only — RFC-0022 is explicit that Engine never deletes weights on its
 own to make room.
 
-**5 · Connected apps.** Every request into Engine already carries the bearer token minted for
-that caller at handshake time — so per-app attribution costs nothing new to add, only something
-to tally instead of discard. The display name is resolved via `PackageManager` from the calling
-package the signature-permission handshake already verified, not self-reported by the client (a
-self-reported name could claim to be anything; the verified package identity cannot).
+**5 · Connected apps.** This screen shows both pending approval requests and previously-approved
+connected apps. The display name is resolved via `PackageManager` from the calling app's verified
+package identity (obtained via Binder's `getCallingUid()`), not self-reported by the client.
+
+Pending approval requests appear at the top:
 
 ```
-  Aidos Agent                    connected
+  Pending approval
 
-    Requests        142 (this session)
-      chat.completions   118
-      embeddings          24
-    Last active     2m ago
+    Some App              pending
+      Tap to approve or deny
 ```
 
-Session-scoped counts (since Engine last started) are close to free — a counter keyed by client
-token, incremented in the dispatch path. Persisted history across restarts is not: Engine owns no
-storage that survives a restart in this RFC's MVP (see Storage, below), so "usage over the last
-week" is Future Work, not something to bundle in now.
+Approved apps appear below, with session-scoped request counters:
+
+```
+  Connected apps
+
+    Aidos Agent                    approved
+
+      Requests        142 (this session)
+        chat.completions   118
+        embeddings          24
+      Last active     2m ago
+
+    Another App                    approved
+      Requests          8 (this session)
+```
+
+Tapping an approved app shows options to revoke its approval (immediately blocking future
+handshake attempts). Session-scoped counts (since Engine last started) are close to free — a
+counter keyed by client token, incremented in the dispatch path. Persisted history across
+restarts and granular usage analytics are Future Work; v1 stores only approval grants.
 
 **6 · Settings.** Narrower than it first looks: only the Hugging Face token lives here, because HF
 authentication is infrastructure for *acquiring* local models, not itself an inference source —
@@ -446,8 +467,10 @@ there's no "provider" to attach it to the way Anthropic or OpenAI have one. Remo
 keys deliberately do **not** live in Settings; each lives on its own Provider detail screen
 (above), for the same reason a model's license lives on that model's own detail screen and not in
 a global list — enter a credential at the point of the decision it's for. Nothing else lives here
-in v1: no account, no sync, no per-app trust configuration (the trust model is signature-only and
-not user-configurable — Trust model, above).
+in v1: no account, no sync (per-app approval grants live only in-session, not backed up),
+no per-user trust configuration at the provider level (providers are configured globally, not
+per-user). App-level permission to access Engine is configured through the Binder handshake and
+Connected Apps screen per the Trust model (above), not through Settings.
 
 **Deliberately absent**, mirroring RFC-0050's own table:
 
@@ -635,7 +658,8 @@ nothing to persist yet.
    management — no Android dependency.
 2. Aidos Engine app: hosts Engine Core in-process in a foreground service; exposes it via
    `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` over loopback HTTP.
-3. Signature-`protectionLevel` handshake surface returning `{port, token, apiVersion, capabilities}`.
+3. Approval-based handshake surface: apps request access via Binder, users approve/deny in the
+   Connected Apps screen, returning `{approval_status, port, token, apiVersion, capabilities}`.
 4. Parallel execution across concurrent callers when the resident working set leaves memory
    headroom; a serialized queue otherwise.
 5. Aidos SDK: the handshake client, token/session management, the loopback HTTP client, and
@@ -652,8 +676,8 @@ nothing to persist yet.
    (gated-model acquisition).
 9. License-acceptance records, persisted per model+version, so acquisition doesn't re-prompt.
 
-Not in MVP: vision/multimodal endpoints, third-party (cross-signature) client trust, any remote or
-LAN exposure of the Engine port, persisted per-app usage history, per-app-scoped model visibility,
+Not in MVP: vision/multimodal endpoints, any remote or LAN exposure of the Engine port, persisted
+cross-restart per-app approval grants and usage history, per-app-scoped model visibility,
 and remote-provider execution through Aidos Engine together with everything that has no purpose
 without it — the Cookbook pane's Remote section, Provider detail, and `ProviderConfig` (direction
 and screens designed above, nothing built or wired).
@@ -662,11 +686,11 @@ and screens designed above, nothing built or wired).
 
 - Vision endpoints: multimodal `chat.completions` with image content parts, once model support and
   the memory budget above are validated against real devices.
-- Opening the handshake to differently-signed clients: per-caller consent UI, a capability-model
-  extension (RFC-0018) for per-app grants, usage/rate limiting per client. The same mechanism,
-  applied one level down, is also how per-app-scoped model visibility would work — "Aidos Agent
-  can see Claude, this other app can't" — rather than every connected client seeing the same
-  enabled set as v1 does (Discovery and model selection, above). Design both together.
+- Per-app-scoped model visibility: extending the approval model to restrict which enabled models
+  each approved app can see and request, rather than every connected client seeing the same
+  enabled set. The same per-caller-grant mechanism as Trust model, applied one level down.
+  Design this together with any future extensions to the per-app grant model.
+- Rate limiting and usage quotas per approved client app.
 - A possible convergence with RFC-0055's "paired remote runtime" Future Work, if a phone's Aidos
   Engine is ever addressed from a desktop runtime rather than only from apps on the same device.
 - Remote-provider execution through Aidos Engine (Remote providers through Aidos Engine, above):
@@ -675,7 +699,7 @@ and screens designed above, nothing built or wired).
   pane's Remote section, Provider detail, and `ProviderConfig` (Aidos Engine's own UI, Data Model,
   above) ship with this, not before it — a configuration screen with nothing behind it to execute
   against is not worth building first.
-- Persisted, cross-restart per-app usage history — requires Aidos Engine to own more storage than
-  the license-acceptance and vault records this RFC's MVP gives it.
+- Persisted, cross-restart per-app approval grants and usage history — requires Aidos Engine to own
+  more storage than the license-acceptance and vault records this RFC's MVP gives it.
 - Aidos Agent's model-selection screen (RFC-0050 amendment): Aidos Engine as default, directly-
   configured remote providers as an explicit secondary path.
