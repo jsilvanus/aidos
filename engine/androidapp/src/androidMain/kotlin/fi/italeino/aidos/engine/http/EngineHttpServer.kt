@@ -1,12 +1,16 @@
 package fi.italeino.aidos.engine.http
 
+import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.ToolCallResult
+import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
@@ -18,6 +22,8 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.util.*
 
 /**
@@ -199,9 +205,9 @@ class EngineHttpServer(
                     "system" -> Turn.System(msg.content ?: "")
                     "user" -> Turn.User(
                         content = listOf(
-                            dev.aidos.kernel.ContentBlock.Text(msg.content ?: "")
+                            ContentBlock.Text(msg.content ?: "")
                         ),
-                        trustLevel = dev.aidos.kernel.TrustLevel.TRUSTED
+                        trustLevel = TrustLevel.TRUSTED
                     )
                     "assistant" -> Turn.Assistant(
                         text = msg.content,
@@ -209,16 +215,18 @@ class EngineHttpServer(
                             dev.aidos.kernel.ToolCall(
                                 callId = tc.id,
                                 toolName = tc.function.name,
-                                arguments = tc.function.arguments,
+                                arguments = parseJsonObject(tc.function.arguments),
                                 capabilityId = null,
                                 rawText = tc.function.arguments
                             )
                         } ?: emptyList()
                     )
                     "tool" -> Turn.ToolResult(
-                        result = dev.aidos.kernel.ToolCallResult.Ok(
-                            toolName = msg.name ?: "unknown",
-                            content = msg.content ?: ""
+                        result = ToolCallResult(
+                            callId = msg.tool_call_id ?: UUID.randomUUID().toString(),
+                            outcome = ToolOutcome.Ok,
+                            content = listOf(ContentBlock.Text(msg.content ?: "")),
+                            trustLevel = TrustLevel.TRUSTED
                         )
                     )
                     else -> Turn.System("")  // fallback
@@ -227,11 +235,24 @@ class EngineHttpServer(
 
             // Convert tools to kernel format
             val tools = request.tools?.map { toolDef ->
+                // Convert parameters map to JsonObject
+                val parametersJson = toolDef.function.parameters?.let { params ->
+                    val entries = params.mapValues { (_, v) ->
+                        when (v) {
+                            is String -> JsonPrimitive(v)
+                            is Number -> JsonPrimitive(v)
+                            is Boolean -> JsonPrimitive(v)
+                            else -> JsonPrimitive(v.toString())
+                        }
+                    }
+                    JsonObject(entries)
+                } ?: JsonObject(emptyMap())
+
                 dev.aidos.kernel.ToolDescriptor(
                     name = toolDef.function.name,
+                    title = toolDef.function.name,  // Use name as title for now
                     description = toolDef.function.description ?: "",
-                    inputSchema = toolDef.function.parameters ?: emptyMap(),
-                    requiresApprovalPerUse = false
+                    inputSchema = parametersJson
                 )
             } ?: emptyList()
 
@@ -292,7 +313,7 @@ class EngineHttpServer(
                         type = "function",
                         function = ToolFunctionCall(
                             name = tc.toolName,
-                            arguments = tc.arguments
+                            arguments = tc.arguments.toString()
                         )
                     )
                 }
@@ -327,6 +348,18 @@ class EngineHttpServer(
                     )
                 )
             )
+        }
+    }
+
+    /**
+     * Parse a JSON string into a JsonObject.
+     * Returns an empty JsonObject if parsing fails.
+     */
+    private fun parseJsonObject(jsonString: String): JsonObject {
+        return try {
+            Json.parseToJsonElement(jsonString) as? JsonObject ?: JsonObject(emptyMap())
+        } catch (e: Exception) {
+            JsonObject(emptyMap())
         }
     }
 
