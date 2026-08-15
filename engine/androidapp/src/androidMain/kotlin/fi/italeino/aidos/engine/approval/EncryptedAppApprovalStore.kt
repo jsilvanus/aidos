@@ -52,16 +52,16 @@ class EncryptedAppApprovalStore(context: Context) : AppApprovalStore {
     
     override suspend fun listAllApprovals(): List<AppApprovalRecord> =
         withContext(Dispatchers.IO) {
-            val all = prefs.all
-                .filterValue { it is String }
+            val allRecords = prefs.all
                 .mapNotNull { (_, value) ->
+                    if (value !is String) return@mapNotNull null
                     try {
-                        Json.decodeFromString<AppApprovalRecord>(value as String)
+                        Json.decodeFromString<AppApprovalRecord>(value)
                     } catch (e: Exception) {
                         null
                     }
                 }
-            all.sortedByDescending { it.lastSeenAt }
+            allRecords.sortedByDescending { it.lastSeenAt }
         }
     
     override fun watchApprovals(): Flow<List<AppApprovalRecord>> = appChangesFlow

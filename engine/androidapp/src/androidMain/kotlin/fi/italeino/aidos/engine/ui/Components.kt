@@ -2,15 +2,10 @@ package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -128,13 +123,12 @@ fun MemoryBudgetIndicator(
             )
         }
         LinearProgressIndicator(
-            progress = { budget.percentUsed },
+            progress = budget.percentUsed,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(6.dp),
             color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(3.dp)
+            trackColor = MaterialTheme.colorScheme.surface
         )
     }
 }
@@ -143,6 +137,7 @@ fun MemoryBudgetIndicator(
 // Resident Model Card
 // ============================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResidentModelCard(
     model: ResidentModel,
@@ -195,6 +190,7 @@ fun ResidentModelCard(
 // Cookbook Model Card
 // ============================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CookbookModelCard(
     model: CookbookModel,
@@ -269,6 +265,7 @@ fun CookbookModelCard(
 // Provider Status Row
 // ============================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProviderStatusRow(
     provider: RemoteProvider,
@@ -538,7 +535,7 @@ fun ModelLoadingProgressCard(
             }
             
             LinearProgressIndicator(
-                progress = { loadingState.loadProgress / 100f },
+                progress = loadingState.loadProgress / 100f,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp),
@@ -609,12 +606,11 @@ fun DownloadProgressCard(
             }
             
             LinearProgressIndicator(
-                progress = { download.progressPercent / 100f },
+                progress = download.progressPercent / 100f,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp),
-                color = MaterialTheme.colorScheme.secondary,
-                shape = RoundedCornerShape(3.dp)
+                color = MaterialTheme.colorScheme.secondary
             )
             
             if (download.speedMBps != null || download.etaSeconds != null) {

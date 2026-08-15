@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.IBinder
+import fi.italeino.aidos.engine.HandshakeResult
 import fi.italeino.aidos.engine.approval.AppApprovalManager
 import fi.italeino.aidos.engine.approval.ApprovalDecision
 import fi.italeino.aidos.engine.http.Capabilities
@@ -101,5 +102,5 @@ class EngineHandshakeImpl(
         return packages?.firstOrNull()
     }
 
-    fun asBinder(): IBinder = this
+    override fun asBinder(): IBinder = this
 }

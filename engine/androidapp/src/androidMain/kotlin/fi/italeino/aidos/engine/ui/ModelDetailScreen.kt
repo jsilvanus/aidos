@@ -9,7 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -56,6 +56,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ModelDetailScreen(
     modelId: String,
+    onBackClick: () -> Unit,
     onTestChatClick: ((modelId: String, modelName: String) -> Unit)? = null,
     globalModelRuntime: GlobalModelRuntime? = null,  // Injected for E.2 integration
 ) {
@@ -111,8 +112,8 @@ fun ModelDetailScreen(
             TopAppBar(
                 title = { Text(state.model?.name?.take(30) ?: "Model") },
                 navigationIcon = {
-                    IconButton(onClick = { /* TODO: navigate back */ }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )

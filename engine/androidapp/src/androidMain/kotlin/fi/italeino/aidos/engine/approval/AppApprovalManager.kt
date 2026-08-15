@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.approval
 import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.PackageManager
+import fi.italeino.aidos.engine.notification.AppNotificationManager
 
 /**
  * Orchestrates app approval decisions and handshake responses (RFC-0103).

@@ -1,4 +1,4 @@
-package fi.italeino.aidos.engine.binder
+package fi.italeino.aidos.engine
 
 import android.app.PendingIntent
 import android.os.Parcel

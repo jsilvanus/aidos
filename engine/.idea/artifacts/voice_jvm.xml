@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="voice-jvm">
+    <output-path>$PROJECT_DIR$/voice/build/libs</output-path>
+    <root id="archive" name="voice-jvm.jar">
+      <element id="module-output" name="aidos-engine.voice.jvmMain" />
+    </root>
+  </artifact>
+</component>

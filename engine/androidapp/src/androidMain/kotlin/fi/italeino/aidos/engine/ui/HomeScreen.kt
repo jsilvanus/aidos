@@ -14,8 +14,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FAB
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -200,6 +201,7 @@ private fun StatusPane() {
  * performance estimates (tokens/s, VRAM). Search queries hit Hugging Face; results are
  * filtered locally based on hardware fit.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CookbookPane(onModelSelected: (modelId: String) -> Unit) {
     var state by remember {
@@ -263,22 +265,22 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit) {
                 .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            AssistChip(
+            FilterChip(
                 label = { Text("All", fontSize = 10.sp) },
                 onClick = { selectedFilter = null },
                 selected = selectedFilter == null
             )
-            AssistChip(
+            FilterChip(
                 label = { Text("Perfect", fontSize = 10.sp) },
                 onClick = { selectedFilter = "RUNS_WELL" },
                 selected = selectedFilter == "RUNS_WELL"
             )
-            AssistChip(
+            FilterChip(
                 label = { Text("Tight", fontSize = 10.sp) },
                 onClick = { selectedFilter = "RUNS_TIGHT" },
                 selected = selectedFilter == "RUNS_TIGHT"
             )
-            AssistChip(
+            FilterChip(
                 label = { Text("LLM", fontSize = 10.sp) },
                 onClick = { selectedFilter = "LLM" },
                 selected = selectedFilter == "LLM"
@@ -365,22 +367,5 @@ private fun ProvidersPane(onProviderSelected: (providerId: String) -> Unit) {
                 onTap = { onProviderSelected(state.providers[index].id) }
             )
         }
-    }
-}
-
-/**
- * Cookbook pane: the RFC-0022 cookbook — label, kind, size, verdict against this device.
- */
-@Composable
-private fun CookbookPane(onModelSelected: (modelId: String) -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text("Cookbook — what could run here")
-        Text("(Catalogue entries with cookbook verdicts will appear here, per RFC-0022)")
-        // TODO(RFC-0103/RFC-0022): bind to the cookbook's computed verdicts; tapping an entry
-        // calls onModelSelected(modelId) to navigate to EngineRoute.ModelDetail.
     }
 }

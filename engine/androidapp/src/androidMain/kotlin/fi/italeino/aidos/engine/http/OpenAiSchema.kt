@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.http
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * OpenAI-compatible request/response schema for Aidos Engine (RFC-0103).
@@ -40,7 +41,7 @@ data class ToolDefinition(
 data class FunctionDefinition(
     val name: String,
     val description: String? = null,
-    val parameters: Map<String, Any>? = null
+    val parameters: JsonObject? = null
 )
 
 @Serializable
@@ -59,7 +60,7 @@ data class ToolFunctionCall(
 @Serializable
 data class ChatCompletionResponse(
     val id: String,
-    val object: String = "chat.completion",
+    val `object`: String = "chat.completion",
     val created: Long,
     val model: String,
     val choices: List<Choice>,
@@ -91,7 +92,7 @@ data class EmbeddingsRequest(
 
 @Serializable
 data class EmbeddingsResponse(
-    val object: String = "list",
+    val `object`: String = "list",
     val data: List<Embedding>,
     val model: String,
     val usage: TokenUsage
@@ -99,7 +100,7 @@ data class EmbeddingsResponse(
 
 @Serializable
 data class Embedding(
-    val object: String = "embedding",
+    val `object`: String = "embedding",
     val embedding: List<Float>,
     val index: Int
 )
@@ -126,7 +127,7 @@ data class TranscriptionResponse(
 @Serializable
 data class ChatCompletionChunk(
     val id: String,
-    val object: String = "chat.completion.chunk",
+    val `object`: String = "chat.completion.chunk",
     val created: Long,
     val model: String,
     val choices: List<ChunkChoice>
@@ -180,7 +181,7 @@ data class Capabilities(
 @Serializable
 data class ModelInfo(
     val id: String,
-    val object: String = "model",
+    val `object`: String = "model",
     val owned_by: String = "aidos-local",
     val kind: String,  // "llm", "embedding", "stt", "tts"
     val context_window: Int? = null,

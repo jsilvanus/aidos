@@ -131,7 +131,7 @@ class EngineService : LifecycleService() {
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
+    override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
 
         // Return the handshake Binder interface

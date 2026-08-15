@@ -135,13 +135,12 @@ fun StorageScreen() {
                         )
                     }
                     LinearProgressIndicator(
-                        progress = { usedPercent },
+                        progress = usedPercent,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(8.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(4.dp)
+                        trackColor = MaterialTheme.colorScheme.surface
                     )
                     Row(
                         modifier = Modifier

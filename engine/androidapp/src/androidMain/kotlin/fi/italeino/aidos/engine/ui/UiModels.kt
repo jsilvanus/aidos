@@ -231,7 +231,7 @@ data class SettingsState(
 // Test Chat Screen Models (Phase E)
 // ============================================================================
 
-data class ChatMessage(
+data class UiChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val role: String,  // "user" or "assistant"
     val content: String,
@@ -242,7 +242,7 @@ data class ChatMessage(
 data class TestChatState(
     val modelId: String = "",
     val modelName: String = "",
-    val messages: List<ChatMessage> = emptyList(),
+    val messages: List<UiChatMessage> = emptyList(),
     val inputText: String = "",
     val isLoading: Boolean = false,
     val error: String? = null,

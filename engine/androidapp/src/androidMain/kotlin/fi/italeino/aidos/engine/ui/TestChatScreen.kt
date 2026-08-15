@@ -1,40 +1,17 @@
 package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -43,23 +20,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import fi.italeino.aidos.engine.http.HttpModelClient
+import fi.italeino.aidos.engine.http.ChatMessage as ApiChatMessage
+import fi.italeino.aidos.engine.http.ChatCompletionResponse
 
-/**
- * Test Chat Screen for interactive model testing (RFC-0103, Phase E).
- *
- * Allows users to:
- * - Send test messages to a loaded model
- * - View responses in real-time
- * - See token usage and generation metrics
- * - Test inference before fully loading a model
- *
- * This screen helps users evaluate model quality, latency, and behavior without
- * committing to loading the full model into memory.
- *
- * Note: This screen is stateful and requires the HttpModelClient to be provided
- * by the caller (or injected via DI). For now, uses a placeholder client that
- * will be wired in E.2 when navigation callback provides the client.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TestChatScreen(
@@ -67,9 +31,8 @@ fun TestChatScreen(
     modelName: String,
     onBackClick: () -> Unit,
     onSendMessage: (message: String) -> Unit = {},
-    httpModelClient: HttpModelClient? = null  // Will be injected once wired
+    httpModelClient: HttpModelClient? = null
 ) {
-    // State for this screen instance
     var state by remember {
         mutableStateOf(
             TestChatState(
@@ -78,6 +41,7 @@ fun TestChatScreen(
             )
         )
     }
+
     var currentInput by remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
 
@@ -86,19 +50,8 @@ fun TestChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            "Test Chat: $modelName",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (state.messages.isNotEmpty()) {
-                            Text(
-                                "${state.totalTokensUsed} tokens | " +
-                                        "${String.format("%.1f", state.averageTokensPerSecond)} tok/s",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(modelName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("Test Chat", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
                     }
                 },
                 navigationIcon = {
@@ -107,119 +60,48 @@ fun TestChatScreen(
                     }
                 }
             )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            // Error message display
-            if (state.error != null) {
-                Card(
+        },
+        bottomBar = {
+            Surface(
+                tonalElevation = 2.dp,
+                modifier = Modifier.navigationBarsPadding()
+            ) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    ),
-                    shape = RoundedCornerShape(8.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        state.error!!,
-                        modifier = Modifier.padding(12.dp),
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.Medium
+                    OutlinedTextField(
+                        value = currentInput,
+                        onValueChange = { currentInput = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        placeholder = { Text("Type a message...") },
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Send,
+                            keyboardType = KeyboardType.Text
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (currentInput.isNotBlank() && !state.isLoading) {
+                                    // Handle send logic
+                                }
+                            }
+                        ),
+                        shape = RoundedCornerShape(8.dp)
                     )
-                }
-            }
 
-            // Chat messages area
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                reverseLayout = false
-            ) {
-                if (state.messages.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "No messages yet.\nSend a test prompt to get started.",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
-                    }
-                } else {
-                    items(state.messages) { message ->
-                        ChatMessageBubble(message)
-                    }
-                }
-
-                // Loading indicator
-                if (state.isLoading) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier
-                                    .align(Alignment.CenterVertically)
-                                    .padding(end = 8.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Text(
-                                "Generating response...",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Input area
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = currentInput,
-                    onValueChange = { currentInput = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(4.dp),
-                    placeholder = { Text("Type your test message...") },
-                    maxLines = 3,
-                    singleLine = false,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
+                    IconButton(
+                        onClick = {
                             if (currentInput.isNotBlank() && !state.isLoading) {
-                                // Add user message
-                                val userMessage = ChatMessage(
+                                val messageText = currentInput
+                                currentInput = ""
+                                
+                                val userMessage = UiChatMessage(
                                     role = "user",
-                                    content = currentInput
+                                    content = messageText
                                 )
                                 state = state.copy(
                                     messages = state.messages + userMessage,
@@ -227,186 +109,104 @@ fun TestChatScreen(
                                     error = null
                                 )
 
-                                // Simulate API call (in real implementation, call HTTP endpoint)
                                 coroutineScope.launch {
                                     try {
                                         val startTime = System.currentTimeMillis()
-                                    
-                                        // Use real HTTP client if available, otherwise simulate
-                                        val response = if (httpModelClient != null) {
-                                            try {
-                                                httpModelClient.chatCompletions(
-                                                    modelId = modelId,
-                                                    messages = listOf(
-                                                        HttpModelClient.ChatMessage(
-                                                            role = "user",
-                                                            content = currentInput
-                                                        )
-                                                    ),
-                                                    temperature = 0.7f,
-                                                    maxTokens = 512
-                                                )
-                                            } catch (e: Exception) {
-                                                throw Exception("HTTP Error: ${e.message}")
-                                            }
+                                        
+                                        val generatedText: String
+                                        val tokensUsed: Int
+                                        
+                                        if (httpModelClient != null) {
+                                            val response = httpModelClient.chatCompletions(
+                                                modelId = modelId,
+                                                messages = listOf(ApiChatMessage(role = "user", content = messageText))
+                                            )
+                                            generatedText = response.choices.firstOrNull()?.message?.content ?: ""
+                                            tokensUsed = response.usage.completion_tokens
                                         } else {
-                                            // Fallback simulation for preview/testing
-                                            simulateModelResponse(currentInput)
+                                            generatedText = simulateModelResponse(messageText)
+                                            tokensUsed = generatedText.split(" ").size
                                         }
-                                    
+                                        
                                         val generationTime = System.currentTimeMillis() - startTime
-                                    
-                                        val generatedText = if (response is HttpModelClient.ChatCompletionResponse) {
-                                            response.firstContent
-                                        } else {
-                                            response as String
-                                        }
-                                    
-                                        val tokensUsed = if (response is HttpModelClient.ChatCompletionResponse) {
-                                            response.usage.completion_tokens
-                                        } else {
-                                            generatedText.split(" ").size
-                                        }
-
-                                        val assistantMessage = ChatMessage(
+                                        
+                                        val assistantMessage = UiChatMessage(
                                             role = "assistant",
                                             content = generatedText,
                                             tokensUsed = tokensUsed,
                                             generationTimeMs = generationTime
                                         )
-
+                                        
                                         state = state.copy(
                                             messages = state.messages + assistantMessage,
                                             isLoading = false,
-                                            totalTokensUsed = state.totalTokensUsed + tokensUsed,
-                                            averageTokensPerSecond = (tokensUsed.toFloat() / generationTime) * 1000
+                                            totalTokensUsed = state.totalTokensUsed + tokensUsed
                                         )
-
-                                        onSendMessage(currentInput)
                                     } catch (e: Exception) {
                                         state = state.copy(
                                             isLoading = false,
-                                            error = "Error: ${e.message}"
+                                            error = e.message ?: "Failed to get response"
                                         )
                                     }
                                 }
-
-                                currentInput = ""
                             }
-                        }
-                    ),
-                    shape = RoundedCornerShape(8.dp)
-                )
-
-                IconButton(
-                    onClick = {
-                        if (currentInput.isNotBlank() && !state.isLoading) {
-                            // Add user message
-                            val userMessage = ChatMessage(
-                                role = "user",
-                                content = currentInput
+                        },
+                        enabled = currentInput.isNotBlank() && !state.isLoading
+                    ) {
+                        if (state.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
                             )
-                            state = state.copy(
-                                messages = state.messages + userMessage,
-                                isLoading = true,
-                                error = null
-                            )
-
-                            // Simulate API call (in real implementation, call HTTP endpoint)
-                            coroutineScope.launch {
-                                try {
-                                    val startTime = System.currentTimeMillis()
-                                    
-                                    // Use real HTTP client if available, otherwise simulate
-                                    val response = if (httpModelClient != null) {
-                                        try {
-                                            httpModelClient.chatCompletions(
-                                                modelId = modelId,
-                                                messages = listOf(
-                                                    HttpModelClient.ChatMessage(
-                                                        role = "user",
-                                                        content = currentInput
-                                                    )
-                                                ),
-                                                temperature = 0.7f,
-                                                maxTokens = 512
-                                            )
-                                        } catch (e: Exception) {
-                                            throw Exception("HTTP Error: ${e.message}")
-                                        }
-                                    } else {
-                                        // Fallback simulation for preview/testing
-                                        simulateModelResponse(currentInput)
-                                    }
-                                    
-                                    val generationTime = System.currentTimeMillis() - startTime
-                                    
-                                    val generatedText = if (response is HttpModelClient.ChatCompletionResponse) {
-                                        response.firstContent
-                                    } else {
-                                        response as String
-                                    }
-                                    
-                                    val tokensUsed = if (response is HttpModelClient.ChatCompletionResponse) {
-                                        response.usage.completion_tokens
-                                    } else {
-                                        generatedText.split(" ").size
-                                    }
-
-                                    val assistantMessage = ChatMessage(
-                                        role = "assistant",
-                                        content = generatedText,
-                                        tokensUsed = tokensUsed,
-                                        generationTimeMs = generationTime
-                                    )
-
-                                    state = state.copy(
-                                        messages = state.messages + assistantMessage,
-                                        isLoading = false,
-                                        totalTokensUsed = state.totalTokensUsed + tokensUsed,
-                                        averageTokensPerSecond = (tokensUsed.toFloat() / generationTime) * 1000
-                                    )
-
-                                    onSendMessage(currentInput)
-                                } catch (e: Exception) {
-                                    state = state.copy(
-                                        isLoading = false,
-                                        error = "Error: ${e.message}"
-                                    )
-                                }
-                            }
-
-                            currentInput = ""
+                        } else {
+                            Icon(Icons.Default.Send, contentDescription = "Send")
                         }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.Bottom)
-                        .padding(4.dp),
-                    enabled = currentInput.isNotBlank() && !state.isLoading
+                    }
+                }
+            }
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            if (state.error != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = "Send message")
+                    Text(
+                        state.error!!,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(8.dp),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                reverseLayout = false,
+                contentPadding = PaddingValues(vertical = 16.dp)
+            ) {
+                items(state.messages) { message ->
+                    ChatMessageBubble(message)
                 }
             }
         }
     }
 }
 
-/**
- * Individual chat message bubble.
- *
- * User messages appear on the right with standard styling.
- * Assistant messages appear on the left and include token/speed metrics.
- */
 @Composable
-private fun ChatMessageBubble(message: ChatMessage) {
+private fun ChatMessageBubble(message: UiChatMessage) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        horizontalArrangement = if (message.role == "user")
-            Arrangement.End
-        else
-            Arrangement.Start
+        horizontalArrangement = if (message.role == "user") Arrangement.End else Arrangement.Start
     ) {
         Card(
             modifier = Modifier
@@ -446,13 +246,6 @@ private fun ChatMessageBubble(message: ChatMessage) {
     }
 }
 
-/**
- * Simulates a model response for testing.
- *
- * TODO: Replace with actual HTTP call to /v1/chat/completions endpoint.
- */
 private fun simulateModelResponse(input: String): String {
-    return "This is a simulated response from the model. " +
-            "In the real implementation, this would call the /v1/chat/completions endpoint. " +
-            "Your message was: \"$input\""
+    return "This is a simulated response from the model. Your message was: \"$input\""
 }

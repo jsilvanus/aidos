@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="androidapp-jvm">
+    <output-path>$PROJECT_DIR$/androidapp/build/libs</output-path>
+    <root id="archive" name="androidapp-jvm.jar">
+      <element id="module-output" name="aidos-engine.androidapp.jvmMain" />
+    </root>
+  </artifact>
+</component>
