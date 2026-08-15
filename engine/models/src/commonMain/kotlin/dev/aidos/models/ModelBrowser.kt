@@ -4,6 +4,8 @@ import dev.aidos.cookbook.CookbookEngine
 import dev.aidos.cookbook.CookbookVerdict
 import dev.aidos.cookbook.DeviceProfile
 import dev.aidos.cookbook.PerformanceMeasurement
+import dev.aidos.huggingface.HuggingFaceClient
+import dev.aidos.huggingface.HuggingFaceModel
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 
@@ -15,6 +17,7 @@ import dev.aidos.kernel.ModelKind
  */
 class ModelBrowser(
     private val catalogManager: ModelCatalogManager,
+    private val hfClient: HuggingFaceClient,
     private val cookbookEngine: CookbookEngine,
     private val deviceProfile: DeviceProfile,
     private val defaultContextWindow: Int = 4096,
@@ -58,11 +61,76 @@ class ModelBrowser(
                     verdict = verdict,
                     installedModel = installedModel,
                     readableVerdict = verdict.humanReadable(),
+                    contextWindow = defaultContextWindow,
+                    sizeBytes = descriptor.sizeBytes,
                 )
             }
             .sortedWith(compareBy(
                 { it.verdict.ordinal }, // Fit verdict first
                 { it.catalogEntry.name }, // Then by name
+            ))
+            .toList()
+    }
+
+    /**
+     * Search models on Hugging Face with cookbook verdicts.
+     */
+    suspend fun searchRemote(
+        query: String,
+        kind: ModelKind? = null,
+        minContext: Int? = null,
+    ): Result<List<BrowsableModel>> = runCatching {
+        val hfFilter = mutableListOf("library:gguf")
+        
+        val searchResult = hfClient.search(
+            query = query,
+            filter = hfFilter.joinToString(","),
+        ).getOrThrow()
+        
+        searchResult.models
+            .asSequence()
+            .map { hfModel ->
+                // Pick best quantization (Q4_K_M or first available)
+                val quant = hfModel.quantizations.find { it.name.contains("Q4_K_M") }
+                    ?: hfModel.quantizations.firstOrNull()
+                
+                val modelKind = hfClient.inferModelKind(hfModel.tags, hfModel.pipeline)
+                val contextWindow = hfModel.contextLength ?: defaultContextWindow
+                
+                val descriptor = ModelDescriptor(
+                    id = hfModel.modelId,
+                    name = hfModel.displayName ?: hfModel.modelId,
+                    kind = modelKind,
+                    providerId = "huggingface",
+                    isLocal = false,
+                    contextWindow = contextWindow,
+                    sizeBytes = quant?.sizeBytes,
+                    digest = quant?.sha256Digest,
+                )
+                
+                val verdict = cookbookEngine.verdict(descriptor, deviceProfile, contextWindow)
+                
+                BrowsableModel(
+                    catalogEntry = CatalogEntry(
+                        id = hfModel.modelId,
+                        name = hfModel.displayName ?: hfModel.modelId,
+                        kind = modelKind,
+                        provider = "huggingface",
+                        remoteUrl = "https://huggingface.co/${hfModel.modelId}",
+                        discoveredAt = "", // Transient
+                    ),
+                    verdict = verdict,
+                    installedModel = null,
+                    readableVerdict = verdict.humanReadable(),
+                    contextWindow = contextWindow,
+                    sizeBytes = quant?.sizeBytes,
+                )
+            }
+            .filter { kind == null || it.kind == kind }
+            .filter { minContext == null || it.contextWindow >= minContext }
+            .sortedWith(compareBy(
+                { it.verdict.ordinal },
+                { it.catalogEntry.name },
             ))
             .toList()
     }
@@ -95,6 +163,8 @@ class ModelBrowser(
             installedModel = installedModel,
             verdict = verdict,
             readableVerdict = verdict.humanReadable(),
+            contextWindow = defaultContextWindow,
+            sizeBytes = descriptor.sizeBytes,
         )
     }
 
@@ -127,6 +197,8 @@ data class BrowsableModel(
     val verdict: CookbookVerdict,
     val installedModel: InstalledModel?,
     val readableVerdict: String,
+    val contextWindow: Int,
+    val sizeBytes: Long? = null,
 ) {
     val id: String get() = catalogEntry.id
     val name: String get() = catalogEntry.name
@@ -144,6 +216,8 @@ data class ModelDetail(
     val installedModel: InstalledModel?,
     val verdict: CookbookVerdict,
     val readableVerdict: String,
+    val contextWindow: Int,
+    val sizeBytes: Long? = null,
 ) {
     val id: String get() = catalogEntry.id
     val name: String get() = catalogEntry.name

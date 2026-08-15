@@ -31,6 +31,7 @@ data class HuggingFaceModel(
     val likes: Long = 0,
     val pipeline: String? = null,
     val modelSize: Long? = null,
+    val contextLength: Int? = null,
     val quantizations: List<Quantization> = emptyList(),
 )
 
@@ -81,8 +82,8 @@ class HuggingFaceClient(
         limit: Int = 10,
     ): Result<HuggingFaceSearchResult> {
         return try {
-            // Build query parameters
-            val params = mutableListOf("search=$query", "sort=$sort", "limit=$limit")
+            // Build query parameters. full=true and config=true to get metadata for verdicts.
+            val params = mutableListOf("search=$query", "sort=$sort", "limit=$limit", "full=true", "config=true")
             if (filter != null) {
                 params.add("filter=$filter")
             }
@@ -295,6 +296,15 @@ class HuggingFaceClient(
             val downloads = json["downloads"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
             val likes = json["likes"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
             val pipeline = json["pipeline_tag"]?.jsonPrimitive?.content
+            
+            // Try to extract context length from config if available
+            val contextLength = json["config"]?.jsonObject?.get("max_position_embeddings")?.jsonPrimitive?.content?.toIntOrNull()
+                ?: json["config"]?.jsonObject?.get("n_ctx")?.jsonPrimitive?.content?.toIntOrNull()
+
+            // Parse sibling files as quantizations if available (only if full=true was used)
+            val quantizations = json["siblings"]?.jsonArray?.mapNotNull { item ->
+                parseQuantization(item.jsonObject)
+            } ?: emptyList()
 
             HuggingFaceModel(
                 modelId = modelId,
@@ -305,6 +315,8 @@ class HuggingFaceClient(
                 downloads = downloads,
                 likes = likes,
                 pipeline = pipeline,
+                contextLength = contextLength,
+                quantizations = quantizations,
             )
         } catch (e: Exception) {
             null

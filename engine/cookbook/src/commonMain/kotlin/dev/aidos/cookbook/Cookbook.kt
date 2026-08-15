@@ -192,6 +192,28 @@ class CookbookEngine {
     }
 
     /**
+     * Finds the maximum context window that fits on the device for this model.
+     *
+     * @return max tokens that fit, or null if even the weights don't fit.
+     */
+    fun findMaxFittingContext(
+        model: ModelDescriptor,
+        device: DeviceProfile,
+        maxLimit: Int = 32768,
+    ): Int? {
+        val sizeBytes = model.sizeBytes ?: return null
+        val overhead = (sizeBytes * OVERHEAD_FRACTION).toLong()
+        
+        if (sizeBytes + overhead > device.availableRamBytes) return null
+        
+        val availableForCache = device.availableRamBytes - sizeBytes - overhead
+        if (availableForCache <= 0) return null
+        
+        val maxTokens = (availableForCache / KV_CACHE_BYTES_PER_TOKEN).toInt()
+        return maxTokens.coerceAtMost(maxLimit).coerceAtLeast(0)
+    }
+
+    /**
      * Estimates parameter count from model size and quantization.
      * This is a rough heuristic; actual numbers come from model metadata.
      */

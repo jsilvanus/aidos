@@ -9,14 +9,32 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
+import app.cash.sqldelight.db.AfterVersion
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlSchema
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.huggingface.HuggingFaceClient
+import dev.aidos.kernel.BasicResourceHandle
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.EffectBroker
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
+import dev.aidos.models.DatabaseModelCatalogManager
+import dev.aidos.models.ModelBrowser
+import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.approval.AppApprovalManager
 import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
+import fi.italeino.aidos.engine.http.AndroidEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.notification.AppNotificationManager
+import fi.italeino.aidos.engine.ui.DeviceProfileProvider
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,6 +79,18 @@ class EngineService : LifecycleService() {
     lateinit var modelRuntime: GlobalModelRuntime
         private set
         
+    lateinit var hfClient: HuggingFaceClient
+        private set
+
+    lateinit var catalogManager: ModelCatalogManager
+        private set
+
+    lateinit var modelBrowser: ModelBrowser
+        private set
+
+    private lateinit var httpClient: HttpClient
+    private lateinit var effectBroker: EffectBroker
+
     private lateinit var approvalStore: EncryptedAppApprovalStore
     private lateinit var approvalManager: AppApprovalManager
     private var _isRunning = false
@@ -73,6 +103,37 @@ class EngineService : LifecycleService() {
             try {
                 // Initialize token manager
                 tokenManager = TokenManager()
+
+                // Initialize HTTP client and broker for egress (RFC-0030)
+                httpClient = HttpClient(io.ktor.client.engine.android.Android) {
+                    install(ContentNegotiation) {
+                        json()
+                    }
+                }
+                effectBroker = AndroidEffectBroker(httpClient)
+                val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
+                hfClient = HuggingFaceClient(effectBroker, hfHandle)
+
+                // Initialize database-backed catalog manager
+                val databaseDriver = AndroidSqliteDriver(
+                    schema = object : SqlSchema<QueryResult.Value<Unit>> {
+                        override val version: Long = 1
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                        override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                    },
+                    context = this@EngineService,
+                    name = "aidos_engine.db"
+                )
+                catalogManager = DatabaseModelCatalogManager(databaseDriver)
+
+                // Initialize model browser with cookbook engine and hardware profile
+                val deviceProfile = DeviceProfileProvider(this@EngineService).getProfile()
+                modelBrowser = ModelBrowser(
+                    catalogManager = catalogManager,
+                    hfClient = hfClient,
+                    cookbookEngine = CookbookEngine(),
+                    deviceProfile = deviceProfile
+                )
 
                 // Initialize model runtime with llama.cpp backend (RFC-0103, M21)
                 // GlobalModelRuntime manages the admission queue and loaded model lifecycle
@@ -123,6 +184,7 @@ class EngineService : LifecycleService() {
             try {
                 if (isRunning) {
                     httpServer.stop()
+                    httpClient.close()
                     
                     // Unload all models and shut down the runtime (RFC-0103, RFC-0022)
                     modelRuntime.loaded().forEach { modelId ->

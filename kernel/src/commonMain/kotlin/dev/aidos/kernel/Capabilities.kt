@@ -191,6 +191,8 @@ sealed interface ResourceHandle {
     val capabilityId: CapabilityId
 }
 
+data class BasicResourceHandle(override val capabilityId: CapabilityId) : ResourceHandle
+
 interface DirHandle : ResourceHandle {
     suspend fun read(relative: RelPath): Result<ByteArray>
     suspend fun write(relative: RelPath, content: ByteArray): Result<Unit>

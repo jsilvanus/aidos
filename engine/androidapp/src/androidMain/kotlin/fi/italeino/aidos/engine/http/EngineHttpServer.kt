@@ -26,9 +26,9 @@ class EngineHttpServer(
     private val modelRuntime: ModelRuntime,
     private val port: Int = 0
 ) {
-    private var server: ApplicationEngine? = null
+    private var server: EmbeddedServer<*, *>? = null
 
-    fun getBoundPort(): Int? = server?.environment?.connectors?.firstOrNull()?.port
+    suspend fun getBoundPort(): Int? = server?.engine?.resolvedConnectors()?.firstOrNull()?.port
 
     fun start() {
         server = embeddedServer(CIO, port = port, host = "127.0.0.1") {

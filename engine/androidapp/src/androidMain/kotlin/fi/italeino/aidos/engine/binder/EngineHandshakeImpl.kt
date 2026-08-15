@@ -62,7 +62,7 @@ class EngineHandshakeImpl(
         val tokenInfo = tokenManager.generateNewToken()
 
         // Get the port the HTTP server is bound to
-        val port = httpServer.getBoundPort()
+        val port = runBlocking { httpServer.getBoundPort() }
             ?: throw IllegalStateException("HTTP server not running or port not bound")
 
         // Build capability list

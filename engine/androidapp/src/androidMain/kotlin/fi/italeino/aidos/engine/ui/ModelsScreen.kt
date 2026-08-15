@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -11,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.aidos.kernel.ModelKind
 import kotlinx.coroutines.launch
 
 /**
@@ -29,7 +32,7 @@ import kotlinx.coroutines.launch
  *
  * Three tabs:
  * 1. Local: Installed models (formerly Storage screen)
- * 2. Cookbook: Browsable catalog
+ * 2. Cookbook: Browsable catalog with Hugging Face integration
  * 3. Providers: Remote providers
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -228,14 +231,22 @@ private fun Modifier.scale(scale: Float) = this.then(
 )
 
 /**
- * Cookbook pane: local models, searchable with filters and fit scoring (RFC-0103).
+ * Cookbook pane: Browsable Hugging Face catalog with fit scoring (RFC-0103).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: ModelsViewModel) {
     val cookbookModels by viewModel.cookbookModels.collectAsState()
+    val isSearching by viewModel.isSearching.collectAsState()
+    
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf<String?>(null) }
+    var selectedKind by remember { mutableStateOf<ModelKind?>(null) }
+    var minContext by remember { mutableStateOf<Int?>(null) }
+
+    // Trigger search when query or filters change
+    LaunchedEffect(searchQuery, selectedKind, minContext) {
+        viewModel.searchRemote(searchQuery, selectedKind, minContext)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         SearchBar(
@@ -245,32 +256,68 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
             modifier = Modifier.padding(vertical = 8.dp)
         )
 
-        Row(
+        LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            FilterChip(
-                label = { Text("All", fontSize = 10.sp) },
-                onClick = { selectedFilter = null },
-                selected = selectedFilter == null
+            item {
+                Icon(
+                    Icons.Default.FilterList,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.outline
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("All", fontSize = 10.sp) },
+                    onClick = { 
+                        selectedKind = null
+                        minContext = null
+                    },
+                    selected = selectedKind == null && minContext == null
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("LLM", fontSize = 10.sp) },
+                    onClick = { selectedKind = if (selectedKind == ModelKind.LLM) null else ModelKind.LLM },
+                    selected = selectedKind == ModelKind.LLM
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("Embedding", fontSize = 10.sp) },
+                    onClick = { selectedKind = if (selectedKind == ModelKind.EMBEDDING) null else ModelKind.EMBEDDING },
+                    selected = selectedKind == ModelKind.EMBEDDING
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("8K+ CTX", fontSize = 10.sp) },
+                    onClick = { minContext = if (minContext == 8192) null else 8192 },
+                    selected = minContext == 8192
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("32K+ CTX", fontSize = 10.sp) },
+                    onClick = { minContext = if (minContext == 32768) null else 32768 },
+                    selected = minContext == 32768
+                )
+            }
+        }
+
+        if (isSearching) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = MaterialTheme.colorScheme.secondary
             )
-            FilterChip(
-                label = { Text("Perfect", fontSize = 10.sp) },
-                onClick = { selectedFilter = "RUNS_WELL" },
-                selected = selectedFilter == "RUNS_WELL"
-            )
-            FilterChip(
-                label = { Text("Tight", fontSize = 10.sp) },
-                onClick = { selectedFilter = "RUNS_TIGHT" },
-                selected = selectedFilter == "RUNS_TIGHT"
-            )
-            FilterChip(
-                label = { Text("LLM", fontSize = 10.sp) },
-                onClick = { selectedFilter = "LLM" },
-                selected = selectedFilter == "LLM"
-            )
+        } else {
+            Spacer(modifier = Modifier.height(2.dp))
         }
 
         LazyColumn(
@@ -280,15 +327,24 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
             items(cookbookModels) { model ->
                 CookbookModelCard(model, onTap = { onModelSelected(model.id) })
             }
+            
+            if (cookbookModels.isEmpty() && !isSearching) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                        Text("No models found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
             item {
                 TextButton(
-                    onClick = { },
+                    onClick = { /* Could open a custom repo dialog */ },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null)
-                    Text("Add from Hugging Face", modifier = Modifier.padding(start = 4.dp))
+                    Text("Add Custom Repo", modifier = Modifier.padding(start = 4.dp))
                 }
             }
         }
