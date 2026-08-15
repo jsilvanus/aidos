@@ -42,6 +42,12 @@ kotlin {
                 implementation(project(":voice"))
 
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+                // Ktor server for HTTP endpoints (RFC-0103)
+                implementation("io.ktor:ktor-server-core:2.3.12")
+                implementation("io.ktor:ktor-server-netty:2.3.12")
+                implementation("io.ktor:ktor-server-cors:2.3.12")
 
                 // Compose and Material Design 3
                 implementation("androidx.compose.ui:ui:1.6.0")

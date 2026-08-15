@@ -17,6 +17,7 @@ sealed class EngineRoute(val route: String) {
     data class ModelDetail(val modelId: String) : EngineRoute("model/{modelId}") {
         fun createRoute(modelId: String) = "model/$modelId"
     }
+    data object TestChat : EngineRoute("test_chat")
     data object Storage : EngineRoute("storage")
     data object ConnectedApps : EngineRoute("connected_apps")
     data object Settings : EngineRoute("settings")

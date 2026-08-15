@@ -31,6 +31,9 @@ fun EngineNavHost(
                 onModelSelected = { modelId ->
                     navController.navigate(EngineRoute.ModelDetail(modelId).createRoute(modelId))
                 },
+                onTestChat = {
+                    navController.navigate(EngineRoute.TestChat.route)
+                }
             )
         }
 
@@ -44,6 +47,10 @@ fun EngineNavHost(
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
             ModelDetailScreen(modelId = modelId)
+        }
+
+        composable(EngineRoute.TestChat.route) {
+            TestChatScreen()
         }
 
         composable(EngineRoute.Storage.route) {
