@@ -117,11 +117,16 @@ val port = server.getBoundPort()  // Ephemeral port assigned by OS
 server.stop()                     // Graceful shutdown
 ```
 
-**TODO (Phase B/C)**: 
-- Integrate with `modelruntime` for actual inference
+**Phase B Status**: ✅ COMPLETE
+- See [PHASE_B_IMPLEMENTATION.md](PHASE_B_IMPLEMENTATION.md) for model integration details
+- Implemented real inference in all endpoints using GlobalModelRuntime
+- Added error handling for model loading and inference failures
+- Transcriptions deferred to Phase C (voice provider integration)
+
+**TODO (Phase C)**:
 - Implement streaming for chat completions
-- Add actual embedding model support
-- Wire STT provider for transcriptions
+- Wire STT provider for transcriptions (RFC-0022, D28)
+- Implement Aidos SDK client library
 
 ### 4. Binder Handshake (`IEngineHandshake.aidl`, `EngineHandshakeImpl.kt`, `HandshakeResult.kt`)
 
