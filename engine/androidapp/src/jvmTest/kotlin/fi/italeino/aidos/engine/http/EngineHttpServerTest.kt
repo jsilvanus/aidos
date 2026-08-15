@@ -190,6 +190,216 @@ class EngineHttpServerTest {
         val body = response.bodyAsText()
         assertTrue(body.contains("ok"))
     }
+
+    @Test
+    fun transcriptions_returnsValidResponse() = testApplication {
+        val mockRuntime = MockModelRuntime()
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        // Setup test server
+        install(ContentNegotiation) {
+            json(Json {
+                prettyPrint = false
+                encodeDefaults = true
+                isLenient = true
+            })
+        }
+
+        install(Authentication) {
+            bearer("bearerAuth") {
+                authenticate { tokenCredential ->
+                    if (tokenManager.validateToken(tokenCredential.token) != null) {
+                        UserIdPrincipal(tokenCredential.token)
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+
+        routing {
+            authenticate("bearerAuth") {
+                post("/v1/audio/transcriptions") {
+                    val request = call.receive<TranscriptionRequest>()
+                    val response = TranscriptionResponse(text = "Mock transcription result")
+                    call.respond(response)
+                }
+            }
+        }
+
+        // Create base64-encoded audio (simple dummy data)
+        val dummyAudio = byteArrayOf(0x52, 0x49, 0x46, 0x46)  // "RIFF" header
+        val base64Audio = java.util.Base64.getEncoder().encodeToString(dummyAudio)
+
+        // Make test request
+        val response = client.post("/v1/audio/transcriptions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(TranscriptionRequest(
+                file = base64Audio,
+                model = "test-model"
+            ))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("Mock transcription result"))
+    }
+
+    @Test
+    fun transcriptions_requiresAuthentication() = testApplication {
+        install(ContentNegotiation) {
+            json()
+        }
+
+        install(Authentication) {
+            bearer("bearerAuth") {
+                authenticate { null }
+            }
+        }
+
+        routing {
+            authenticate("bearerAuth") {
+                post("/v1/audio/transcriptions") {
+                    call.respond(HttpStatusCode.OK)
+                }
+            }
+        }
+
+        // Make request without authentication
+        val response = client.post("/v1/audio/transcriptions") {
+            contentType(ContentType.Application.Json)
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun transcriptions_rejectsMissingModel() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        install(ContentNegotiation) {
+            json()
+        }
+
+        routing {
+            post("/v1/audio/transcriptions") {
+                val request = call.receive<TranscriptionRequest>()
+                if (request.model.isBlank()) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Model name is required",
+                                type = "invalid_request_error"
+                            )
+                        )
+                    )
+                } else {
+                    call.respond(HttpStatusCode.OK)
+                }
+            }
+        }
+
+        val dummyAudio = java.util.Base64.getEncoder().encodeToString(byteArrayOf(0x52, 0x49, 0x46, 0x46))
+
+        val response = client.post("/v1/audio/transcriptions") {
+            contentType(ContentType.Application.Json)
+            setBody(TranscriptionRequest(
+                file = dummyAudio,
+                model = ""
+            ))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("Model name is required"))
+    }
+
+    @Test
+    fun transcriptions_rejectsMissingAudioFile() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        install(ContentNegotiation) {
+            json()
+        }
+
+        routing {
+            post("/v1/audio/transcriptions") {
+                val request = call.receive<TranscriptionRequest>()
+                if (request.file.isBlank()) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Audio file is required",
+                                type = "invalid_request_error"
+                            )
+                        )
+                    )
+                } else {
+                    call.respond(HttpStatusCode.OK)
+                }
+            }
+        }
+
+        val response = client.post("/v1/audio/transcriptions") {
+            contentType(ContentType.Application.Json)
+            setBody(TranscriptionRequest(
+                file = "",
+                model = "test-model"
+            ))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("Audio file is required"))
+    }
+
+    @Test
+    fun transcriptions_rejectsInvalidBase64() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        install(ContentNegotiation) {
+            json()
+        }
+
+        routing {
+            post("/v1/audio/transcriptions") {
+                val request = call.receive<TranscriptionRequest>()
+                try {
+                    java.util.Base64.getDecoder().decode(request.file)
+                    call.respond(HttpStatusCode.OK)
+                } catch (e: IllegalArgumentException) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Invalid base64-encoded audio file: ${e.message}",
+                                type = "invalid_request_error"
+                            )
+                        )
+                    )
+                }
+            }
+        }
+
+        val response = client.post("/v1/audio/transcriptions") {
+            contentType(ContentType.Application.Json)
+            setBody(TranscriptionRequest(
+                file = "invalid_base64!!!",
+                model = "test-model"
+            ))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("Invalid base64-encoded audio file"))
+    }
 }
 
 /**

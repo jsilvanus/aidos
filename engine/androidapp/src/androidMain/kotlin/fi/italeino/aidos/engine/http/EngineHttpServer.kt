@@ -534,19 +534,141 @@ class EngineHttpServer(
                 return
             }
 
-            // Note: Full STT integration requires voice provider integration (RFC-0022, D28)
-            // This is deferred to Phase C. For now, return a placeholder.
-            val response = TranscriptionResponse(
-                text = "[Speech-to-text model loading not yet implemented in Phase B - deferred to Phase C]"
+            if (request.file.isBlank()) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(
+                        error = ErrorDetail(
+                            message = "Audio file is required",
+                            type = "invalid_request_error"
+                        )
+                    )
+                )
+                return
+            }
+
+            // Decode base64 audio (RFC-0103, Phase C: STT integration)
+            val audioBytes = try {
+                Base64.getDecoder().decode(request.file)
+            } catch (e: IllegalArgumentException) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(
+                        error = ErrorDetail(
+                            message = "Invalid base64-encoded audio file: ${e.message}",
+                            type = "invalid_request_error"
+                        )
+                    )
+                )
+                return
+            }
+
+            // Try to load the STT model (RFC-0103, Phase C: Model loading)
+            val modelResult = modelRuntime.load(request.model)
+            if (modelResult.isFailure) {
+                val error = modelResult.exceptionOrNull()
+                val statusCode = when {
+                    error?.message?.contains("not installed") == true -> HttpStatusCode.NotFound
+                    else -> HttpStatusCode.InternalServerError
+                }
+                call.respond(
+                    statusCode,
+                    ErrorResponse(
+                        error = ErrorDetail(
+                            message = error?.message ?: "Failed to load STT model ${request.model}",
+                            type = "model_error"
+                        )
+                    )
+                )
+                return
+            }
+
+            val adapter = modelResult.getOrNull()
+                ?: run {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Model adapter is null",
+                                type = "internal_error"
+                            )
+                        )
+                    )
+                    return
+                }
+
+            // Build prompt hint if provided (helps guide transcription)
+            val systemPrompt = if (!request.prompt.isNullOrBlank()) {
+                request.prompt
+            } else {
+                "Transcribe the following audio to text. Output only the transcription, nothing else."
+            }
+
+            // Create model request with audio data as Image content block
+            // Use audio/wav as mime type (generic audio format)
+            val modelRequest = ModelRequest(
+                messages = listOf(
+                    Turn.System(systemPrompt),
+                    Turn.User(
+                        content = listOf(
+                            ContentBlock.Image(
+                                mimeType = "audio/wav",
+                                data = audioBytes
+                            )
+                        ),
+                        trustLevel = TrustLevel.TRUSTED
+                    )
+                ),
+                tools = emptyList(),
+                toolChoice = ToolChoice.None,
+                maxOutputTokens = request.prompt?.length?.coerceAtMost(500) ?: 500,
+                stopConditions = emptyList()
             )
+
+            // Invoke the model for transcription
+            val inferenceResult = adapter.invoke(modelRequest)
+            if (inferenceResult.isFailure) {
+                val error = inferenceResult.exceptionOrNull()
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(
+                        error = ErrorDetail(
+                            message = error?.message ?: "STT model inference failed",
+                            type = "inference_error"
+                        )
+                    )
+                )
+                return
+            }
+
+            val modelResponse = inferenceResult.getOrNull()
+                ?: run {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Model response is null",
+                                type = "internal_error"
+                            )
+                        )
+                    )
+                    return
+                }
+
+            // Extract transcribed text from model response
+            val transcribedText = modelResponse.text ?: ""
+
+            // Return transcription response (RFC-0103, Phase C: STT integration complete)
+            val response = TranscriptionResponse(text = transcribedText)
             call.respond(response)
+
         } catch (e: Exception) {
             call.respond(
-                HttpStatusCode.BadRequest,
+                HttpStatusCode.InternalServerError,
                 ErrorResponse(
                     error = ErrorDetail(
-                        message = e.message ?: "Unknown error",
-                        type = "invalid_request_error"
+                        message = e.message ?: "Unknown error during transcription",
+                        type = "internal_error"
                     )
                 )
             )
