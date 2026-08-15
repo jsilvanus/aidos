@@ -55,6 +55,10 @@ import kotlinx.coroutines.launch
  *
  * This screen helps users evaluate model quality, latency, and behavior without
  * committing to loading the full model into memory.
+ *
+ * Note: This screen is stateful and requires the HttpModelClient to be provided
+ * by the caller (or injected via DI). For now, uses a placeholder client that
+ * will be wired in E.2 when navigation callback provides the client.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +67,7 @@ fun TestChatScreen(
     modelName: String,
     onBackClick: () -> Unit,
     onSendMessage: (message: String) -> Unit = {},
+    httpModelClient: HttpModelClient? = null  // Will be injected once wired
 ) {
     // State for this screen instance
     var state by remember {
@@ -225,10 +230,43 @@ fun TestChatScreen(
                                 // Simulate API call (in real implementation, call HTTP endpoint)
                                 coroutineScope.launch {
                                     try {
-                                        // TODO: Call actual /v1/chat/completions endpoint
-                                        val generatedText = simulateModelResponse(currentInput)
-                                        val tokensUsed = generatedText.split(" ").size
-                                        val generationTime = 1200L  // ms
+                                        val startTime = System.currentTimeMillis()
+                                    
+                                        // Use real HTTP client if available, otherwise simulate
+                                        val response = if (httpModelClient != null) {
+                                            try {
+                                                httpModelClient.chatCompletions(
+                                                    modelId = modelId,
+                                                    messages = listOf(
+                                                        HttpModelClient.ChatMessage(
+                                                            role = "user",
+                                                            content = currentInput
+                                                        )
+                                                    ),
+                                                    temperature = 0.7f,
+                                                    maxTokens = 512
+                                                )
+                                            } catch (e: Exception) {
+                                                throw Exception("HTTP Error: ${e.message}")
+                                            }
+                                        } else {
+                                            // Fallback simulation for preview/testing
+                                            simulateModelResponse(currentInput)
+                                        }
+                                    
+                                        val generationTime = System.currentTimeMillis() - startTime
+                                    
+                                        val generatedText = if (response is HttpModelClient.ChatCompletionResponse) {
+                                            response.firstContent
+                                        } else {
+                                            response as String
+                                        }
+                                    
+                                        val tokensUsed = if (response is HttpModelClient.ChatCompletionResponse) {
+                                            response.usage.completion_tokens
+                                        } else {
+                                            generatedText.split(" ").size
+                                        }
 
                                         val assistantMessage = ChatMessage(
                                             role = "assistant",
@@ -277,10 +315,43 @@ fun TestChatScreen(
                             // Simulate API call (in real implementation, call HTTP endpoint)
                             coroutineScope.launch {
                                 try {
-                                    // TODO: Call actual /v1/chat/completions endpoint
-                                    val generatedText = simulateModelResponse(currentInput)
-                                    val tokensUsed = generatedText.split(" ").size
-                                    val generationTime = 1200L  // ms
+                                    val startTime = System.currentTimeMillis()
+                                    
+                                    // Use real HTTP client if available, otherwise simulate
+                                    val response = if (httpModelClient != null) {
+                                        try {
+                                            httpModelClient.chatCompletions(
+                                                modelId = modelId,
+                                                messages = listOf(
+                                                    HttpModelClient.ChatMessage(
+                                                        role = "user",
+                                                        content = currentInput
+                                                    )
+                                                ),
+                                                temperature = 0.7f,
+                                                maxTokens = 512
+                                            )
+                                        } catch (e: Exception) {
+                                            throw Exception("HTTP Error: ${e.message}")
+                                        }
+                                    } else {
+                                        // Fallback simulation for preview/testing
+                                        simulateModelResponse(currentInput)
+                                    }
+                                    
+                                    val generationTime = System.currentTimeMillis() - startTime
+                                    
+                                    val generatedText = if (response is HttpModelClient.ChatCompletionResponse) {
+                                        response.firstContent
+                                    } else {
+                                        response as String
+                                    }
+                                    
+                                    val tokensUsed = if (response is HttpModelClient.ChatCompletionResponse) {
+                                        response.usage.completion_tokens
+                                    } else {
+                                        generatedText.split(" ").size
+                                    }
 
                                     val assistantMessage = ChatMessage(
                                         role = "assistant",

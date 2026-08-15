@@ -73,6 +73,11 @@ kotlin {
                 implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
                 implementation("io.ktor:ktor-server-auth:2.3.12")
 
+                // HTTP client for calling the Engine (RFC-0103, Phase E - E.1 HTTP client)
+                implementation("io.ktor:ktor-client-android:2.3.12")
+                implementation("io.ktor:ktor-client-serialization:2.3.12")
+                implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
+
                 // JSON serialization for OpenAI schema
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 

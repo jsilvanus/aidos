@@ -25,12 +25,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.aidos.modelruntime.GlobalModelRuntime
+import fi.italeino.aidos.engine.loading.ModelLoader
+import kotlinx.coroutines.launch
 
 /**
  * Model detail / acquire screen (RFC-0103, RFC-0022, Phase D/E).
@@ -53,6 +57,7 @@ import androidx.compose.ui.unit.sp
 fun ModelDetailScreen(
     modelId: String,
     onTestChatClick: ((modelId: String, modelName: String) -> Unit)? = null,
+    globalModelRuntime: GlobalModelRuntime? = null,  // Injected for E.2 integration
 ) {
     // Sample data (will be bound to ViewModel later)
     var state by remember {
@@ -98,6 +103,8 @@ fun ModelDetailScreen(
             )
         )
     }
+    val coroutineScope = rememberCoroutineScope()
+    val modelLoader = remember { globalModelRuntime?.let { ModelLoader(it) } }
 
     Scaffold(
         topBar = {
@@ -208,16 +215,69 @@ fun ModelDetailScreen(
 
                 Button(
                     onClick = {
-                        // TODO: Call GlobalModelRuntime.load() to load model to memory
-                        modelLoadingState = modelLoadingState.copy(
-                            status = ModelLoadingStatus.LOADING,
-                            loadProgress = 0
-                        )
+                        if (modelLoadingState.status == ModelLoadingStatus.LOADED) {
+                            // Unload from memory
+                            modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.UNLOADING)
+                            coroutineScope.launch {
+                                if (modelLoader != null) {
+                                    modelLoader.unloadModel(modelId) { progress ->
+                                        modelLoadingState = modelLoadingState.copy(loadProgress = progress)
+                                    }.onSuccess {
+                                        modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
+                                    }.onFailure { error ->
+                                        modelLoadingState = modelLoadingState.copy(
+                                            status = ModelLoadingStatus.ERROR,
+                                            error = error.message
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Load to memory
+                            modelLoadingState = modelLoadingState.copy(
+                                status = ModelLoadingStatus.LOADING,
+                                loadProgress = 0,
+                                error = null
+                            )
+                            coroutineScope.launch {
+                                if (modelLoader != null) {
+                                    modelLoader.loadModel(
+                                        modelId = modelId,
+                                        estimatedSizeMB = state.model?.sizeMB ?: 2_400,
+                                        onProgress = { progress ->
+                                            modelLoadingState = modelLoadingState.copy(loadProgress = progress)
+                                        },
+                                        onError = { error ->
+                                            modelLoadingState = modelLoadingState.copy(
+                                                status = ModelLoadingStatus.ERROR,
+                                                error = error
+                                            )
+                                        }
+                                    ).onSuccess {
+                                        modelLoadingState = modelLoadingState.copy(
+                                            status = ModelLoadingStatus.LOADED,
+                                            loadTimeMs = System.currentTimeMillis()
+                                        )
+                                    }.onFailure { error ->
+                                        modelLoadingState = modelLoadingState.copy(
+                                            status = ModelLoadingStatus.ERROR,
+                                            error = error.message ?: "Unknown error"
+                                        )
+                                    }
+                                } else {
+                                    // Fallback: no model runtime, just simulate
+                                    modelLoadingState = modelLoadingState.copy(
+                                        status = ModelLoadingStatus.LOADED,
+                                        loadTimeMs = System.currentTimeMillis()
+                                    )
+                                }
+                            }
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
-                    enabled = !state.isDownloading && modelLoadingState.status != ModelLoadingStatus.LOADING,
+                    enabled = !state.isDownloading && modelLoadingState.status != ModelLoadingStatus.LOADING && modelLoadingState.status != ModelLoadingStatus.UNLOADING,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (modelLoadingState.status == ModelLoadingStatus.LOADED)
                             MaterialTheme.colorScheme.tertiary

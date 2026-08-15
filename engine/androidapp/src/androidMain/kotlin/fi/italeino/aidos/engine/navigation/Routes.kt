@@ -17,6 +17,9 @@ sealed class EngineRoute(val route: String) {
     data class ModelDetail(val modelId: String) : EngineRoute("model/{modelId}") {
         fun createRoute(modelId: String) = "model/$modelId"
     }
+    data class TestChat(val modelId: String, val modelName: String) : EngineRoute("test_chat/{modelId}/{modelName}") {
+        fun createRoute(modelId: String, modelName: String) = "test_chat/$modelId/${modelName.replace("/", "%2F")}"
+    }
     data class ProviderDetail(val providerId: String) : EngineRoute("provider/{providerId}") {
         fun createRoute(providerId: String) = "provider/$providerId"
     }
