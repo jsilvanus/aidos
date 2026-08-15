@@ -63,6 +63,9 @@ kotlin {
                 // the Engine core.
                 implementation("androidx.lifecycle:lifecycle-service:2.6.1")
 
+                // Encrypted shared preferences for app approval storage (RFC-0103)
+                implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
                 // HTTP server for OpenAI-compatible endpoints (RFC-0103)
                 implementation("io.ktor:ktor-server-core:2.3.12")
                 implementation("io.ktor:ktor-server-cio:2.3.12")

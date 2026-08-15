@@ -11,9 +11,12 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
+import fi.italeino.aidos.engine.approval.AppApprovalManager
+import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.TokenManager
+import fi.italeino.aidos.engine.notification.AppNotificationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,13 +28,18 @@ import kotlinx.coroutines.launch
  *
  * Wires the Engine core (model loading, inference backends) into the Android service
  * lifecycle:
- * - [onCreate]: Initialize Engine core, HTTP server, and Binder handshake
+ * - [onCreate]: Initialize Engine core, HTTP server, Binder handshake, and app approval system
  * - [onStartCommand]: Start foreground notification; return sticky service mode
  * - [onDestroy]: Graceful shutdown of HTTP server and Engine
  * - [onBind]: Expose Binder handshake interface for clients
  *
  * The service binds an HTTP server to 127.0.0.1 on an ephemeral port and posts
  * an ongoing foreground notification (required by Android 12+).
+ *
+ * Approval System (RFC-0103): User-approval workflow for connected apps. First handshake
+ * from an app triggers PENDING_APPROVAL response with deep-link to ConnectedAppsScreen.
+ * User decides to APPROVE or DENY. Approved apps receive credentials on handshake; denied
+ * apps receive 401 Unauthorized on HTTP requests.
  */
 class EngineService : LifecycleService() {
 
@@ -45,6 +53,8 @@ class EngineService : LifecycleService() {
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
     private lateinit var modelRuntime: GlobalModelRuntime
+    private lateinit var approvalStore: EncryptedAppApprovalStore
+    private lateinit var approvalManager: AppApprovalManager
     private var isRunning = false
 
     override fun onCreate() {
@@ -67,8 +77,13 @@ class EngineService : LifecycleService() {
                     throw IllegalStateException("HTTP server failed to bind")
                 }
 
-                // Initialize Binder handshake interface
-                binder = EngineHandshakeImpl(tokenManager, httpServer)
+                // Initialize app approval system (RFC-0103)
+                approvalStore = EncryptedAppApprovalStore(this@EngineService)
+                val notificationManager = AppNotificationManager(this@EngineService)
+                approvalManager = AppApprovalManager(this@EngineService, approvalStore, notificationManager)
+
+                // Initialize Binder handshake interface with approval manager
+                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager)
 
                 isRunning = true
                 updateNotification("Engine running on port $boundPort")

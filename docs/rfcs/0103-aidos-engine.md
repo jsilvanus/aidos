@@ -194,39 +194,49 @@ protocol code hand-maintained per app.
 - A bare TCP socket carries no caller identity — unlike Binder, where Android tells the callee the
   caller's UID and signature for free — so it cannot itself be gated by the OS permission system.
   Aidos Engine therefore exposes exactly one Binder surface, a **handshake**, declared with
-  `protectionLevel="signature"`. Given the caller's OS-verified identity, it returns
-  `{port, token, apiVersion, capabilities}`. Every HTTP request after that presents the token as
-  a bearer credential. This is the direct analogue of RFC-0055's desktop connection token —
-  "written to a file readable only by the user" — adapted for Android, where no shared file
-  exists between two sandboxed apps to carry that secret.
+  `protectionLevel="signature"`. The OS verifies the caller holds the permission; given the
+  caller's identity, the handshake performs an approval check and returns one of two responses:
+
+  - **`{status: "APPROVED", port, token, apiVersion, capabilities}`** — full response with
+    everything the client needs. Used if the app was previously approved by the user.
+  - **`{status: "PENDING_APPROVAL", deepLinkIntent}`** — the app is not yet approved. The
+    `deepLinkIntent` points to Engine's ConnectedAppsScreen UI where the user can approve/deny.
+    Clients should present this to the user; Engine simultaneously posts a notification.
+
 - The port is ephemeral, chosen at Engine startup, and fetched fresh on each cold connect — never
   hardcoded, never assumed stable across Engine restarts.
 
-### Trust model (v1: signature-only)
+### Trust model (v1: user-approval)
 
-The handshake's `signature` protection level is a hard, OS-enforced gate: only apps signed with
-the same key as Aidos Engine can complete a handshake at all. Broadening this to differently-signed
-clients needs a new authorization step in front of the handshake (consent UI, a capability grant
-per caller, plausibly an extension of RFC-0018) — not a transport change. Deferred; see Future
-Work.
+The handshake's `signature` protection level remains an OS-enforced initial gate for technical
+safety: only apps with the permission can *reach* the handshake at all. But **approval is
+delegated to the user**, not to certificate matching, solving the F-Droid problem where re-signed
+versions cannot pass signature comparison.
 
-**What "signature" actually checks.** This is Android's own permission-protection level, not
-anything this RFC invents: every installable APK carries a signing certificate, and a custom
-permission declared `protectionLevel="signature"` is granted by the OS, silently and without a
-user prompt, only to a caller whose *installed APK* is signed with the identical certificate as
-the app that declared the permission — not the same developer account, not the same Play Store
-listing, the same cryptographic key. Aidos Engine declares the permission; Aidos Agent (and any
-other client) requests it; `PackageManager` does the certificate comparison at install time.
+**Initial handshake with approval check.** When a caller reaches the handshake:
 
-This has a real consequence worth naming rather than discovering later: RFC-0050 already commits
-Aidos Agent to F-Droid distribution, and F-Droid rebuilds and **re-signs** submitted apps with its
-own key by default, replacing whatever certificate the developer built with. If Aidos Engine and
-Aidos Agent are both distributed through F-Droid, whether they end up with a matching certificate
-depends on F-Droid's signing configuration for the two apps, not on anything this RFC controls —
-and if they don't match, the handshake fails for every real install while still working in local
-debug builds signed with the same development key, which is exactly the shape of bug that stays
-invisible until someone hits it in production. This needs verifying against F-Droid's actual
-signing behavior before release, not assumed.
+1. The Binder transport itself is signature-protected (OS enforces at the OS level), so we know
+   the caller's identity (package name, signature). This is a technical prerequisite.
+2. Engine checks its AppApprovalStore: has this caller ever been approved?
+   - **If yes**: return `{status: "APPROVED", port, token, apiVersion, capabilities}` as before.
+   - **If no** (first time or explicitly denied): return `{status: "PENDING_APPROVAL", intentToSettings: Intent}` — no token, no port.
+3. On `PENDING_APPROVAL`, the Aidos SDK client gets a special Intent embedded in the response,
+   which it can deep-link to, opening Engine's ConnectedAppsScreen.
+4. Engine posts a notification simultaneously: "App X wants to use local models" with a button to
+   "Approve" or "Deny".
+5. The user taps Approve or Deny on the ConnectedAppsScreen or notification. Decision is persisted
+   in AppApprovalStore.
+6. The app retries the handshake. This time it gets `APPROVED` and can proceed.
+
+**Why this design, not signature-only.** F-Droid rebuilds and re-signs submitted apps by default,
+using F-Droid's own key instead of the developer's. If Engine and Agent are both distributed
+through F-Droid with different re-signing configurations, they will not match on certificate —
+the handshake fails silently in production while working in local debug builds, which is exactly
+the failure mode worth avoiding. User approval is intentional and explicit, independent of how
+an app is signed; it works the same way whether the caller is dev-signed, Play Store signed,
+F-Droid signed, or re-signed after installation. This brings Aidos Engine in line with how
+users expect OS permissions to work: an explicit approval decision, persistent across restarts,
+revokable at any time on the settings screen.
 
 ### Version and capability contract
 
@@ -308,6 +318,31 @@ independent of any particular client, the way Ollama is independent of any one c
 Client apps never render download or licensing UI themselves; they either use a model the
 capability set already reports as available, or deep-link into Aidos Engine's own screens to
 acquire one — so `model/{modelId}` must be a real, deep-linkable destination, not just reachable
+through a client app.
+
+**Screens in v1:**
+
+1. **ConnectedAppsScreen** — lists every caller app that has ever attempted a handshake, grouped
+   by approval status:
+   - **Approved apps**: shows request count, last-active time, an "Edit" button for settings, and
+     a "Revoke" button to withdraw approval (forces re-approval on next handshake).
+   - **Pending apps**: shows "Approve" and "Deny" buttons. Denying is sticky: the app stays in
+     denied status on retry, not pending forever — a deliberate denial, not a forgotten approval
+     the first time.
+   - **Denied apps**: shows "Undo Deny" to restore pending status (or approve directly).
+   
+   When an app first makes a handshake request and is neither approved nor denied, it appears here
+   with "Approve" and "Deny" buttons, and Engine posts a notification simultaneously. Tapping the
+   notification deep-links to this screen with the new app highlighted.
+
+2. **Home/Overview** — real-time model status (loaded, loading, offloaded), device storage and
+   memory usage, current request queue depth and latency, Hugging Face provider health.
+
+3. **CookbookScreen** — model catalog, discovery, download/delete, version upgrades. Exact design
+   TBD; mirrors the Aidos Agent model-selection UI structure (RFC-0020/0021).
+
+4. **SettingsScreen** — provider credentials (Hugging Face token), license ToS acceptance per
+   model, revoke app approval (same as ConnectedAppsScreen's "Revoke" button), app info/version.
 from Home, and so must `provider/{providerId}` for the remote case (Provider detail, below).
 Screens are derived from the actual questions someone opening Engine has, the same
 method RFC-0050 uses for Aidos Agent, and the gesture grammar is inherited rather than reinvented:
