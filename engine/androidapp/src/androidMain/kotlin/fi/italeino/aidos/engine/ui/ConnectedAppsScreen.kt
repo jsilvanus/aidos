@@ -1,6 +1,5 @@
 package fi.italeino.aidos.engine.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,13 +30,13 @@ fun ConnectedAppsScreen() {
                         packageName = "fi.italeino.aidos",
                         displayName = "Aidos Agent",
                         lastActiveMs = System.currentTimeMillis() - 5_000,
-                        requestMetrics = RequestMetrics(chatCompletions = 47, embeddings = 12)
+                        requestMetrics = RequestMetrics(chatCompletions = 47, embeddings = 12),
                     ),
                     ConnectedApp(
                         packageName = "com.example.testapp",
                         displayName = "Test App",
                         lastActiveMs = System.currentTimeMillis() - 60_000,
-                        requestMetrics = RequestMetrics(chatCompletions = 5)
+                        requestMetrics = RequestMetrics(chatCompletions = 5),
                     ),
                 )
             )
@@ -50,7 +49,7 @@ fun ConnectedAppsScreen() {
                 packageName = "com.unknown.app",
                 displayName = "New Assistant",
                 lastActiveMs = System.currentTimeMillis(),
-                requestMetrics = RequestMetrics()
+                requestMetrics = RequestMetrics(),
             )
         )
     }
@@ -65,7 +64,7 @@ fun ConnectedAppsScreen() {
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (pendingApps.isNotEmpty()) {
                 item {
@@ -73,14 +72,14 @@ fun ConnectedAppsScreen() {
                         "Approval Pending",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFEAB308) // Amber
+                        color = Color(0xFFEAB308), // Amber
                     )
                 }
                 items(pendingApps) { app ->
                     PendingAppCard(
                         app = app,
-                        onApprove = { pendingApps.remove(app); /* Add to state */ },
-                        onDeny = { pendingApps.remove(app) }
+                        onApprove = { pendingApps.remove(app) },
+                        onDeny = { pendingApps.remove(app) },
                     )
                 }
             }
@@ -90,13 +89,17 @@ fun ConnectedAppsScreen() {
                     "Connected",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
 
             if (state.value.connectedApps.isEmpty()) {
                 item {
-                    Text("No apps currently connected", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "No apps currently connected",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 items(state.value.connectedApps) { app ->
@@ -111,31 +114,40 @@ fun ConnectedAppsScreen() {
 private fun PendingAppCard(
     app: ConnectedApp,
     onApprove: () -> Unit,
-    onDeny: () -> Unit
+    onDeny: () -> Unit,
 ) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(app.displayName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Text(app.packageName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+            Text(
+                app.packageName,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
             
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
                     onClick = onApprove,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E)),
                 ) {
                     Text("Approve", fontSize = 12.sp)
                 }
                 OutlinedButton(
                     onClick = onDeny,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text("Deny", fontSize = 12.sp, color = Color(0xFFEF4444))
                 }
@@ -149,24 +161,43 @@ private fun ConnectedAppCard(app: ConnectedApp) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(app.displayName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text(app.packageName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                    Text(
+                        app.packageName,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                    )
                 }
-                Text(formatLastActive(app.lastActiveMs), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    formatLastActive(app.lastActiveMs),
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
-            Divider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            Divider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
 
-            Text("Usage Breakdown", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                "Usage Breakdown",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 UsageRow("Chat Completions", app.requestMetrics.chatCompletions, "qwen-3b")
                 if (app.requestMetrics.embeddings > 0) {
@@ -174,11 +205,16 @@ private fun ConnectedAppCard(app: ConnectedApp) {
                 }
             }
 
-            Text("Last Activity", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+            Text(
+                "Last Activity",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+            )
             Text(
                 "Completed chat request at ${formatTimestamp(app.lastActiveMs)}",
                 fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -188,10 +224,15 @@ private fun ConnectedAppCard(app: ConnectedApp) {
 private fun UsageRow(label: String, count: Int, model: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("$count calls ($model)", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
+        Text(
+            "$count calls ($model)",
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 

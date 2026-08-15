@@ -28,7 +28,8 @@ class EngineHandshakeImpl(
     private val context: Context,
     private val tokenManager: TokenManager,
     private val httpServer: EngineHttpServer,
-    private val approvalManager: AppApprovalManager
+    private val approvalManager: AppApprovalManager,
+    private val modelRuntime: dev.aidos.modelruntime.GlobalModelRuntime
 ) : fi.italeino.aidos.engine.IEngineHandshake.Stub() {
 
     override fun performHandshake(): HandshakeResult {
@@ -65,24 +66,17 @@ class EngineHandshakeImpl(
             ?: throw IllegalStateException("HTTP server not running or port not bound")
 
         // Build capability list
-        // TODO(RFC-0103 Phase B): Populate actual available models from model catalog
+        val catalog = runBlocking { modelRuntime.catalog() }
         val capabilities = Capabilities(
             endpoints = listOf("chat.completions", "embeddings", "audio.transcriptions"),
-            models = listOf(
-                // Placeholder models — real ones populated during Phase B
+            models = catalog.map { descriptor ->
                 ModelInfo(
-                    id = "llama-7b",
-                    kind = "llm",
-                    context_window = 2048,
-                    quantization = "q4_k_m"
-                ),
-                ModelInfo(
-                    id = "nomic-embed-text",
-                    kind = "embedding",
-                    context_window = 2048,
-                    quantization = "q8_0"
+                    id = descriptor.id,
+                    kind = descriptor.kind.toString().lowercase(),
+                    context_window = descriptor.contextWindow,
+                    quantization = "q4_k_m" // TODO: derive from filename or metadata
                 )
-            )
+            }
         )
 
         val capabilitiesJson = Json.encodeToString(capabilities)

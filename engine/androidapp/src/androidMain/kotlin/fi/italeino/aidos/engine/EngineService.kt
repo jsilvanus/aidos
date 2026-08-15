@@ -93,7 +93,7 @@ class EngineService : LifecycleService() {
                 approvalManager = AppApprovalManager(this@EngineService, approvalStore, notificationManager)
 
                 // Initialize Binder handshake interface with approval manager
-                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager)
+                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, modelRuntime)
 
                 _isRunning = true
                 updateNotification("Engine running on port $boundPort")

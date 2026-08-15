@@ -55,10 +55,8 @@ class ModelDetailViewModel : ViewModel() {
             
             // Mock download: create a dummy file so LlamaCppInferenceBackend sees it as installed
             try {
-                // Determine models directory (matches LlamaCppInferenceBackend)
-                val modelsDirPath = System.getProperty("aidos.models.dir")
-                    ?: File(System.getProperty("user.home"), ".aidos/models").absolutePath
-                val modelsDir = File(modelsDirPath)
+                // Determine models directory (matches LlamaCppInferenceBackend for now)
+                val modelsDir = File(System.getProperty("user.home"), ".aidos/models")
                 modelsDir.mkdirs()
                 
                 val file = File(modelsDir, "${model.id}.gguf")

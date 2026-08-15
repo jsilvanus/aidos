@@ -94,6 +94,20 @@ class GlobalModelRuntime(
         }
     }
 
+    /**
+     * Physically deletes model weights from disk (RFC-0022).
+     */
+    suspend fun delete(modelId: String) {
+        admissionQueue.withLock {
+            // Unload first if it's resident
+            if (loadedModels.containsKey(modelId)) {
+                loadedModels = loadedModels - modelId
+                backend.unload(modelId)
+            }
+            backend.delete(modelId)
+        }
+    }
+
     override fun loaded(): List<String> = loadedModels.keys.toList()
 
     companion object

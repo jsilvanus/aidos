@@ -1,8 +1,6 @@
 package fi.italeino.aidos.engine.ui
 
 import android.content.Intent
-import android.os.Build
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +19,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import fi.italeino.aidos.engine.EngineService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Home screen showing status and Engine control (RFC-0103, Phase D).
@@ -33,7 +32,7 @@ fun HomeScreen(viewModel: StatusViewModel = viewModel()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(innerPadding),
         ) {
             StatusPane(viewModel)
         }
@@ -56,15 +55,15 @@ private fun StatusPane(viewModel: StatusViewModel) {
     
     // Engine Control long press logic
     var isPressing by remember { mutableStateOf(false) }
-    var pressProgress by remember { mutableStateOf(0f) }
+    var pressProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
 
     // Sample data (memory/apps still mocked for now)
     val state = remember {
         StatusPaneState(
-            memoryBudget = MemoryBudget(2_400, 4_096),
+            memoryBudget = MemoryBudget(usedMB = 2400, totalMB = 4096),
             connectedApps = listOf(
-                ConnectedAppStatus("Aidos Agent", "fi.italeino.aidos"),
+                ConnectedAppStatus(appName = "Aidos Agent", packageName = "fi.italeino.aidos"),
             )
         )
     }
@@ -104,7 +103,11 @@ private fun StatusPane(viewModel: StatusViewModel) {
                         Text(
                             text = if (isEngineRunning) "Engine is ON" else "Engine is OFF",
                             fontWeight = FontWeight.Bold,
-                            color = if (isEngineRunning) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isEngineRunning) {
+                                Color(0xFF22C55E)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         )
                         
                         Box(
@@ -116,14 +119,11 @@ private fun StatusPane(viewModel: StatusViewModel) {
                                         onTap = {
                                             if (!isEngineRunning) {
                                                 val intent = Intent(context, EngineService::class.java)
-                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                                    context.startForegroundService(intent)
-                                                } else {
-                                                    context.startService(intent)
-                                                }
+                                                context.startForegroundService(intent)
+                                                
                                                 // Small delay for service to start and update instance
                                                 coroutineScope.launch {
-                                                    delay(500)
+                                                    delay(500.milliseconds)
                                                     viewModel.refresh()
                                                 }
                                             }
@@ -134,16 +134,16 @@ private fun StatusPane(viewModel: StatusViewModel) {
                                                 pressProgress = 0f
                                                 val startTime = System.currentTimeMillis()
                                                 val job = coroutineScope.launch {
-                                                    while (isPressing && pressProgress < 1f) {
+                                                    while (isPressing && (pressProgress < 1f)) {
                                                         val elapsed = System.currentTimeMillis() - startTime
                                                         pressProgress = (elapsed / 5000f).coerceIn(0f, 1f)
-                                                        delay(50)
+                                                        delay(50.milliseconds)
                                                     }
                                                     if (pressProgress >= 1f) {
                                                         context.stopService(Intent(context, EngineService::class.java))
                                                         isPressing = false
                                                         pressProgress = 0f
-                                                        delay(500)
+                                                        delay(500.milliseconds)
                                                         viewModel.refresh()
                                                     }
                                                 }
@@ -206,7 +206,11 @@ private fun StatusPane(viewModel: StatusViewModel) {
 
         if (residentModels.isEmpty()) {
             item {
-                Text("No models resident", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "No models resident",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         } else {
             items(residentModels.size) { index ->

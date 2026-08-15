@@ -1,10 +1,12 @@
 package fi.italeino.aidos.engine
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -12,14 +14,10 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -29,7 +27,6 @@ import androidx.navigation.compose.rememberNavController
 import fi.italeino.aidos.engine.navigation.EngineNavHost
 import fi.italeino.aidos.engine.navigation.EngineRoute
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
-
 import java.io.File
 
 /**
@@ -42,6 +39,15 @@ import java.io.File
  */
 class MainActivity : ComponentActivity() {
 
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            // Permission granted, restart service to show notification if it's already running
+            startEngineService()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -52,13 +58,19 @@ class MainActivity : ComponentActivity() {
         // Set models directory for LlamaCppInferenceBackend
         System.setProperty("aidos.models.dir", File(filesDir, "models").absolutePath)
 
-        // Start the Engine foreground service
-        val engineIntent = Intent(this, EngineService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(engineIntent)
-        } else {
-            startService(engineIntent)
+        // Request notification permission on Android 13+ (RFC-0103 Phase E)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
+
+        // Start the Engine foreground service
+        startEngineService()
 
         setContent {
             AidosEngineTheme {
@@ -96,17 +108,17 @@ class MainActivity : ComponentActivity() {
                                                 launchSingleTop = true
                                                 restoreState = true
                                             }
-                                        }
+                                        },
                                     )
                                 }
                             }
                         }
-                    }
+                    },
                 ) { innerPadding ->
                     Surface(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding)
+                            .padding(innerPadding),
                     ) {
                         EngineNavHost(navController = navController)
                     }
@@ -114,5 +126,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
 
+    private fun startEngineService() {
+        val engineIntent = Intent(this, EngineService::class.java)
+        startService(engineIntent)
+    }
+}
