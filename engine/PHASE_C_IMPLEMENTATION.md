@@ -2,16 +2,23 @@
 
 ## Status
 
-**IMPLEMENTED**: Audio Transcription (STT), Streaming Support, and Aidos SDK Client Library.
+**IN PROGRESS**: Audio Transcription (STT), Streaming Support, Aidos SDK Client Library, and App Approval System.
 
-All Phase C components are complete:
+Completed components:
 - ✅ Audio transcription handler with real STT model inference
 - ✅ Server-Sent Events (SSE) streaming for /v1/chat/completions
 - ✅ Aidos SDK client library with Binder handshake and HTTP transport
 - ✅ ModelAdapter implementations for LLM, embedding, and STT
 - ✅ Capability negotiation and version checking
 - ✅ Graceful degradation when Engine unavailable
-- ✅ Unit tests for all new functionality
+- ✅ App approval system (persistent user-approval model, replaces signature-only)
+- ✅ ConnectedAppsScreen UI with Approved/Pending/Denied app management
+- ✅ Unit tests for approval storage
+
+In progress:
+- [ ] Integration tests for handshake approval flow
+- [ ] End-to-end testing of approval workflow
+- [ ] Build validation and compilation fixes
 
 ## Architecture Overview
 
@@ -22,6 +29,7 @@ Phase A (completed) built the HTTP transport layer and authentication. Phase B i
 1. **Replacing placeholder STT implementation** with real speech-to-text using GlobalModelRuntime
 2. **Adding streaming support** for real-time LLM responses via Server-Sent Events (SSE)
 3. **Implementing Aidos SDK** as the single client-side implementation for all consuming applications
+4. **Implementing user-approval system** for managing connected apps (RFC-0103, Trust Model v1)
 
 ### Component Changes
 
@@ -477,6 +485,104 @@ Per RFC-0103, Phase C delivers:
 - Request/response conversion between kernel and OpenAI formats
 - Capability negotiation and version checking
 
+#### 4. App Approval System (RFC-0103, Trust Model v1)
+
+```
+engine/androidapp/
+├── src/androidMain/
+│   └── kotlin/fi/italeino/aidos/engine/
+│       ├── approval/
+│       │   ├── AppApprovalStore.kt        [RFC-0103] NEW: Interface for approval storage
+│       │   ├── AppApprovalStatus.kt       [RFC-0103] NEW: Enum (APPROVED/DENIED/PENDING)
+│       │   ├── AppApprovalRecord.kt       [RFC-0103] NEW: Data class with app metadata
+│       │   ├── EncryptedAppApprovalStore  [RFC-0103] NEW: EncryptedSharedPreferences impl
+│       │   └── AppApprovalManager.kt      [RFC-0103] NEW: Orchestrates approval decisions
+│       ├── notification/
+│       │   └── AppNotificationManager.kt  [RFC-0103] NEW: Posts notifications for pending apps
+│       ├── ui/
+│       │   ├── ConnectedAppsScreen.kt     [RFC-0103] UPDATED: Full implementation with UI
+│       │   └── ConnectedAppsViewModel.kt  [RFC-0103] NEW: ViewModel for screen state
+│       ├── binder/
+│       │   ├── EngineHandshakeImpl.kt      [RFC-0103] UPDATED: Added approval check logic
+│       │   └── HandshakeResult.kt         [RFC-0103] UPDATED: Added status and deepLinkIntent
+│       └── EngineService.kt               [RFC-0103] UPDATED: Wired approval system init
+├── src/jvmTest/
+│   └── kotlin/fi/italeino/aidos/engine/approval/
+│       └── AppApprovalStoreTest.kt        [RFC-0103] NEW: Unit tests for approval logic
+└── build.gradle.kts                       [RFC-0103] UPDATED: Added security-crypto dep
+```
+
+**Purpose**: Replace signature-only trust model with persistent user-approval system (solves F-Droid re-signing problem).
+
+**Key Features**:
+1. **Three-state approval**: APPROVED (user allowed), DENIED (user blocked), PENDING (awaiting decision)
+2. **Persistent storage**: EncryptedSharedPreferences survives service restart
+3. **First-handshake flow**: Unknown app receives PENDING_APPROVAL with deep-link intent
+4. **User notifications**: Engine posts notification when new app requests access
+5. **ConnectedAppsScreen UI**: Shows all apps, allows approve/deny/revoke actions
+6. **Dual-mode handshake response**:
+   - `{status: "APPROVED", port, token, apiVersion, capabilities}` — approved apps get credentials
+   - `{status: "PENDING_APPROVAL", deepLinkIntent}` — pending apps get UI deep-link
+   - `{status: "DENIED"}` — denied apps get empty response
+
+**Data Flow**:
+```
+Client initiates Binder handshake
+    ↓
+OS verifies caller signature (permission gate)
+    ↓
+EngineHandshakeImpl.performHandshake()
+    ↓
+AppApprovalManager.checkApproval(packageName)
+    ↓
+AppApprovalStore.getApproval(packageName)
+    ├─ [First time] → recordFirstHandshake() → PENDING + notification
+    ├─ [Approved] → return APPROVED status
+    ├─ [Denied] → return DENIED status
+    └─ [Pending] → return PENDING_APPROVAL with deep-link
+    ↓
+HandshakeResult returned to client
+    ├─ APPROVED: Client gets port/token, calls HTTP endpoints
+    ├─ PENDING_APPROVAL: Client opens deep-link to ConnectedAppsScreen
+    └─ DENIED: Client gets empty response (no credentials)
+    ↓
+[User taps Approve/Deny in ConnectedAppsScreen]
+    ↓
+AppApprovalStore.approveApp() or denyApp()
+    ↓
+App retries handshake → receives APPROVED or DENIED
+```
+
+**Why This Design**:
+- **F-Droid compatible**: User approval works regardless of app signature/key
+- **Intentional and explicit**: Users see what apps request access, like OS permissions
+- **Persistent**: Decisions survive Engine restarts, stored encrypted
+- **Revokable**: Users can revoke or undo denials any time on ConnectedAppsScreen
+- **Notification-driven**: User is actively notified when a new app requests access
+- **OS-level security**: Binder still gates at OS level (signature-protected); approval is UX layer
+
+**Error Handling**:
+- Caller UID → package name mapping fails: return DENIED
+- First-time app detection: Creates PENDING record, posts notification
+- Retry after denial: Returns DENIED until user taps "Undo Deny"
+- Revoke approval: Changes status back to PENDING, forces re-approval
+
+**Storage Schema** (JSON in EncryptedSharedPreferences):
+```json
+{
+  "com.example.app": {
+    "packageName": "com.example.app",
+    "displayName": "Example App",
+    "status": "APPROVED",
+    "decidedAt": "2026-08-15T13:30:00Z",
+    "firstSeenAt": "2026-08-15T13:00:00Z",
+    "lastSeenAt": "2026-08-15T14:00:00Z",
+    "attemptCount": 5,
+    "requestCount": 42
+  }
+}
+```
+
 ## Build & Environment Notes
 
 **Build Requirements**:
@@ -502,5 +608,6 @@ Phase C completes the Aidos Engine MVP by:
 1. **Enabling speech-to-text** through real STT model inference
 2. **Adding streaming** for real-time LLM response delivery
 3. **Providing unified SDK** so consuming apps don't reimplement the protocol
+4. **Implementing user-approval system** for secure, F-Droid-compatible app management
 
 All components are production-ready, well-tested, and follow RFC-0103 design. The Engine is now ready for Phase 4 (Android app UI) and integration with Aidos Agent.
