@@ -400,6 +400,138 @@ class EngineHttpServerTest {
         val body = response.bodyAsText()
         assertTrue(body.contains("Invalid base64-encoded audio file"))
     }
+
+    @Test
+    fun chatCompletions_supportsStreamingParameter() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        install(ContentNegotiation) {
+            json(Json {
+                prettyPrint = false
+                encodeDefaults = true
+                isLenient = true
+            })
+        }
+
+        install(Authentication) {
+            bearer("bearerAuth") {
+                authenticate { tokenCredential ->
+                    if (tokenManager.validateToken(tokenCredential.token) != null) {
+                        UserIdPrincipal(tokenCredential.token)
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+
+        routing {
+            authenticate("bearerAuth") {
+                post("/v1/chat/completions") {
+                    val request = call.receive<ChatCompletionRequest>()
+                    // Verify stream parameter is parsed correctly
+                    if (request.stream) {
+                        call.response.header(HttpHeaders.ContentType, "text/event-stream")
+                        call.response.write("data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n".encodeToByteArray())
+                        call.response.write("data: [DONE]\n\n".encodeToByteArray())
+                    } else {
+                        call.respond(ChatCompletionResponse(
+                            id = "test",
+                            created = System.currentTimeMillis() / 1000,
+                            model = request.model,
+                            choices = listOf(
+                                Choice(
+                                    index = 0,
+                                    message = ChatMessage(role = "assistant", content = "Hello"),
+                                    finish_reason = "stop"
+                                )
+                            ),
+                            usage = TokenUsage(prompt_tokens = 5, completion_tokens = 1, total_tokens = 6)
+                        ))
+                    }
+                }
+            }
+        }
+
+        // Test streaming request
+        val streamResponse = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(ChatCompletionRequest(
+                model = "test-model",
+                messages = listOf(ChatMessage(role = "user", content = "Hello")),
+                stream = true
+            ))
+        }
+
+        assertEquals(HttpStatusCode.OK, streamResponse.status)
+        val streamBody = streamResponse.bodyAsText()
+        assertTrue(streamBody.contains("text/event-stream") || streamBody.contains("[DONE]"))
+    }
+
+    @Test
+    fun chatCompletions_supportsNonStreamingResponse() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+
+        install(ContentNegotiation) {
+            json(Json {
+                prettyPrint = false
+                encodeDefaults = true
+                isLenient = true
+            })
+        }
+
+        install(Authentication) {
+            bearer("bearerAuth") {
+                authenticate { tokenCredential ->
+                    if (tokenManager.validateToken(tokenCredential.token) != null) {
+                        UserIdPrincipal(tokenCredential.token)
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+
+        routing {
+            authenticate("bearerAuth") {
+                post("/v1/chat/completions") {
+                    val request = call.receive<ChatCompletionRequest>()
+                    call.respond(ChatCompletionResponse(
+                        id = "test",
+                        created = System.currentTimeMillis() / 1000,
+                        model = request.model,
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                message = ChatMessage(role = "assistant", content = "Non-streaming response"),
+                                finish_reason = "stop"
+                            )
+                        ),
+                        usage = TokenUsage(prompt_tokens = 5, completion_tokens = 3, total_tokens = 8)
+                    ))
+                }
+            }
+        }
+
+        // Test non-streaming request (stream = false or omitted)
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(ChatCompletionRequest(
+                model = "test-model",
+                messages = listOf(ChatMessage(role = "user", content = "Hello")),
+                stream = false
+            ))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("Non-streaming response"))
+        assertTrue(body.contains("chat.completion"))  // non-chunk object type
+    }
 }
 
 /**

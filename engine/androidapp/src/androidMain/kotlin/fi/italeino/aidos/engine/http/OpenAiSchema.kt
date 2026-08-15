@@ -121,6 +121,31 @@ data class TranscriptionResponse(
     val text: String
 )
 
+// Chat Completion Streaming Schema (RFC-0103, Phase C.2)
+
+@Serializable
+data class ChatCompletionChunk(
+    val id: String,
+    val object: String = "chat.completion.chunk",
+    val created: Long,
+    val model: String,
+    val choices: List<ChunkChoice>
+)
+
+@Serializable
+data class ChunkChoice(
+    val index: Int,
+    val delta: ChunkDelta,
+    val finish_reason: String?
+)
+
+@Serializable
+data class ChunkDelta(
+    val content: String? = null,
+    val role: String? = null,
+    val tool_calls: List<ToolCall>? = null
+)
+
 // Error Schema
 
 @Serializable

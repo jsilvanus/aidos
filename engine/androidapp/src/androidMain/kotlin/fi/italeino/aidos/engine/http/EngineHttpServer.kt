@@ -24,6 +24,7 @@ import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.encodeToString
 import java.util.*
 
 /**
@@ -238,6 +239,232 @@ class EngineHttpServer(
                 // Convert parameters map to JsonObject
                 val parametersJson = toolDef.function.parameters?.let { params ->
                     val entries = params.mapValues { (_, v) ->
+                        when (v) {
+                            is String -> JsonPrimitive(v)
+                            is Number -> JsonPrimitive(v)
+                            is Boolean -> JsonPrimitive(v)
+                            else -> JsonPrimitive(v.toString())
+                        }
+                    }
+                    JsonObject(entries)
+                } ?: JsonObject(emptyMap())
+
+                dev.aidos.kernel.ToolDescriptor(
+                    name = toolDef.function.name,
+                    title = toolDef.function.name,
+                    description = toolDef.function.description ?: "",
+                    schema = parametersJson
+                )
+            } ?: emptyList()
+
+            // Parse tool_choice
+            val toolChoice = when (request.tool_choice?.lowercase()) {
+                "none" -> ToolChoice.None
+                "required" -> ToolChoice.Required
+                "auto" -> ToolChoice.Auto
+                else -> if (tools.isNotEmpty()) ToolChoice.Auto else ToolChoice.None
+            }
+
+            // Build model request
+            val modelRequest = ModelRequest(
+                messages = turns,
+                tools = tools,
+                toolChoice = toolChoice,
+                maxOutputTokens = request.max_tokens ?: 2000,
+                stopConditions = emptyList()
+            )
+
+            // Invoke the model
+            val inferenceResult = adapter.invoke(modelRequest)
+            if (inferenceResult.isFailure) {
+                val error = inferenceResult.exceptionOrNull()
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(
+                        error = ErrorDetail(
+                            message = error?.message ?: "Inference failed",
+                            type = "inference_error"
+                        )
+                    )
+                )
+                return
+            }
+
+            val response = inferenceResult.getOrNull()
+                ?: run {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        ErrorResponse(
+                            error = ErrorDetail(
+                                message = "Model response is null",
+                                type = "internal_error"
+                            )
+                        )
+                    )
+                    return
+                }
+
+            // Handle streaming or non-streaming response (RFC-0103, Phase C.2)
+            if (request.stream) {
+                // Send SSE streaming response
+                streamChatCompletions(call, response, request.model)
+            } else {
+                // Send complete response
+                val message = ChatMessage(
+                    role = "assistant",
+                    content = response.text,
+                    tool_calls = response.toolCalls.map { tc ->
+                        ToolCall(
+                            id = tc.callId,
+                            type = "function",
+                            function = ToolFunctionCall(
+                                name = tc.toolName,
+                                arguments = tc.arguments.toString()
+                            )
+                        )
+                    }
+                )
+
+                val httpResponse = ChatCompletionResponse(
+                    id = "chatcmpl-${UUID.randomUUID()}",
+                    created = System.currentTimeMillis() / 1000,
+                    model = request.model,
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = message,
+                            finish_reason = response.stopReason.name.lowercase()
+                        )
+                    ),
+                    usage = TokenUsage(
+                        prompt_tokens = response.usage.inputTokens,
+                        completion_tokens = response.usage.outputTokens,
+                        total_tokens = response.usage.inputTokens + response.usage.outputTokens
+                    )
+                )
+
+                call.respond(httpResponse)
+            }
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(
+                    error = ErrorDetail(
+                        message = e.message ?: "Unknown error",
+                        type = "invalid_request_error"
+                    )
+                )
+            )
+        }
+    }
+
+    /**
+     * Stream chat completion response as Server-Sent Events (RFC-0103, Phase C.2).
+     * Converts complete model response into incremental chunks for streaming clients.
+     */
+    private suspend fun streamChatCompletions(
+        call: ApplicationCall,
+        response: ModelResponse,
+        modelId: String
+    ) {
+        val completionId = "chatcmpl-${UUID.randomUUID()}"
+        val responseText = response.text ?: ""
+
+        // Set response headers for streaming
+        call.response.header(HttpHeaders.ContentType, "text/event-stream")
+        call.response.header(HttpHeaders.CacheControl, "no-cache")
+        call.response.header("Connection", "keep-alive")
+
+        // Send initial chunk with start of response
+        val text = responseText.ifEmpty { "" }
+
+        // Split response into tokens (words/spaces) for streaming effect
+        // This simulates token-by-token streaming while working with complete response
+        val tokens = tokenizeResponseText(text)
+
+        try {
+            // Stream each token as a separate SSE event
+            for ((tokenIndex, token) in tokens.withIndex()) {
+                val chunk = ChatCompletionChunk(
+                    id = completionId,
+                    created = System.currentTimeMillis() / 1000,
+                    model = modelId,
+                    choices = listOf(
+                        ChunkChoice(
+                            index = 0,
+                            delta = ChunkDelta(content = token),
+                            finish_reason = null
+                        )
+                    )
+                )
+
+                val json = Json.encodeToString(ChatCompletionChunk.serializer(), chunk)
+                call.response.write("data: $json\n\n".encodeToByteArray())
+            }
+
+            // Send final chunk with stop reason
+            val finalChunk = ChatCompletionChunk(
+                id = completionId,
+                created = System.currentTimeMillis() / 1000,
+                model = modelId,
+                choices = listOf(
+                    ChunkChoice(
+                        index = 0,
+                        delta = ChunkDelta(content = ""),
+                        finish_reason = response.stopReason.name.lowercase()
+                    )
+                )
+            )
+
+            val finalJson = Json.encodeToString(ChatCompletionChunk.serializer(), finalChunk)
+            call.response.write("data: $finalJson\n\n".encodeToByteArray())
+
+            // Send stream end marker
+            call.response.write("data: [DONE]\n\n".encodeToByteArray())
+        } catch (e: Exception) {
+            // Client disconnected or other streaming error
+            // Gracefully handle without throwing
+        }
+    }
+
+    /**
+     * Tokenize response text for streaming (RFC-0103, Phase C.2).
+     * Splits text into tokens while preserving meaningful units.
+     * Simple implementation: split on spaces and punctuation boundaries.
+     */
+    private fun tokenizeResponseText(text: String): List<String> {
+        if (text.isEmpty()) return emptyList()
+
+        val tokens = mutableListOf<String>()
+        var current = StringBuilder()
+
+        for (char in text) {
+            when {
+                char == ' ' -> {
+                    if (current.isNotEmpty()) {
+                        tokens.add(current.toString())
+                        current = StringBuilder()
+                    }
+                    tokens.add(" ")
+                }
+                char in ".,!?;:" -> {
+                    if (current.isNotEmpty()) {
+                        tokens.add(current.toString())
+                        current = StringBuilder()
+                    }
+                    tokens.add(char.toString())
+                }
+                else -> current.append(char)
+            }
+        }
+
+        if (current.isNotEmpty()) {
+            tokens.add(current.toString())
+        }
+
+        return tokens
+    }
+
                         when (v) {
                             is String -> JsonPrimitive(v)
                             is Number -> JsonPrimitive(v)
