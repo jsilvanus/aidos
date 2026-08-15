@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Custom permission for Binder handshake (RFC-0103).
+         Only apps signed with the same certificate as Aidos Engine can call the handshake.
+         The OS enforces this at install time via PackageManager. -->
+    <permission
+        android:name="fi.italeino.aidos.engine.HANDSHAKE"
+        android:protectionLevel="signature"
+        android:label="@string/permission_handshake_label"
+        android:description="@string/permission_handshake_description" />
+
     <!-- Core permissions for model loading and inference -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -11,6 +20,9 @@
 
     <!-- The ongoing notification is a real UI surface (RFC-0103), not optional chrome -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Declare the custom handshake permission for this app's own use -->
+    <uses-permission android:name="fi.italeino.aidos.engine.HANDSHAKE" />
 
     <!-- Optional for voice/STT features (M33) -->
     <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
@@ -39,13 +51,18 @@
         </activity>
 
         <!-- Foreground service for Engine (RFC-0103). Hosts the Engine core (model loading,
-             inference) in-process. TODO(RFC-0103): Binder handshake, foreground service,
-             HTTP server — not implemented yet -->
+             inference) in-process. Exposes an HTTP server on loopback + Binder handshake. -->
         <service
             android:name="fi.italeino.aidos.engine.EngineService"
             android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:exported="true"
+            android:foregroundServiceType="dataSync"
+            android:permission="fi.italeino.aidos.engine.HANDSHAKE">
+            <!-- Binder handshake interface (RFC-0103): signature-protected by permission above -->
+            <intent-filter>
+                <action android:name="fi.italeino.aidos.engine.HANDSHAKE" />
+            </intent-filter>
+        </service>
 
     </application>
 
