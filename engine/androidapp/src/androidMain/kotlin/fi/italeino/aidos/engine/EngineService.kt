@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
+import dev.aidos.modelruntime.GlobalModelRuntime
+import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.TokenManager
@@ -42,6 +44,7 @@ class EngineService : LifecycleService() {
     private lateinit var tokenManager: TokenManager
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
+    private lateinit var modelRuntime: GlobalModelRuntime
     private var isRunning = false
 
     override fun onCreate() {
@@ -51,8 +54,12 @@ class EngineService : LifecycleService() {
                 // Initialize token manager
                 tokenManager = TokenManager()
 
+                // Initialize model runtime with llama.cpp backend (RFC-0103, M21)
+                // GlobalModelRuntime manages the admission queue and loaded model lifecycle
+                modelRuntime = GlobalModelRuntime(LlamaCppInferenceBackend())
+
                 // Initialize HTTP server (on ephemeral port, chosen by OS)
-                httpServer = EngineHttpServer(tokenManager)
+                httpServer = EngineHttpServer(tokenManager, modelRuntime)
                 httpServer.start()
 
                 val boundPort = httpServer.getBoundPort()
@@ -91,6 +98,12 @@ class EngineService : LifecycleService() {
             try {
                 if (isRunning) {
                     httpServer.stop()
+                    
+                    // Unload all models and shut down the runtime (RFC-0103, RFC-0022)
+                    modelRuntime.loaded().forEach { modelId ->
+                        modelRuntime.unload(modelId)
+                    }
+                    
                     tokenManager.clearTokens()
                     isRunning = false
                 }
