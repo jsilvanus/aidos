@@ -2,6 +2,7 @@ package fi.italeino.aidos.engine
 
 import android.content.Intent
 import androidx.lifecycle.LifecycleService
+import fi.italeino.aidos.engine.approval.ApprovalManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,7 +17,7 @@ import kotlinx.coroutines.cancel
  *
  * TODO(RFC-0103): Binder handshake, foreground service, HTTP server implementation.
  * This includes:
- * - Handshake Binder surface with signature-only protection
+ * - Handshake Binder surface with approval-based access control (RFC-0103)
  * - Loopback HTTP server binding to 127.0.0.1
  * - OpenAI-compatible endpoints (/v1/chat/completions, /v1/embeddings, /v1/audio/transcriptions)
  * - Token-based authentication for HTTP requests
@@ -26,6 +27,12 @@ import kotlinx.coroutines.cancel
 class EngineService : LifecycleService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    
+    /**
+     * Manages app approval state for handshake requests (RFC-0103).
+     * Approval grants are session-scoped (cleared on Engine restart) in v1.
+     */
+    private val approvalManager = ApprovalManager()
 
     override fun onCreate() {
         super.onCreate()
@@ -43,4 +50,10 @@ class EngineService : LifecycleService() {
         super.onDestroy()
         // TODO(RFC-0103): Graceful shutdown of Engine core and HTTP server
     }
+    
+    /**
+     * Returns the approval manager instance.
+     * Exposed for Binder handshake and UI screens to check/manage approval state.
+     */
+    fun getApprovalManager(): ApprovalManager = approvalManager
 }

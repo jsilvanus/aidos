@@ -12,6 +12,13 @@
     <!-- The ongoing notification is a real UI surface (RFC-0103), not optional chrome -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Permission for Binder handshake (RFC-0103: approval-based access control).
+         Apps must request this permission to attempt a handshake. Whether they get approved
+         is determined by the user in the Connected Apps screen, not by certificate matching. -->
+    <permission
+        android:name="fi.italeino.aidos.engine.ACCESS_ENGINE"
+        android:protectionLevel="normal" />
+
     <!-- Optional for voice/STT features (M33) -->
     <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
 

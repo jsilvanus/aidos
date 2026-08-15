@@ -9,16 +9,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * Connected apps screen (RFC-0103).
+ * Connected apps screen (RFC-0103: approval-based access control).
  *
- * Every request into Engine already carries the bearer token minted for that caller at handshake
- * time, so per-app attribution is free to compute — this screen tallies what's already there.
- * Display names are resolved from PackageManager using the calling package the signature-
- * permission handshake already verified, not self-reported by the client.
+ * Shows pending approval requests and previously-approved connected apps.
+ * Display names are resolved from PackageManager using the calling package's verified UID,
+ * not self-reported by the client.
  *
- * Session-scoped only in v1 (counters reset when Engine restarts) — persisted history across
- * restarts is Future Work, since Engine owns no storage that survives a restart beyond the vault
- * and license-acceptance records.
+ * Session-scoped only in v1 (counters and approvals reset when Engine restarts) — persisted
+ * history across restarts is Future Work, since Engine owns no storage that survives a restart
+ * beyond the vault and license-acceptance records.
+ *
+ * TODO(RFC-0103): Implement approval request UI showing:
+ * - Pending approval requests at the top (app name, tap to approve/deny)
+ * - Previously-approved apps below (with session-scoped request counters)
+ * - Revoke button for each approved app
+ * - Bind to the ApprovalManager registry and per-client-token request counters
+ *   in Engine Core's dispatch path.
  */
 @Composable
 fun ConnectedAppsScreen() {
@@ -28,8 +34,13 @@ fun ConnectedAppsScreen() {
             .padding(16.dp)
     ) {
         Text("Connected apps")
-        Text("(Per-app request counts and last-active time will appear here, session-scoped)")
-        // TODO(RFC-0103): bind to the handshake registry and per-client-token request counters
-        // in Engine Core's dispatch path.
+        Text("Pending approval")
+        Text("(Pending requests will appear here)")
+        Text("")
+        Text("Approved apps")
+        Text("(Request counts and last-active time will appear here, session-scoped)")
+        // TODO(RFC-0103): bind to the ApprovalManager and per-client-token request counters
+        // in Engine Core's dispatch path. Show pending requests with approve/deny buttons,
+        // and approved apps with usage stats and revoke options.
     }
 }
