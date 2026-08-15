@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Aidos Engine</string>
+    <string name="permission_handshake_label">Aidos Engine Handshake</string>
+    <string name="permission_handshake_description">Required to establish a secure connection with Aidos Engine for local model inference.</string>
+</resources>

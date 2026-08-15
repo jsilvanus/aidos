@@ -1,5 +1,7 @@
 package fi.italeino.aidos.engine
 
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,13 +20,21 @@ import fi.italeino.aidos.engine.theme.AidosEngineTheme
  * this activity only manages the UI, the same separation Aidos Agent's MainActivity keeps between
  * presentation and the runtime it's a client of.
  *
- * TODO(RFC-0103): bind Engine Core's in-process state (resident models, download progress,
+ * TODO(RFC-0103 Phase E): Bind Engine Core's in-process state (resident models, download progress,
  * connected-app registry) once Engine Core exposes it — screens currently show placeholder text.
  */
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Start the Engine foreground service
+        val engineIntent = Intent(this, EngineService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(engineIntent)
+        } else {
+            startService(engineIntent)
+        }
 
         setContent {
             AidosEngineTheme {
@@ -38,3 +48,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+

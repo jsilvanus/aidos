@@ -4,19 +4,26 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import androidx.navigation.NavType
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelDetailScreen
+import fi.italeino.aidos.engine.ui.ProviderDetailScreen
 import fi.italeino.aidos.engine.ui.SettingsScreen
 import fi.italeino.aidos.engine.ui.StorageScreen
+import fi.italeino.aidos.engine.ui.TestChatScreen
 
 /**
- * Navigation graph for Aidos Engine (RFC-0103).
+ * Navigation graph for Aidos Engine (RFC-0103, Phase D).
  *
  * [EngineRoute.ModelDetail] is reachable both from in-app navigation (Home's Cookbook pane) and
  * as an external deep link from client apps — RFC-0103 requires this, since client apps deep-link
  * into Aidos Engine's own screens to acquire a model rather than rendering their own download UI.
+ *
+ * [EngineRoute.ProviderDetail] is reachable from the Providers pane for remote model provider
+ * configuration (API key management, enable/disable, configured models list).
  */
 @Composable
 fun EngineNavHost(
@@ -31,6 +38,9 @@ fun EngineNavHost(
                 onModelSelected = { modelId ->
                     navController.navigate(EngineRoute.ModelDetail(modelId).createRoute(modelId))
                 },
+                onProviderSelected = { providerId ->
+                    navController.navigate(EngineRoute.ProviderDetail(providerId).createRoute(providerId))
+                },
             )
         }
 
@@ -43,7 +53,35 @@ fun EngineNavHost(
             deepLinks = listOf(navDeepLink { uriPattern = "aidosengine://model/{modelId}" }),
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
-            ModelDetailScreen(modelId = modelId)
+            ModelDetailScreen(
+                modelId = modelId,
+                onTestChatClick = { id, name ->
+                    navController.navigate(EngineRoute.TestChat(id, name).createRoute(id, name))
+                }
+            )
+        }
+
+        composable(
+            EngineRoute.TestChat(modelId = "{modelId}", modelName = "{modelName}").route,
+            arguments = listOf(
+                navArgument("modelId") { type = NavType.StringType },
+                navArgument("modelName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
+            val modelName = backStackEntry.arguments?.getString("modelName") ?: return@composable
+            TestChatScreen(
+                modelId = modelId,
+                modelName = modelName,
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            EngineRoute.ProviderDetail(providerId = "{providerId}").route,
+        ) { backStackEntry ->
+            val providerId = backStackEntry.arguments?.getString("providerId") ?: return@composable
+            ProviderDetailScreen(providerId = providerId)
         }
 
         composable(EngineRoute.Storage.route) {

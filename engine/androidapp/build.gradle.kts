@@ -29,6 +29,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+                implementation("io.ktor:ktor-server-test-host:2.3.12")
             }
         }
 
@@ -61,6 +62,27 @@ kotlin {
                 // EngineService : LifecycleService (RFC-0103) — the foreground service hosting
                 // the Engine core.
                 implementation("androidx.lifecycle:lifecycle-service:2.6.1")
+
+                // Encrypted shared preferences for app approval storage (RFC-0103)
+                implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+                // HTTP server for OpenAI-compatible endpoints (RFC-0103)
+                implementation("io.ktor:ktor-server-core:2.3.12")
+                implementation("io.ktor:ktor-server-cio:2.3.12")
+                implementation("io.ktor:ktor-server-content-negotiation:2.3.12")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+                implementation("io.ktor:ktor-server-auth:2.3.12")
+
+                // HTTP client for calling the Engine (RFC-0103, Phase E - E.1 HTTP client)
+                implementation("io.ktor:ktor-client-android:2.3.12")
+                implementation("io.ktor:ktor-client-serialization:2.3.12")
+                implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
+
+                // JSON serialization for OpenAI schema
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+                // Token generation and management
+                implementation("commons-codec:commons-codec:1.16.0")
             }
         }
     }
@@ -81,6 +103,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    // Enable AIDL compilation for Binder handshake interface (RFC-0103)
+    buildFeatures {
+        aidl = true
     }
 
     buildTypes {
