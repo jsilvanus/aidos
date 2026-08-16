@@ -17,6 +17,41 @@ milestone either serves it or is cuttable.
 
 ## Status
 
+**2026-08-16 · Dictator becomes Aidos SDK's first consumer — plan proposed, nothing built yet.**
+Plan: [`docs/dictator-sdk-integration-plan.md`](docs/dictator-sdk-integration-plan.md). Dictator
+(`jsilvanus/dictator`, its `dictator-kotlin/` Android port) is the "second app, independent of
+Aidos Agent" that RFC-0103's Motivation names as the reason the Engine split exists. Findings from
+reading the code, not status lines:
+
+- **`sdk/` does not compile and has never had a consumer.** `EngineModelAdapter.kt` is missing a
+  brace (55 `{` vs 54 `}`); it imports `dev.aidos.kernel.*` and `kotlinx.serialization.json.*`
+  while `sdk/build.gradle.kts` declares neither and `sdk/settings.gradle.kts` does not
+  `include(":kernel")`; `sdk/` pins Kotlin 2.1.0 against `agent/`+`engine/`'s 2.4.10; `okhttp` is
+  declared but unused (transport is `HttpURLConnection`). `build-sdk` is red on `main`
+  (run 31900887492), as are `test-agent` and `test-engine`.
+- **`EngineClientImpl.initialize()` has no Binder code at all** — it sets `isConnected = false`
+  and returns `false` unconditionally. Its internal `HandshakeResponse` has no `status` field, so
+  it cannot represent `PENDING_APPROVAL`/`DENIED` and does not model the contract
+  `EngineHandshakeImpl` actually returns. There is no SSE client, so `stream: true` is
+  unreachable. No tests, and no `jvm()` target to run any on.
+- **The user-approval model is built (`e26aee4`) but unreachable by a third-party app.**
+  `AppApprovalStore`/`AppApprovalManager`/`ConnectedAppsScreen` all work, but
+  `AndroidManifest.xml:9` still declares the handshake permission `protectionLevel="signature"`
+  and `:64` gates `EngineService` on it. A differently-signed caller gets a `SecurityException` at
+  `bindService`, never reaches `performHandshake()`, and so never records a PENDING row —
+  ConnectedAppsScreen can only ever offer apps that already cleared the signature gate. This
+  reintroduces exactly the F-Droid re-signing failure RFC-0103's Trust model section adopted user
+  approval to avoid. Owner confirmed in conversation that user approval is the intended model;
+  the fix is `protectionLevel="normal"` plus an RFC-0103 amendment (its Trust model paragraph and
+  its Non-goals bullet both still assert signature-only), landing in that phase, not in the plan
+  PR.
+- **Engine's SSE is not real streaming.** `EngineHttpServer.streamChatCompletions` receives an
+  already-complete `ModelResponse` and splits `response.text` on whitespace after generation has
+  finished — correct framing, but time-to-first-token equals full generation time.
+- `EngineHandshakeImpl.buildApprovedResult()` still returns hardcoded placeholder models
+  (`llama-7b`, `nomic-embed-text`) behind a `TODO(RFC-0103 Phase B)`; a client cannot select a
+  model against those.
+
 **2026-08-11 (later still, again) · USER_PROMPT park/resume is now built too** — the project owner
 picked the standalone `ask_user` tool design (not RFC-0011's plan-approval anchor) explicitly in
 conversation, closing the last of the three "beyond MVP" continuation asks:
