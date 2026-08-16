@@ -26,7 +26,7 @@ import kotlinx.serialization.json.jsonArray
  */
 internal class EngineLocalModelAdapter(
     private val client: AidosEngineClient,
-    private val modelId: String
+    modelId: String
 ) : ModelAdapter {
     override val providerId: String = "aidos-engine"
     override val modelId: String = modelId
@@ -71,7 +71,7 @@ internal class EngineLocalModelAdapter(
         val messagesJson = request.messages.map { turn ->
             val obj = when (turn) {
                 is dev.aidos.kernel.Turn.System -> {
-                    """{"role":"system","content":${escapeJsonString(turn.text)}}"""
+                    """{"role":"system","content":${escapeJsonString(turn.content)}}"""
                 }
                 is dev.aidos.kernel.Turn.User -> {
                     val content = turn.content.joinToString("\n") { block ->
@@ -114,6 +114,7 @@ internal class EngineLocalModelAdapter(
             .replace("\r", "\\r")
             .replace("\t", "\\t")
         return "\"$escaped\""
+    }
 
     /**
      * Convert OpenAI-compatible HTTP response to kernel ModelResponse format.
@@ -158,7 +159,7 @@ internal class EngineLocalModelAdapter(
  */
 internal class EngineEmbeddingAdapter(
     private val client: AidosEngineClient,
-    private val modelId: String
+    modelId: String
 ) : ModelAdapter {
     override val providerId: String = "aidos-engine"
     override val modelId: String = modelId
@@ -233,7 +234,7 @@ internal class EngineEmbeddingAdapter(
  */
 internal class EngineTranscriptionAdapter(
     private val client: AidosEngineClient,
-    private val modelId: String
+    modelId: String
 ) : ModelAdapter {
     override val providerId: String = "aidos-engine"
     override val modelId: String = modelId
