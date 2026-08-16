@@ -46,7 +46,8 @@ recorded here so it isn't lost.
 3. Define the transport: a Binder handshake plus loopback HTTP, OpenAI-compatible wire schema.
 4. Define Aidos SDK as the one client-side implementation of that handshake and transport, so no
    consuming app hand-rolls it.
-5. Define the v1 trust model (signature-only) and what changes to broaden it later.
+5. Define the v1 trust model (user approval over a Binder-verified caller identity) and what
+   changes to broaden it later.
 6. Define the version and capability-negotiation contract between Engine and its clients.
 7. Define concurrency and memory policy across multiple loaded models and multiple callers.
 8. Define graceful degradation when Engine is absent or incompatible.
@@ -68,8 +69,11 @@ This RFC does not change DESKTOP or HEADLESS_SERVER behaviour — RFC-0055 alrea
 This is specifically the MOBILE, app-to-app case RFC-0055 did not have, because it assumed
 MOBILE has exactly one frontend.
 
-This RFC does not open Aidos Engine to differently-signed (third-party) clients. v1 is
-signature-only; opening it further is Future Work and is not designed here.
+This RFC does open Aidos Engine to differently-signed clients — that is what the user-approval
+trust model below is for, and refusing them would reintroduce the F-Droid re-signing failure that
+model exists to avoid. What it does not design is *per-caller* authority once a client is approved:
+per-app capability grants, per-app model visibility, and per-client rate limiting are Future Work.
+Today every approved client is equally trusted.
 
 This RFC does not define remote or LAN exposure of the Engine. The bound port is loopback-only.
 
@@ -194,8 +198,10 @@ protocol code hand-maintained per app.
 - A bare TCP socket carries no caller identity — unlike Binder, where Android tells the callee the
   caller's UID and signature for free — so it cannot itself be gated by the OS permission system.
   Aidos Engine therefore exposes exactly one Binder surface, a **handshake**, declared with
-  `protectionLevel="signature"`. The OS verifies the caller holds the permission; given the
-  caller's identity, the handshake performs an approval check and returns one of two responses:
+  `protectionLevel="normal"`. The permission stays declared so a caller's intent to reach Engine is
+  visible in its manifest, but it is not what establishes trust: Binder tells Engine the caller's
+  verified UID and package name for free, and the approval decision below is the actual gate. Given
+  that identity, the handshake performs an approval check and returns one of three responses:
 
   - **`{status: "APPROVED", port, token, apiVersion, capabilities}`** — full response with
     everything the client needs. Used if the app was previously approved by the user.
@@ -208,15 +214,23 @@ protocol code hand-maintained per app.
 
 ### Trust model (v1: user-approval)
 
-The handshake's `signature` protection level remains an OS-enforced initial gate for technical
-safety: only apps with the permission can *reach* the handshake at all. But **approval is
-delegated to the user**, not to certificate matching, solving the F-Droid problem where re-signed
-versions cannot pass signature comparison.
+The handshake permission is declared `protectionLevel="normal"`: any app may hold it, and holding
+it grants nothing beyond the ability to ask. What is load-bearing is the identity Binder supplies —
+the caller's verified UID and package name, which the OS guarantees and a caller cannot forge — and
+**the user's explicit approval decision on top of it**, not certificate matching. This solves the
+F-Droid problem, where re-signed versions cannot pass signature comparison.
+
+A `signature` protection level here would have been actively wrong rather than merely strict: it
+admits exactly the apps that need no approval (same-key siblings) and excludes every app the
+approval flow was built to handle. An earlier draft of this RFC kept it as an "initial gate for
+technical safety"; that gate made the approval screen unreachable for any third-party caller, which
+is the opposite of what this section designs.
 
 **Initial handshake with approval check.** When a caller reaches the handshake:
 
-1. The Binder transport itself is signature-protected (OS enforces at the OS level), so we know
-   the caller's identity (package name, signature). This is a technical prerequisite.
+1. Binder tells Engine the caller's UID, from which its package name is resolved via
+   `PackageManager`. The OS guarantees this identity; it is not self-reported and cannot be
+   forged. This is the technical prerequisite the approval decision is recorded against.
 2. Engine checks its AppApprovalStore: has this caller ever been approved?
    - **If yes**: return `{status: "APPROVED", port, token, apiVersion, capabilities}` as before.
    - **If no** (first time or explicitly denied): return `{status: "PENDING_APPROVAL", intentToSettings: Intent}` — no token, no port.
@@ -281,7 +295,7 @@ case a client cached an identifier from before it was disabled, guessed one, or 
 through whatever string it was given. Hiding something from a list and actually forbidding it are
 different guarantees, and this design does not rely on the first one doing the second one's job.
 
-**Not designed here: per-app-scoped visibility.** v1's trust model (signature-only, above) means
+**Not designed here: per-app-scoped visibility.** v1's trust model (user approval, above) means
 every connected client currently sees the same enabled set — there is no "Aidos Agent can see
 Claude, some other app can't" yet. This is not a separate gap to solve later; it is the same
 per-caller-grant mechanism Trust model already defers to Future Work, applied one level down, from
@@ -481,8 +495,8 @@ there's no "provider" to attach it to the way Anthropic or OpenAI have one. Remo
 keys deliberately do **not** live in Settings; each lives on its own Provider detail screen
 (above), for the same reason a model's license lives on that model's own detail screen and not in
 a global list — enter a credential at the point of the decision it's for. Nothing else lives here
-in v1: no account, no sync, no per-app trust configuration (the trust model is signature-only and
-not user-configurable — Trust model, above).
+in v1: no account, no sync. Per-app trust *is* user-configurable, but it lives on Connected apps
+where each caller is listed, not here (Trust model, above).
 
 **Deliberately absent**, mirroring RFC-0050's own table:
 
@@ -670,12 +684,17 @@ nothing to persist yet.
    management — no Android dependency.
 2. Aidos Engine app: hosts Engine Core in-process in a foreground service; exposes it via
    `/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions` over loopback HTTP.
-3. Signature-`protectionLevel` handshake surface returning `{port, token, apiVersion, capabilities}`.
+3. `normal`-`protectionLevel` handshake surface returning `{status, port, token, apiVersion,
+   capabilities}`, with approval persisted per calling package.
 4. Parallel execution across concurrent callers when the resident working set leaves memory
    headroom; a serialized queue otherwise.
 5. Aidos SDK: the handshake client, token/session management, the loopback HTTP client, and
    `ModelAdapter` implementations for LLM, embedding, and STT, exposing "Engine unavailable" as
-   one signal.
+   one signal. These ship as two artifacts, not one: the client half carries no dependency on
+   `kernel`, and the `ModelAdapter` bindings — which necessarily do — are separate. A third-party
+   app should not have to link Aidos's frozen contract types to ask for a completion, and now that
+   the trust model admits differently-signed callers, third-party apps are the expected case rather
+   than a hypothetical one.
 6. Aidos Agent as Aidos SDK's first consumer, falling back to a remote provider or reporting
    unavailability when Aidos SDK reports the handshake failed or `apiVersion` is incompatible.
 7. Aidos Engine's own UI, calling Engine Core in-process, not through its own HTTP server: Home
@@ -697,11 +716,12 @@ and screens designed above, nothing built or wired).
 
 - Vision endpoints: multimodal `chat.completions` with image content parts, once model support and
   the memory budget above are validated against real devices.
-- Opening the handshake to differently-signed clients: per-caller consent UI, a capability-model
-  extension (RFC-0018) for per-app grants, usage/rate limiting per client. The same mechanism,
-  applied one level down, is also how per-app-scoped model visibility would work — "Aidos Agent
-  can see Claude, this other app can't" — rather than every connected client seeing the same
-  enabled set as v1 does (Discovery and model selection, above). Design both together.
+- Per-caller authority once a client is approved: a capability-model extension (RFC-0018) for
+  per-app grants, and usage/rate limiting per client. The same mechanism, applied one level down,
+  is also how per-app-scoped model visibility would work — "Aidos Agent can see Claude, this other
+  app can't" — rather than every approved client seeing the same enabled set as v1 does (Discovery
+  and model selection, above). Design both together. Admitting differently-signed clients at all is
+  no longer Future Work; that is the user-approval trust model above.
 - A possible convergence with RFC-0055's "paired remote runtime" Future Work, if a phone's Aidos
   Engine is ever addressed from a desktop runtime rather than only from apps on the same device.
 - Remote-provider execution through Aidos Engine (Remote providers through Aidos Engine, above):
