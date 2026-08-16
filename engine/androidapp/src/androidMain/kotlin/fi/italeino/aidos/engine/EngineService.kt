@@ -123,7 +123,7 @@ class EngineService : LifecycleService() {
                         override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
                     },
                     context = this@EngineService,
-                    name = "aidos_engine.db"
+                    name = "aidos_engine.db",
                 )
                 catalogManager = DatabaseModelCatalogManager(databaseDriver)
 
@@ -159,9 +159,9 @@ class EngineService : LifecycleService() {
 
                 _isRunning = true
                 updateNotification("Engine running on port $boundPort")
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 _isRunning = false
-                updateNotification("Engine failed: ${e.message}")
+                updateNotification("Engine failed: Unable to start HTTP server or model runtime")
             }
         }
     }
@@ -223,18 +223,16 @@ class EngineService : LifecycleService() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                "Aidos Engine",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            channel.description = "Aidos Engine local model inference service"
-            channel.setShowBadge(false)
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            "Aidos Engine",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        channel.description = "Aidos Engine local model inference service"
+        channel.setShowBadge(false)
 
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
-        }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.createNotificationChannel(channel)
     }
 
     private fun buildNotification(message: String): Notification {

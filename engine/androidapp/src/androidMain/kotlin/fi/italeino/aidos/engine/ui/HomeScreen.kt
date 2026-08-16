@@ -46,8 +46,8 @@ private fun StatusPane(viewModel: StatusViewModel) {
     }
     
     // Engine Control long press logic
-    var isPressing by remember { mutableStateOf(false) }
-    var pressProgress by remember { mutableFloatStateOf(0f) }
+    var isPressing by remember { mutableStateOf(value = false) }
+    var pressProgress by remember { mutableFloatStateOf(value = 0f) }
     val coroutineScope = rememberCoroutineScope()
 
     // Sample data (memory/apps still mocked for now)
@@ -56,7 +56,7 @@ private fun StatusPane(viewModel: StatusViewModel) {
             memoryBudget = MemoryBudget(usedMB = 2400, totalMB = 4096),
             connectedApps = listOf(
                 ConnectedAppStatus(appName = "Aidos Agent", packageName = "fi.italeino.aidos"),
-            )
+            ),
         )
     }
 
@@ -153,7 +153,7 @@ private fun StatusPane(viewModel: StatusViewModel) {
                         ) {
                             if (isPressing) {
                                 CircularProgressIndicator(
-                                    progress = pressProgress,
+                                    progress = { pressProgress },
                                     modifier = Modifier.fillMaxSize(),
                                     color = Color(0xFFEF4444),
                                     strokeWidth = 4.dp

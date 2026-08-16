@@ -129,7 +129,7 @@ private fun LocalModelsPane(onModelConfigClick: (String) -> Unit, viewModel: Mod
                         viewModel.toggleModelEnabled(model.id, enabled)
                     },
                     onDeleteClick = { showDeleteDialog = model },
-                    onCardClick = { onModelConfigClick(model.id) }
+                    onCardClick = { onModelConfigClick(model.id) },
                 )
             }
         }
@@ -279,7 +279,7 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
                         selectedKind = null
                         minContext = null
                     },
-                    selected = selectedKind == null && minContext == null
+                    selected = (selectedKind == null && minContext == null)
                 )
             }
             item {

@@ -435,7 +435,7 @@ fun LicenseAcceptanceCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
+                    .heightIn(max = 200.dp)
                     .background(
                         MaterialTheme.colorScheme.surface,
                         shape = RoundedCornerShape(6.dp)

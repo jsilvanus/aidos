@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
                     EngineRoute.Home to (Icons.Default.Home to "Home"),
                     EngineRoute.Models to (Icons.Default.Storage to "Models"),
                     EngineRoute.ConnectedApps to (Icons.Default.Share to "Apps"),
-                    EngineRoute.Settings to (Icons.Default.Settings to "Settings")
+                    EngineRoute.Settings to (Icons.Default.Settings to "Settings"),
                 )
 
                 Scaffold(
@@ -129,6 +129,10 @@ class MainActivity : ComponentActivity() {
 
     private fun startEngineService() {
         val engineIntent = Intent(this, EngineService::class.java)
-        startService(engineIntent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(engineIntent)
+        } else {
+            startService(engineIntent)
+        }
     }
 }

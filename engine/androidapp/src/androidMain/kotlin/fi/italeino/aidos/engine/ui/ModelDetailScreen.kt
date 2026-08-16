@@ -98,7 +98,7 @@ fun ModelDetailScreen(
                     licenseName = model.licenseName,
                     licenseText = model.licenseText,
                     accepted = state.licenseAccepted,
-                    onAcceptedChange = { /* TODO in VM */ }
+                    onAcceptedChange = { accepted -> viewModel.toggleLicenseAccepted(accepted) }
                 )
 
                 Button(

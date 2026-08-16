@@ -69,6 +69,10 @@ class ModelDetailViewModel : ViewModel() {
         }
     }
 
+    fun toggleLicenseAccepted(accepted: Boolean) {
+        _state.value = _state.value.copy(licenseAccepted = accepted)
+    }
+
     private fun dev.aidos.models.ModelDetail.toUiModel(): ModelDetail {
         val browser = EngineService.instance?.modelBrowser ?: return ModelDetail(id = id, name = name, sizeMB = 0)
         val cookbook = dev.aidos.cookbook.CookbookEngine()

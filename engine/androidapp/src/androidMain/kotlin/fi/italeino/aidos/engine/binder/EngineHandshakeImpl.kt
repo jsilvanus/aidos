@@ -74,7 +74,7 @@ class EngineHandshakeImpl(
                     id = descriptor.id,
                     kind = descriptor.kind.toString().lowercase(),
                     context_window = descriptor.contextWindow,
-                    quantization = "q4_k_m" // TODO: derive from filename or metadata
+                    quantization = deriveQuantization(descriptor.id)
                 )
             }
         )
@@ -88,6 +88,15 @@ class EngineHandshakeImpl(
             apiVersion = 1,
             capabilitiesJson = capabilitiesJson
         )
+    }
+
+    private fun deriveQuantization(modelId: String): String {
+        return when {
+            modelId.contains("q4_k_m", ignoreCase = true) -> "q4_k_m"
+            modelId.contains("q8_0", ignoreCase = true) -> "q8_0"
+            modelId.contains("q5_k_m", ignoreCase = true) -> "q5_k_m"
+            else -> "q4_k_m" // Default to q4_k_m if not specified in filename
+        }
     }
     
     private fun getPackageNameForUid(uid: Int): String? {
