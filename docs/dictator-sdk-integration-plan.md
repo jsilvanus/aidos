@@ -108,9 +108,20 @@ framing in the SDK is necessary but not sufficient.
 repos, which RFC-0103 asks for: the SDK is "versioned and distributed independently of both Aidos
 Agent and Aidos Engine."
 
-**D-5 · Dictator takes all three capabilities** — LLM chat, STT, embeddings — with embeddings
-scoped to client surface and provider method only. Nothing in Dictator consumes embeddings today,
-so a UI consumer (semantic document search) is new feature work, deliberately not bundled here.
+**D-5 · The SDK serves all three capabilities; Dictator consumes two of them.** LLM chat,
+embeddings, and STT are all in the SDK's client surface — that is RFC-0103 MVP item 5, and it is
+not contingent on any one consumer wanting all three. Dictator takes LLM chat and STT.
+
+Embeddings deliberately have **no Dictator-side phase**. Nothing in Dictator consumes vectors
+today — a `grep` for embeddings across both the web app and `dictator-kotlin` returns only
+`EmbeddedPackagingStrategy.ts` and `c2pa-manifest.ts`, which are "embedded" in the unrelated
+file-packaging sense. Wiring a provider method with no caller would be plumbing that rots until
+something uses it. The feature that would use it — semantic search over dictated documents —
+carries its own design questions (vector storage in the SQLDelight schema and whether it
+participates in sync, embedding granularity against Dictator's existing paragraph-level identity,
+when vectors are recomputed, similarity search without a native SQLite vector index) that have
+nothing to do with talking to Aidos Engine. It gets scoped on its own merits, separately. When it
+is, the SDK side is already built and waiting.
 
 ## Phases
 
@@ -167,6 +178,12 @@ New module `sdk/client/`, published as `aidos-sdk-client`. No `kernel` dependenc
   scoped to one handshake, per RFC-0103. A 401, a connection refusal, or a changed port all mean
   "re-handshake," not "fail."
 - **Transport.** Replace `HttpURLConnection` with OkHttp, which is already a declared dependency.
+- **All three endpoints, regardless of who consumes them.** `/v1/chat/completions`,
+  `/v1/embeddings`, and `/v1/audio/transcriptions` each get a typed client method. Embeddings ship
+  here even though no phase of this plan has Dictator calling them (D-5): the SDK's surface is set
+  by RFC-0103 MVP item 5 and by Engine's endpoints, not by what its first consumer happens to
+  need. Leaving a hole for the one capability nobody asked for yet would just mean the next
+  consumer files a bug.
 - **SSE (D-3).** A streaming chat call exposed as a `Flow` of deltas, parsing `data:` frames and
   terminating on `data: [DONE]` — the exact framing `EngineHttpServer.streamChatCompletions`
   emits. This is the capability the owner called out as required.
@@ -278,18 +295,11 @@ that. Engine's `/v1/audio/transcriptions` is utterance-at-a-time — no partials
 
 *Done when:* a user can dictate a document in airplane mode with Engine installed.
 
-### D3 · Embeddings surface
-
-Client method and provider surface only, per D-5. No UI consumer; semantic document search is
-separate feature work to be scoped on its own merits.
-
-*Done when:* Dictator can request an embedding through the SDK and receives a vector.
-
 ## Sequencing
 
 ```
 S0 ─┬─► S1 ─────────────┐
-    │                   ├─► D1 ─► D2 ─► D3
+    │                   ├─► D1 ─► D2
     └─► S2 ─► S3 ───────┘
                 S4 (parallel; improves D1, blocks nothing)
 
