@@ -76,7 +76,7 @@ class ModelBrowser(
      * Search models on Hugging Face with cookbook verdicts.
      */
     suspend fun searchRemote(
-        query: String,
+        query: String? = null,
         kind: ModelKind? = null,
         minContext: Int? = null,
     ): Result<List<BrowsableModel>> = runCatching {
@@ -85,7 +85,12 @@ class ModelBrowser(
         val searchResult = hfClient.search(
             query = query,
             filter = hfFilter.joinToString(","),
+            sort = if (query.isNullOrBlank()) "trendingScore" else "downloads",
+            limit = 30, // Increased limit for better discovery
         ).getOrThrow()
+
+        val installed = catalogManager.listInstalled().getOrThrow()
+        val installedMap = installed.associateBy { it.modelId }
         
         searchResult.models
             .asSequence()
@@ -109,6 +114,7 @@ class ModelBrowser(
                 )
                 
                 val verdict = cookbookEngine.verdict(descriptor, deviceProfile, contextWindow)
+                val installedModel = installedMap[hfModel.modelId]
                 
                 BrowsableModel(
                     catalogEntry = CatalogEntry(
@@ -120,7 +126,7 @@ class ModelBrowser(
                         discoveredAt = "", // Transient
                     ),
                     verdict = verdict,
-                    installedModel = null,
+                    installedModel = installedModel,
                     readableVerdict = verdict.humanReadable(),
                     contextWindow = contextWindow,
                     sizeBytes = quant?.sizeBytes,

@@ -71,19 +71,22 @@ class HuggingFaceClient(
      *
      * @param query search query (e.g., "qwen2.5 3b gguf")
      * @param filter optional filter (e.g., task:text-generation, library:gguf)
-     * @param sort sort order (e.g., "downloads", "trending")
+     * @param sort sort order (e.g., "downloads", "trendingScore")
      * @param limit max results to return
      * @return search results
      */
     suspend fun search(
-        query: String,
+        query: String? = null,
         filter: String? = null,
-        sort: String = "downloads",
-        limit: Int = 10,
+        sort: String = "trendingScore",
+        limit: Int = 20,
     ): Result<HuggingFaceSearchResult> {
         return try {
             // Build query parameters. full=true and config=true to get metadata for verdicts.
-            val params = mutableListOf("search=$query", "sort=$sort", "limit=$limit", "full=true", "config=true")
+            val params = mutableListOf("sort=$sort", "limit=$limit", "full=true", "config=true")
+            if (!query.isNullOrBlank()) {
+                params.add("search=$query")
+            }
             if (filter != null) {
                 params.add("filter=$filter")
             }

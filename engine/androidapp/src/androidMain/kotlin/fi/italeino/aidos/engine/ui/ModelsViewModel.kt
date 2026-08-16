@@ -54,7 +54,15 @@ class ModelsViewModel : ViewModel() {
 
                 // Initial catalog (curated set)
                 val catalog = browser.browse().getOrThrow()
-                _cookbookModels.value = catalog.map { it.toUiModel() }
+                val catalogUi = catalog.map { it.toUiModel() }
+
+                // Browse Hugging Face for trending GGUF models (RFC-0022)
+                val remote = browser.searchRemote(query = null).getOrDefault(emptyList())
+                val remoteUi = remote.map { it.toUiModel() }
+                
+                // Merge catalog and remote discovery, removing duplicates (by ID)
+                val merged = (catalogUi + remoteUi).distinctBy { it.id }
+                _cookbookModels.value = merged
             } catch (e: Exception) {
                 // Handle error
             } finally {
@@ -64,11 +72,6 @@ class ModelsViewModel : ViewModel() {
     }
 
     fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null) {
-        if (query.isEmpty() && kind == null) {
-            refresh()
-            return
-        }
-
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (query.isNotEmpty()) {
@@ -79,7 +82,9 @@ class ModelsViewModel : ViewModel() {
             
             _isSearching.value = true
             try {
-                val results = browser.searchRemote(query, kind, minContext).getOrThrow()
+                // If query is empty, we are effectively browsing trending models again
+                val searchQuery = if (query.isBlank()) null else query
+                val results = browser.searchRemote(searchQuery, kind, minContext).getOrThrow()
                 _cookbookModels.value = results.map { it.toUiModel() }
             } catch (e: Exception) {
                 // Handle error
