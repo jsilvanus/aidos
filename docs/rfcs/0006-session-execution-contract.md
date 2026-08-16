@@ -190,6 +190,21 @@ Whoever amends RFC-0050/RFC-0022 with the "superseding language" RFC-0103's own 
 says is owed should settle this and update `ForegroundReason.LOCAL_INFERENCE`'s doc comment
 accordingly — this file is not the place to guess at it.
 
+**Amendment 2026-08-16 — the open question above is resolved: yes, an FGS is still required, for a
+different reason than either candidate above named.** Android's process-importance propagation is
+one-directional: a client that binds to a service can raise *that service's* importance to its own
+(this is how Engine survives being treated as a background app once Agent, its client, is itself
+important), but the reverse does not exist — a service cannot lend its foreground status back to a
+client bound to it. Agent binding to Engine does not, and structurally cannot, exempt Agent's own
+process from Android's normal background execution limits. So `ForegroundReason.LOCAL_INFERENCE`
+keeps triggering an FGS, but for a different reason than its name implies post-RFC-0103: not to
+protect a local compute burst (that burst is now Engine's own problem, covered by Engine's own FGS),
+but because Agent's own process — awaiting the round trip, then resuming the Run, writing results,
+possibly invoking further tools — is doing exactly the kind of extended background work D24 already
+requires an FGS for, independent of where the model math happens. The doc comment rename this
+paragraph calls for should reflect that: the trigger is "Agent has a Run in flight that depends on a
+pending Engine call," not "Agent is computing locally."
+
 `ChildRun` and `CapabilityApproval` are new. Waiting on a worker session was previously
 unrepresentable — the flagship Driver/Worker workflow in RFC-0011 had the driver "yield while
 the worker runs", and no suspension type could express it.

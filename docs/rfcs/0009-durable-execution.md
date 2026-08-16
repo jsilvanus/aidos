@@ -196,9 +196,11 @@ local model call is now, from Aidos Agent's executor's point of view, structural
 remote HTTP call to a provider — an opaque request/response the executor already treats as one
 step, with nothing of its own to persist mid-flight either way. The KV-cache-cost argument above is
 moot rather than wrong; it answers a question ("should Agent persist a cache it holds") that no
-longer arises, because Agent never holds one. See RFC-0006's own 2026-08-14 amendment for the
-related, still-open question of whether `ForegroundRequired` itself is still needed for this case
-on MOBILE.
+longer arises, because Agent never holds one. See RFC-0006's own 2026-08-16 amendment: yes,
+`ForegroundRequired` is still needed for this case on MOBILE, but no longer to protect a compute
+burst — Android does not propagate a bound service's foreground status back to its client, so
+Agent's own process still needs its own FGS to survive while a Run is in flight, independent of
+where the model math happens.
 
 ### Relationship to RFC-0006
 

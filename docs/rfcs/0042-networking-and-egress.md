@@ -124,13 +124,21 @@ not an oversight this RFC needs to police.** The reasoning:
    way here.** RFC-0031/D17 reject a loopback exemption for MCP specifically because a bare TCP
    port on Android carries no caller identity — "any app holding `INTERNET` can bind or connect to
    it." Aidos SDK's channel is different: the *port and bearer token themselves* are only ever
-   handed out after a **signature-level Binder handshake** that the OS itself authenticates
-   (RFC-0103, "Handshake and transport" / "Trust model") — the peer identity is verified before any
-   loopback byte is sent, which is exactly the safe mechanism RFC-0031 names as its own deferred
-   Future Work ("Android's own IPC... where the caller's package name is verifiable"). This is the
-   same shape as RFC-0055's own precedent: the DESKTOP runtime socket (UI↔runtime, not
-   device↔network) is not run through `EgressClient` either, for the analogous reason that it's an
-   intra-product IPC boundary with its own authentication, not a network egress path.
+   handed out through a **Binder handshake**, and Binder — unlike a bare socket — gives the callee
+   the caller's UID/package name for free, which is what makes a per-caller approval decision
+   possible in the first place. This is *not* a signature-match trust claim: RFC-0103's own Trust
+   model section is explicit that raw signature comparison (`protectionLevel="signature"`) is only
+   "an OS-enforced initial gate for technical [identity] safety," not the actual authority — F-Droid
+   rebuilds and re-signs submitted apps, so two genuine Aidos apps installed from F-Droid will *not*
+   share a signature, and RFC-0103 designs around that explicitly ("Why this design, not
+   signature-only"). The real trust anchor is the **persisted, explicit user-approval decision**
+   (Engine's `AppApprovalStore`, surfaced via ConnectedAppsScreen) that the Binder-verified caller
+   identity is checked against on every handshake — closer in shape to RFC-0031's own deferred
+   Future Work ("Android's own IPC... where the caller's package name is verifiable," *plus* an
+   explicit approval step) than to a bare signature check. This is the same shape as RFC-0055's own
+   precedent: the DESKTOP runtime socket (UI↔runtime, not device↔network) is not run through
+   `EgressClient` either, for the analogous reason that it's an intra-product IPC boundary with its
+   own authentication, not a network egress path.
 3. **It should not write `egress_records`.** That table is "the evidence for the answer to 'what has
    left this device, and where did it go'" — a call that never leaves the device has no answer to
    record there, and adding a same-device entry would make the privacy audit noisier without adding
@@ -148,8 +156,9 @@ should be constructed at the same composition-root layer as `EgressClient` (for 
 timeout/retry policy, Timeouts/retries above) even though it is not routed *through* it — this is
 an implementation-shape question for whoever wires Aidos SDK into Aidos Agent's dependency graph
 (RFC-0048), not a networking-policy question this RFC needs to settle. If reviewing this amendment,
-the load-bearing claim to check is #2: that a signature-verified handshake before token issuance is
-a sufficient substitute for the peer-identity check a bare loopback socket cannot provide.
+the load-bearing claim to check is #2: that Binder-verified caller identity plus a persisted,
+explicit user-approval decision — not a raw signature match — is a sufficient substitute for the
+peer-identity check a bare loopback socket cannot provide.
 
 **Certificate pinning is not used.** It breaks corporate proxies, breaks when providers rotate,
 and produces failures users cannot diagnose or fix. The threat it addresses — a compromised

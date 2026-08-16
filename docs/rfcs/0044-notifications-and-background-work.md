@@ -135,12 +135,12 @@ visible. RFC-0103 moves that compute to **Aidos Engine**, which "runs its own fo
 for the same reasons RFC-0050 gives for Aidos Agent's" — the inference itself is still visible, via
 a different app's notification. What this section does not settle, and RFC-0103 does not address
 either: whether Aidos Agent's *own* Run additionally needs its own FGS just to keep making progress
-while awaiting Engine's response (a real question about Android's background-network restrictions
-on Agent's process, independent of whether the compute itself is protected) — see RFC-0006's own
-2026-08-14 amendment for the same open question, stated once there rather than duplicated per RFC.
-Until that's settled, treat this section's two-mode table as still correct in *outcome* (a Run
-either gets a full local-inference turn or parks and prepares), or at least accountable to
-whichever answer whoever amends RFC-0050/RFC-0022 settles on.
+while awaiting Engine's response. **Resolved 2026-08-16, see RFC-0006's own amendment of that date:
+yes** — Android's process-importance propagation only runs client→service (binding to Engine cannot
+lend Agent Engine's foreground status back), so Agent's process still needs its own FGS while a Run
+is in flight, for its own reasons, independent of whether the compute itself is protected elsewhere.
+This section's two-mode table stands as written: a Run either gets a full local-inference turn or
+parks and prepares, and Agent's FGS requirement for that is unchanged by RFC-0103.
 
 Two rejected alternatives, recorded so they are not re-attempted:
 
