@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Custom permission for Binder handshake (RFC-0103).
-         Only apps signed with the same certificate as Aidos Engine can call the handshake.
-         The OS enforces this at install time via PackageManager. -->
+    <!-- Custom permission for the Binder handshake (RFC-0103, "Trust model").
+         Declared `normal`, not `signature`: holding it grants nothing beyond the ability to ask.
+         Trust comes from the caller identity Binder supplies (verified UID, resolved to a package
+         name) plus the user's persisted approval on ConnectedAppsScreen. A `signature` level would
+         admit only same-key siblings — precisely the callers that need no approval — and would make
+         the approval screen unreachable for everyone else, including F-Droid re-signed builds of
+         Aidos Agent itself. The permission stays declared so a caller's intent to reach Engine is
+         visible in its own manifest. -->
     <permission
         android:name="fi.italeino.aidos.engine.HANDSHAKE"
-        android:protectionLevel="signature"
+        android:protectionLevel="normal"
         android:label="@string/permission_handshake_label"
         android:description="@string/permission_handshake_description" />
 
