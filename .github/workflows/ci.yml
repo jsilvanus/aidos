@@ -66,8 +66,14 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      # sdk/ is an Android library with no jvm() target and no tests yet (RFC-0103: the client
-      # implementation is a TODO stub) — this only checks it still compiles.
+      # sdk/ ships as an Android library (RFC-0103), but its wire-format mapping and negotiation
+      # logic is ordinary Kotlin and lives in a jvm+android source set, so it compiles and tests
+      # without an Android SDK. Run that first: it fails faster and its errors are real code
+      # errors rather than toolchain ones.
+      - name: Test Aidos SDK (JVM target)
+        working-directory: sdk
+        run: gradle jvmTest --no-daemon
+
       - name: Compile Aidos SDK (debug)
         working-directory: sdk
         run: gradle assembleDebug --no-daemon
