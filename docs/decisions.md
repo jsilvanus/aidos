@@ -71,6 +71,30 @@ Desktop needs multiple frontends and must survive a UI crash; Android has exactl
 by construction and no meaningful multi-process story.
 **RFCs:** 0052, 0055.
 
+**Amended 2026-08-14 — the decision for Aidos Agent's own runtime is unchanged; its stated
+justification no longer holds platform-wide.** RFC-0103 (Aidos Engine) puts a second, independent
+app on MOBILE that legitimately needs a multi-process, multi-frontend-serving shape — the exact
+thing this decision's rationale said Android had no story for. RFC-0103's own Motivation names
+this decision's premise directly: *"Android has no meaningful multi-process story for this... That
+premise no longer holds: a second app, independent of Aidos Agent, is already in development."*
+
+**What survives, narrowed rather than reversed:** Aidos Agent's own `RuntimeClient` — sessions,
+projects, capabilities, executor, the agent loop — still has exactly one frontend, still hosts
+in-process, and this decision's outcome for that component is untouched. What no longer holds is
+the *general* claim about the platform: Android does have a meaningful multi-process story now
+(a signature-verified Binder handshake plus a loopback HTTP daemon, authenticated per-request by a
+bearer token) — it was simply narrower than "no story at all," and RFC-0103 is what needed it
+first. **Aidos Engine takes the daemon shape this decision reserves for desktop**, scoped to that
+one component, for the reason RFC-0103 states: its whole purpose is serving several independent
+apps on one device, which is exactly the "needs multiple frontends" condition this decision already
+uses to justify Desktop's own daemon shape — the same test, applied to a second MOBILE component
+this decision didn't anticipate existing.
+
+Read this decision going forward as: *"a component with exactly one frontend by construction hosts
+in-process; a component serving several independent frontends runs as a daemon — true on every
+profile, not a MOBILE-vs-DESKTOP platform rule."* Aidos Agent satisfies the first clause on MOBILE;
+Aidos Engine satisfies the second, on the same profile. **RFCs:** 0052, 0055, 0103.
+
 ---
 
 ## Authority and trust

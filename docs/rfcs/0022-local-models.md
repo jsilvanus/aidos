@@ -49,6 +49,45 @@ This RFC does not train, fine-tune, or merge models.
 
 ## Design
 
+### Amendment 2026-08-14 (RFC-0103) — read this whole RFC as DESKTOP/HEADLESS_SERVER design; on
+### MOBILE, Aidos Engine is now authoritative for everything below
+
+RFC-0103 splits local model hosting off Aidos Agent onto a separate app, **Aidos Engine**, on
+MOBILE only (DESKTOP and HEADLESS_SERVER are explicitly out of RFC-0103's scope). This is not a
+one-section correction the way most of this corpus's other RFC-0103 amendments are — this RFC's
+entire subject matter (where weights live, the cookbook, acquisition, the admission queue,
+foreground-only inference, storage management, model lifecycle) describes work that, on MOBILE, is
+now Aidos Engine's to do, not Aidos Agent's. RFC-0103's own Motivation says as much directly: "This
+RFC does not itself rewrite RFC-0050 or RFC-0022... If this RFC is accepted, those passages need
+superseding language in a follow-up commit... recorded here so it isn't lost." This amendment is
+that follow-up, in addendum form rather than a rewrite — a full rewrite is a separate, larger task
+this amendment does not attempt.
+
+**What stays true, unconditionally, everywhere:** every *design decision* below — user scope not
+project scope, content-addressed digests, the cookbook's device-fit computation (weights + KV
+cache + overhead, four verdicts), never-automatic acquisition, the global admission queue with LRU
+eviction, foreground-only inference, manual-only storage removal, the embedding-model-pinning rule,
+offer-don't-apply updates, `UnavailableOffline` as first-class — all of it is **exactly what
+RFC-0103 also specifies for Aidos Engine**, largely verbatim (RFC-0103's own Design section cites
+this RFC by name for several of these: "RFC-0022's model storage is already scoped to user,"
+"RFC-0022 is explicit that Engine never deletes weights on its own to make room," "matching
+RFC-0022's own MVP section," "per RFC-0022"). **What changes is which component does it and where
+it's read from:**
+
+| This RFC's claim | On DESKTOP/HEADLESS_SERVER | On MOBILE |
+|---|---|---|
+| Where weights live | `~/.aidos/models/`, Aidos Agent's `user.db` | Aidos Engine's own app-private storage (RFC-0103, Data Model) |
+| Who runs the admission queue | Aidos Agent's `ModelRuntime` | Aidos Engine, extended across every client app on the device, not just Aidos Agent's own projects (RFC-0103, "Concurrency and memory policy") |
+| Who serves the cookbook/acquisition UI | Aidos Agent | Aidos Engine's own UI screens (RFC-0103, "Aidos Engine's own UI") — Aidos Agent's model-selection surface becomes a client of Engine's catalogue, not the catalogue's owner |
+| Foreground requirement | Aidos Agent's own foreground service, in-process | Aidos Engine's own, separate foreground service (RFC-0103, "Two apps, one device") — see RFC-0006's 2026-08-14 amendment for the still-open question of whether Aidos Agent additionally needs its own |
+| Model selection (which model to use) | Aidos Agent's routing layer, unchanged | Unchanged — RFC-0103 is explicit this stays "user-owned policy" in the calling app, never Engine's decision |
+
+Read every section below with that substitution in mind on MOBILE: the *policy* is this RFC's; the
+*component* is Aidos Engine's. Where this document says "the runtime does X" or "Aidos does X," on
+MOBILE that is now Aidos Engine doing X, reached from Aidos Agent over Aidos SDK — this amendment
+does not repeat that qualifier at every single sentence below, since RFC-0103 is the authoritative
+document for the corrected component ownership.
+
 ### Weights live at user scope, once
 
 `~/.aidos/models/` on desktop, the app-private equivalent on Android (RFC-0050). One copy, shared

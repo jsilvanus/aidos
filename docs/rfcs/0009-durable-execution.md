@@ -186,6 +186,22 @@ preemption mechanism. Mid-generation checkpointing was considered and rejected �
 hundreds of megabytes, and persisting it per window plausibly costs more than the inference it
 would preserve.
 
+**Amendment 2026-08-14 (RFC-0103) — the KV cache is no longer this process's to persist or not.**
+This section's rejection of mid-generation checkpointing was reasoned from the KV cache sitting in
+Aidos Agent's own process, alongside the executor doing the checkpointing. RFC-0103 moves local
+model execution — and with it, the KV cache — into **Aidos Engine**, a separate process Aidos
+Agent's executor has no access to and no reason to checkpoint. The conclusion (no sub-step
+checkpointing for a model call) still holds, but for a simpler reason than the one stated here: a
+local model call is now, from Aidos Agent's executor's point of view, structurally the same as a
+remote HTTP call to a provider — an opaque request/response the executor already treats as one
+step, with nothing of its own to persist mid-flight either way. The KV-cache-cost argument above is
+moot rather than wrong; it answers a question ("should Agent persist a cache it holds") that no
+longer arises, because Agent never holds one. See RFC-0006's own 2026-08-16 amendment: yes,
+`ForegroundRequired` is still needed for this case on MOBILE, but no longer to protect a compute
+burst — Android does not propagate a bound service's foreground status back to its client, so
+Agent's own process still needs its own FGS to survive while a Run is in flight, independent of
+where the model math happens.
+
 ### Relationship to RFC-0006
 
 RFC-0006 remains the contract for yield, cancellation, and interrupt *semantics*. This RFC

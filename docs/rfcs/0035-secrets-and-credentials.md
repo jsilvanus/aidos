@@ -70,6 +70,28 @@ The vault database holds ciphertext. The key that decrypts it is held by the pla
 and never written to the filesystem by Aidos. Where no keystore exists, a passphrase-derived key
 is used, and the user is told plainly that protection is weaker.
 
+**Amendment 2026-08-14 (RFC-0103) — "the vault" is now one of two, on MOBILE.** This RFC describes
+a single vault for the whole product, reasoned from "a credential belongs to a person" (singular).
+RFC-0103 gives **Aidos Engine**, a separate app, its own Keystore-backed credential store —
+explicitly "not a shared one," because Engine "cannot reach `agent/vault`... unreachable across the
+app boundary by construction" (RFC-0103, "Vault"). Engine's vault holds a Hugging Face token today,
+and per RFC-0103's Future Work, may eventually hold remote-provider credentials for calls Engine
+executes on a client app's behalf.
+
+This RFC's design is otherwise unaffected — Aidos Agent's own vault stays exactly as specified
+here, for Agent's own secrets (its direct-remote-provider keys, Git remote credentials, MCP
+tokens). What no longer holds as an unqualified statement is "the vault" as *the one place* a
+credential belonging to this device's user lives: it is now "Aidos Agent's vault" for everything
+this RFC governs, plus a second, separately-encrypted store inside Aidos Engine for Engine's own
+credentials — same encryption model (platform keystore), same reference-based resolution pattern
+within each app, but no shared storage, no shared key material, and **no cross-app redaction**:
+the redactor below (Detection and the redactor) is registered with each app's own vault
+independently; a value known to Engine's redactor is not known to Agent's, and vice versa. If a
+Hugging Face token or a future Engine-held remote-provider key ever needs to be prevented from
+leaking through *Aidos Agent's* logs, prompts, or exports (e.g. because Agent's UI ever displays
+something derived from an Engine credential), that value would need registering with Agent's
+redactor too — not automatic today, and not designed here.
+
 ### Secrets are referenced, never embedded
 
 Nothing outside the vault holds a secret value. Consumers hold a `secret_ref`:

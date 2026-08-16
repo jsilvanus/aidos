@@ -72,11 +72,11 @@ first. Each rung is user-visible.
 | Rung | Trigger | Action |
 |---|---|---|
 | 1 | sustained background pressure | pause indexing and compaction |
-| 2 | memory pressure | unload the loaded model; keep weights on disk |
+| 2 | memory pressure | unload the loaded model; keep weights on disk *(on MOBILE, no longer Aidos Agent's action to take — see Amendment below)* |
 | 3 | continued pressure | drop knowledge index caches; queries degrade to keyword |
 | 4 | low battery, not charging | suspend all `DEFERRED` and `OPPORTUNISTIC` work (RFC-0044) |
 | 5 | critical memory | park active Runs at the next checkpoint; do not start new ones |
-| 6 | thermal throttling | disable local inference; route remote or report `UNAVAILABLE_OFFLINE` |
+| 6 | thermal throttling | disable local inference; route remote or report `UNAVAILABLE_OFFLINE` *(on MOBILE, Agent can stop calling, not disable — see Amendment below)* |
 
 Rung 5 is why the whole architecture is checkpointed: **the runtime can always stop cleanly**,
 because there is always a recent safe point to stop at. A system that had to abandon in-flight
@@ -98,6 +98,37 @@ routing resolves to a smaller local model, to remote (subject to policy), or to
 `UNAVAILABLE_OFFLINE` (RFC-0020).
 
 Only one large model is resident at a time. Two 4 GB models on a phone is not a tuning question.
+
+**Amendment 2026-08-14 (RFC-0103) — on MOBILE, this section describes DESKTOP/HEADLESS_SERVER
+and pre-split MOBILE; it no longer describes what Aidos Agent itself controls.** RFC-0103 moves
+local model hosting off Aidos Agent onto a separate app, **Aidos Engine**, reached over a loopback
+transport. Two consequences this RFC did not anticipate:
+
+- **The admission decision above is Aidos Engine's, not "the runtime['s]."** Engine "loads a model
+  on first request for it... [and] may [keep] multiple models... resident simultaneously if the
+  device's available memory allows it," evicting least-recently-used only when it doesn't — a
+  policy extended "from one project's models to every modality and every client on the device"
+  (RFC-0103, "Concurrency and memory policy"). **"Only one large model is resident at a time" is no
+  longer true in general on MOBILE**: Engine may hold several residents at once across several
+  client apps, none of which is Aidos Agent's decision to make or veto.
+- **Rungs 2 and 6 are not actions Aidos Agent can perform on MOBILE.** Agent has no handle on
+  Engine's residency and no authority to unload a model Engine is also serving to a different
+  client, or to disable local inference device-wide — it can only stop calling Engine itself,
+  which surfaces to a Run as `UnavailableOffline`/`UNAVAILABLE_OFFLINE`, same as today's "nothing
+  fits" case. Whether Engine implements its own analogous degradation ladder under its own memory/
+  thermal pressure is Engine's design question, not specified by this RFC and not designed by
+  RFC-0103 either (RFC-0103 states memory-based eviction only; it does not mention thermal
+  throttling at all).
+- **This section's admission math (`≥ model working set × 1.3`, battery-floor gating) still
+  describes the right computation — it has just moved.** It is now Aidos Engine's admission
+  policy to implement, not Aidos Agent's. This RFC's own Non-goals already exclude "the inference
+  engine's internals" (implicitly RFC-0022's territory before the split, Aidos Engine's after it),
+  so this amendment does not relocate scope this RFC ever claimed to own outright — it corrects
+  which component the existing text was describing.
+
+Not amended by this note, and unaffected: rungs 1, 3, 4, 5 (indexing, knowledge caches, background
+work, and Run parking are all still Aidos Agent's own resources and remain exactly as specified).
+DESKTOP and HEADLESS_SERVER are unaffected — RFC-0103 is MOBILE-only (its own Non-goals).
 
 ### What is measured, and what acts on it
 

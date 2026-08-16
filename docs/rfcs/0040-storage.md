@@ -65,6 +65,22 @@ DESKTOP   ~/.aidos/user.db, ~/.aidos/secrets/vault.db, <project>/.aidos/state.db
 MOBILE    /data/data/fi.italeino.aidos/files/… — same layout, app-private (RFC-0050)
 ```
 
+**Amendment 2026-08-14 (RFC-0103) — MOBILE has more than three databases now, in a second app.**
+The Abstract's "three SQLite databases" and the `user.db` row's "model catalog, installed models"
+both describe Aidos Agent alone. RFC-0103 gives **Aidos Engine** — a separate app on MOBILE — its
+own small persistent storage: the model catalog and installed-models data this table currently
+assigns to Agent's `user.db` (relocated, not duplicated — RFC-0103's Data Model: "No new persistent
+schema beyond RFC-0022's existing model storage... relocated from Agent's storage to Engine's with
+the same shape"), plus new state this RFC never had a slot for at all — license-acceptance
+records, provider configuration, and Engine's own vault (RFC-0035's 2026-08-14 amendment) — under
+`/data/data/fi.italeino.aidos.engine/…`, a directory Aidos Agent cannot read.
+
+**Read this RFC as governing Aidos Agent's three databases specifically, not "Aidos" as a whole,
+on MOBILE.** DESKTOP and HEADLESS_SERVER are unaffected (RFC-0103 is MOBILE-only) and keep exactly
+the layout above, model catalog included, since there is no second app to split it into. `user.db`'s
+row should be read with "model catalog, installed models" as MOBILE-conditional — present on
+DESKTOP/HEADLESS_SERVER, absent (living in Engine's own storage instead) on MOBILE.
+
 ### There is no storage provider abstraction, and that is a decision
 
 SQLite, directly. No `StorageProvider`, no `query(sql, params)` pass-through, no second backend.

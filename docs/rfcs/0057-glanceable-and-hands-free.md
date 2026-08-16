@@ -264,6 +264,41 @@ intent, which is the case where a phone genuinely beats a laptop.
 (`ModelKind.TTS`). Availability follows RFC-0049 — where no TTS model is installed, the feature
 is absent rather than degraded, and the user is told which model kind is missing.
 
+**Amendment 2026-08-14 (RFC-0103) — STT and TTS execution moved to a sibling app; this section's
+"model installed" framing needs a second condition, and the eyes-free loop below needs new
+latency/coordination questions answered before it can be built as written.** RFC-0103 keeps
+`SpokenSummaryGenerator` and `VoiceApprovalHandler` (this RFC's actual concern — composing what to
+say and gating what voice may approve) in Aidos Agent, unchanged, but moves the `SttProvider`/
+`TtsProvider` model-serving interfaces themselves to **Aidos Engine**. Every transcription and every
+spoken response in this RFC's voice flow now crosses a loopback IPC call to a separate app, not an
+in-process model invocation.
+
+Three things this creates that neither this RFC nor RFC-0103 currently answers:
+
+1. **"No TTS model installed" is no longer the only absence condition.** Per RFC-0049's own
+   2026-08-14 amendment (new `SIDECAR` tier), voice can now also be unavailable because Aidos Engine
+   itself isn't installed or hasn't been approved via its handshake flow (RFC-0103, Trust model) —
+   a condition this section's "where no TTS model is installed" phrasing doesn't cover, even though
+   RFC-0103's own unified "local inference unavailable" signal (Degradation, RFC-0103) is exactly
+   the right thing to report it through, once this section is updated to say so.
+2. **New latency in the eyes-free loop's real-time exchange.** The loop below assumes STT/TTS
+   round-trips are fast enough to sustain a natural back-and-forth while cycling. An added IPC hop,
+   Engine's own admission-queue latency under contention from other apps (RFC-0103, "Concurrency and
+   memory policy"), and Engine's foreground service potentially cold-starting are all new latency
+   sources this design did not budget for. Whether they're small enough to preserve "press to talk,
+   release to send" as written is an open, unmeasured question.
+3. **Cross-app foreground-service coordination during a single voice turn.** Holding audio focus
+   (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, below) is Aidos Agent's job; the actual STT/TTS compute
+   now runs under Aidos Engine's separate foreground service. Whether Agent's own D24 foreground
+   service is still required to hold the audio session open while awaiting Engine's response — the
+   same open question RFC-0006's 2026-08-14 amendment raises for local model calls generally —
+   applies here too, for a case (a live, user-present voice exchange) where getting it wrong is more
+   noticeable than a silent background Run parking.
+
+None of this changes what voice may approve (Voice, and what voice may not do, above) or the
+benign-only gate (D26) — those are Aidos Agent's own decisions, unaffected by where STT/TTS
+inference executes.
+
 ### The eyes-free loop
 
 The target interaction, in full, is a conversation — not a notification with two buttons read
@@ -377,7 +412,10 @@ asked to enforce it cannot be relied on to notice.
 ### Everything here works offline
 
 No part of this requires network. The projection is a local query. The templates are local
-strings. TTS and STT are local models at user scope (RFC-0054). This is deliberate: the eyes-free
+strings. TTS and STT are local models at user scope (RFC-0054) — on MOBILE, served by Aidos Engine
+over loopback IPC rather than in-process (RFC-0103, and this RFC's own 2026-08-14 amendment above);
+the claim in this sentence is about the offline guarantee, which still holds exactly as stated,
+not about which process does the serving. This is deliberate: the eyes-free
 mode is the one most likely to happen with no signal, and a hands-free interface that stops
 working on a train is not one anybody will rely on.
 

@@ -128,6 +128,20 @@ So recurring sessions have two honest modes:
 Both are explainable in one sentence, which is the test. The fallback also makes the subsequent
 foreground session faster, because the expensive preparation is already done.
 
+**Amendment 2026-08-14 (RFC-0103) — "the work must be visible" now names Aidos Engine's foreground
+service, not necessarily Aidos Agent's own.** This section, like D24 itself, was written when local
+inference ran inside Aidos Agent's own process, so Agent's own FGS was what made the compute
+visible. RFC-0103 moves that compute to **Aidos Engine**, which "runs its own foreground service,
+for the same reasons RFC-0050 gives for Aidos Agent's" — the inference itself is still visible, via
+a different app's notification. What this section does not settle, and RFC-0103 does not address
+either: whether Aidos Agent's *own* Run additionally needs its own FGS just to keep making progress
+while awaiting Engine's response. **Resolved 2026-08-16, see RFC-0006's own amendment of that date:
+yes** — Android's process-importance propagation only runs client→service (binding to Engine cannot
+lend Agent Engine's foreground status back), so Agent's process still needs its own FGS while a Run
+is in flight, for its own reasons, independent of whether the compute itself is protected elsewhere.
+This section's two-mode table stands as written: a Run either gets a full local-inference turn or
+parks and prepares, and Agent's FGS requirement for that is unchanged by RFC-0103.
+
 Two rejected alternatives, recorded so they are not re-attempted:
 
 - **Mid-generation checkpointing** — persisting a KV cache and resuming next window. The cache is

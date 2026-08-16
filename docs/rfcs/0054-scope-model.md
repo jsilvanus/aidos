@@ -78,6 +78,48 @@ future team support somewhere to attach without redesign (RFC-0046).
 | Audit log | Project, plus a user-scope stream for cross-project events | |
 | Knowledge index | Project | Derived from project content |
 
+### Amendment 2026-08-14 (RFC-0103) — "user scope" is now split across an app boundary on MOBILE
+
+Four rows of the Assignment table above — **model catalog, model weights on disk, loaded model
+instances**, and (from RFC-0103's own Future Work) **eventually remote-provider credentials** —
+were assigned to User scope on the reasoning that user scope is "one per Aidos installation per
+device user," so co-residency with everything else at user scope is what makes "sharing is
+mandatory, not an optimization" and "a global queue" true. RFC-0103 moves exactly those four things
+into **Aidos Engine**, a second, independently-installed app with its own sandboxed storage that
+Aidos Agent cannot read or write directly — reachable only over the loopback transport RFC-0103
+defines, never by shared file or database access. On MOBILE, "user scope" for this specific data is
+no longer inside the single `~/.aidos/` tree the Storage layout below draws; it is a second
+`/data/data/fi.italeino.aidos.engine/` tree, owned by a different app, under the same device user.
+
+This does not undo the *scope classification* — model weights are still correctly "device state,
+not project state," and still still exist exactly once per device user, which is the property this
+RFC's Motivation actually cares about. What changes is the **storage-layout mechanism**: "user
+scope" on MOBILE is now two cooperating app-private stores instead of one directory tree, connected
+by RFC-0103's handshake/transport rather than by direct filesystem or database access. Concretely:
+
+- **Model catalog, model weights, loaded model instances** — now Aidos Engine's storage, per
+  RFC-0103's own Data Model ("relocated from Agent's storage to Engine's with the same shape").
+  `~/.aidos/models/` in the Storage layout below describes DESKTOP/HEADLESS_SERVER only now; on
+  MOBILE the equivalent path is inside Aidos Engine's own app-private storage, not Aidos Agent's.
+- **Secrets vault** — stays split, not merged, and this is new: Aidos Agent's own `agent/vault`
+  (RFC-0035) continues to hold Aidos Agent's secrets (remote-provider API keys used by Agent's
+  direct-remote path, etc.), while Aidos Engine holds a second, separate vault for its own
+  credentials (a Hugging Face token today; potentially remote-provider keys too, per RFC-0103's
+  Future Work on routing remote execution through Engine) — "cannot reach `agent/vault`... Engine
+  needs a small vault of its own, not a shared one" (RFC-0103, "Vault"). **There are now two
+  user-scope secret stores on one device, not one**, and this RFC's "Secrets vault | User" row
+  should be read as "one per app that needs one," not "exactly one for the product."
+- **This is a MOBILE-only split.** RFC-0103 is explicitly scoped to MOBILE; DESKTOP and
+  HEADLESS_SERVER keep the single-tree layout below exactly as written, since Aidos Engine as a
+  separate app is a MOBILE-specific answer to a MOBILE-specific constraint (RFC-0103's own
+  Motivation: the premise it changes is Android's, not the desktop daemon's).
+
+The **capability-scoping rule** (below) is unaffected in substance: a session's `model:query`
+capability is still a project-scoped grant to use a device-state resource, whether that resource is
+reached in-process (DESKTOP/HEADLESS_SERVER) or over Aidos SDK's loopback transport (MOBILE) — the
+authority question and the transport question are independent, which is exactly why RFC-0103 could
+add the transport without this RFC's capability model needing to change.
+
 ### The MCP and plugin rule
 
 MCP servers and plugins are **registered at user scope** and **enabled per project**. A project

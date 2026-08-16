@@ -57,6 +57,16 @@ On MOBILE the in-process shape is still mediated by `RuntimeClient`; the boundar
 discipline rather than a process. This is acceptable because MOBILE has exactly one frontend by
 construction.
 
+**Amendment 2026-08-14 (RFC-0103):** this holds for **Aidos Agent's own `RuntimeClient`** — it
+still has exactly one frontend, and this row's rationale is unchanged for it. It is no longer true
+of MOBILE as a platform in general: **Aidos Engine**, a second app on the same device, legitimately
+takes the daemon shape this table reserves for DESKTOP/HEADLESS_SERVER, because unlike Aidos Agent
+its entire purpose is serving several independent frontends at once. RFC-0103's own Design section
+states this precisely as "a deliberate, narrow exception... scoped only to this one component" —
+this note exists so a reader of this table alone, without also having read RFC-0103, isn't misled
+by "MOBILE has exactly one frontend by construction" into thinking that's still true of the
+platform rather than of Aidos Agent specifically.
+
 ### Project locking
 
 A project is owned by at most one runtime instance at a time.

@@ -100,6 +100,66 @@ TLS with the platform trust store. Plaintext HTTP requires an explicitly granted
 never a default — including for `localhost`, where a plaintext MCP server on a shared machine is
 readable by any local process.
 
+### Amendment 2026-08-14 (RFC-0103) — Aidos SDK's loopback call to Aidos Engine is not `Egress`
+
+RFC-0103 gives Aidos Agent a new outbound call this RFC's Motivation list (five subsystems) did
+not anticipate: Aidos SDK's loopback HTTP client to Aidos Engine's port for
+`/v1/chat/completions`, `/v1/embeddings`, and `/v1/audio/transcriptions`. Two things about it
+would, read literally, collide with rules above:
+
+- **"No subsystem opens its own connection" / "one runtime HTTP client."** Aidos SDK is,
+  structurally, a second HTTP client outside `EgressClient`.
+- **`NetworkScope`'s own default denies exactly this traffic**: "resolved addresses are checked
+  against blocked ranges: loopback... denied by default" (Destination scoping, above) — Aidos
+  Engine's port is `127.0.0.1` by construction (RFC-0103: "bound to `127.0.0.1`").
+
+**Resolution: this traffic is not `Egress`, and does not go through `EgressClient`, by design —
+not an oversight this RFC needs to police.** The reasoning:
+
+1. **It never leaves the device.** This RFC's own Abstract scopes itself to "the single path by
+   which data leaves the device" — Aidos Engine is a sibling app on the *same* device, and RFC-0103
+   forbids any LAN/remote exposure of its port outright. Nothing here is the kind of boundary this
+   RFC exists to control.
+2. **The loopback-is-unsafe reasoning that motivates the default-deny above does not apply the same
+   way here.** RFC-0031/D17 reject a loopback exemption for MCP specifically because a bare TCP
+   port on Android carries no caller identity — "any app holding `INTERNET` can bind or connect to
+   it." Aidos SDK's channel is different: the *port and bearer token themselves* are only ever
+   handed out through a **Binder handshake**, and Binder — unlike a bare socket — gives the callee
+   the caller's UID/package name for free, which is what makes a per-caller approval decision
+   possible in the first place. This is *not* a signature-match trust claim: RFC-0103's own Trust
+   model section is explicit that raw signature comparison (`protectionLevel="signature"`) is only
+   "an OS-enforced initial gate for technical [identity] safety," not the actual authority — F-Droid
+   rebuilds and re-signs submitted apps, so two genuine Aidos apps installed from F-Droid will *not*
+   share a signature, and RFC-0103 designs around that explicitly ("Why this design, not
+   signature-only"). The real trust anchor is the **persisted, explicit user-approval decision**
+   (Engine's `AppApprovalStore`, surfaced via ConnectedAppsScreen) that the Binder-verified caller
+   identity is checked against on every handshake — closer in shape to RFC-0031's own deferred
+   Future Work ("Android's own IPC... where the caller's package name is verifiable," *plus* an
+   explicit approval step) than to a bare signature check. This is the same shape as RFC-0055's own
+   precedent: the DESKTOP runtime socket (UI↔runtime, not device↔network) is not run through
+   `EgressClient` either, for the analogous reason that it's an intra-product IPC boundary with its
+   own authentication, not a network egress path.
+3. **It should not write `egress_records`.** That table is "the evidence for the answer to 'what has
+   left this device, and where did it go'" — a call that never leaves the device has no answer to
+   record there, and adding a same-device entry would make the privacy audit noisier without adding
+   privacy-relevant information. If per-call observability into Agent↔Engine traffic is ever wanted,
+   it belongs in RFC-0103's own domain (its "Connected apps" screen already tallies per-app request
+   counts on Engine's side) rather than this table.
+4. **This does not need a new capability-approval prompt of its own.** RFC-0103's Security section
+   already states Engine executes "with authority already established by Aidos Agent's own approval
+   flow, not re-derived by Engine" — the relevant authority question (may this Run call a model at
+   all) is RFC-0018's `model:query` capability, already checked before dispatch, same as it is for a
+   remote provider call today.
+
+**What this amendment does not resolve, flagged rather than guessed:** whether Aidos SDK's client
+should be constructed at the same composition-root layer as `EgressClient` (for consistency of
+timeout/retry policy, Timeouts/retries above) even though it is not routed *through* it — this is
+an implementation-shape question for whoever wires Aidos SDK into Aidos Agent's dependency graph
+(RFC-0048), not a networking-policy question this RFC needs to settle. If reviewing this amendment,
+the load-bearing claim to check is #2: that Binder-verified caller identity plus a persisted,
+explicit user-approval decision — not a raw signature match — is a sufficient substitute for the
+peer-identity check a bare loopback socket cannot provide.
+
 **Certificate pinning is not used.** It breaks corporate proxies, breaks when providers rotate,
 and produces failures users cannot diagnose or fix. The threat it addresses — a compromised
 platform trust store — is out of scope (RFC-0003). Proxy configuration is honoured from the
