@@ -66,7 +66,7 @@ enum class PlatformProfile { MOBILE, DESKTOP, HEADLESS_SERVER }
 | Spawn arbitrary subprocess | **no** | yes | yes |
 | MCP stdio transport | **no** | yes | yes |
 | MCP HTTP transport | yes (online only) | yes | yes |
-| Local model inference | yes (small models, **foreground only**) | yes | yes |
+| Local model inference | yes (small models, **foreground only**) *— on MOBILE, conditional; see Amendment below* | yes | yes |
 | Uninterrupted execution window | **~seconds to minutes** | unbounded | unbounded |
 | Exact timers | **no** | yes | yes |
 
@@ -89,7 +89,10 @@ enum class AvailabilityTier {
     UNIVERSAL,      // works on every profile, offline. fs, git-object, git-tree
     BUNDLED,        // ships as a native binary inside the app package
     PLATFORM,       // present only on some profiles. shell, subprocess, stdio MCP
-    NETWORKED       // requires connectivity. remote models, HTTP MCP, git push/fetch
+    NETWORKED,      // requires connectivity. remote models, HTTP MCP, git push/fetch
+    SIDECAR         // requires a companion app installed, approved, and reachable — offline-capable
+                     // itself, but not BUNDLED and not gated on connectivity. MOBILE only. Added
+                     // 2026-08-14 (RFC-0103) — see Amendment below
 }
 ```
 
@@ -101,6 +104,40 @@ confusion occurs.
 
 This is the central mechanism of this RFC and it is nearly free to implement: one filter in
 prompt assembly.
+
+### Amendment 2026-08-14 (RFC-0103) — local model inference on MOBILE needs a fifth tier
+
+RFC-0103 moves local model hosting off Aidos Agent onto a separate, sibling app (**Aidos Engine**),
+reached over a loopback transport, with its own install/approval state. This RFC's guarantee table
+and `AvailabilityTier` enum were both written assuming local inference is either a build-time
+platform fact (available on MOBILE, absent nowhere it's compiled in) or a connectivity fact
+(`NETWORKED`). It is now neither:
+
+- **It is not `BUNDLED`.** Nothing about local inference ships inside the Aidos Agent app package
+  anymore — the model-serving code, the weights, and the inference engine all live in a separate
+  APK the user installs (or doesn't) independently.
+- **It must not be tagged `NETWORKED`, even though `requiresNetwork` might look like the closest
+  existing fit.** Aidos Engine is reached over loopback with **no internet connection required at
+  all** — a phone in airplane mode with Aidos Engine installed and approved has local inference
+  fully available. Tagging it `NETWORKED` would make an offline phone incorrectly report local
+  inference unavailable, which is backwards from the offline-first thesis this RFC exists to
+  protect (see Motivation) and would misclassify exactly the G3 scenario (RFC-0099) this whole
+  product is built to prove.
+- **The actual gating condition is new: "is a specific companion app installed, has it been
+  approved via the handshake flow (RFC-0103, Trust model), and is it currently reachable."** This
+  is a runtime-checked condition like `NETWORKED`'s connectivity check, but it is not a network
+  fact — it is app-installation and cross-app-approval state, checked the same way (at project
+  open, reported through `AvailabilityReport`, never discovered mid-Run) but through a different
+  mechanism (Aidos SDK's handshake, not a connectivity probe).
+
+**The fix:** a new tier, `SIDECAR` (added to the enum above), for MOBILE-only capabilities gated on
+a companion app's presence and reachability rather than on connectivity or bundling. Local model
+inference (LLM, embedding, STT) is tagged `SIDECAR` on MOBILE; DESKTOP and HEADLESS_SERVER are
+unaffected (RFC-0103 is explicitly MOBILE-only) and keep local inference as an unconditional `yes`
+in the guarantee table above, since neither profile depends on a second app. RFC-0103's own
+Degradation section already names the right *reporting* behavior — "the affected capability is
+reported unavailable when the project opens (RFC-0049), not mid-Run" — this amendment supplies the
+tier that behavior needed and this RFC did not previously have.
 
 ### The `BUNDLED` tier
 

@@ -57,6 +57,27 @@ else.
 A new event type must not require a schema migration. A new API method must not invalidate
 archives. Keeping them separate is what allows each to move at its own pace.
 
+**Amendment 2026-08-14 (RFC-0103) — a fifth version now exists and should be governed by the same
+discipline, not float free of it.** RFC-0103 defines its own version/capability contract for the
+Aidos SDK ↔ Aidos Engine boundary: `apiVersion`, "a strict integer, incremented on any breaking
+wire-format change," which RFC-0103 itself describes as "the same role RFC-0052 gives
+`RuntimeClient`'s API version" (RFC-0103, "Version and capability contract"). It was designed
+without reference to this RFC, and it is not quite the same mechanism as the Runtime API version
+row above: RFC-0052's model is a *range* (a client declares a minimum required version; the runtime
+accepts any client at or above its own floor), while RFC-0103's is an *exact match* (a version
+mismatch of any kind is incompatible, no floor). RFC-0103 also pairs its version with a separate
+`capabilities` field (which endpoints/models exist) — a negotiation shape this RFC's four-row table
+doesn't have an analogue for, though it is the same *kind* of problem versioning exists to solve.
+
+This should be added as a fifth row — **Engine API version** (int), governs the Aidos SDK ↔ Aidos
+Engine wire contract, changes on a breaking handshake/wire change, exact-match compatibility rule
+(distinct from the Runtime API row's range-based rule, and that distinction is worth keeping,
+not reconciling away — Engine and Agent ship and update independently of each other and of
+Aidos Agent's own frontends, so exact-match is a defensible, deliberately different choice, not an
+oversight). Whoever next touches this table should add the row and note the compatibility-rule
+difference explicitly, so a future reader doesn't assume the two "API version" concepts behave the
+same way.
+
 ### Format
 
 **kotlinx.serialization, JSON, for everything persisted or exchanged.** Not because JSON is

@@ -106,6 +106,24 @@ Model inference being device-global is usually the real limit on a phone, not th
 Four workers can plan in parallel; their model calls queue. On desktop with a remote provider,
 they proceed concurrently.
 
+**Amendment 2026-08-14 (RFC-0103) — on MOBILE, "Model inference | per device" is no longer this
+process's mutex, though the observed queueing behavior is preserved.** The table above lists model
+inference as a peer of the working-tree mutex and SQLite's single-writer discipline — resources
+*this RFC's own dispatcher hierarchy* arbitrates. That was accurate when local model loading ran
+inside Aidos Agent's process. RFC-0103 moves it to **Aidos Engine**, a separate app: admission,
+residency, and request serialization under memory contention are now Aidos Engine's own internal
+policy ("Engine loads a model on first request... When [memory headroom is insufficient], they're
+serialized through a request queue instead of rejected" — RFC-0103, "Concurrency and memory
+policy"), extended across every client app sharing the device, not just this process's own workers.
+Aidos Agent's `session` dispatcher no longer holds a device-global model mutex on MOBILE at all —
+what looks like the same queueing behavior from a Run's point of view (a model call takes longer
+under contention) now happens on the other side of a loopback HTTP call, invisible to and
+unmanaged by this RFC's concurrency model. "Four workers can plan in parallel; their model calls
+queue" is still an accurate observation of what a user sees; it is no longer this RFC's own
+`worktreeMutex`-shaped mechanism producing it. DESKTOP is unaffected — RFC-0103 is MOBILE-only,
+and remote-provider concurrency ("they proceed concurrently") was already outside this table's
+scope.
+
 Because parallel workers are now possible on every profile, the invariant that **at most one
 Task per Run is `RUNNING`** (RFC-0006) becomes load-bearing: parallelism is across Runs, never
 inside one. That keeps each Run's audit trail a single ordered sequence.

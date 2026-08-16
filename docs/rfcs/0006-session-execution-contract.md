@@ -168,6 +168,28 @@ outside a foreground service — on MOBILE, a local model call without an FGS (d
 Run parks and notifies "ready to continue" rather than failing or silently routing to a remote
 model. It resumes when the user opens the app.
 
+**Amendment 2026-08-14 (RFC-0103) — `LOCAL_INFERENCE`'s trigger still holds; its justification has
+moved.** D24 requires a foreground service for a local model call because the FGS window has to be
+long enough to cover the compute itself, and the compute used to happen inside Aidos Agent's own
+process. RFC-0103 moves that compute to **Aidos Engine**, a sibling app with its own foreground
+service — the model call Aidos Agent now makes is a loopback HTTP round-trip to a process Agent
+does not control the lifecycle of, not an in-process compute burst.
+
+**Open question this amendment does not resolve** (RFC-0103 does not address it either, and it is
+a real design decision, not an implementation detail): does Aidos Agent's own Run still need
+`ForegroundRequired`/an FGS for this case? Two candidate answers, both defensible, neither decided
+here:
+- **Yes, unchanged** — Android's background network restrictions can still throttle or kill Agent's
+  own process while it awaits the response, even though the actual inference is protected by
+  Engine's FGS; parking without one risks losing the awaiting Task the same way it always did.
+- **Possibly relaxed** — since the compute-protection reason D24 states no longer applies to
+  Agent's own process, the FGS requirement here might reduce to whatever Android already requires
+  for a plain background HTTP call, which is a different (probably weaker) constraint.
+
+Whoever amends RFC-0050/RFC-0022 with the "superseding language" RFC-0103's own Motivation section
+says is owed should settle this and update `ForegroundReason.LOCAL_INFERENCE`'s doc comment
+accordingly — this file is not the place to guess at it.
+
 `ChildRun` and `CapabilityApproval` are new. Waiting on a worker session was previously
 unrepresentable — the flagship Driver/Worker workflow in RFC-0011 had the driver "yield while
 the worker runs", and no suspension type could express it.

@@ -166,6 +166,27 @@ which is a different product, and the gate should fail rather than be set up aro
 If this cannot be met, the correct response is to change the product, not to ship the UI and
 hope. It is scheduled here so that the answer arrives while it is still cheap to act on.
 
+**Amendment 2026-08-14 (RFC-0103) — Phase 3's scope list and G3's exit criteria don't budget
+Aidos Engine, and now they need to.** "Model runtime at user scope" and "one local LLM small
+enough for a mid-range phone" above were written as Aidos's own Phase 3 deliverables. RFC-0103
+splits that work into a second, independently-built and independently-installed app, **Aidos
+Engine**, plus **Aidos SDK** as the client library Aidos Agent links to reach it — with its own MVP
+list (RFC-0103's own "MVP" section: the Engine Core module, its foreground service and HTTP/Binder
+surface, Aidos SDK, Engine's own UI, its vault, license-acceptance records). None of that is named
+in this Phase's scope list, and it is real, separately-scoped work, not a detail folded into "model
+runtime at user scope."
+
+**Concretely, G3's exit criteria now has a precondition it didn't have when this section was
+written**: satisfying "open a real repository... with no network" on a real device requires Aidos
+Engine installed, the user having completed its handshake/approval flow at least once (RFC-0103,
+"Trust model" — a one-time, on-device, offline-capable step, but a real one), and Engine's own
+foreground service reachable. This is still consistent with "no network" and "no pre-built index
+bundle" above — Engine's approval flow and model residency are both entirely on-device — but it
+is a new setup dependency the phone-in-airplane-mode scenario now has that this section doesn't
+name. Whoever next revises the Phase 3/4 milestone breakdown (`docs/mvp-roadmap.md`) should add
+Aidos Engine's MVP list as an explicit, tracked co-requisite rather than leaving it implicit inside
+"local models."
+
 ### Phase 4: Android application (3 months)
 
 ```
@@ -398,7 +419,9 @@ RFC-0046 Identity · RFC-0047 Project Templates · RFC-0048 Dependency Injection
 RFC-0050 Android · RFC-0051 Desktop · RFC-0052 Runtime API ·
 **RFC-0053 Git Backend and Reconciliation** · **RFC-0054 Scope Model** ·
 **RFC-0055 Runtime Instances** · **RFC-0056 Retention and Lifecycle** ·
-**RFC-0057 Glanceable and Hands-Free Operation** · RFC-0060 Plugin SDK
+**RFC-0057 Glanceable and Hands-Free Operation** · RFC-0060 Plugin SDK ·
+**RFC-0103 Aidos Engine** — added 2026-08-14, postdates this appendix's last full pass; see this
+document's own 2026-08-14 amendment above for what it changes about Phase 3/G3
 
 **Roadmap and reviews**
 RFC-0099 Roadmap (this document) · RFC-0100, RFC-0101, RFC-0102 Architecture reviews ·

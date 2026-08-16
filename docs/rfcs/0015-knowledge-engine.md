@@ -95,7 +95,7 @@ A `Match` carries a blob hash, the paths that blob has been seen at, a line span
 its provenance (`VECTOR` / `FTS` / `HYBRID`) — never an Aidos domain type. The adapter maps it
 into `ContextItem` (RFC-0025) on the way out.
 
-Aidos reaches this through `KnowledgeContextProvider` (RFC-0025, `runtime/kernel/Knowledge.kt`),
+Aidos reaches this through `KnowledgeContextProvider` (RFC-0025, `kernel/Knowledge.kt`),
 which is the only interface the rest of the runtime sees. **That interface exists because
 RFC-0025 needs a seam for prompt assembly, not because a second knowledge source is anticipated.**
 There is exactly one implementation and no `KnowledgeProvider` SPI: a `query`/`is_current`/
@@ -117,6 +117,29 @@ to add against a real second case.
    calls what it is handed. On MOBILE that is a local GGUF model through llama.cpp (D28). **The
    "no network" property is Aidos's to keep, not the library's to promise** — which is the right
    place for it, since Aidos is where egress policy lives (RFC-0042, RFC-0027).
+
+   **Amendment 2026-08-14 (RFC-0103):** "a local GGUF model through llama.cpp" is no longer
+   literally what happens on MOBILE. RFC-0103 moves LLM, embedding, and STT inference off Aidos
+   Agent onto **Aidos Engine**, a sibling app — the `EmbeddingProvider` Aidos Agent hands the
+   library is now an Aidos SDK `ModelAdapter` making a loopback HTTP call, not an in-process
+   llama.cpp invocation. **The guarantee this point actually cares about — no network beyond the
+   device — still holds**: RFC-0103 forbids any LAN/remote exposure of Engine's port, so the call
+   never reaches further than a sibling app on the same device (see RFC-0042's own 2026-08-14
+   amendment, which reasons through why this specific loopback call is not treated as `Egress`).
+   What changes is only the *mechanism* description, not the promise made to `gitsema-kotlin`: the
+   library still never dials out itself, and Aidos still keeps the "no network" property — Aidos
+   now keeps it via a same-device IPC channel with its own authentication (RFC-0103) rather than an
+   in-process function call.
+
+   Two consequences worth naming for whoever implements this, not previously true: the embedding
+   call can now fail for reasons entirely outside Aidos Agent's own process — Aidos Engine not
+   installed, not yet approved via its handshake flow, or its own foreground service lost
+   independently of Agent's (RFC-0103's "Degradation when Engine is unavailable" collapses these
+   into one "local inference unavailable" signal) — which the Availability and degradation table
+   below can absorb as an outcome but does not currently name as a cause; and point 2 above
+   ("Aidos cancels indexing on... foreground-service loss") should be read as Agent's *own*
+   foreground-service loss only — Engine losing its foreground service independently is a new,
+   separate interruption source this RFC does not yet describe.
 4. **Storage under `.aidos/index/`**, never in `state.db` (D21, RFC-0054). Embedding writes would
    contend with the single writer (RFC-0007) and would inflate the file the user backs up with
    entirely rebuildable data.
@@ -298,7 +321,7 @@ registry, no cached-fact store. The index is the library's, at `.aidos/index/`, 
 does not define and does not migrate.
 
 The only Aidos-side type is the adapter's output, `ContextItem` (RFC-0025,
-`runtime/kernel/Knowledge.kt`), which carries the trust level that feeds the Run's taint
+`kernel/Knowledge.kt`), which carries the trust level that feeds the Run's taint
 computation (RFC-0027). **Indexed project content is `PROJECT` trust, not `TRUSTED`** — it is
 repository content, and a query result is repository content that has been ranked.
 

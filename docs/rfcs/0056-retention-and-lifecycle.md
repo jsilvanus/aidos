@@ -136,6 +136,27 @@ Eviction of model weights is a real cost — re-downloading is expensive and may
 offline. Weights are therefore evicted last, LRU, never automatically when offline, and never
 without notification.
 
+**Amendment 2026-08-14 (RFC-0103) — Stage 2's "then LRU model weights" is no longer an action Aidos
+Agent can perform on MOBILE.** Model weights moved to **Aidos Engine**'s own storage, a separate
+app Aidos Agent cannot delete files from. Two real conflicts, not just a relocation:
+
+- **Aidos Agent has no mechanism to trigger weight eviction in Engine at all.** RFC-0103 names no
+  such API — its own Storage screen for weights is explicitly "Manual only... Engine never deletes
+  weights on its own to make room" (RFC-0103, "4 · Storage"). Stage 2's automatic LRU eviction
+  under device-storage pressure has nothing on the other side of the app boundary to call.
+- **Even if it did, RFC-0103's "manual only" policy for Engine's own weight deletion directly
+  conflicts with this RFC's automatic-eviction-under-pressure design for that same data**,
+  independent of which app performs it. This is a real, unresolved question — not just a wiring
+  gap — for whoever reconciles the two: should Aidos Engine gain an automatic eviction path when a
+  *different* app's storage pressure asks for it (weakening RFC-0103's "manual only" guarantee), or
+  should this RFC's Stage 2 stop naming model weights as something it can evict on MOBILE and fall
+  through to Stage 3's stop-and-notify behavior sooner instead?
+
+This item was already `post-MVP` in this RFC's own scope (Stage 2 model eviction is not required
+for the MVP milestone this RFC gates), so it is not blocking — but the design as currently written
+will not build against Aidos Engine's architecture without settling the question above first, and
+it should not be picked up as a routine implementation task without doing so.
+
 ### What is never deleted automatically
 
 - Anything in Git. Aidos does not run `git gc`, does not prune refs it did not create, and

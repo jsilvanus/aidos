@@ -75,6 +75,23 @@ class RuntimeComposition(
 }
 ```
 
+**Amendment 2026-08-14 (RFC-0103) — the illustrative composition above is stale for MOBILE,
+specifically the `modelRuntime` line and `PlatformAdapter.modelDir`.** `ModelRuntime(userStore,
+platform.modelDir, dispatchers)` constructs local model loading from a filesystem directory in the
+same process — exactly the shape RFC-0103 removes from Aidos Agent on MOBILE, replacing it with an
+Aidos SDK-backed `ModelAdapter` that talks to Aidos Engine over IPC instead of loading from
+`platform.modelDir` at all. This RFC's own consumer-owned-interface pattern (The dependency rule,
+below) is the right tool to express the seam — `router` already depends on `modelRuntime` through
+an interface, so MOBILE's composition root would supply an Aidos-SDK-backed implementation of that
+same interface where DESKTOP/HEADLESS_SERVER supply the in-process `ModelRuntime` shown above — but
+this RFC doesn't yet say so, and `PlatformAdapter` (Platform variation, below) has no field for it:
+`modelDir: Path` assumes local-model access is always a directory, which is only true on DESKTOP/
+HEADLESS_SERVER now. A MOBILE `PlatformAdapter` needs something in place of (or alongside)
+`modelDir` — an Aidos SDK client handle, or nothing at all if the SDK is constructed directly inside
+whatever supplies the `ModelAdapter` implementation for MOBILE's composition root, rather than
+through `PlatformAdapter`. Which shape is right is a real design choice for whoever wires this,
+not decided here.
+
 Why no framework: the runtime has on the order of thirty components and one composition site.
 A DI container would add a dependency, reflection (which complicates KMP and Android
 minification), and — worse — the ability to resolve services implicitly. Manual wiring is

@@ -95,13 +95,38 @@ one frontend and one process. A previous version of this RFC specified a separat
 authenticated socket; that was carried over from the desktop design and would have bought
 nothing but serialization cost and an Android-only crash surface.
 
+**Amendment 2026-08-14 (RFC-0103) — this claim now holds for Aidos Agent's own sessions/executor/
+broker specifically, not for "the runtime" as a whole, and the diagram above is stale on one
+line.** RFC-0103's own Motivation names this exact passage as the premise it changes: "RFC-0050
+hosts the runtime, including model loading, in-process on MOBILE, on the stated grounds that
+'Android has no meaningful multi-process story for this'... That premise no longer holds." What
+RFC-0103 actually splits off is narrower than "the runtime": **model loading and serving** moves to
+**Aidos Engine**, a separate app reached over a real IPC boundary (a signature-level Binder
+handshake plus loopback HTTP, with a bearer-token authentication check on every request — RFC-0103,
+"Handshake and transport" / "Security"). Everything else this section describes — sessions,
+executor, broker, capabilities, taint, the UI's `RuntimeClient` relationship — stays exactly as
+written: one frontend, one process, no IPC boundary for any of that.
+
+Concretely, the diagram's bottom box is now wrong on one line: `models` is not hosted inside
+`AidosService` alongside `runtime, executor, broker` — it is reached from inside that box via an
+Aidos SDK client making calls across the app boundary to Aidos Engine's own, separately-hosted
+service. "No IPC... between UI and runtime" is still true (the UI still only ever talks to
+`RuntimeClient` in-process); it is no longer true to say there is no IPC anywhere in the app at
+all — there is, between Aidos Agent's runtime and Aidos Engine, for model calls specifically. See
+RFC-0103 in full for the corrected shape; this amendment states the correction rather than
+duplicating RFC-0103's own design here.
+
 The UI holds no state the runtime does not. It renders `RuntimeClient` responses and the event
 stream, and it survives process death by re-subscribing with `sinceSequence` (RFC-0052) rather
 than by caching.
 
 **The service is what keeps the app alive**, and it is the same service in both directions: it is
 required for local inference (below) and it is what allows a Run to keep going when the user
-switches away.
+switches away. *(2026-08-14: "required for local inference" is now RFC-0103's territory — Aidos
+Engine holds its own foreground service for the inference itself. Whether Aidos Agent's own
+service is additionally required just to keep the app alive while awaiting Engine's response is
+the open question RFC-0006's 2026-08-14 amendment raises; this sentence should be revisited once
+that's settled.)*
 
 ### Background execution
 
@@ -149,10 +174,13 @@ Projects live in **app-private storage**:
 │           └── state.db      ← RFC-0054 project scope, RFC-0040 schema
 ├── aidos/
 │   ├── user.db               ← user scope
-│   ├── secrets/vault.db      ← RFC-0035
-│   └── models/               ← weights, user scope (RFC-0054)
+│   └── secrets/vault.db      ← RFC-0035
 └── cache/
 ```
+
+*(2026-08-14: `models/` removed from this diagram — weights now live in Aidos Engine's own
+app-private storage, `/data/data/fi.italeino.aidos.engine/…`, a directory this app cannot read,
+per RFC-0103. Everything else in this layout is unchanged.)*
 
 This follows D2 (`.aidos/` lives inside the project directory, Git-ignored) and RFC-0054's three
 scopes. A previous version placed project state at `~/.aidos/projects/<id>/storage.db`, which put
@@ -324,6 +352,9 @@ state in the frontend is a consistency bug waiting for a reason to appear.
 1. **One process.** The UI and the runtime share a trust domain; there is no IPC boundary to
    authenticate. The boundaries that matter are capability grants (RFC-0018) and taint
    (RFC-0027), and they are enforced in the runtime regardless of which frontend is attached.
+   *(2026-08-14: true of the UI↔runtime boundary this item describes; a real, separately-secured
+   IPC boundary now exists between Aidos Agent and Aidos Engine for model calls — RFC-0103's own
+   Security section, not this one, is authoritative for that boundary's threat model.)*
 2. **Approval requires a `user_interactive` connection** (RFC-0055). On Android that means the
    Activity is in the foreground — a notification action alone can cancel work, never approve a
    capability request.

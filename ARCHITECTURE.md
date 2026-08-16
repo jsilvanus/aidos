@@ -36,7 +36,7 @@ other. This is the rule that keeps the dependency graph acyclic.
 │  SERVICES                                                     │
 │  Projects (0010)      Sessions (0011)     Intent Graph (0012) │
 │  Content graph (0024) Knowledge (0015)    Instructions (0016) │
-│  Model runtime (0020) Git (0032/0053)     Import/export (0041)│
+│  Model runtime (0020)* Git (0032/0053)    Import/export (0041)│
 ├───────────────────────────────────────────────────────────────┤
 │  KERNEL — every service depends on these; they depend on none │
 │                                                               │
@@ -52,11 +52,45 @@ other. This is the rule that keeps the dependency graph acyclic.
 └───────────────────────────────────────────────────────────────┘
 ```
 
+**Footnote, added 2026-08-14 (RFC-0103):** "Model runtime (0020)" is drawn inside SERVICES as if it
+always lives in the same box as Projects/Sessions/Knowledge. On MOBILE, it doesn't anymore — see
+"Two apps on MOBILE," below, added the same day. This diagram otherwise still describes DESKTOP/
+HEADLESS_SERVER, and MOBILE for everything except model loading/serving.
+
 Note what this diagram does *not* claim. An earlier version drew a strict downward stack —
 Sessions above the AI Engine above the Tool Broker above the Knowledge Engine — which asserted a
 cycle, since the Knowledge Engine needs embeddings from the AI Engine and the Tool Broker sits
 beside both rather than beneath them. There is no such stack. There is a kernel and there are
 services.
+
+## Two apps on MOBILE (RFC-0103, added 2026-08-14)
+
+Everything above describes one runtime, hosted somewhere. On MOBILE specifically, "somewhere" is
+now **two independent Android apps**, not one, because local model inference (an LLM, an embedding
+model, STT) needs sharing across apps that the single-app design above didn't provide for:
+
+- **Aidos Agent** (`fi.italeino.aidos`) — everything this document already describes: sessions,
+  projects, capabilities, executor, agent loop, tools, knowledge, memory, settings, identity,
+  vault. Still hosts its own runtime in-process, in its own foreground service, with exactly one
+  frontend — D5's decision, unchanged for this component.
+- **Aidos Engine** (`fi.italeino.aidos.engine`) — a separate app that hosts local model loading and
+  serving (the "Model runtime (0020)" box above, for local models specifically), so multiple apps
+  on one device share one loaded model set instead of each bundling and loading its own. It runs
+  its own foreground service and has its own small UI, vault, and storage.
+- **Aidos SDK** — a small Android library every client app (Aidos Agent included) links to reach
+  Aidos Engine, over a signature-verified Binder handshake plus a token-authenticated loopback HTTP
+  transport.
+
+The repository mirrors this: `agent/` (formerly `runtime/`), `engine/`, and `sdk/` are three
+independent Gradle roots, sharing only `kernel/` (frozen contract types, pulled out to its own
+top-level directory) at the source level. Full design in
+[RFC-0103: Aidos Engine](docs/rfcs/0103-aidos-engine.md) — this section is a map pointer, not a
+substitute for reading it.
+
+**Why this matters for a new contributor**, immediately: if you're looking for local-model-loading
+code on MOBILE, it's in `engine/`, not `agent/`. If you're touching anything this document's
+diagram puts in the SERVICES box other than "Model runtime," you're still in `agent/`, unaffected
+by any of this.
 
 ## The centre: the agent loop
 
@@ -181,8 +215,12 @@ instruction set.
 ### If you care about **AI/models**:
 - [RFC-0020: AI Engine](docs/rfcs/0020-ai-engine.md) — Reasoning, planning, multi-model support.
 - [RFC-0021: Model Providers](docs/rfcs/0021-model-providers.md) — Abstraction for different model sources.
-- [RFC-0022: Local Models](docs/rfcs/0022-local-models.md) — Offline-first; no cloud required.
+- [RFC-0022: Local Models](docs/rfcs/0022-local-models.md) — Offline-first; no cloud required. On
+  MOBILE, this design now belongs to Aidos Engine (RFC-0103) — read that RFC's own "Amendment"
+  note at the top of this RFC's Design section first.
 - [RFC-0023: Remote Models](docs/rfcs/0023-remote-models.md) — Cloud models with privacy controls.
+- [RFC-0103: Aidos Engine](docs/rfcs/0103-aidos-engine.md) — Local model inference as a shared,
+  standalone app on MOBILE. Read this before RFC-0022 if you're starting fresh.
 
 ### If you care about **tools/integration**:
 - [RFC-0030: Tool Broker](docs/rfcs/0030-tool-broker.md) — Unified tool interface.
