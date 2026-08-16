@@ -78,8 +78,11 @@ model, STT) needs sharing across apps that the single-app design above didn't pr
   on one device share one loaded model set instead of each bundling and loading its own. It runs
   its own foreground service and has its own small UI, vault, and storage.
 - **Aidos SDK** — a small Android library every client app (Aidos Agent included) links to reach
-  Aidos Engine, over a signature-verified Binder handshake plus a token-authenticated loopback HTTP
-  transport.
+  Aidos Engine, over a Binder handshake (which gives Engine the caller's verified UID/package name)
+  plus a token-authenticated loopback HTTP transport. Trust is not derived from the two apps sharing
+  a signing key — F-Droid re-signs submitted apps, so genuine installs of Aidos Agent and Aidos
+  Engine will not always share one — it comes from an explicit, persisted user-approval decision on
+  top of that verified identity (RFC-0103, "Trust model").
 
 The repository mirrors this: `agent/` (formerly `runtime/`), `engine/`, and `sdk/` are three
 independent Gradle roots, sharing only `kernel/` (frozen contract types, pulled out to its own
@@ -91,6 +94,17 @@ substitute for reading it.
 code on MOBILE, it's in `engine/`, not `agent/`. If you're touching anything this document's
 diagram puts in the SERVICES box other than "Model runtime," you're still in `agent/`, unaffected
 by any of this.
+
+### A third app is planned: "Aidos Dictator" (name provisional, no RFC yet)
+
+A separate repository the project owner already maintains is expected to join this ecosystem later,
+under a name in the shape of **Aidos Dictator** (exact branding not finalized). As of this writing
+there is no RFC for it, so nothing about its scope, its relationship to Aidos Agent and Aidos Engine,
+or whether it follows the same "separate app, `fi.italeino.aidos.*` package, own foreground service"
+shape RFC-0103 established for Aidos Engine has been decided. This note exists only so a contributor
+who later sees a third `fi.italeino.aidos.*`-style app, or a fourth Gradle root alongside `agent/`,
+`engine/`, and `sdk/`, isn't caught unaware — treat it as "coming, unspecified" until an RFC lands,
+not as an implicit design commitment this document is making now.
 
 ## The centre: the agent loop
 
