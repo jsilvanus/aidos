@@ -32,6 +32,9 @@ class ModelsViewModel : ViewModel() {
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
     // Tracks which local models are "enabled" (UI only for now)
     private val _enabledModelIds = MutableStateFlow<Set<String>>(emptySet())
     val enabledModelIds: StateFlow<Set<String>> = _enabledModelIds.asStateFlow()
@@ -47,6 +50,7 @@ class ModelsViewModel : ViewModel() {
         
         viewModelScope.launch {
             _isLoading.value = true
+            _errorMessage.value = null
             try {
                 // Get installed models from browser (browsing local only)
                 val installed = browser.browse(onlyInstalled = true).getOrThrow()
@@ -64,7 +68,7 @@ class ModelsViewModel : ViewModel() {
                 val merged = (catalogUi + remoteUi).distinctBy { it.id }
                 _cookbookModels.value = merged
             } catch (e: Exception) {
-                // Handle error
+                _errorMessage.value = "Refresh failed: ${e.message ?: "Unknown error"}"
             } finally {
                 _isLoading.value = false
             }
@@ -81,17 +85,22 @@ class ModelsViewModel : ViewModel() {
             val browser = EngineService.instance?.modelBrowser ?: return@launch
             
             _isSearching.value = true
+            _errorMessage.value = null
             try {
                 // If query is empty, we are effectively browsing trending models again
                 val searchQuery = if (query.isBlank()) null else query
                 val results = browser.searchRemote(searchQuery, kind, minContext).getOrThrow()
                 _cookbookModels.value = results.map { it.toUiModel() }
             } catch (e: Exception) {
-                // Handle error
+                _errorMessage.value = "Search failed: ${e.message ?: "Network error"}"
             } finally {
                 _isSearching.value = false
             }
         }
+    }
+
+    fun clearError() {
+        _errorMessage.value = null
     }
 
     fun toggleModelEnabled(modelId: String, enabled: Boolean) {

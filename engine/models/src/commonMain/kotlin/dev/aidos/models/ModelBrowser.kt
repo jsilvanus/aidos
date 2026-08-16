@@ -80,27 +80,33 @@ class ModelBrowser(
         kind: ModelKind? = null,
         minContext: Int? = null,
     ): Result<List<BrowsableModel>> = runCatching {
-        val hfFilter = mutableListOf("library:gguf")
+        val hfFilter = mutableListOf("gguf")
         
         val searchResult = hfClient.search(
             query = query,
             filter = hfFilter.joinToString(","),
             sort = if (query.isNullOrBlank()) "trendingScore" else "downloads",
-            limit = 30, // Increased limit for better discovery
+            limit = 10, // Reduced limit for parallel detail fetching
         ).getOrThrow()
 
         val installed = catalogManager.listInstalled().getOrThrow()
         val installedMap = installed.associateBy { it.modelId }
         
-        searchResult.models
+        // Fetch full metadata for each result to get sizes and context windows (RFC-0022)
+        val fullModels = searchResult.models.map { hfModel ->
+            hfClient.getModel(hfModel.modelId).getOrDefault(hfModel)
+        }
+
+        fullModels
             .asSequence()
             .map { hfModel ->
                 // Pick best quantization (Q4_K_M or first available)
                 val quant = hfModel.quantizations.find { it.name.contains("Q4_K_M") }
-                    ?: hfModel.quantizations.firstOrNull()
+                    ?: hfModel.quantizations.firstOrNull { it.sizeBytes > 0 }
                 
                 val modelKind = hfClient.inferModelKind(hfModel.tags, hfModel.pipeline)
                 val contextWindow = hfModel.contextLength ?: defaultContextWindow
+                val sizeBytes = hfModel.modelSize ?: quant?.sizeBytes
                 
                 val descriptor = ModelDescriptor(
                     id = hfModel.modelId,
@@ -109,7 +115,7 @@ class ModelBrowser(
                     providerId = "huggingface",
                     isLocal = false,
                     contextWindow = contextWindow,
-                    sizeBytes = quant?.sizeBytes,
+                    sizeBytes = sizeBytes,
                     digest = quant?.sha256Digest,
                 )
                 
@@ -129,7 +135,7 @@ class ModelBrowser(
                     installedModel = installedModel,
                     readableVerdict = verdict.humanReadable(),
                     contextWindow = contextWindow,
-                    sizeBytes = quant?.sizeBytes,
+                    sizeBytes = sizeBytes,
                 )
             }
             .filter { kind == null || it.kind == kind }

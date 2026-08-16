@@ -5,10 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
@@ -76,17 +78,18 @@ class EngineService : LifecycleService() {
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
     
-    // Public state for UI ViewModels
-    lateinit var modelRuntime: GlobalModelRuntime
+    // Public state for UI ViewModels (RFC-0103 Phase E)
+    // Nullable because initialization is async in onCreate.
+    var modelRuntime: GlobalModelRuntime? = null
         private set
         
-    lateinit var hfClient: HuggingFaceClient
+    var hfClient: HuggingFaceClient? = null
         private set
 
-    lateinit var catalogManager: ModelCatalogManager
+    var catalogManager: ModelCatalogManager? = null
         private set
 
-    lateinit var modelBrowser: ModelBrowser
+    var modelBrowser: ModelBrowser? = null
         private set
 
     private lateinit var httpClient: HttpClient
@@ -111,9 +114,11 @@ class EngineService : LifecycleService() {
                         json()
                     }
                 }
-                effectBroker = AndroidEffectBroker(httpClient)
+                val broker = AndroidEffectBroker(httpClient)
+                effectBroker = broker
                 val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
-                hfClient = HuggingFaceClient(effectBroker, hfHandle)
+                val client = HuggingFaceClient(broker, hfHandle)
+                hfClient = client
 
                 // Initialize database-backed catalog manager
                 val databaseDriver = AndroidSqliteDriver(
@@ -125,23 +130,26 @@ class EngineService : LifecycleService() {
                     context = this@EngineService,
                     name = "aidos_engine.db",
                 )
-                catalogManager = DatabaseModelCatalogManager(databaseDriver)
+                val catalog = DatabaseModelCatalogManager(databaseDriver)
+                catalogManager = catalog
 
                 // Initialize model browser with cookbook engine and hardware profile
                 val deviceProfile = DeviceProfileProvider(this@EngineService).getProfile()
-                modelBrowser = ModelBrowser(
-                    catalogManager = catalogManager,
-                    hfClient = hfClient,
+                val browser = ModelBrowser(
+                    catalogManager = catalog,
+                    hfClient = client,
                     cookbookEngine = CookbookEngine(),
                     deviceProfile = deviceProfile
                 )
+                modelBrowser = browser
 
                 // Initialize model runtime with llama.cpp backend (RFC-0103, M21)
                 // GlobalModelRuntime manages the admission queue and loaded model lifecycle
-                modelRuntime = GlobalModelRuntime(LlamaCppInferenceBackend())
+                val runtime = GlobalModelRuntime(LlamaCppInferenceBackend())
+                modelRuntime = runtime
 
                 // Initialize HTTP server (on ephemeral port, chosen by OS)
-                httpServer = EngineHttpServer(tokenManager, modelRuntime)
+                httpServer = EngineHttpServer(tokenManager, runtime)
                 httpServer.start()
 
                 val boundPort = httpServer.getBoundPort()
@@ -155,7 +163,7 @@ class EngineService : LifecycleService() {
                 approvalManager = AppApprovalManager(this@EngineService, approvalStore, notificationManager)
 
                 // Initialize Binder handshake interface with approval manager
-                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, modelRuntime)
+                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
 
                 _isRunning = true
                 updateNotification("Engine running on port $boundPort")
@@ -172,15 +180,27 @@ class EngineService : LifecycleService() {
         // Post foreground notification (required by Android 12+)
         createNotificationChannel()
         val notification = buildNotification("Initializing...")
+        
+        // Security check for foreground service type (RFC-0103)
+        // Android 14+ requires manifest declaration AND the corresponding permission.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            val hasDataSyncPermission = ContextCompat.checkSelfPermission(
+                this,
+                "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+            ) == PackageManager.PERMISSION_GRANTED
+            
+            if (hasDataSyncPermission) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                // If permission missing, start without type to avoid crash, though it may 
+                // limit functionality on Android 14+.
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
 
         // RFC-0103: Sticky mode keeps the service running as long as Engine is needed
-        // Clients hold onto the Binder connection; service restarts on crash with data loss
-        // recovery per RFC-0009.
         return START_STICKY
     }
 
@@ -192,8 +212,8 @@ class EngineService : LifecycleService() {
                     httpClient.close()
                     
                     // Unload all models and shut down the runtime (RFC-0103, RFC-0022)
-                    modelRuntime.loaded().forEach { modelId ->
-                        modelRuntime.unload(modelId)
+                    modelRuntime?.loaded()?.forEach { modelId ->
+                        modelRuntime?.unload(modelId)
                     }
                     
                     tokenManager.clearTokens()

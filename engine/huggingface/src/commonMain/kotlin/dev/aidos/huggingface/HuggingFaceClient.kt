@@ -118,19 +118,34 @@ class HuggingFaceClient(
 
             // Extract JSON from HTTP response (format: "HTTP 200\n\n{json}")
             val jsonPart = responseBody.substringAfter("\n\n").trim()
-            if (jsonPart.isEmpty()) {
+            if (jsonPart.isEmpty() || jsonPart == "[]") {
                 return Result.success(HuggingFaceSearchResult(total = 0, models = emptyList()))
             }
 
             val jsonElement = Json.parseToJsonElement(jsonPart)
-            val jsonObj = jsonElement.jsonObject
-
-            val total = jsonObj["total"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-            val models = jsonObj[if ("results" in jsonObj) "results" else ""]?.jsonArray?.mapNotNull { item ->
-                parseModel(item.jsonObject)
-            } ?: emptyList()
-
-            Result.success(HuggingFaceSearchResult(total = total, models = models))
+            
+            // Hugging Face API /api/models returns an array of models, 
+            // but some search endpoints might wrap it in an object.
+            return when (jsonElement) {
+                is JsonArray -> {
+                    val models = jsonElement.mapNotNull { item ->
+                        if (item is JsonObject) parseModel(item) else null
+                    }
+                    Result.success(HuggingFaceSearchResult(total = models.size, models = models))
+                }
+                is JsonObject -> {
+                    val total = jsonElement["total"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+                    // Handle both "results" and "models" keys if wrapped
+                    val resultsArray = (jsonElement["results"] ?: jsonElement["models"])?.jsonArray
+                    val models = resultsArray?.mapNotNull { item ->
+                        if (item is JsonObject) parseModel(item) else null
+                    } ?: emptyList()
+                    Result.success(HuggingFaceSearchResult(total = if (total > 0) total else models.size, models = models))
+                }
+                else -> {
+                    Result.success(HuggingFaceSearchResult(total = 0, models = emptyList()))
+                }
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -300,9 +315,13 @@ class HuggingFaceClient(
             val likes = json["likes"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
             val pipeline = json["pipeline_tag"]?.jsonPrimitive?.content
             
-            // Try to extract context length from config if available
-            val contextLength = json["config"]?.jsonObject?.get("max_position_embeddings")?.jsonPrimitive?.content?.toIntOrNull()
+            // Try to extract context length from gguf object or config if available
+            val contextLength = json["gguf"]?.jsonObject?.get("context_length")?.jsonPrimitive?.content?.toIntOrNull()
+                ?: json["config"]?.jsonObject?.get("max_position_embeddings")?.jsonPrimitive?.content?.toIntOrNull()
                 ?: json["config"]?.jsonObject?.get("n_ctx")?.jsonPrimitive?.content?.toIntOrNull()
+
+            // Try to get total file size from gguf object
+            val modelSize = json["gguf"]?.jsonObject?.get("totalFileSize")?.jsonPrimitive?.content?.toLongOrNull()
 
             // Parse sibling files as quantizations if available (only if full=true was used)
             val quantizations = json["siblings"]?.jsonArray?.mapNotNull { item ->
@@ -319,6 +338,7 @@ class HuggingFaceClient(
                 likes = likes,
                 pipeline = pipeline,
                 contextLength = contextLength,
+                modelSize = modelSize,
                 quantizations = quantizations,
             )
         } catch (e: Exception) {
@@ -328,18 +348,18 @@ class HuggingFaceClient(
 
     private fun parseQuantization(json: JsonObject): Quantization? {
         return try {
-            val filename = json["filename"]?.jsonPrimitive?.content ?: return null
+            val filename = (json["filename"] ?: json["rfilename"])?.jsonPrimitive?.content ?: return null
             // Only include GGUF quantizations
             if (!filename.endsWith(".gguf")) return null
 
             val size = json["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-            val blob = json["blob"]?.jsonPrimitive?.content ?: return null
-            val sha256 = json["lfs"]?.jsonObject?.get("sha256")?.jsonPrimitive?.content
+            val blob = json["blob"]?.jsonPrimitive?.content ?: ""
+            val sha256 = (json["lfs"]?.jsonObject?.get("sha256") ?: json["sha256"])?.jsonPrimitive?.content
 
             Quantization(
-                name = filename.removeSuffix(".gguf"),
+                name = filename.substringAfterLast("/").removeSuffix(".gguf"),
                 sizeBytes = size,
-                downloadUrl = "https://huggingface.co/$blob",
+                downloadUrl = if (blob.isNotEmpty()) "https://huggingface.co/$blob" else "",
                 sha256Digest = sha256,
             )
         } catch (e: Exception) {

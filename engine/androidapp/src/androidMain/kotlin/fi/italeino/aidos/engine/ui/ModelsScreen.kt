@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.aidos.kernel.ModelKind
 import kotlinx.coroutines.launch
@@ -45,14 +46,29 @@ fun ModelsScreen(
 ) {
     val pagerState = rememberPagerState(pageCount = { 3 })
     val coroutineScope = rememberCoroutineScope()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Refresh state when entering screen
     LaunchedEffect(Unit) {
         viewModel.refresh()
     }
 
+    // Show error message if it changes
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(
+                message = it,
+                actionLabel = "Dismiss",
+                duration = SnackbarDuration.Short
+            )
+            viewModel.clearError()
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
                 TopAppBar(title = { Text("Models") })
@@ -85,17 +101,26 @@ fun ModelsScreen(
             }
         }
     ) { innerPadding ->
-        HorizontalPager(
-            state = pagerState,
+        // To fix IllegalStateException (infinity constraints), ensure the pager 
+        // area is explicitly constrained by the Scaffold's innerPadding.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(8.dp),
-        ) { page ->
-            when (page) {
-                0 -> LocalModelsPane(onModelConfigClick, viewModel)
-                1 -> CookbookPane(onModelSelected, viewModel)
-                2 -> ProvidersPane(onProviderSelected)
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                // Ensure pager doesn't allow infinite height in its children
+                beyondViewportPageCount = 0 
+            ) { page ->
+                when (page) {
+                    0 -> LocalModelsPane(onModelConfigClick, viewModel)
+                    1 -> CookbookPane(onModelSelected, viewModel)
+                    2 -> ProvidersPane(onProviderSelected)
+                }
             }
         }
     }
