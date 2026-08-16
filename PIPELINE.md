@@ -17,13 +17,22 @@ milestone either serves it or is cuttable.
 
 ## Status
 
-**2026-08-16 · Dictator becomes Aidos SDK's first consumer — plan proposed, nothing built yet.**
-Plan: [`docs/dictator-sdk-integration-plan.md`](docs/dictator-sdk-integration-plan.md). Dictator
+**2026-08-16 · Dictator becomes Aidos SDK's first consumer — plan proposed; phase S0 built and
+green.** Plan: [`docs/dictator-sdk-integration-plan.md`](docs/dictator-sdk-integration-plan.md).
+**S0 (`sdk/` compiles) is done**: `build-sdk` passes both steps — the new `jvm()` target and
+`assembleDebug`. The six defects it fixed are listed in the commit; three of them (a missing brace,
+`private val modelId` conflicting with `override val modelId` in all three adapters, and
+`Turn.System.text` where kernel declares `content`) could not have survived one compile, which is
+the clearest evidence available that this module had never been built. The `jvm()` target is what
+makes the SDK checkable at all without an Android SDK, and it earned itself immediately: the
+`Turn.System` defect was found by a local `compileKotlinJvm` in seconds rather than a CI round
+trip. S1 (the `protectionLevel` change) needs the project owner's sign-off on an RFC-0103
+amendment before it can land. Dictator
 (`jsilvanus/dictator`, its `dictator-kotlin/` Android port) is the "second app, independent of
 Aidos Agent" that RFC-0103's Motivation names as the reason the Engine split exists. Findings from
 reading the code, not status lines:
 
-- **`sdk/` does not compile and has never had a consumer.** `EngineModelAdapter.kt` is missing a
+- **`sdk/` did not compile and has never had a consumer** (fixed in S0, below; recorded here as found): `EngineModelAdapter.kt` is missing a
   brace (55 `{` vs 54 `}`); it imports `dev.aidos.kernel.*` and `kotlinx.serialization.json.*`
   while `sdk/build.gradle.kts` declares neither and `sdk/settings.gradle.kts` does not
   `include(":kernel")`; `sdk/` pins Kotlin 2.1.0 against `agent/`+`engine/`'s 2.4.10; `okhttp` is
