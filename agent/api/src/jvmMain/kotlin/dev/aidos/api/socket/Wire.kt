@@ -340,9 +340,9 @@ object Wire {
     fun decodeRuntimeEvent(json: JsonObject): RuntimeEvent {
         val eventId = json["eventId"]!!.jsonPrimitive.content
         val timestamp = Instant.parse(json["timestamp"]!!.jsonPrimitive.content)
-        val projectId = (json["projectId"] as? JsonElement)?.takeIf { it != JsonNull }?.jsonPrimitive?.content
+        val projectId = json["projectId"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
             ?: error("event $eventId has no projectId")
-        val sessionId = (json["sessionId"] as? JsonElement)?.takeIf { it != JsonNull }?.jsonPrimitive?.content
+        val sessionId = json["sessionId"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
             ?: error("event $eventId has no sessionId")
         return when (json["type"]!!.jsonPrimitive.content) {
             "SessionCreated" -> RuntimeEvent.SessionCreated(
