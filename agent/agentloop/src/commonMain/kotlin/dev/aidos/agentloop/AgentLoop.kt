@@ -1,36 +1,35 @@
 package dev.aidos.agentloop
 
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.EffectBroker
+import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.AssemblyRequest
 import dev.aidos.prompt.AssemblyResult
+import dev.aidos.prompt.ContextItem
 import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
-import dev.aidos.kernel.ContextItem
-import dev.aidos.kernel.ToolDescriptor
-import dev.aidos.kernel.ModelKind
-import dev.aidos.kernel.PlatformProfile
-import dev.aidos.kernel.ExecutionWindow
 
-/** An unbounded execution window for tests and desktop use. */
 object UnboundedExecutionWindow : ExecutionWindow {
     override fun remainingMillis(): Long? = null
     override fun permitsLocalInference(): Boolean = true
 }
 
-/** Agent loop for a single Run (RFC-0008, M16). */
 class AgentLoop(
     private val router: InferenceRouter,
     private val assembler: PromptAssembler,
@@ -78,8 +77,7 @@ class AgentLoop(
                     is RoutingDecision.RemoteApproved -> larger.adapter
                     else -> return RunOutcome.Failed("No model with context window >= ${ar.minimumContextWindow}")
                 }
-                val ar2 = assembler.assemble(assemblyReq.copy(model = largerAdapter))
-                when (ar2) {
+                when (val ar2 = assembler.assemble(assemblyReq.copy(model = largerAdapter))) {
                     is AssemblyResult.Ok -> ar2.pkg
                     is AssemblyResult.TooBig -> return RunOutcome.Failed("Prompt does not fit even in larger context window")
                 }
@@ -88,7 +86,6 @@ class AgentLoop(
 
         val transcript = mutableListOf<Turn>()
         transcript.addAll(pkg.request.messages)
-
         var runTaint = TrustLevel.TRUSTED
         var taintSourceDescription: String? = null
         var steps = 0
@@ -111,11 +108,13 @@ class AgentLoop(
                 return RunOutcome.Failed("Model invocation failed: ${err.message}")
             }
 
-            // Consume the generalized RFC-0022 response once at the semantic boundary. The
-            // transcript remains intentionally text/tool oriented for the agent loop; tensor and
-            // future modality outputs are handled by capability-specific consumers above/beside it.
-            val responseText = response.text()
-            val responseToolCalls = response.toolCalls()
+            val responseText = response.outputs
+                .filterIsInstance<dev.aidos.kernel.TextOutput>()
+                .joinToString("") { it.text }
+                .ifEmpty { null }
+            val responseToolCalls = response.outputs
+                .filterIsInstance<ToolCallOutput>()
+                .map { it.call }
             val assistantTurn = Turn.Assistant(text = responseText, toolCalls = responseToolCalls)
             transcript.add(assistantTurn)
 
@@ -154,7 +153,6 @@ class AgentLoop(
                     call = toolCall,
                     runTaint = runTaint,
                 )
-
                 val newTaint = runTaint raisedBy result.trustLevel
                 if (newTaint != runTaint) {
                     runTaint = newTaint
@@ -174,7 +172,6 @@ class AgentLoop(
                     transcript.add(Turn.ToolResult(result = result))
                 }
             }
-
             checkpoint(StepEvent.StepCompleted(step = steps, taint = runTaint))
         }
 
@@ -202,7 +199,6 @@ sealed interface RunOutcome {
         val taintSourceDescription: String?,
         val instructionSetHash: String?,
     ) : RunOutcome
-
     data class Failed(val reason: String) : RunOutcome
     data class Suspended(val reason: String) : RunOutcome
 }
