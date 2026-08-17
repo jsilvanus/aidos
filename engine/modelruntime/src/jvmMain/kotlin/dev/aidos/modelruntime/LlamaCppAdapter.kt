@@ -5,10 +5,13 @@ import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.TokenUsage
 import dev.aidos.kernel.Turn
 import java.io.File
@@ -19,45 +22,6 @@ import java.io.File
  * Uses llama-cpp-java JNI bindings to load and run GGUF models locally.
  * Supports constrained decoding via GBNF grammars for tool-calling
  * (RFC-0021 constrained decoding, RFC-0008 agent loop).
- *
- * ## Tool Calling Protocol (RFC-0021, M22)
- *
- * Local GGUF models without native function-calling are supported through:
- *
- * 1. **GBNF Grammar Compilation**: Tool descriptors are compiled to GBNF (GGML BNF)
- *    grammars by GbnfGrammarCompiler. This constrains the model output to valid
- *    JSON tool calls during sampling.
- *
- * 2. **Tool Call Format**: Model output is constrained to:
- *    ```
- *    {"tool": "toolName", "args": {...}}
- *    ```
- *    Multiple calls can appear in a single output, each on independent lines.
- *
- * 3. **Tool Call Parsing**: Model output is parsed by ToolCallParser to extract
- *    structured ToolCall objects with:
- *    - callId: Unique identifier (UUID-based)
- *    - toolName: Tool to invoke (validated against available tools)
- *    - arguments: JSON arguments for the tool
- *    - capabilityId: null (resolved by agent loop per RFC-0008)
- *    - rawText: Original text (retained for heuristic parsing, security audit)
- *
- * ## Design Rationale
- *
- * The constraint-based approach (vs. freeform parsing) ensures:
- * - Guaranteed well-formed JSON from the model (GBNF enforces syntax)
- * - No post-hoc schema validation needed
- * - Clear audit trail: rawText shows what the model emitted vs. what was parsed
- *
- * For M22 MVP, grammar is compiled but not yet passed to llama.cpp sampling.
- * Parsing uses heuristic pattern matching with audit trail (rawText retained).
- * Future work: Integrate compiled grammar into llama.cpp's constrained_sampling.
- *
- * Resource management:
- * - One model at a time (admission queue, RFC-0022)
- * - Context is loaded for the duration of inference
- * - Memory is freed explicitly on unload
- * - Native crashes are bounded by checkpoint recovery (RFC-0009)
  */
 class LlamaCppAdapter(
     override val modelId: String,
@@ -71,55 +35,26 @@ class LlamaCppAdapter(
     override val contextWindow = contextSize
     override val isLocal = true
 
-    /**
-     * M21 (RFC-0022, RFC-0045): wall-clock time spent inside [loadModel] -- the audit's Part 3
-     * finding was that zero cold-start timing instrumentation existed anywhere in this class, so
-     * RFC-0022's "cold start to first token under 10 seconds" number could never actually be
-     * captured even once real hardware exists. This measures model *load* specifically (mmap +
-     * llama.cpp initialization), not load-plus-first-token -- callers timing the full done-when
-     * number should add first-token latency from [invoke] on top of this. Property initializers
-     * run in declaration order, so [loadStartNanos] is guaranteed set before [model]'s
-     * initializer (which calls [loadModel]) runs.
-     */
     private val loadStartNanos: Long = System.nanoTime()
     private val model: LlamaModel = loadModel(modelFile, contextSize, threads)
     val coldStartMillis: Long = (System.nanoTime() - loadStartNanos) / 1_000_000
 
-    /**
-     * M21: set once [close] has freed the native model. A backgrounded Android process can have
-     * this adapter closed by [GlobalModelRuntime.unload] (memory pressure, execution window
-     * ending) while a caller still holds a reference -- [invoke] must fail cleanly afterward
-     * rather than dereference a freed native pointer, which is a crash, not a `Result.failure`.
-     * This is the reload-survival half of M21's done-when at the adapter's own boundary; the
-     * corresponding backend-level fix (actually calling [close] on unload, rather than leaking
-     * the native handle) is in [LlamaCppInferenceBackend.unload].
-     */
     @Volatile
     private var closed: Boolean = false
 
-    /**
-     * Load GGUF model using llama-cpp-java binding.
-     *
-     * Parameters are optimized for mid-range devices:
-     * - Context size: configurable (default 2048 for memory efficiency)
-     * - Threads: number of CPU threads for inference
-     * - GPU layers: 0 by default (CPU only; GPU support in future)
-     * - Use mmap: enabled for efficient file loading
-     * - Use mlock: disabled to prevent app being killed under memory pressure
-     */
     private fun loadModel(
         modelPath: File,
         contextSize: Int,
         threads: Int,
     ): LlamaModel {
         val params = ModelParameters()
-            .setNCtx(contextSize)          // Context window size
-            .setNThreads(threads)          // CPU threads for inference
-            .setNGpuLayers(0)              // No GPU for now (M22+)
-            .setNBbatch(512)               // Batch size for token generation (real API's own typo, not this file's)
-            .setLogitsAll(false)           // Don't compute logits for all tokens
-            .setUseMmap(true)              // Use memory-mapped file I/O
-            .setUseMLock(false)            // Don't lock memory (avoid killing app)
+            .setNCtx(contextSize)
+            .setNThreads(threads)
+            .setNGpuLayers(0)
+            .setNBbatch(512)
+            .setLogitsAll(false)
+            .setUseMmap(true)
+            .setUseMLock(false)
 
         return try {
             LlamaModel(modelPath.absolutePath, params)
@@ -128,47 +63,27 @@ class LlamaCppAdapter(
         }
     }
 
-    /**
-     * Check if model supports native tool calling.
-     * llama.cpp uses constrained decoding (GBNF) for tool calling,
-     * not native function calling support in the model.
-     */
     override fun supportsNativeToolCalls(): Boolean = false
 
     /**
-     * Run inference with the loaded model (RFC-0021, RFC-0022).
-     *
-     * Supports:
-     * - Text generation from input turns (system/user/assistant)
-     * - Constrained decoding via GBNF grammar for tool-calling
-     * - Stop criteria (max tokens, stop sequences)
-     * - Token counting and usage reporting
-     *
-     * Thread-safe via the global admission queue (RFC-0022).
+     * Run inference and return the generalized RFC-0022 response shape.
+     * Text and tool calls are separate ordered ModelOutput values; model identity and usage
+     * remain attached to the response rather than being encoded in output types.
      */
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         if (closed) {
-            // M21: the model was unloaded (backgrounded, memory pressure, execution window
-            // ended) after this adapter reference was taken but before this call arrived --
-            // a real, expected race on a phone, not a bug. Fail cleanly; GlobalModelRuntime's
-            // admission queue is the reload path (a fresh load() call gets a fresh adapter).
             return Result.failure(
                 IllegalStateException("Model $modelId was unloaded; reload before invoking again")
             )
         }
+
         return try {
-            // Convert turns to prompt text
             val prompt = formatPrompt(request.messages)
 
-            // If tools are provided, compile GBNF grammar for constrained decoding (RFC-0021)
             if (request.tools.isNotEmpty()) {
                 compileToolGrammar(request.tools)
             }
 
-            // Generate response using the real de.kherud.llama API: LlamaModel.generate(prompt,
-            // InferenceParameters) returns Iterable<Output>, not a bespoke hasNext()/next()
-            // completion handle -- iterate it directly, and each Output's *text* (not the Output
-            // itself) is the token's decoded string.
             val output = buildString {
                 val tokens = model.generate(prompt, InferenceParameters()).iterator()
                 var tokenCount = 0
@@ -182,34 +97,38 @@ class LlamaCppAdapter(
                 }
             }
 
-            // Extract tool calls from output if tools were requested
             val toolCalls = if (request.tools.isNotEmpty()) {
                 extractToolCalls(output, request.tools)
             } else {
                 emptyList()
             }
 
-            // Determine stop reason
             val stopReason = when {
                 estimateTokens(output) >= request.maxOutputTokens -> StopReason.MAX_TOKENS
                 shouldStop(output, request.stopConditions) -> StopReason.STOP_SEQUENCE
+                toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                 else -> StopReason.END_TURN
             }
 
-            // Token counting (approximate; llama-cpp-java doesn't expose exact counts yet)
+            val inputTokens = estimateTokens(prompt)
+            val outputTokens = estimateTokens(output)
             val usage = TokenUsage(
-                inputTokens = estimateTokens(prompt),
-                outputTokens = estimateTokens(output),
+                inputTokens = inputTokens,
+                outputTokens = outputTokens,
+                totalTokens = inputTokens + outputTokens,
             )
+
+            val outputs = buildList {
+                if (output.isNotEmpty()) add(TextOutput(output))
+                toolCalls.forEach { add(ToolCallOutput(it)) }
+            }
 
             Result.success(
                 ModelResponse(
-                    text = output,
-                    toolCalls = toolCalls,
+                    outputs = outputs,
                     stopReason = stopReason,
                     usage = usage,
-                    modelId = modelId,
-                    modelVersion = modelVersion,
+                    model = ModelRef(modelId, modelVersion),
                 )
             )
         } catch (e: Exception) {
@@ -217,14 +136,6 @@ class LlamaCppAdapter(
         }
     }
 
-    /**
-     * Convert turn list to a prompt string (RFC-0025 prompt construction).
-     *
-     * Format:
-     * 1. System turn (if present)
-     * 2. Then for each turn: role + content
-     * 3. Add "Assistant:" prompt to continue
-     */
     private fun formatPrompt(turns: List<Turn>): String {
         val prompt = StringBuilder()
 
@@ -267,71 +178,26 @@ class LlamaCppAdapter(
         return prompt.toString()
     }
 
-    /**
-     * Compile tool definitions to GBNF grammar for constrained decoding (RFC-0021, M22).
-     *
-     * GBNF (GGML BNF) is llama.cpp's grammar format for enforcing structured output.
-     * This creates a grammar that validates tool calls match the schema.
-     *
-     * The compiled grammar constrains the model to generate valid JSON tool calls
-     * with the structure: {"tool": "toolName", "args": {...}}
-     *
-     * See GbnfGrammarCompiler for the implementation.
-     */
-    private fun compileToolGrammar(tools: List<dev.aidos.kernel.ToolDescriptor>): String? {
-        return GbnfGrammarCompiler.compile(tools)
-    }
+    private fun compileToolGrammar(tools: List<dev.aidos.kernel.ToolDescriptor>): String? =
+        GbnfGrammarCompiler.compile(tools)
 
-    /**
-     * Extract tool calls from model output (RFC-0021, M22).
-     *
-     * Parses the output text to find tool calls with the expected format:
-     * {"tool": "toolName", "args": {...}}
-     *
-     * When constrained decoding is used, the output is guaranteed to be well-formed
-     * and parsing is straightforward. When not constrained, rawText is retained
-     * to preserve the original output for audit purposes (security-relevant when
-     * parsing was heuristic — RFC-0021).
-     *
-     * See ToolCallParser for the implementation.
-     */
     private fun extractToolCalls(
         output: String,
         tools: List<dev.aidos.kernel.ToolDescriptor>,
-    ): List<ToolCall> {
-        // For M22, assume output was not constrained by GBNF grammar yet
-        // (grammar compilation happens above, but llama.cpp integration is future work).
-        // Mark parsing as heuristic so rawText is retained for audit trail.
-        return ToolCallParser.parse(output, tools, isConstrained = false)
-    }
+    ): List<ToolCall> = ToolCallParser.parse(output, tools, isConstrained = false)
 
-    /**
-     * Check if output contains a stop sequence.
-     */
-    private fun shouldStop(output: String, stopSequences: List<String>): Boolean {
-        return stopSequences.any { output.contains(it) }
-    }
+    private fun shouldStop(output: String, stopSequences: List<String>): Boolean =
+        stopSequences.any { output.contains(it) }
 
-    /**
-     * Estimate token count (rough approximation).
-     * llama-cpp-java doesn't expose exact token counts in M21.
-     * Token count ≈ word count * 1.3 (typical for English).
-     */
-    private fun estimateTokens(text: String): Int {
-        return (text.split("\\s+".toRegex()).size * 1.3).toInt()
-    }
+    private fun estimateTokens(text: String): Int =
+        (text.split("\\s+".toRegex()).size * 1.3).toInt()
 
-    /**
-     * Clean up resources (free model from memory).
-     * Called by GlobalModelRuntime when unloading the model.
-     */
     fun close() {
-        if (closed) return  // Idempotent -- GlobalModelRuntime.unload() may race a second call.
+        if (closed) return
         closed = true
         try {
             model.close()
         } catch (e: Exception) {
-            // Log but don't throw; cleanup should be best-effort
             System.err.println("Error closing llama.cpp model: ${e.message}")
         }
     }
