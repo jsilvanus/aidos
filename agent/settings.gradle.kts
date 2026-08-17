@@ -49,7 +49,12 @@ include(":vault")
 include(":prompt")
 include(":agentloop")
 include(":memory")
-include(":mcp")
+// RFC-0031 "Implementation Layering": what was :mcp is three modules. :mcp-core and :mcp-policy
+// are kernel-free by construction — that is what makes them reusable outside this repo — and
+// :mcp-broker is the only one that binds to :kernel.
+include(":mcp-core")
+include(":mcp-policy")
+include(":mcp-broker")
 include(":routing")
 include(":worker")
 include(":retention")
