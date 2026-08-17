@@ -118,33 +118,33 @@ goals, reads its own inventions back, and drifts — each step locally plausible
 
 ### D7 — Taint attenuates authority · `SETTLED`
 
-A Run whose context has admitted untrusted content operates under a reduced capability set for
-its remainder. In-project reversible work stays frictionless; egress, secrets, out-of-project
-mutation, and `UNSAFE` effects require per-call approval naming the tainting source.
+A Run whose context has admitted untrusted content operates under a reduced capability set for its
+remainder. In-project reversible work stays frictionless; egress, secrets, out-of-project mutation,
+and `UNSAFE` effects require per-call approval naming the tainting source.
 
-Prompt injection is dangerous because the next tool call carries the session's authority, not
-because the model read the text. Delimiters ask the model to enforce a boundary; models are not
-reliable enforcement points.
+Prompt injection is dangerous because the next tool call carries the session's authority, not because
+the model read the text. Delimiters ask the model to enforce a boundary; models are not reliable
+enforcement points.
 
-**Tuning note:** if prompts prove too frequent in practice, loosen the defaults — do not remove
-the mechanism. Frequent prompts train dismissal, which is the failure mode.
+**Tuning note:** if prompts prove too frequent in practice, loosen the defaults — do not remove the
+mechanism. Frequent prompts train dismissal, which is the failure mode.
 **RFCs:** 0027, 0025, 0018.
 
 ### D8 — Budget divides on delegation · `SETTLED`
 
-A driver holding 10,000 cost units delegating to three workers **divides** that allowance. It
-does not multiply it. Without the rule, fan-out is an unbounded spend multiplier and
-orchestration becomes the most expensive way to use the product.
+A driver holding 10,000 cost units delegating to three workers **divides** that allowance. It does not
+multiply it. Without the rule, fan-out is an unbounded spend multiplier and orchestration becomes the
+most expensive way to use the product.
 
-Follows from RFC-0018's equal-or-more-restrictive delegation rule, but is stated because the
-natural implementation gives each worker a fresh budget.
+Follows from RFC-0018's equal-or-more-restrictive delegation rule, but is stated because the natural
+implementation gives each worker a fresh budget.
 **RFCs:** 0011, 0028, 0018.
 
 ### D9 — Run budget defaults: 24 steps, 8 model calls · `SETTLED`
 
 A product-feel decision, not an engineering one. Conservative at Run scope; absent above it.
-Nagging users about monthly limits they did not ask for is worse than a per-Run ceiling that
-catches runaways.
+Nagging users about monthly limits they did not ask for is worse than a per-Run ceiling that catches
+runaways.
 **RFCs:** 0028.
 
 ---
@@ -153,44 +153,42 @@ catches runaways.
 
 ### D10 — Intent status is derived, never authored · `SETTLED`
 
-Computed from `IMPLEMENTS` edges, acceptance criteria, children, and dependencies. User
-overrides are stored as timestamped claims shown *alongside* the derived value, never replacing
-it.
+Computed from `IMPLEMENTS` edges, acceptance criteria, children, and dependencies. User overrides are
+stored as timestamped claims shown *alongside* the derived value, never replacing it.
 
-A stored field becomes a lie the moment a Run is reverted, partially fails, or is later broken —
-and it then feeds prompt construction, so the model inherits the false belief. Adds `STALE`,
-which a stored field cannot represent and which is a normal event in a Git-first product.
+A stored field becomes a lie the moment a Run is reverted, partially fails, or is later broken — and
+it then feeds prompt construction, so the model inherits the false belief. Adds `STALE`, which a
+stored field cannot represent and which is a normal event in a Git-first product.
 
-**Not deferrable:** retrofitting derivation after a stored field exists means migrating data
-that was never trustworthy.
+**Not deferrable:** retrofitting derivation after a stored field exists means migrating data that was
+never trustworthy.
 **RFCs:** 0012.
 
 ### D11 — `TARGETED` (fact) and `IMPLEMENTS` (assertion) are separate edges · `SETTLED`
 
-`TARGETED` is written by the runtime at Run creation. `IMPLEMENTS` is asserted at completion and
-carries `confirmed`. They diverge constantly — a Run started to fix a bug often ends up
-refactoring something else.
+`TARGETED` is written by the runtime at Run creation. `IMPLEMENTS` is asserted at completion and carries
+`confirmed`. They diverge constantly — a Run started to fix a bug often ends up refactoring something else.
 **RFCs:** 0019.
 
 ### D12 — Cross-graph edges point one way · `SETTLED`
 
-**The Execution Graph is the only graph with outbound cross-graph edges.** Intent and Resource
-never reference each other or reference execution. Reverse directions are queries.
+**The Execution Graph is the only graph with outbound cross-graph edges.** Intent and Resource never
+reference each other or reference execution. Reverse directions are queries.
 
-Rationale in descending cost: write amplification on a Git-snapshotted structure; two sources of
-truth; each side must survive without the other; direction encodes authorship.
+Rationale in descending cost: write amplification on a Git-snapshotted structure; two sources of truth;
+each side must survive without the other; direction encodes authorship.
 
 **If a traversal is awkward, extend `ProvenanceService` — do not add an edge.**
 **RFCs:** 0019, 0024.
 
 ### D13 — Declared plans for anything spawning workers · `SETTLED`
 
-Two Task creation modes: emergent (the loop appends Tasks as the model emits calls) and declared
-(a batch with `DEPENDS_ON` proposed upfront, approved before execution). Declared is required
-when a plan spawns workers, exceeds a cost estimate, or is requested.
+Two Task creation modes: emergent (the loop appends Tasks as the model emits calls) and declared (a batch
+with `DEPENDS_ON` proposed upfront, approved before execution). Declared is required when a plan spawns
+workers, exceeds a cost estimate, or is requested.
 
-The line is reversibility: a plan you watch unfold step by step needs no gate; one that commits
-five sessions to hours of work does.
+The line is reversibility: a plan you watch unfold step by step needs no gate; one that commits five
+sessions to hours of work does.
 **RFCs:** 0019, 0011.
 
 ---
@@ -199,26 +197,25 @@ five sessions to hours of work does.
 
 ### D14 — At most one *effectful* Task per Run is `RUNNING` · `SETTLED`
 
-Reformulated from "at most one Task". `Read` effects may run concurrently; everything else
-serializes.
+Reformulated from "at most one Task". `Read` effects may run concurrently; everything else serializes.
 
-The invariant was never about concurrency — it was about the audit trail being able to say what
-happened in what order, and **reads have no order that matters**. They are `PURE`, so recovery
-is re-execution with no idempotency question.
+The invariant was never about concurrency — it was about the audit trail being able to say what happened
+in what order, and **reads have no order that matters**. They are `PURE`, so recovery is re-execution with
+no idempotency question.
 
-**Sequencing:** write `nextRunnableTask` to return a set and recovery to iterate (near-zero cost
-now); enable concurrent reads at v1; never relax for `Mutate`, which would contend on the
-worktree lock inside a Run and make the audit trail a genuine partial order.
+**Sequencing:** write `nextRunnableTask` to return a set and recovery to iterate (near-zero cost now);
+enable concurrent reads at v1; never relax for `Mutate`, which would contend on the worktree lock inside
+a Run and make the audit trail a genuine partial order.
 **RFCs:** 0006, 0009, 0019.
 
 ### D15 — Parallelism is across Runs; the worktree is the lock · `SETTLED`
 
-The contended resource is the working tree and Git index, not the project. Treeless workers
-build commits against the object database and contend on nothing, so they run genuinely in
-parallel — each with its own Run, transcript, Execution Graph subtree, and audit attribution.
+The contended resource is the working tree and Git index, not the project. Treeless workers build commits
+against the object database and contend on nothing, so they run genuinely in parallel — each with its own
+Run, transcript, Execution Graph subtree, and audit attribution.
 
-On mobile the real limit is device-global model inference, not the tree: five workers is not
-five times faster.
+On mobile the real limit is device-global model inference, not the tree: five workers is not five times
+faster.
 **RFCs:** 0007, 0049.
 
 ---
@@ -238,102 +235,70 @@ five times faster.
 | Knowledge index | no — derived; rebuilding is cheaper |
 
 **Rejected:** full CRDT/event-sourced sync. Foundational, and a different product.
-**Complementary, not alternatives:** Git-backed sync gives offline continuity of intent and
-knowledge; pairing gives access to compute.
+**Complementary, not alternatives:** Git-backed sync gives offline continuity of intent and knowledge;
+pairing gives access to compute.
 
-**Decides now:** intent and memory must stay file-serializable with globally unique IDs — no
-device-local sequence numbers, no autoincrement IDs in those two structures.
+**Decides now:** intent and memory must stay file-serializable with globally unique IDs — no device-local
+sequence numbers, no autoincrement IDs in those two structures.
 **RFCs:** 0099, 0046, 0053.
 
 ### D17 — MCP ships in the MVP: stdio on desktop, HTTP on every profile · `SETTLED`
 
 MCP stdio lands with the first vertical slice (Phase 2), not in a later ecosystem phase.
 
-The MVP is CLI-first and therefore DESKTOP, where stdio MCP works. More importantly, **it
-validates the tool abstraction while that is still cheap to change** — if `ToolDescriptor`, the
-effect taxonomy, and capability subjects cannot absorb tools the runtime did not write, that is a
-finding worth having in month four rather than month fourteen.
+The MVP is CLI-first and therefore DESKTOP, where stdio MCP works. More importantly, **it validates the
+tool abstraction while that is still cheap to change** — if `ToolDescriptor`, the effect taxonomy, and
+capability subjects cannot absorb tools the runtime did not write, that is a finding worth having in month
+four rather than month fourteen.
 
-**Consequence to accept:** the MVP is no longer purely first-party. The MCP trust model becomes
-MVP-critical rather than future hardening.
+**Consequence to accept:** the MVP is no longer purely first-party. The MCP trust model becomes MVP-critical
+rather than future hardening.
 **Does not change D18.**
 
-**Amended 2026-08-04 — streamable HTTP is in the MVP too, on every profile.** This decision was
-originally titled *"MCP ships in the MVP, desktop only"* and scoped the MVP to stdio. That scope
-limit is lifted: HTTP transport ships in Phase 2 alongside stdio, and MCP is therefore available
-on MOBILE when online.
+**Amended 2026-08-04 — streamable HTTP is in the MVP too, on every profile.** This decision was originally
+titled *"MCP ships in the MVP, desktop only"* and scoped the MVP to stdio. That scope limit is lifted: HTTP
+transport ships in Phase 2 alongside stdio, and MCP is therefore available on MOBILE when online.
 
-The reason the limit existed was platform reality — Android cannot spawn arbitrary binaries, so
-*stdio* MCP genuinely does not exist there — and it was over-applied to MCP as a whole. Network
-connectivity is already a used, decided path in the MVP: M23 routes to remote model providers as
-user-owned policy, and Git fetch/push egress on every profile. Withholding HTTP MCP did not keep
-the network boundary closed; it only kept one tool family from crossing a boundary that others
-already cross. RFC-0049 and RFC-0050 had in fact already modelled HTTP MCP as available
-everywhere — `AvailabilityTier.NETWORKED` names it by name — so the corpus was written for this
-and only the MVP phasing said otherwise.
+The reason the limit existed was platform reality — Android cannot spawn arbitrary binaries, so *stdio* MCP
+genuinely does not exist there — and it was over-applied to MCP as a whole. Network connectivity is already a
+used, decided path in the MVP: M23 routes to remote model providers as user-owned policy, and Git fetch/push
+egress on every profile. Withholding HTTP MCP did not keep the network boundary closed; it only kept one tool
+family from crossing a boundary that others already cross. RFC-0049 and RFC-0050 had in fact already modelled
+HTTP MCP as available everywhere — `AvailabilityTier.NETWORKED` names it by name — so the corpus was written
+for this and only the MVP phasing said otherwise.
 
-**What it costs, stated rather than discovered:**
-
-- **Every call to an HTTP server is `Egress` by construction.** A stdio server can hold `Read`
-  and no `Egress`; an HTTP server reaches the network to do anything at all. Consequently a
-  tainted Run needs per-call approval, naming the tainting source, for *every* call to an HTTP
-  server under D7 — where it could still call a stdio one for a read with no friction. Egress is
-  attenuated to per-call approval rather than denied; denial is reserved for out-of-project
-  mutation, secrets, and wider-scope workers (RFC-0027). The remembered per-`(server, project)`
-  grant (D30) carries the ergonomics on the untainted path.
-- **Credentials move from the spawn environment to request headers.** There is no child process,
-  so `secret_ref` resolves into an `Authorization` header. The promise that a secret never enters
-  project configuration or the audit log has to hold on that path too.
-- **The endpoint is a new trust surface.** A URL in a user-scope file is somewhere the runtime
-  will POST project content. HTTPS is required, certificates are validated, and redirects to a
-  different host are refused — otherwise the endpoint is one redirect away from an exfiltration
-  target.
-- **No `http://` loopback exemption on MOBILE**, though DESKTOP and HEADLESS_SERVER keep one. A
-  loopback TCP port on Android is an unauthenticated shared namespace — any app holding
-  `INTERNET` can bind or connect to it, and the socket carries no peer identity to check — so an
-  app squatting the port would receive the project content and the credential. RFC-0055 answers
-  the same question for the desktop runtime socket with a `0600` Unix socket and a token;
-  loopback TCP on Android has neither. **Consequently an MCP server running on the phone itself
-  is not reachable in v1.** The safe form is Android's own IPC, where the platform authenticates
-  the calling package; it is future work in RFC-0031 and must not be approximated by relaxing
-  this rule.
-- **The scrubbed-environment defence does not apply, and does not need to.** With no child
-  process there is nothing to hand a runtime token to, and the server cannot reach the local
-  filesystem or the runtime socket at all. The risk moves rather than growing: from *a local
-  process holding your privileges* to *your project content on someone else's machine*.
-
-**The invariant that keeps the thesis testable:** the core mobile use case must not depend on MCP
-at all. An unreachable server is a degraded tool family (RFC-0049), never a failure, and G3 is
-measured with the network off to prove nothing on the thesis path degrades without it.
+**The invariant that keeps the thesis testable:** the core mobile use case must not depend on MCP at all. An
+unreachable server is a degraded tool family (RFC-0049), never a failure, and G3 is measured with the network
+off to prove nothing on the thesis path degrades without it.
 
 **RFCs:** 0031, 0099, 0049, 0050.
 
 ### D18 — No plugin host in v1; WASM-only when it lands · `SETTLED`
 
-MCP is a protocol spoken to a separate process the user installed deliberately. A plugin host
-loads arbitrary code into the runtime. Different trust problems.
+MCP is a protocol spoken to a separate process the user installed deliberately. A plugin host loads arbitrary
+code into the runtime. Different trust problems.
 
-When built: WASM/WASI only — one isolation target, because a menu of them means the weakest
-defines the system's security. User-scope installation; project-local plugins never.
+When built: WASM/WASI only — one isolation target, because a menu of them means the weakest defines the system's
+security. User-scope installation; project-local plugins never.
 **Decides now:** nothing may require in-process native loading.
 **RFCs:** 0043, 0060.
 
 ### D19 — Remote-client Android reserved, not built · `SETTLED`
 
-A future Android build may be a client of a remote runtime *in addition to* hosting its own.
-Reserved: no client paths in the Runtime API, resumable event streams (`sinceSequence`),
-`FRONTEND` capability subjects, transport-agnostic `RuntimeClient`.
+A future Android build may be a client of a remote runtime *in addition to* hosting its own. Reserved: no client
+paths in the Runtime API, resumable event streams (`sinceSequence`), `FRONTEND` capability subjects,
+transport-agnostic `RuntimeClient`.
 
-**Design constraint for whoever builds it:** a phone should be both, and losing the remote must
-degrade to local operation rather than failure.
+**Design constraint for whoever builds it:** a phone should be both, and losing the remote must degrade to local
+operation rather than failure.
 **RFCs:** 0052, 0055, 0049.
 
 ### D20 — Three of the original runtime concepts changed status · `SETTLED`
 
-- **Media Engine:** not built. A `ContentNode` kind plus two existing AI capabilities covers
-  every stated need; an "engine" would wrap things that are already engines.
-- **Resources / Artifacts:** collapsed into `ContentNode` with mutability as a policy field.
-  RFC-0013 and RFC-0014 are superseded.
+- **Media Engine:** not built. A `ContentNode` kind plus two existing AI capabilities covers every stated need;
+  an "engine" would wrap things that are already engines.
+- **Resources / Artifacts:** collapsed into `ContentNode` with mutability as a policy field. RFC-0013 and RFC-0014
+  are superseded.
 - **Intent Graph:** demoted to a leaf. Nothing depends on it; build it last and small.
 
 **RFCs:** 0024, 0012, 0013, 0014.
@@ -344,601 +309,218 @@ degrade to local operation rather than failure.
 
 ### D21 — Embeddings live outside the operational database · `SETTLED`
 
-The index is at `.aidos/index/`, never in `state.db` — embedding writes would contend with the
-single writer and inflate the file the user backs up with entirely rebuildable data.
+The index is at `.aidos/index/`, never in `state.db` — embedding writes would contend with the single writer and
+inflate the file the user backs up with entirely rebuildable data.
 
-**Start with brute force and measure.** For a few thousand unique blobs, an exhaustive cosine
-scan over a memory-mapped array is milliseconds — inside the query target, with no dependency,
-no build step, and no corruption mode. An ANN index earns its place only when measurement shows
-brute force missing the target on a real repository on a real phone.
+**Start with brute force and measure.** For a few thousand unique blobs, an exhaustive cosine scan over a
+memory-mapped array is milliseconds — inside the query target, with no dependency, no build step, and no
+corruption mode. An ANN index earns its place only when measurement shows brute force missing the target on a
+real repository on a real phone.
 **RFCs:** 0015, 0045.
 
 ### D22 — Build less prompt machinery, not more · `SETTLED`
 
-Implement precedence, hard reserved sections, and a simple recency window over conversation
-history. Do **not** build adaptive compression, semantic chunking, or relevance-scored eviction.
+Implement precedence, hard reserved sections, and a simple recency window over conversation history. Do **not**
+build adaptive compression, semantic chunking, or relevance-scored eviction.
 
-Context windows are growing; much of the scarcity this machinery addresses may not exist in two
-years. The rolling window is in scope and already specified. The layer above it — where effort
-disappears and a larger context window makes the work retroactively pointless — is not.
+Context windows are growing; much of the scarcity this machinery addresses may not exist in two years. The
+rolling window is in scope and already specified. The layer above it — where effort disappears and a larger
+context window makes the work retroactively pointless — is not.
 
-**Revisit when:** measurement shows a long session degrading in quality *before* hitting its
-budget. The precedence hierarchy is the extension point.
+**Revisit when:** measurement shows a long session degrading in quality *before* hitting its budget. The
+precedence hierarchy is the extension point.
 **RFCs:** 0025.
 
 ### D23 — `ToolDescriptor` stays structurally MCP-shaped · `SETTLED`
 
-`name`, `description`, `inputSchema` as JSON Schema. Runtime-only fields (`effect`,
-`requiredPermission`, `availability`) stay strictly additive and never mix into what a model or
-an MCP server sees.
+`name`, `description`, `inputSchema` as JSON Schema. Runtime-only fields (`effect`, `requiredPermission`,
+`availability`) stay strictly additive and never mix into what a model or an MCP server sees.
 
-If MCP becomes universal, `ToolDescriptor` degrades gracefully into a thin translation layer
-rather than a competing model requiring bidirectional mapping. Doubly load-bearing given D17.
+If MCP becomes universal, `ToolDescriptor` degrades gracefully into a thin translation layer rather than a
+competing model requiring bidirectional mapping. Doubly load-bearing given D17.
 
-**Concretely:** no custom schema dialect, no Aidos-specific type system, no restructured
-parameter model.
+**Concretely:** no custom schema dialect, no Aidos-specific type system, no restructured parameter model.
 **RFCs:** 0008, 0031.
-
----
 
 ### D24 — Local inference requires a foreground service; background Runs otherwise prepare only · `SETTLED`
 
-**A Run may make a local model call only in the foreground.** Concretely:
+**A Run may make a local model call only in the foreground.** A Run using a local model runs under a foreground
+service with a visible ongoing notification. Without an FGS, a background Run does deterministic preparation
+only and parks at `ForegroundRequired`; it does not checkpoint KV caches or silently route to remote inference.
 
-- **Primary path (a).** A Run using a local model runs under a foreground service with a visible
-  ongoing notification. The FGS window is long enough for a full inference step, so no
-  sub-step escape hatch is needed in the deadline budget (RFC-0009).
-  **The user may pocket the phone.** A foreground service holding a wake lock keeps running
-  while the app is backgrounded and the screen is locked, across many chained steps — start an
-  analysis, put the phone away, come back to a result. That is the point of (a), not an
-  incidental benefit, and the ongoing notification is what buys it. What does *not* work is
-  `WorkManager`: ~10 minutes, no timing guarantee, deferred by Doze. Deterministic preparation
-  belongs there; anything reaching a model call does not (RFC-0050).
-- **Fallback (d).** Without an FGS — unavailable, or the user declined it — a background Run does
-  deterministic work only: index, fetch, reconcile Git, assemble context. On reaching a model
-  call it **parks** with suspension reason `ForegroundRequired` (RFC-0006) and notifies *"ready
-  to continue"*. Inference happens when the user opens the app.
-- **(b) is rejected**, not deferred. Mid-generation checkpointing — persisting a KV cache and
-  resuming in the next window — sounds like the sophisticated answer and is probably the worst
-  one: the cache is hundreds of megabytes, and serializing it per window plausibly costs more in
-  I/O and battery than the inference it preserves.
-- **(c) is rejected.** Routing background Runs to remote models contradicts offline-first exactly
-  where it was promised.
-
-**Why.** The naive framing — "a model call exceeds any available window" — is wrong. A foreground
-service holding a wake lock runs for minutes; ~500 tokens from a 3B model is around 50 seconds
-and fits comfortably. It is `WorkManager`'s ceiling and Doze that do not accommodate it. So the
-question was never whether inference fits, but what we are willing to require to make it fit —
-and a visible notification is the *correct* user experience for a phone doing sustained work,
-not a cost to engineer around. An agent consuming your battery should say so.
-
-**Consequence, stated plainly:** RFC-0044's recurring sessions complete autonomously when the
-user has granted a foreground service, and otherwise prepare and wait. Both states are
-explainable in one sentence, which is the test that matters. The fallback also makes the
-subsequent foreground session faster, since context is already assembled.
-
-**Would change the answer:** on-device models getting materially faster (fallback becomes rare);
-Android tightening FGS further (pushes toward (d) as primary); measured battery cost at G3
-proving unacceptable (pushes background toward (c) while keeping local in foreground).
-
-**Long-form analysis:** `docs/decisions/D24-android-inference-windows.md`.
 **RFCs:** 0044, 0049, 0009, 0006.
-
----
 
 ### D25 — Diff review on a phone: earlier, and by hunk · `SETTLED`
 
-**Review moves earlier and gets smaller.** Per-mutation `Preview` — already required for every
-`EffectKind.Mutate` for security reasons — is the primary review surface. The commit screen
-separates changes the user already approved from those they did not, and directs attention at
-the second set. Line-level review of that residue is a **hunk card stack**: one hunk per screen,
-keep/skip/revert, visible progress. Raw unified diff stays one tap away. Model-generated diff
-summaries are deferred past G4.
+Per-mutation `Preview` is the primary review surface. The commit screen separates changes the user already
+approved from those they did not; the latter use a hunk card stack with stable identity `(path, base blob hash,
+hunk index)`. Raw unified diff remains one tap away.
 
-**Why it is a Phase 2 decision, not a Phase 4 one.** It determines what the Runtime API and the
-Git tool must return. `diff(): String` in Phase 2 means the Android app inherits a diff parser
-it should never contain — on the device with the least CPU, furthest from JGit, reimplemented by
-every frontend. **The API returns structured hunks with stable identity**, decided at M9,
-implemented at M13, consumed at M31.
-
-**Hunk identity** is `(path, base blob hash, hunk index)`. If the base moves mid-review, the
-review restarts visibly. Silent renumbering during partial staging is how a user stages the
-wrong lines.
-
-**Cost, stated plainly:** applying a *subset* of hunks to the index is real work. JGit gives an
-`EditList` but no hunk-level staging, so the resulting blob is constructed by hand, with tests
-for overlapping edits, CRLF, missing trailing newline, binary, renames, and mode changes. It is
-the only expensive item here. If it must be cut, cut staging and keep the card stack for
-reading.
-
-**Rejected:** scrollable unified diff as the *primary* surface — a diff line is ~120 columns and
-a phone shows ~40 at a readable size; it fails every clause of "comfortably, one-handed, on a
-bus". **Deferred:** model-summarized diffs — a model call at the moment the user is waiting to
-commit, and a D6 hazard, since a model summarizing the diff it just produced is reporting on its
-own work at the point where a wrong summary is least likely to be checked.
-
-**Consequence:** RFC-0050's "Git Browser (Optional)" stops being optional. It is the product.
-
-**Long-form analysis:** `docs/decisions/D25-phone-diff-review.md`.
 **RFCs:** 0050, 0052, 0032, 0053, 0030.
-
----
 
 ### D26 — Glance and voice may approve only the benign class · `SETTLED`
 
-Development on the move has three attention modes — focused, glance, eyes-free — and an approval
-must be answerable in the mode the user is actually in. But approving without reading is exactly
-what the capability model exists to prevent, so the two must be separated by rule rather than by
-hoping.
-
-**An approval is *benign*, and therefore glanceable and voice-answerable, when all of:**
-
-```
-effect      is Read, or Mutate(IN_PROJECT, reversible = true)
-recovery    is not UNSAFE
-run.taint   is TRUSTED
-capability  is already granted — this is an exercise, not a new grant
-```
-
-**Amended 2026-08-03 — `reversible` is a separate axis from `RecoveryClass`.** The original
-predicate used "not `UNSAFE`" as the proxy for reversible. That is wrong, and branch switching
-found it: discarding uncommitted changes is in-project, untainted, and perfectly re-runnable
-after a crash — so it satisfied every clause and became approvable by saying *"approve"* while
-cycling. `RecoveryClass` asks whether an effect can be *re-executed*; `reversible` asks whether
-the user can get their work back. `EffectKind.Mutate` now carries the flag (RFC-0053).
-
-Everything else — egress, out-of-project mutation, `UNSAFE`, a tainted Run, a new grant —
-requires the full card with its preview, and says so. It does not become approvable by being
-looked at harder. Voice approvals are additionally **off by default** (`speech.voice_approvals`):
-answering a capability request by speech extends how authority can be exercised, and that should
-be something the user turned on.
-
-**Amended 2026-08-03 — voice gets three tiers, not one.** The original rule above gave voice the
-benign class and nothing else. The target interaction is richer than that: a spoken notification
-interrupts, the user asks *what*, *where*, *why*, *what if I refuse*, hears structured answers,
-and then decides — while cycling. That user has verified the request **more** thoroughly than
-someone tapping approve on a card they glanced at, and the rule should follow verification rather
-than modality.
-
-| Tier | What | Answered by |
-|---|---|---|
-| **1 · Benign** | the class above | a single *"approve"* |
-| **2 · Readback** | out-of-project mutation, `UNSAFE` effects | runtime states path, scope, blast radius; user replies with a **distinct phrase naming the action**, never a bare *"yes"* |
-| **3 · Never by voice** | egress of project content, any tainted Run, any **new** capability grant | parks — *"that one needs your eyes"* |
-
-Tier 3 holds because each of those changes the *authority envelope* rather than exercising it:
-egress is irreversible and unobservable afterwards, a tainted Run already has an adversary in its
-context, and a new grant is what every other check depends on. A structured readback cannot
-verify them, because what needs checking is not a fact the runtime owns.
-
-Tier 2 requires a naming phrase because *"yes"* is the single most likely word to be misrecognised
-out of music, ambient noise, or a sentence addressed to someone else. `tier2` is a separate
-opt-in from `tier1`.
-
-**And a structural rule that makes the Q&A safe:** the questions are answered from a **fixed
-vocabulary, by template, from runtime-owned fields** — no inference and no attacker-controlled
-text. A user may ask to hear the actual content, and **that turn ends the approval exchange**;
-re-approving starts over. Hearing attacker-authored text and granting authority must not be
-possible in one breath, because that is exactly the sequence an injection needs.
-
-**Why not simply forbid all glance approvals.** Because then every approval is a full card, and a
-user interrupted twelve times per Run learns to tap through — which is D7's tuning note, and the
-failure mode is worse than the thing it was protecting against.
-
-**The classifier is not new policy.** It is the signal set RFC-0027 already uses to decide what
-needs approval, applied one level further to decide what needs *reading*.
-
-**Corollary — no attacker prose in an approval prompt.** Spoken approvals are composed only from
-runtime-owned structured fields: tool name, effect kind, path, scope, taint. Model output and
-file content are never read aloud inside an approval, because a hostile repository could
-otherwise craft text that sounds, to someone who cannot see the screen, like a request they would
-grant. Prompt injection aimed at the human. The boundary is structural for the same reason
-RFC-0025 keeps untrusted content out of the system turn.
-
-**Also settled here:** the Run Summary is a **projection of the Execution Graph, not a model
-call** — D6 applies with extra force, because a glance summary is consumed *instead of* the
-detail rather than alongside it. A generated summary is also uncheckable, costs an inference at
-the worst moment, and parks when there is no foreground service (D24) — which is exactly the
-eyes-free case.
+An approval is benign when it is Read, or reversible in-project mutation, under a trusted Run with an existing
+grant. Voice has three tiers: benign can be one-word approved; readback can approve certain out-of-project or
+unsafe actions with a distinct naming phrase; egress, tainted Runs, and new grants require eyes-on approval.
 
 **RFCs:** 0057, 0050, 0027, 0018, 0049.
 
----
-
 ### D27 — Native dependencies: only where nothing else works and a crash is bounded · `SETTLED`
 
-**The rule.** Accept a native dependency only when **both** hold:
-
-1. **No viable pure-JVM alternative exists** — not "none is as fast", but none is good enough.
-2. **A crash is bounded by machinery that already exists**, so a segfault degrades rather than
-   destroys.
-
-This is the counterpart to D4, and the pair is the policy. D4 rejected libgit2-via-JNI for Git
-on grounds — per-ABI builds, contributor build complexity, a native crash surface in a
-safety-critical component — that apply word for word to an inference engine. The tests above are
-why the answers differ:
-
-| | Pure-JVM alternative? | Blast radius of a crash |
-|---|---|---|
-| **Git** | **Yes** — JGit, good enough | Corrupted history. Unbounded, unrecoverable |
-| **Inference** | **No** — nothing competitive exists | A failed Run. Bounded, already recoverable |
-
-The second column is the load-bearing half. RFC-0009 assumes the process dies without warning,
-because Android does that routinely — so a segfault in the inference engine is a failure mode the
-durable execution model **already handles**: the Run resumes from its last checkpoint. A native
-crash mid-`git commit` is exactly what D4 refused to risk, and no checkpoint saves it.
-
-**Applied:**
-
-- **llama.cpp — accepted.** Inference passes both tests. See RFC-0022.
-- **JGit — unchanged.** Git fails test 1.
-- **tree-sitter — leans reject.** Used for structural extraction in the knowledge index. An
-  alternative arguably exists (heuristic extraction) and the blast radius is an incomplete graph
-  rather than a lost Run, so the presumption is against it. Revisit with a specific proposal.
-
-**Costs accepted, stated rather than discovered:** per-ABI builds (`arm64-v8a` at minimum,
-`x86_64` for the emulator); F-Droid reproducible builds are harder with native code and RFC-0050
-commits to F-Droid, so this is validated early rather than at M34; and the GGUF loader becomes a
-concrete attack surface — a C++ parser reading a file from the internet, mitigated by digest
-verification and not fully.
-
-**Forecloses:** a pure-JVM build of Aidos with local inference. Anyone wanting one gets remote
-providers only, which is a supported configuration (RFC-0022, "when nothing fits").
+Accept a native dependency only when no viable pure-JVM alternative exists and a crash is bounded by existing
+recovery machinery. llama.cpp is accepted; Git remains JGit.
 **RFCs:** 0022, 0049, 0050.
 
 ### D28 — GGUF via llama.cpp for LLM; format is per model kind · `SETTLED`
 
-**Local LLM inference is GGUF, executed by llama.cpp.** The format decision made this
-inevitable — GGUF *is* llama.cpp's format — and the previous RFCs chose GGUF without naming the
-engine, which left the most consequential dependency in the product unstated.
+Local LLM inference is GGUF executed by llama.cpp. GGUF availability, quantization quality, and llama.cpp GBNF
+make it the LLM backend. Format is per `ModelKind`, not globally.
 
-Three reasons, the third being the one that is not merely convenience:
-
-- **Model availability.** Nearly every open model appears as GGUF within days. ONNX conversion of
-  a modern LLM is fiddly — dynamic shapes, KV cache plumbing — and would be ours to do.
-- **Quantization quality.** The k-quants are tuned for quality-per-byte and are why a 3B is
-  useful on a phone at all.
-- **GBNF grammars.** RFC-0021 specifies that an adapter for a model *without* native tool calling
-  uses constrained decoding — a grammar admitting only well-formed calls. That is llama.cpp's
-  GBNF. It is not an optimisation; it is the mechanism by which a local model that cannot do
-  function calling still participates in the agent loop. ONNX Runtime has no equivalent.
-
-**Format is per `ModelKind`, not global.** ONNX Runtime is genuinely better for embeddings, STT
-and TTS — `onnxruntime-android` is an official Maven artifact with Kotlin bindings and no
-hand-written JNI, and NNAPI gives far better NPU access. It is nevertheless **not in the MVP**: a
-second native runtime doubles the APK, the ABI matrix, the crash surface, and the F-Droid
-problem, for a benefit concentrated in kinds that are not on the critical path. Embeddings run
-through llama.cpp; STT, if voice survives the Phase 4 cut, uses whisper.cpp in the same family.
-TTS is the genuine gap, and TTS is M33 — the first thing cut.
-
-**Revisit after G3, with measurement**, specifically for NPU-accelerated embeddings if indexing
-proves to be the bottleneck. That is a numbers question and should be settled with numbers.
+**Amended 2026-08-17 by D44:** ONNX Runtime is now accepted as the second Aidos inference backend and is to be
+implemented as a general tensor/ML backend. The amendment does **not** displace llama.cpp for GGUF LLMs. ONNX
+is the preferred backend for model kinds where tensor/ML execution is a better fit.
 
 **RFCs:** 0022, 0021, 0020, 0049.
 
 ### D29 — The knowledge engine is a consumed library, not an Aidos subsystem · `SETTLED`
 
-RFC-0015 was written as if Aidos would build a knowledge engine: a provider SPI, an entry
-schema, four addressing classes, an invalidation mechanism. It is instead consuming one.
-`gitsema-kotlin` — the port of `jsilvanus/gitsema` — already implements the blob-addressed model
-RFC-0015 adopted, because RFC-0015 adopted it *from* gitsema.
-
-**The library owns its schema.** Aidos owns the location (`.aidos/index/`, outside `state.db` per
-D21), the lifecycle (when indexing starts, when it yields, when it stops), and the resource
-envelope (background dispatcher, cancellable batches, no network). It does not own the DDL. The
-alternative — Aidos defining an entry shape the library writes through — makes every upstream
-schema change an Aidos migration and puts `schema/check.py` in the position of policing tables
-Aidos does not understand. The addressing-class table stays in RFC-0015 as a description of what
-Aidos relies on and would notice breaking, not as Aidos's design.
-
-**There is no provider SPI.** One provider exists. One interface already exists —
-`KnowledgeContextProvider` (RFC-0025). A `KnowledgeProvider` seam with `query`/`is_current`/
-`update`/`subscribe` is maintained for hypothetical implementors and is the same speculative
-extensibility D18 and D22 refused elsewhere. If a second knowledge source appears, the seam is
-cheap to add against a real second case.
-
-Three consequences settled with it:
-
-- **The index covers committed content only** in the MVP. Hash-on-save is elegant and re-embeds a
-  file on every keystroke, on a phone, for content superseded within minutes. Uncommitted work
-  reaches the model through the filesystem tool, which is how it reaches it anyway when the model
-  is the one editing. Debounced hash-on-idle is the upgrade, not the starting point.
-- **A query reports coverage** — blobs indexed over blobs known. Two counters. Without it, first
-  open of a large repository answers "there is no retry logic here" when the truth is "I have not
-  read most of it yet," and G3's measurement cannot distinguish an answer at minute two from an
-  answer at minute forty.
-- **No secret redaction.** RFC-0015 promised secrets in code would be redacted from the index.
-  Nothing funds a scanner, it would have false negatives, and stating it invites reliance. The
-  real property is that the index is app-private, never egresses, and holds nothing the repository
-  does not already hold. A secret committed to the repository is a secret in the repository.
-
-**Forecloses:** shipping a knowledge feature the library does not have. Aidos's contribution is
-the adapter and the resource discipline; capability gaps are upstream work in `gitsema-kotlin`.
+`gitsema-kotlin` owns its knowledge schema; Aidos owns location, lifecycle, and resource envelope. There is no
+speculative provider SPI.
 **RFCs:** 0015, 0025, 0054.
 
 ### D30 — An MCP server's authority is fixed when it is enabled · `SETTLED`
 
-RFC-0031 established that an MCP server is a capability subject holding an attenuated grant, and
-RFC-0027 that its results are `UNTRUSTED`. What neither answered is the interaction: RFC-0055 has
-`user_interactive` capability requests, so may an untrusted process make the user's device raise
-a prompt?
-
-**No.** A server's authority is set when the user enables it for a project and does not grow at
-runtime. A call needing more fails with a message naming what is not permitted; the user changes
-the registration if they want it. A prompt raised by untrusted code is a phishing surface — the
-server picks the moment and part of the wording — and the property lost is worth more than the
-ergonomics gained: a server's maximum authority stays knowable by reading one file. Attributed,
-`EYES_ONLY` runtime requests (D26 already routes `isNewGrant` there) are future work with their
-own threat analysis, not an MVP convenience.
-
-**The grant is by effect class, at enable time.** The user answers one answerable question —
-*this server reads the network and writes files outside your project; yes or no?* — and per-call
-approval then follows the ordinary tier rules. Per-operation grants sound safer and ask the user
-to rule on forty operation names they have never seen, which is a consent dialog that trains
-people to click through. Approving every call is unusable; MCP servers are chatty.
-
-**There is no `TRUSTED` promotion for MCP servers.** RFC-0031 let the user mark a server trusted
-to relax per-call `Egress` approval. It bought fewer prompts and cost the clearest sentence in
-the security model, by putting the word *trusted* on a process whose output is untrusted
-permanently. The same ergonomics come from a remembered grant: an approved egress to a named
-server, scoped to a project, visible in the capability list and revocable there. That mechanism
-already exists and does not require a second concept that reads as if it means more.
-
-**Nothing is spawned by opening a project.** Servers start lazily on first call and shut down
-when idle. "Connect on open, show the green dot" is the obvious implementation and it executes
-third-party code before the user has asked for anything.
-
-Two adjacent questions close the same way. **MCP resources do not feed the knowledge engine** —
-index identity is the blob hash, and an MCP resource has no blob, no stable identity, and no
-invalidation story; it would need a fifth addressing class whose only member is *things that
-might have changed, we cannot tell*. They are fetched as tool results: untrusted, tainting,
-in-context, unindexed. And **Aidos does not expose itself as an MCP server** in v1; that is an
-inbound authority surface needing its own subject kind and threat model.
-
-**Forecloses:** an MCP server that adapts its own permissions as it discovers what it needs. Any
-server requiring that is configured out of band, deliberately, by the user.
+A server's authority is set when the user enables it and does not grow at runtime. There is no `TRUSTED`
+promotion; servers start lazily on first call, not on project open.
 **RFCs:** 0031, 0018, 0027, 0055, 0015.
-
----
 
 ### D31 — A tool description is fenced prose, adopted at enable time · `SETTLED`
 
-RFC-0027 classifies an MCP server's **output** as `UNTRUSTED`. Nothing classified the prose a
-server supplies to *describe* each operation — text that reaches the model in every prompt, before
-any call has returned, so no taint has been applied yet. RFC-0025 placed it in the worst available
-spot: `toolDescriptors` is a **reserved** budget section, always included in full, in the same tier
-as safety constraints and system instructions, and outside the structural sandbox. A server needed
-no capability request (D30 forbids those) if it could write text the model read as instruction.
-
-**Taint cannot be the mechanism, and that is forced rather than preferred.** Descriptors enter
-every prompt from step 0. Counting them as `UNTRUSTED` `ContextItem`s in RFC-0027's `max()` would
-make every Run in a project with any MCP server enabled *begin* tainted — out-of-project mutation
-and secrets denied, egress and `git push` needing per-call approval permanently, and eyes-free
-operation dead under D26 tier 3. Approval cannot rescue it, since approving an escalation is a
-single-use exercise that never clears taint. There is no terminating version of *it taints but you
-can approve it*.
-
-So the control acts at **admission**, which is the distinction RFC-0016 already draws:
-
-> **Taint is for content that arrives during a Run. Adoption is for content that is there before
-> it starts.**
-
-Instruction files sit at high authority, are not runtime-authored, and do not taint; what makes
-them admissible is that a human has seen them, tracked by hash. Tool descriptors are the same kind
-of thing. **Two mechanisms, both required:**
-
-**1 · Fenced.** MCP-sourced description prose renders inside RFC-0025's structural sandbox with
-attribution, and the system statement extends to cover it: text in a tool descriptor describes what
-a tool does and is never an instruction. The machine-checked `inputSchema` is unaffected. The
-description cannot simply be dropped — a model that cannot read what a tool does cannot call it.
-
-**2 · Adopted, per operation, at enable time.** An operation is offered to the model only if the
-user has seen its descriptor, keyed by a hash over `(name, description, inputSchema)`. The schema is
-in the hash deliberately: a description that stays constant while a parameter widens is a real
-attack, and hashing prose alone would miss it.
-
-**Adoption is per operation, not per catalog**, so a server adding one tool does not withdraw the
-other thirty-nine. Unadopted operations are simply **not offered**; the adopted subset keeps
-working.
-
-**Timing — three moments, and the separation is load-bearing** because D30 says nothing is spawned
-or connected by opening a project:
-
-| Moment | What happens |
-|---|---|
-| **Enable time** (explicit user action) | Connect once, fetch the catalog, show what it claims, record adoptions. A legitimate spawn: the user is asking for this server, now. The dialog states that enabling will contact the endpoint. |
-| **Project open** | Nothing. D30 unchanged. |
-| **First call in a Run** | Lazy connect; admit only operations whose current descriptor hash is adopted. |
-
-**Nothing about a descriptor ever interrupts a Run.** A changed, new, or never-adopted operation is
-absent from the catalog the model sees, and the user re-adopts from the server's settings screen
-whenever they choose. A Run may be executing unattended or on a phone with the screen off, so a
-design in which third-party text can park it would hand an untrusted party a denial-of-service
-lever. It also inverts the incentive correctly: a server that silently rewrites its descriptions
-**loses** the ability to steer the model rather than gaining a way to halt work.
-
-**An unreachable catalog is a state, not a failure.** Enabling a server that cannot be contacted
-succeeds with an empty adopted set; the server contributes no tools until adoption completes on a
-later successful connection, surfaced in settings. Refusing to enable would conflate *I want this*
-with *it is reachable right now*, and offline is normal on the profile that matters.
-
-**The enable-time connection needs no separate egress approval.** The enable exchange is the
-approval, and the catalog fetch is scoped to it — provided the dialog says the endpoint will be
-contacted before the user confirms. Approving inside the approval adds a prompt without adding
-information.
-
-**Adoption is not trust promotion**, exactly as in RFC-0016: an adopted descriptor is still
-third-party text, still fenced, still describing a tool whose *results* are `UNTRUSTED` forever.
-Adoption means the user has seen it, nothing more.
-
-**Forecloses:** a server that changes what its tools claim to do and has that reach the model
-unseen.
+MCP descriptions are fenced and adopted per operation at enable time by a hash over `(name, description,
+inputSchema)`. Changed or unadopted operations are not offered to the model and never interrupt a Run.
 **RFCs:** 0031, 0025, 0027, 0016, 0008.
-
-### D34 — Five RFCs claimed MVP scope no milestone built; reconciled · `SETTLED`
-
-A mechanical sweep of every RFC's `## MVP` section against every Phase 1–4 milestone found
-fifteen unmatched. Ten were explicable — meta documents, superseded ones, and subsystems that are
-post-MVP by design. **Five were not**, and three of those were already Accepted. The RFCs' MVP
-sections and the roadmap's milestone set had been written independently and never reconciled, so
-each was internally consistent and they disagreed with each other.
-
-| RFC | Resolution |
-|---|---|
-| **0004** Event bus | Already built — M5 publishes, M9 exposes, M10 verifies `sinceSequence` gap replay. It was only missing from the RFC columns. **Bookkeeping, not scope** |
-| **0036** Settings | Plumbing that M14, M16 and M18 all assume and none built. Folded into **M1** (declared settings, `aidos.toml` parsing) and **M2** (nearest-first resolution, `SECURITY`/`SPEND` enforcement) |
-| **0005** Scheduler | Split: **waking from an event is part of the session model; waking on a clock is a feature.** Event-driven wake lands at M5 because a driver must wake when its worker completes, and the `causal_depth` ceiling with self-wake refusal lands at M6 as a runaway bound. Timers, the admission policy, and priorities are post-MVP |
-| **0012** Intent graph | Task list only, at **M32c**, built last (D20) — but with **derived status and the proposal gate**, the two items that cannot be retrofitted |
-| **0047** Project types | **Types in, templates out.** `projects.project_type` and its defaults at M2; the whole template mechanism post-MVP |
-
-**Two of these are non-deferrable for the same structural reason**, and it is worth stating once:
-derived intent status cannot be retrofitted because doing so migrates data that was never
-trustworthy (D10), and the proposal gate cannot be added later because by then the graph is full
-of unreviewed model output and nobody can tell which parts the user wanted (D6). Both are cases
-where the cost of adding a control is not the control — it is the corrupt data accumulated while
-it was missing.
-
-**The general rule this leaves:** an RFC's MVP section is a claim about the roadmap, and a claim
-nobody checked. Ask of any RFC claiming MVP scope: **which milestone builds this?** If the answer
-is none, one of the two documents is wrong.
-
-**Forecloses:** nothing. It reconciles two documents that had drifted.
-**RFCs:** 0004, 0005, 0012, 0036, 0047.
-
-### D33 — Memory is session-scoped; project scope is a promotion only a user can make · `SETTLED`
-
-Session memory is needed — a project worked on for months should not answer *"I told you last week
-the auth module uses JWT"* with a blank. But a session writing project-wide facts that other
-sessions read back as authority is D6's stated failure mode word for word: *it invents goals,
-reads its own inventions back, and drifts — each step locally plausible, none checked.*
-
-**So memory has two scopes and a gate between them.**
-
-| Kind | Scope |
-|---|---|
-| `TASK_STATE` | **session only, always.** It is the session's current work state; project scope is meaningless for it |
-| `FACT`, `DECISION` | written at **session** scope; **promotable to project scope by the user, never by a session** |
-
-A session reads its own entries plus its project's promoted ones. `session_id` stays populated
-after promotion — it records which session learned the thing, which is provenance worth keeping.
-
-**The gate is not new machinery.** The corpus already refuses this exact crossing twice, both
-times the same way: `intent_proposals` (D6, RFC-0012) lets sessions propose and *only* users
-resolve — "no SESSION variant by construction" — and instruction adoption (RFC-0016) keeps text
-from steering a model until a human has seen it. Project-scoped memory is the same crossing, where
-one agent's conclusion becomes context that steers *future* work, so it gets the same answer.
-
-**Three constraints, enforced by the database rather than by a write path that has to remember:**
-
-```sql
-CHECK (scope <> 'PROJECT' OR promoted_by_user_id IS NOT NULL)  -- no unattributed promotion
-CHECK (kind  <> 'TASK_STATE' OR scope = 'SESSION')             -- task state is never project-wide
-CHECK (scope <> 'PROJECT' OR trust_level <> 'UNTRUSTED')       -- taint cannot buy durable authority
-```
-
-**The third is the load-bearing one.** A promoted entry taints *every* future Run in the project
-that reads it, so promoting an `UNTRUSTED` entry would let a hostile file read once, in one
-session, permanently degrade the authority of every session after it — an unbounded version of
-precisely what D7 exists to bound. A user who wants that fact remembered can state it themselves,
-which makes it `USER_STATED` and `TRUSTED`. Refusing it in the schema means no write path can
-get it wrong.
-
-**Why not project-scoped by default:** it is the drift hazard above, and it arrives silently.
-**Why not session-only:** sessions archive when their work finishes, and RFC-0026 calls `DECISION`
-"the most valuable thing a long-lived session accumulates". Value that evaporates at archival is
-not value.
-
-**Consequence:** RFC-0026's memory review surface stops being optional. Promotion needs a place to
-happen, and the user needs to see what a session is claiming before it becomes project context.
-The surface is the same shape as approving an intent proposal, which Phase 4 builds regardless.
-
-**Forecloses:** ambient cross-session memory that accumulates unattributed beliefs.
-**RFCs:** 0026, 0011, 0012, 0016, 0027.
 
 ### D32 — Durable memory is deterministic; nothing is summarized by a model · `SETTLED`
 
-**There is no model-written summary anywhere in the memory or context path.** The `SUMMARY`
-memory kind is removed (RFC-0026, RFC-0011). Conversation history that does not fit the budget is
-**dropped with an explicit omission marker**, never compacted by a model call (RFC-0025).
-
-What crosses a Run boundary is structured and cited:
-
-| Carrier | What it is |
-|---|---|
-| `FACT`, `DECISION`, `TASK_STATE` | specific claims with mandatory `source_refs`, still carrying the max taint of their sources |
-| **Run Summary** (RFC-0057) | a SQL projection over `runs`/`tasks`/`attempts` — no model call, offline, auditable |
-| **Taint marker** | `runs.taint_level`, rendered as `⚠` at strip density and named on tap |
-
-Four reasons, each sufficient on its own:
-
-- **D6.** A model summarizing its own session is reporting on its own work, at the point where
-  the summary is consumed *instead of* the detail. D26 already refused exactly this for the Run
-  Summary and D25 for diffs; memory was the remaining place it survived.
-- **It launders taint.** RFC-0026 closed the channel with "one field and one `max()`" — a rule
-  that must be remembered at every write site. Removing the summarizer removes the channel, which
-  cannot be forgotten.
-- **It parks on a phone.** Compaction that reaches a model call has no foreground service in the
-  background case (D24), so a session's own memory write would suspend.
-- **D22 already declined this machinery.** Adaptive compression was ruled out; a summarizer is
-  that machinery under a different name, and it had survived as future work.
-
-**Taint crosses the boundary as a marker, not as prose.** A tainted Run is visibly tainted, with
-its cause nameable, and no untrusted text rides along into the next Run.
-
-**Consequence to accept, stated plainly:** a long session's older turns are *gone*, not
-compressed — the model is told how many turns were omitted so it knows its view is partial. If
-that degrades quality before the budget is reached, the trigger is D22's revisit condition, and
-the answer is a larger context window or a better recency policy — **not** a summarizer
-reintroduced under another name.
-
-**Forecloses:** "the assistant remembers the gist of last week." It remembers cited facts,
-recorded decisions, and what the graph says happened.
+No model-written summary exists in the memory or context path. History drops with an omission marker; structured
+facts, decisions, task state, and SQL projections carry durable state.
 **RFCs:** 0026, 0025, 0027, 0011, 0057.
+
+### D33 — Memory is session-scoped; project scope is a promotion only a user can make · `SETTLED`
+
+`TASK_STATE` is session-only. `FACT` and `DECISION` begin at session scope and may become project scope only by
+explicit user promotion, never when untrusted.
+**RFCs:** 0026, 0011, 0012, 0016, 0027.
+
+### D34 — Five RFCs claimed MVP scope no milestone built; reconciled · `SETTLED`
+
+The MVP sections of five RFCs were reconciled against actual milestones. The general rule is that an RFC's MVP
+section is a roadmap claim and must name the milestone that builds it.
+**RFCs:** 0004, 0005, 0012, 0036, 0047.
 
 ### D35 — SQLite binding: SQLDelight's drivers, not its schema codegen · `SETTLED`
 
-Phase 1 needs a concrete way to open SQLite from common KMP code on two targets, JVM (desktop)
-and Android. `gitsema-kotlin` solved the identical problem — same two targets, same requirement
-to run inside one phone process as Aidos — by adopting **SQLDelight** wholesale: `.sq` files
-declare the schema and named queries, the Gradle plugin generates a typed `Database`/`Queries`
-API, and a platform `SqlDriver` (`sqlite-driver`'s `JdbcSqliteDriver` on JVM, `android-driver`'s
-`AndroidSqliteDriver` on Android, itself a thin wrapper over `androidx.sqlite:sqlite-framework`)
-executes it.
-
-**Aidos takes the driver half and declines the schema half.**
-
-**What is shared with gitsema, and why it matters on a phone.** Both libraries load in the same
-process on Android. Taking the same `android-driver` artifact means both go through
-`androidx.sqlite:sqlite-framework` to the platform's own `android.database.sqlite`, i.e. the
-*same* SQLite build the OS already ships — not a second, independently-bundled native SQLite
-competing for the page cache and holding its own locks. On desktop, both take
-`sqlite-driver`'s `JdbcSqliteDriver`, so upgrading the JDBC driver once upgrades the SQLite
-version for every consumer in the process rather than two drifting copies. This is exactly the
-concern RFC-0015's dependency survey flagged for the knowledge engine, and matching gitsema's
-driver choice is how Aidos avoids being the second copy.
-
-**What is not adopted: `.sq`-file schema ownership and query codegen.** RFC-0040 already settled
-that `schema/` is the canonical DDL, executed and checked by `schema/check.py`, and that "the
-real portability boundary is `schema/` plus typed repository functions" — not a generated API
-owned by a third-party plugin. SQLDelight's codegen wants the `CREATE TABLE` statements inside
-its own `.sq` files, in its own dialect (`AS Long`-style Kotlin type annotations are not
-executable SQL). Adopting it would mean either a second schema representation to keep in sync by
-hand — the exact drift `check.py` exists to prevent — or teaching `check.py` to parse SQLDelight's
-dialect instead of plain SQLite DDL, which makes the canonical schema less portable, not more.
-Hand-written repository functions executing `schema/`'s own SQL through `SqlDriver.execute` /
-`executeQuery` keep one schema, one checker, and one place a second engine would ever need to
-reimplement.
-
-**Consequence:** `runtime/storage` depends on `app.cash.sqldelight:runtime`,
-`:sqlite-driver` (JVM), and (when `androidTarget()` lands with the app, Phase 4)
-`:android-driver` plus `androidx.sqlite:sqlite-framework` — pinned to the versions
-`gitsema-kotlin` already validated (SQLDelight 2.0.2, androidx-sqlite 2.3.1) so the two libraries
-in one process are never running against two different pins of the same driver. No `.sq` file, no
-SQLDelight Gradle plugin, no generated `Database` class.
-
-**Forecloses:** a second, generated-from-`.sq` schema representation; SQLDelight-dialect DDL
-anywhere `check.py` cannot see it.
+Use SQLDelight's runtime/platform drivers for KMP SQLite access, but keep `schema/` as the sole canonical DDL and
+do not adopt SQLDelight `.sq` schema code generation.
 **RFCs:** 0040, 0039, 0015.
+
+### D36 — Inference backends expose capabilities, not one universal inference shape · `SETTLED`
+
+`InferenceBackend` is the common identity/lifecycle/diagnostics boundary. Actual operations are expressed through
+capabilities such as text generation, embeddings, tensor inference, vision, audio, tokenization, batching and
+streaming. A backend implements only the capabilities it can actually provide; unsupported operations are explicit,
+not fake no-ops.
+
+This prevents the engine from becoming an LLM-shaped abstraction with special cases for every other model kind.
+**RFCs:** 0022.
+
+### D37 — Capability-specific interfaces sit above the backend core · `SETTLED`
+
+The runtime uses a small backend core plus capability interfaces, rather than a single god interface or a giant
+`infer()` request containing every possible modality. Conceptually: `InferenceBackend`, `TextGenerationBackend`,
+`EmbeddingBackend`, `TensorBackend`, and future capability interfaces.
+
+This preserves type safety and makes it possible for ONNX to expose generic tensor inference without pretending
+that every ONNX model is a text generator.
+**RFCs:** 0022.
+
+### D38 — Backend selection is capability- and policy-driven · `SETTLED`
+
+Model format is a strong candidate signal, not the entire selection policy. Multiple installed backends may be
+candidates; Aidos selects a backend that satisfies the model's required capabilities and the device/user policy.
+GGUF normally selects llama.cpp; ONNX normally selects ONNX Runtime, but the architecture does not make those
+mappings immutable.
+
+The selection layer may consider format, model kind, requested capability, available execution providers,
+device constraints and user preference.
+**RFCs:** 0022.
+
+### D39 — Aidos chooses execution constraints; backends own accelerator mechanics · `SETTLED`
+
+Aidos may express requirements or preferences such as CPU-only, GPU-preferred, accelerator-required, memory
+limits, or supported device classes. The backend owns the concrete mapping to llama.cpp backends or ONNX Runtime
+Execution Providers. Aidos does not duplicate provider-specific hardware logic.
+
+This keeps hardware policy above the runtime implementation while allowing ONNX Runtime and llama.cpp to evolve
+independently.
+**RFCs:** 0022.
+
+### D40 — Streaming is a first-class inference capability · `SETTLED`
+
+Streaming is not required of every backend, but it is a first-class capability when a model can produce useful
+incremental output. `infer()` returns a complete `ModelResponse`; `stream()` returns a typed `ModelStream` of output
+chunks and completion. Streaming is therefore not synonymous with LLM tokens: it may represent text deltas,
+tool-call deltas, tensor/frame chunks, audio chunks, or future output kinds.
+
+A backend advertises streaming support. Consumers must not assume it exists merely because inference exists.
+**RFCs:** 0022.
+
+### D41 — Multimodal output types grow from a generic tensor primitive · `SETTLED`
+
+The engine does not attempt to freeze every possible modality up front. Typed outputs cover common semantics such
+as text and tool calls, while `TensorOutput` is the generic escape hatch for model results that Aidos does not yet
+have a domain-specific type for. Higher-level APIs may interpret tensors as embeddings, detections, classifications,
+and other domain results.
+
+This lets ONNX Runtime remain a general ML backend without requiring the kernel to predict every future model
+family.
+**RFCs:** 0022.
+
+### D42 — Backend interfaces are shared where possible; implementations remain platform-specific · `SETTLED`
+
+The stable Aidos backend/capability contracts live in the shared KMP layer where their types permit it. Backend
+implementations and native/platform bindings remain in the appropriate JVM, Android, or other platform source sets.
+The common layer must not leak a platform-specific native handle into the public contract.
+**RFCs:** 0022.
+
+### D43 — `ModelResponse` is generalized around typed outputs · `SETTLED`
+
+`ModelResponse` is no longer conceptually "the text an LLM returned". It contains typed model outputs plus common
+completion metadata such as stop reason and usage. Outputs can include text, tool calls, tensors and future typed
+modalities.
+
+Existing LLM consumers retain convenient text/tool-call accessors, so the kernel change does not force every
+consumer to inspect a heterogeneous collection manually. Embeddings and other non-text inference can therefore
+cross the kernel boundary without inventing a parallel top-level response abstraction for every model family.
+
+The response is still a completed result. Streaming is represented by D40's `ModelStream`, whose chunks use the
+same typed output vocabulary.
+**RFCs:** 0022.
+
+### D44 — ONNX Runtime is the second inference backend · `SETTLED`
+
+Aidos adds ONNX Runtime as the first secondary inference backend after llama.cpp. It is treated as a general tensor
+and ML runtime, not merely as an ONNX LLM implementation. It is therefore the preferred fit for embeddings, vision,
+audio and other tensor-oriented model kinds where ONNX is appropriate.
+
+The implementation target is broad: model/session lifecycle, input/output tensor introspection, typed tensors,
+dynamic shapes, multiple inputs/outputs, batching, execution-provider discovery/selection, metadata and diagnostics,
+with Android/JVM support where the platform backend permits it. llama.cpp remains the GGUF LLM backend.
+
+**Why now:** ONNX adds a genuinely different inference capability rather than duplicating another LLM runtime, and
+Hugging Face model discovery is already format/backend-neutral.
+**RFCs:** 0022, 0103.
 
 ---
 
@@ -953,17 +535,8 @@ None.
 | Date | Change |
 |---|---|
 | 2026-08-02 | Initial record: D1–D23 settled, D24 open. |
-| 2026-08-02 | D24 settled: (a) foreground service primary, (d) preparation-only fallback, (b) and (c) rejected. |
-| 2026-08-03 | D25 recommended: diff review moves earlier and goes hunk-by-hunk; Runtime API returns structured hunks. |
-| 2026-08-03 | D25 settled as recommended. D26 settled: glance and voice may approve only the benign class. |
-| 2026-08-03 | D26 amended: three voice tiers, verification gates authority. `reversible` split from `RecoveryClass`. |
-| 2026-08-03 | D27 settled: native dependencies only where nothing else works and a crash is bounded. D28 settled: GGUF via llama.cpp, format per model kind. |
-| 2026-08-04 | Legacy RFC audit complete: 46 Accepted, 15 Draft, RFC-0099 excepted. |
-| 2026-08-04 | D29 settled: the knowledge engine is a consumed library; no provider SPI; committed content only; queries report coverage. D30 settled: an MCP server's authority is fixed at enable time; no `TRUSTED` promotion; nothing spawns on project open. |
-| 2026-08-04 | D17 amended: streamable HTTP MCP ships in the MVP on every profile, not stdio-on-desktop only. Was *"MCP ships in the MVP, desktop only"*. |
-| 2026-08-04 | D31 opened: an MCP server's tool *description* has no trust classification and lands in a reserved prompt section. Must be settled before M18. |
-| 2026-08-04 | D31 settled: tool descriptors are fenced prose adopted per operation at enable time; taint cannot be the mechanism. |
-| 2026-08-04 | D34 settled: five RFCs claimed MVP scope no milestone built. 0004 was bookkeeping; 0036 folds into M1/M2; 0005 splits event-wake from timers; 0012 becomes M32c; 0047 keeps types, drops templates. |
-| 2026-08-04 | D33 settled: memory is session-scoped; `FACT`/`DECISION` promote to project scope only by user action, and never when `UNTRUSTED`. |
-| 2026-08-04 | D32 settled: no model-written summary in memory or context. `SUMMARY` kind removed; history drops with an omission marker; taint crosses a Run boundary as a marker, not as prose. |
-| 2026-08-05 | D35 settled: SQLite binding is SQLDelight's `SqlDriver` + platform drivers (matching `gitsema-kotlin`, one SQLite build per process), not its `.sq` schema codegen — `schema/` stays the only canonical DDL. |
+| 2026-08-02 | D24 settled: foreground service primary, preparation-only fallback, KV-cache checkpointing and remote background inference rejected. |
+| 2026-08-03 | D25 settled: diff review moves earlier and goes hunk-by-hunk. D26 settled and later amended with three voice tiers. |
+| 2026-08-04 | Legacy RFC audit and D29–D34 reconciliation; MCP HTTP MVP amendment; memory and MCP authority decisions settled. |
+| 2026-08-05 | D35 settled: SQLite binding is SQLDelight's drivers, not its schema codegen. |
+| 2026-08-17 | D36–D44 settled: capability-oriented inference backends, policy-driven backend selection, accelerator ownership, first-class streaming, generalized typed model outputs, KMP backend boundaries, and ONNX Runtime as the second backend. |
