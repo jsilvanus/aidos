@@ -8,9 +8,7 @@ import java.io.File
 /** JVM entry point for the engine-only CLI. */
 fun main(args: Array<String>) = runBlocking {
     val cli = EngineCli(GlobalModelRuntime.create())
-    try {
-        execute(cli, args)
-    } catch (e: Exception) {
+    try { execute(cli, args) } catch (e: Exception) {
         System.err.println("error: ${e.message ?: e::class.simpleName}")
         System.exit(1)
     }
@@ -62,6 +60,9 @@ private suspend fun execute(cli: EngineCli, args: Array<String>) {
             println("Size: ${inspection.sizeBytes} bytes")
             println("GGUF version: ${inspection.version}")
             println("Model: ${inspection.modelName}")
+            println("Architecture: ${inspection.architecture}")
+            println("Size label: ${inspection.sizeLabel}")
+            println("Parameters: ${inspection.parameterCount}")
             println("Context: ${inspection.contextWindow}")
             println("Quantization: ${inspection.quantization}")
             println("Tensors: ${inspection.tensorCount}")
@@ -77,11 +78,7 @@ private suspend fun execute(cli: EngineCli, args: Array<String>) {
             if (!result.passed) error("backend test failed: catalog is empty")
             println("PASS")
         }
-        else -> {
-            System.err.println("unknown command: ${args[0]}")
-            printHelp()
-            System.exit(2)
-        }
+        else -> { System.err.println("unknown command: ${args[0]}"); printHelp(); System.exit(2) }
     }
 }
 
@@ -89,8 +86,7 @@ private suspend fun chat(cli: EngineCli, modelId: String) {
     println("Aidos Engine chat — /quit to exit")
     val prompts = mutableListOf<String>()
     while (true) {
-        print("You: ")
-        System.out.flush()
+        print("You: "); System.out.flush()
         val prompt = readlnOrNull() ?: break
         if (prompt == "/quit" || prompt == "/exit") break
         if (prompt.isBlank()) continue
@@ -125,10 +121,10 @@ private fun printHelp() {
           load <model>                      Load a model
           unload <model>                    Unload a model
           download hf <repo> <filename>     Download a GGUF file from Hugging Face
-          infer <model> <prompt>            Run one prompt and print the response
-          chat <model>                     Interactive multi-turn chat
-          model inspect <file>             Inspect a local GGUF file
-          test backend                      Run backend smoke test
+          infer <model> <prompt>             Run one prompt and print the response
+          chat <model>                      Interactive multi-turn chat
+          model inspect <file>              Inspect a local GGUF file
+          test backend                       Run backend smoke test
           help                              Show this help
         """.trimIndent()
     )
