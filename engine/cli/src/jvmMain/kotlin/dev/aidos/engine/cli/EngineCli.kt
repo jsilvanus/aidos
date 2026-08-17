@@ -13,6 +13,7 @@ import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.modelruntime.GgufLoader
 import java.io.File
+import kotlinx.coroutines.flow.collect
 
 /** Testable command layer for the Aidos Engine CLI. */
 class EngineCli(
@@ -64,11 +65,11 @@ class EngineCli(
         } finally { runtime.unload(modelId) }
     }
 
+    /** Download any recognized Hugging Face artifact; format/backend selection happens elsewhere. */
     suspend fun downloadFromHuggingFace(repo: String, filename: String): File {
         require(repo.isNotBlank()) { "Hugging Face repository must not be blank" }
         require(filename.isNotBlank()) { "Hugging Face filename must not be blank" }
         require(!filename.contains("/") && !filename.contains("\\")) { "filename must be a file name, not a path" }
-        require(filename.endsWith(".gguf", ignoreCase = true)) { "Hugging Face model file must be a .gguf file" }
         modelsDirectory.mkdirs()
         val destination = File(modelsDirectory, filename)
         val url = "https://huggingface.co/${repo.trim('/')}/resolve/main/$filename?download=true"
