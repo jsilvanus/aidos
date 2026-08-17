@@ -74,9 +74,21 @@ class ModelDetailViewModel : ViewModel() {
     }
 
     private fun dev.aidos.models.ModelDetail.toUiModel(): ModelDetail {
-        val browser = EngineService.instance?.modelBrowser ?: return ModelDetail(id = id, name = name, sizeMB = 0)
+        val instance = EngineService.instance
+        val device = if (instance != null) {
+            DeviceProfileProvider(instance).getProfile()
+        } else {
+            // Default profile if service not available
+            dev.aidos.cookbook.DeviceProfile(
+                totalRamBytes = 8_000_000_000,
+                availableRamBytes = 4_000_000_000,
+                storageFreeBytes = 10_000_000_000,
+                cpuCoreCount = 8,
+                hasAccelerator = false
+            )
+        }
+
         val cookbook = dev.aidos.cookbook.CookbookEngine()
-        val device = DeviceProfileProvider(EngineService.instance!!).getProfile()
 
         val descriptor = ModelDescriptor(
             id = id,

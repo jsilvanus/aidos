@@ -8,6 +8,9 @@ import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.huggingface.HuggingFaceModel
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Model discovery and browser service (RFC-0022, RFC-0021, RFC-0020).
@@ -82,6 +85,22 @@ class ModelBrowser(
     ): Result<List<BrowsableModel>> = runCatching {
         val hfFilter = mutableListOf("gguf")
         
+        // Map ModelKind to Hugging Face pipeline/task filters
+        kind?.let {
+            val taskFilter = when (it) {
+                ModelKind.LLM -> "text-generation"
+                ModelKind.EMBEDDING -> "sentence-transformers"
+                ModelKind.VISION -> "image-text-to-text"
+                ModelKind.STT -> "automatic-speech-recognition"
+                ModelKind.TTS -> "text-to-speech"
+                ModelKind.TRANSLATION -> "translation"
+                else -> null
+            }
+            if (taskFilter != null) {
+                hfFilter.add(taskFilter)
+            }
+        }
+
         val searchResult = hfClient.search(
             query = query,
             filter = hfFilter.joinToString(","),
@@ -151,32 +170,74 @@ class ModelBrowser(
      * Get detailed information about a specific model.
      */
     suspend fun getModelDetail(modelId: String): Result<ModelDetail> = runCatching {
+        // Try local catalog first
         val catalogEntry = catalogManager.getCatalog(modelId).getOrThrow()
-            ?: return@runCatching throw IllegalArgumentException("Model not found: $modelId")
+        
+        if (catalogEntry != null) {
+            val installedModel = catalogManager.listInstalled().getOrThrow()
+                .firstOrNull { it.modelId == modelId }
 
-        val installedModel = catalogManager.listInstalled().getOrThrow()
-            .firstOrNull { it.modelId == modelId }
+            val descriptor = ModelDescriptor(
+                id = catalogEntry.id,
+                name = catalogEntry.name,
+                kind = catalogEntry.kind,
+                providerId = catalogEntry.provider,
+                isLocal = true,
+                contextWindow = defaultContextWindow,
+                sizeBytes = extractSizeBytes(catalogEntry),
+                digest = extractDigest(catalogEntry),
+            )
+            
+            val verdict = cookbookEngine.verdict(descriptor, deviceProfile, defaultContextWindow)
+
+            return@runCatching ModelDetail(
+                catalogEntry = catalogEntry,
+                installedModel = installedModel,
+                verdict = verdict,
+                readableVerdict = verdict.humanReadable(),
+                contextWindow = defaultContextWindow,
+                sizeBytes = descriptor.sizeBytes,
+            )
+        }
+
+        // Fallback to Hugging Face
+        val hfModel = hfClient.getModel(modelId).getOrThrow()
+        val modelKind = hfClient.inferModelKind(hfModel.tags, hfModel.pipeline)
+        val contextWindow = hfModel.contextLength ?: defaultContextWindow
+        
+        // Pick best quantization
+        val quant = hfModel.quantizations.find { it.name.contains("Q4_K_M") }
+            ?: hfModel.quantizations.firstOrNull { it.sizeBytes > 0 }
+
+        val sizeBytes = hfModel.modelSize ?: quant?.sizeBytes
 
         val descriptor = ModelDescriptor(
-            id = catalogEntry.id,
-            name = catalogEntry.name,
-            kind = catalogEntry.kind,
-            providerId = catalogEntry.provider,
-            isLocal = true,
-            contextWindow = defaultContextWindow,
-            sizeBytes = extractSizeBytes(catalogEntry),
-            digest = extractDigest(catalogEntry),
+            id = hfModel.modelId,
+            name = hfModel.displayName ?: hfModel.modelId,
+            kind = modelKind,
+            providerId = "huggingface",
+            isLocal = false,
+            contextWindow = contextWindow,
+            sizeBytes = sizeBytes,
+            digest = quant?.sha256Digest,
         )
         
-        val verdict = cookbookEngine.verdict(descriptor, deviceProfile, defaultContextWindow)
+        val verdict = cookbookEngine.verdict(descriptor, deviceProfile, contextWindow)
 
         ModelDetail(
-            catalogEntry = catalogEntry,
-            installedModel = installedModel,
+            catalogEntry = CatalogEntry(
+                id = hfModel.modelId,
+                name = hfModel.displayName ?: hfModel.modelId,
+                kind = modelKind,
+                provider = "huggingface",
+                remoteUrl = "https://huggingface.co/${hfModel.modelId}",
+                discoveredAt = "",
+            ),
+            installedModel = null,
             verdict = verdict,
             readableVerdict = verdict.humanReadable(),
-            contextWindow = defaultContextWindow,
-            sizeBytes = descriptor.sizeBytes,
+            contextWindow = contextWindow,
+            sizeBytes = sizeBytes,
         )
     }
 
@@ -187,17 +248,21 @@ class ModelBrowser(
         catalogManager.updateInstalledMetadata(modelId, userLabel = label)
 
     private fun extractSizeBytes(entry: CatalogEntry): Long? {
-        // Extract size_bytes from propertiesJson if available
-        // For now, return null to indicate we don't have the information
-        // Real implementation would parse JSON
-        return null
+        return try {
+            val json = Json.parseToJsonElement(entry.propertiesJson).jsonObject
+            json["size_bytes"]?.jsonPrimitive?.content?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun extractDigest(entry: CatalogEntry): String? {
-        // Extract digest from propertiesJson if available
-        // For now, return null
-        // Real implementation would parse JSON
-        return null
+        return try {
+            val json = Json.parseToJsonElement(entry.propertiesJson).jsonObject
+            json["sha256"]?.jsonPrimitive?.content
+        } catch (e: Exception) {
+            null
+        }
     }
 }
 

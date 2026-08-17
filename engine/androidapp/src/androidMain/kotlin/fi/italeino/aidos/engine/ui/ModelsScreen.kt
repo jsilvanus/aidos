@@ -267,11 +267,17 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
     
     var searchQuery by remember { mutableStateOf("") }
     var selectedKind by remember { mutableStateOf<ModelKind?>(null) }
+    var isCodingOnly by remember { mutableStateOf(false) }
     var minContext by remember { mutableStateOf<Int?>(null) }
 
     // Trigger search when query or filters change
-    LaunchedEffect(searchQuery, selectedKind, minContext) {
-        viewModel.searchRemote(searchQuery, selectedKind, minContext)
+    LaunchedEffect(searchQuery, selectedKind, isCodingOnly, minContext) {
+        val effectiveQuery = if (isCodingOnly) {
+            if (searchQuery.isBlank()) "code" else "$searchQuery code"
+        } else {
+            searchQuery
+        }
+        viewModel.searchRemote(effectiveQuery, selectedKind, minContext)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -316,9 +322,33 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
             }
             item {
                 FilterChip(
+                    label = { Text("Coding", fontSize = 10.sp) },
+                    onClick = { 
+                        isCodingOnly = !isCodingOnly
+                        if (isCodingOnly) selectedKind = ModelKind.LLM 
+                    },
+                    selected = isCodingOnly
+                )
+            }
+            item {
+                FilterChip(
                     label = { Text("Embedding", fontSize = 10.sp) },
                     onClick = { selectedKind = if (selectedKind == ModelKind.EMBEDDING) null else ModelKind.EMBEDDING },
                     selected = selectedKind == ModelKind.EMBEDDING
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("Vision", fontSize = 10.sp) },
+                    onClick = { selectedKind = if (selectedKind == ModelKind.VISION) null else ModelKind.VISION },
+                    selected = selectedKind == ModelKind.VISION
+                )
+            }
+            item {
+                FilterChip(
+                    label = { Text("STT", fontSize = 10.sp) },
+                    onClick = { selectedKind = if (selectedKind == ModelKind.STT) null else ModelKind.STT },
+                    selected = selectedKind == ModelKind.STT
                 )
             }
             item {

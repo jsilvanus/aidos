@@ -7,6 +7,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import androidx.navigation.NavType
+import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelConfigScreen
@@ -52,7 +53,8 @@ fun EngineNavHost(
                 onBackClick = { navController.popBackStack() },
                 onTestChatClick = { id, name ->
                     navController.navigate(EngineRoute.TestChat(id, name).createRoute(id, name))
-                }
+                },
+                globalModelRuntime = EngineService.instance?.modelRuntime
             )
         }
 
