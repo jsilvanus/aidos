@@ -12,7 +12,7 @@ import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallOutput
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Turn
 import java.io.File
 
@@ -112,7 +112,7 @@ class LlamaCppAdapter(
 
             val inputTokens = estimateTokens(prompt)
             val outputTokens = estimateTokens(output)
-            val usage = TokenUsage(
+            val usage = Usage(
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
                 totalTokens = inputTokens + outputTokens,
