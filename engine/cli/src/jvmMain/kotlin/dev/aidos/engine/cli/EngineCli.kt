@@ -1,5 +1,8 @@
 package dev.aidos.engine.cli
 
+import dev.aidos.downloads.DownloadEvent
+import dev.aidos.downloads.DownloadManager
+import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRequest
@@ -9,12 +12,6 @@ import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import java.io.File
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /**
  * Testable command layer for the Aidos Engine CLI.
@@ -28,7 +25,7 @@ class EngineCli(
         System.getProperty("aidos.models.dir")
             ?: File(System.getProperty("user.home"), ".aidos/models").absolutePath
     ),
-    private val httpClient: HttpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build(),
+    private val downloadManager: DownloadManager = LocalDownloadManager(modelsDirectory.absolutePath),
 ) {
     suspend fun catalog(): List<ModelDescriptor> = runtime.catalog()
 
@@ -67,12 +64,10 @@ class EngineCli(
 
     /**
      * Download one GGUF file from Hugging Face into the engine's model directory.
-     *
-     * [repo] is e.g. `Qwen/Qwen2.5-3B-Instruct-GGUF` and [filename] is the exact
-     * repository filename. The destination is `~/.aidos/models/<filename>` (or the
-     * configured `aidos.models.dir`).
+     * The actual byte transfer is delegated to the engine DownloadManager so CLI and
+     * Android share the same resumable/digest-verification semantics.
      */
-    fun downloadFromHuggingFace(repo: String, filename: String): File {
+    suspend fun downloadFromHuggingFace(repo: String, filename: String): File {
         require(repo.isNotBlank()) { "Hugging Face repository must not be blank" }
         require(filename.isNotBlank()) { "Hugging Face filename must not be blank" }
         require(!filename.contains("/") && !filename.contains("\\")) {
@@ -84,25 +79,37 @@ class EngineCli(
 
         modelsDirectory.mkdirs()
         val destination = File(modelsDirectory, filename)
-        val temporary = File(modelsDirectory, "$filename.part")
         val url = "https://huggingface.co/${repo.trim('/')}/resolve/main/$filename?download=true"
+        var completed: File? = null
+        var failure: Throwable? = null
 
-        val request = HttpRequest.newBuilder(URI.create(url))
-            .header("User-Agent", "aidos-engine-cli")
-            .GET()
-            .build()
-
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        if (response.statusCode() !in 200..299) {
-            response.body().close()
-            throw IllegalStateException("Hugging Face download failed: HTTP ${response.statusCode()} ($url)")
+        downloadManager.download(url, destination.absolutePath, expectedDigest = null).collect { event ->
+            when (event) {
+                is DownloadEvent.Started -> {
+                    val total = event.totalBytes?.let { " / $it bytes" } ?: ""
+                    println("download started at ${event.resumeFromBytes} bytes$total")
+                }
+                is DownloadEvent.Progress -> {
+                    // Keep CLI output simple; callers that need a progress bar can consume
+                    // DownloadManager directly.
+                    if (event.totalBytes != null && event.totalBytes > 0) {
+                        val percent = (event.bytesDownloaded * 100 / event.totalBytes).coerceIn(0, 100)
+                        print("\rDownloading: $percent%")
+                    }
+                }
+                is DownloadEvent.Completed -> {
+                    println()
+                    completed = File(event.finalPath)
+                }
+                is DownloadEvent.Failed -> failure = IllegalStateException(event.reason)
+                is DownloadEvent.DigestMismatch -> failure = IllegalStateException(
+                    "SHA-256 mismatch: expected ${event.expectedDigest}, got ${event.actualDigest}"
+                )
+            }
         }
 
-        response.body().use { input ->
-            temporary.outputStream().buffered().use { output -> input.copyTo(output) }
-        }
-        Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        return destination
+        failure?.let { throw it }
+        return completed ?: error("Download did not complete")
     }
 
     fun version(): String = VERSION
