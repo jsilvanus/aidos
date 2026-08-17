@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import androidx.navigation.NavType
 import fi.italeino.aidos.engine.EngineService
@@ -40,14 +39,17 @@ fun EngineNavHost(
         }
 
         composable(
-            EngineRoute.ModelDetail(modelId = "{modelId}").route,
+            route = "model_detail?id={id}",
             // External deep link (RFC-0103): client apps navigate straight here to acquire a
             // model rather than rendering their own download UI. AndroidManifest.xml declares
             // the matching <intent-filter> on MainActivity so this resolves from another app's
             // Intent, not just in-app navigation.
-            deepLinks = listOf(navDeepLink { uriPattern = "aidosengine://model/{modelId}" }),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "aidosengine://model?id={id}" },
+                navDeepLink { uriPattern = "aidosengine://model/{id}" }
+            ),
         ) { backStackEntry ->
-            val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
+            val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
             ModelDetailScreen(
                 modelId = modelId,
                 onBackClick = { navController.popBackStack() },
@@ -59,14 +61,10 @@ fun EngineNavHost(
         }
 
         composable(
-            EngineRoute.TestChat(modelId = "{modelId}", modelName = "{modelName}").route,
-            arguments = listOf(
-                navArgument("modelId") { type = NavType.StringType },
-                navArgument("modelName") { type = NavType.StringType }
-            )
+            route = "test_chat?id={id}&name={name}",
         ) { backStackEntry ->
-            val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
-            val modelName = backStackEntry.arguments?.getString("modelName") ?: return@composable
+            val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
+            val modelName = backStackEntry.arguments?.getString("name") ?: return@composable
             TestChatScreen(
                 modelId = modelId,
                 modelName = modelName,
@@ -75,9 +73,9 @@ fun EngineNavHost(
         }
 
         composable(
-            EngineRoute.ProviderDetail(providerId = "{providerId}").route,
+            route = "provider_detail?id={id}",
         ) { backStackEntry ->
-            val providerId = backStackEntry.arguments?.getString("providerId") ?: return@composable
+            val providerId = backStackEntry.arguments?.getString("id") ?: return@composable
             ProviderDetailScreen(providerId = providerId, onBackClick = { navController.popBackStack() })
         }
 
@@ -96,9 +94,9 @@ fun EngineNavHost(
         }
 
         composable(
-            EngineRoute.ModelConfig(modelId = "{modelId}").route,
+            route = "model_config?id={id}",
         ) { backStackEntry ->
-            val modelId = backStackEntry.arguments?.getString("modelId") ?: return@composable
+            val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
             ModelConfigScreen(
                 modelId = modelId,
                 onBackClick = { navController.popBackStack() }

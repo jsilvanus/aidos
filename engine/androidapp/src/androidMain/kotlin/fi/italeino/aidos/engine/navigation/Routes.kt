@@ -14,18 +14,19 @@ package fi.italeino.aidos.engine.navigation
  */
 sealed class EngineRoute(val route: String) {
     data object Home : EngineRoute("home")
-    data class ModelDetail(val modelId: String) : EngineRoute("model/{modelId}") {
-        fun createRoute(modelId: String) = "model/$modelId"
+    data class ModelDetail(val modelId: String) : EngineRoute("model_detail?id={id}") {
+        fun createRoute(modelId: String) = "model_detail?id=${java.net.URLEncoder.encode(modelId, "UTF-8")}"
     }
-    data class TestChat(val modelId: String, val modelName: String) : EngineRoute("test_chat/{modelId}/{modelName}") {
-        fun createRoute(modelId: String, modelName: String) = "test_chat/$modelId/${modelName.replace("/", "%2F")}"
+    data class TestChat(val modelId: String, val modelName: String) : EngineRoute("test_chat?id={id}&name={name}") {
+        fun createRoute(modelId: String, modelName: String) = 
+            "test_chat?id=${java.net.URLEncoder.encode(modelId, "UTF-8")}&name=${java.net.URLEncoder.encode(modelName, "UTF-8")}"
     }
-    data class ProviderDetail(val providerId: String) : EngineRoute("provider/{providerId}") {
-        fun createRoute(providerId: String) = "provider/$providerId"
+    data class ProviderDetail(val providerId: String) : EngineRoute("provider_detail?id={id}") {
+        fun createRoute(providerId: String) = "provider_detail?id=${java.net.URLEncoder.encode(providerId, "UTF-8")}"
     }
     data object Models : EngineRoute("models")
-    data class ModelConfig(val modelId: String) : EngineRoute("model_config/{modelId}") {
-        fun createRoute(modelId: String) = "model_config/$modelId"
+    data class ModelConfig(val modelId: String) : EngineRoute("model_config?id={id}") {
+        fun createRoute(modelId: String) = "model_config?id=${java.net.URLEncoder.encode(modelId, "UTF-8")}"
     }
     data object ConnectedApps : EngineRoute("connected_apps")
     data object Settings : EngineRoute("settings")
