@@ -1,63 +1,25 @@
 package dev.aidos.models
 
+import dev.aidos.downloads.DownloadEvent
+import dev.aidos.downloads.DownloadManager
 import dev.aidos.kernel.ModelKind
+import kotlinx.coroutines.flow.collect
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
-/**
- * Model catalog manager (RFC-0022, RFC-0021).
- *
- * Operations on the model_catalog and installed_models tables.
- * Abstracts the database from higher-level model management code.
- */
 interface ModelCatalogManager {
-    /**
-     * Add or update a model in the catalog.
-     */
     suspend fun addToCatalog(model: CatalogEntry): Result<Unit>
-
-    /**
-     * Get all models in the catalog.
-     */
     suspend fun listCatalog(): Result<List<CatalogEntry>>
-
-    /**
-     * Find a specific model in the catalog.
-     */
     suspend fun getCatalog(modelId: String): Result<CatalogEntry?>
-
-    /**
-     * Get all installed models.
-     */
     suspend fun listInstalled(): Result<List<InstalledModel>>
-
-    /**
-     * Mark a model as installed after download and verification.
-     */
-    suspend fun markInstalled(
-        modelId: String,
-        digest: String,
-        path: String,
-        sizeBytes: Long,
-        quantization: String? = null,
-    ): Result<Unit>
-
-    /**
-     * Remove an installed model.
-     */
+    suspend fun markInstalled(modelId: String, digest: String, path: String, sizeBytes: Long, quantization: String? = null): Result<Unit>
     suspend fun uninstall(modelId: String): Result<Unit>
-
-    /**
-     * Update metadata for an installed model (e.g., labels, last used).
-     */
-    suspend fun updateInstalledMetadata(
-        modelId: String,
-        userLabel: String? = null,
-        propertiesJson: String? = null,
-    ): Result<Unit>
+    suspend fun updateInstalledMetadata(modelId: String, userLabel: String? = null, propertiesJson: String? = null): Result<Unit>
 }
 
-/**
- * Catalog entry (model_catalog table).
- */
 data class CatalogEntry(
     val id: String,
     val name: String,
@@ -65,97 +27,127 @@ data class CatalogEntry(
     val provider: String,
     val remoteUrl: String? = null,
     val propertiesJson: String = "{}",
-    val discoveredAt: String, // ISO 8601
+    val discoveredAt: String,
 )
 
-/**
- * Installed model (installed_models table).
- */
 data class InstalledModel(
     val modelId: String,
     val digest: String,
     val path: String,
     val sizeBytes: Long,
     val quantization: String? = null,
-    val installedAt: String, // ISO 8601
+    val installedAt: String,
     val lastLoadedAt: String? = null,
     val userLabel: String? = null,
     val propertiesJson: String = "{}",
 )
 
-/**
- * Model download request parameters.
- */
 data class ModelDownloadRequest(
     val modelId: String,
     val quantization: String,
     val downloadUrl: String,
     val expectedDigest: String? = null,
     val destination: String,
+    val kind: ModelKind = ModelKind.LLM,
 )
 
-/**
- * Model installation workflow (RFC-0022).
- *
- * Orchestrates the full flow: download → verify digest → record in installed_models.
- */
 interface ModelInstallerWorkflow {
-    /**
-     * Start a model installation.
-     *
-     * @param request download parameters
-     * @param onProgress callback for download progress
-     * @return result of installation (success or error)
-     */
-    suspend fun install(
-        request: ModelDownloadRequest,
-        onProgress: suspend (InstallerEvent) -> Unit = { },
-    ): Result<InstalledModel>
-
-    /**
-     * Attempt to resume a partial download.
-     *
-     * @param modelId model to resume
-     * @param onProgress callback for download progress
-     * @return result (success, or explanation why not resumable)
-     */
-    suspend fun resume(
-        modelId: String,
-        onProgress: suspend (InstallerEvent) -> Unit = { },
-    ): Result<InstalledModel>
-
-    /**
-     * Remove an installed model and clean up its files.
-     */
+    suspend fun install(request: ModelDownloadRequest, onProgress: suspend (InstallerEvent) -> Unit = { }): Result<InstalledModel>
+    suspend fun resume(modelId: String, onProgress: suspend (InstallerEvent) -> Unit = { }): Result<InstalledModel>
     suspend fun uninstall(modelId: String): Result<Unit>
 }
 
-/**
- * Events emitted during model installation.
- */
 sealed interface InstallerEvent {
-    /** Download started. */
     data class DownloadStarted(val modelId: String, val totalBytes: Long?) : InstallerEvent
-
-    /** Download progress. */
-    data class DownloadProgress(
-        val modelId: String,
-        val bytesDownloaded: Long,
-        val totalBytes: Long?,
-    ) : InstallerEvent
-
-    /** Download completed. */
+    data class DownloadProgress(val modelId: String, val bytesDownloaded: Long, val totalBytes: Long?) : InstallerEvent
     data class DownloadCompleted(val modelId: String, val actualDigest: String) : InstallerEvent
-
-    /** Digest verification. */
     data class DigitVerifying(val modelId: String) : InstallerEvent
-
-    /** Digest match verified. */
     data class DigitVerified(val modelId: String) : InstallerEvent
-
-    /** Installation complete. */
     data class InstallationComplete(val modelId: String, val installedAt: String) : InstallerEvent
-
-    /** Installation failed. */
     data class InstallationFailed(val modelId: String, val reason: String) : InstallerEvent
+}
+
+/** Shared installation workflow for Android, CLI, and future engine hosts. */
+class DefaultModelInstallerWorkflow(
+    private val downloadManager: DownloadManager,
+    private val catalogManager: ModelCatalogManager,
+) : ModelInstallerWorkflow {
+    override suspend fun install(
+        request: ModelDownloadRequest,
+        onProgress: suspend (InstallerEvent) -> Unit,
+    ): Result<InstalledModel> {
+        return try {
+            val metadata = buildJsonObject {
+                put("download_url", request.downloadUrl)
+                put("quantization", request.quantization)
+                put("destination", request.destination)
+                request.expectedDigest?.let { put("sha256", it) }
+            }.toString()
+            catalogManager.addToCatalog(
+                CatalogEntry(request.modelId, request.modelId, request.kind, "huggingface", request.downloadUrl, metadata, "")
+            ).getOrThrow()
+
+            var completed: DownloadEvent.Completed? = null
+            downloadManager.download(request.downloadUrl, request.destination, request.expectedDigest).collect { event ->
+                when (event) {
+                    is DownloadEvent.Started -> onProgress(InstallerEvent.DownloadStarted(request.modelId, event.totalBytes))
+                    is DownloadEvent.Progress -> onProgress(InstallerEvent.DownloadProgress(request.modelId, event.bytesDownloaded, event.totalBytes))
+                    is DownloadEvent.Completed -> {
+                        onProgress(InstallerEvent.DigitVerifying(request.modelId))
+                        completed = event
+                        onProgress(InstallerEvent.DownloadCompleted(request.modelId, event.actualDigest))
+                        onProgress(InstallerEvent.DigitVerified(request.modelId))
+                    }
+                    is DownloadEvent.DigestMismatch -> throw IllegalStateException("SHA-256 mismatch: expected ${event.expectedDigest}, got ${event.actualDigest}")
+                    is DownloadEvent.Failed -> throw IllegalStateException(event.reason)
+                }
+            }
+
+            val result = completed ?: throw IllegalStateException("Download did not complete")
+            val installed = InstalledModel(
+                modelId = request.modelId,
+                digest = result.actualDigest,
+                path = result.finalPath,
+                sizeBytes = result.sizeBytes,
+                quantization = request.quantization,
+                installedAt = "",
+            )
+            catalogManager.markInstalled(
+                installed.modelId,
+                installed.digest,
+                installed.path,
+                installed.sizeBytes,
+                installed.quantization,
+            ).getOrThrow()
+            onProgress(InstallerEvent.InstallationComplete(request.modelId, installed.installedAt))
+            Result.success(installed)
+        } catch (e: Exception) {
+            onProgress(InstallerEvent.InstallationFailed(request.modelId, e.message ?: "Installation failed"))
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun resume(modelId: String, onProgress: suspend (InstallerEvent) -> Unit): Result<InstalledModel> {
+        val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
+            ?: return Result.failure(IllegalArgumentException("No download metadata for $modelId"))
+        return try {
+            val metadata = Json.parseToJsonElement(catalog.propertiesJson).jsonObject
+            val url = metadata["download_url"]?.jsonPrimitive?.content ?: error("No download URL for $modelId")
+            val destination = metadata["destination"]?.jsonPrimitive?.content ?: error("No destination for $modelId")
+            val quantization = metadata["quantization"]?.jsonPrimitive?.content ?: "unknown"
+            val digest = metadata["sha256"]?.jsonPrimitive?.content
+            install(ModelDownloadRequest(modelId, quantization, url, digest, destination, catalog.kind), onProgress)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun uninstall(modelId: String): Result<Unit> = try {
+        val installed = catalogManager.listInstalled().getOrThrow().firstOrNull { it.modelId == modelId }
+        installed?.let { downloadManager.delete(it.path) }
+        catalogManager.uninstall(modelId).getOrThrow()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 }
