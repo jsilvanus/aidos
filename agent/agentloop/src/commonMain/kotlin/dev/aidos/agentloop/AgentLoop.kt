@@ -1,6 +1,7 @@
 package dev.aidos.agentloop
 
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContextItem
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
@@ -12,7 +13,6 @@ import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
@@ -21,7 +21,6 @@ import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
 import dev.aidos.prompt.AssemblyRequest
 import dev.aidos.prompt.AssemblyResult
-import dev.aidos.prompt.ContextItem
 import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
 
@@ -50,10 +49,8 @@ class AgentLoop(
         val adapter = when (initialDecision) {
             is RoutingDecision.Local -> initialDecision.adapter
             is RoutingDecision.RemoteApproved -> initialDecision.adapter
-            is RoutingDecision.RemotePendingApproval ->
-                return RunOutcome.Suspended("Remote approval required: ${initialDecision.reason}")
-            is RoutingDecision.UnavailableOffline ->
-                return RunOutcome.Suspended("Model unavailable offline: ${initialDecision.kind}")
+            is RoutingDecision.RemotePendingApproval -> return RunOutcome.Suspended("Remote approval required: ${initialDecision.reason}")
+            is RoutingDecision.UnavailableOffline -> return RunOutcome.Suspended("Model unavailable offline: ${initialDecision.kind}")
             else -> return RunOutcome.Failed("Routing failed: $initialDecision")
         }
 
@@ -68,10 +65,7 @@ class AgentLoop(
         val pkg = when (val ar = assembler.assemble(assemblyReq)) {
             is AssemblyResult.Ok -> ar.pkg
             is AssemblyResult.TooBig -> {
-                val larger = router.select(
-                    request.modelKind,
-                    routingCtx.copy(minimumContextWindow = ar.minimumContextWindow),
-                )
+                val larger = router.select(request.modelKind, routingCtx.copy(minimumContextWindow = ar.minimumContextWindow))
                 val largerAdapter = when (larger) {
                     is RoutingDecision.Local -> larger.adapter
                     is RoutingDecision.RemoteApproved -> larger.adapter
@@ -96,14 +90,13 @@ class AgentLoop(
         while (steps < maxSteps) {
             steps++
             checkpoint(StepEvent.StepStarted(step = steps))
-
             val modelReq = ModelRequest(
                 messages = transcript.toList(),
                 tools = request.tools,
                 toolChoice = ToolChoice.Auto,
                 maxOutputTokens = adapter.contextWindow / 8,
             )
-            val response: ModelResponse = adapter.invoke(modelReq).getOrElse { err ->
+            val response = adapter.invoke(modelReq).getOrElse { err ->
                 checkpoint(StepEvent.StepFailed(step = steps, reason = err.message ?: "model error"))
                 return RunOutcome.Failed("Model invocation failed: ${err.message}")
             }
@@ -112,32 +105,12 @@ class AgentLoop(
                 .filterIsInstance<dev.aidos.kernel.TextOutput>()
                 .joinToString("") { it.text }
                 .ifEmpty { null }
-            val responseToolCalls = response.outputs
-                .filterIsInstance<ToolCallOutput>()
-                .map { it.call }
-            val assistantTurn = Turn.Assistant(text = responseText, toolCalls = responseToolCalls)
-            transcript.add(assistantTurn)
+            val responseToolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }
+            transcript.add(Turn.Assistant(text = responseText, toolCalls = responseToolCalls))
 
-            if (response.stopReason in setOf(StopReason.END_TURN, StopReason.STOP_SEQUENCE, StopReason.REFUSAL)) {
+            if (response.stopReason in setOf(StopReason.END_TURN, StopReason.STOP_SEQUENCE, StopReason.REFUSAL) || responseToolCalls.isEmpty()) {
                 checkpoint(StepEvent.RunCompleted(step = steps, taint = runTaint))
-                return RunOutcome.Completed(
-                    transcript = transcript.toList(),
-                    steps = steps,
-                    runTaint = runTaint,
-                    taintSourceDescription = taintSourceDescription,
-                    instructionSetHash = pkg.instructionSetHash,
-                )
-            }
-
-            if (responseToolCalls.isEmpty()) {
-                checkpoint(StepEvent.RunCompleted(step = steps, taint = runTaint))
-                return RunOutcome.Completed(
-                    transcript = transcript.toList(),
-                    steps = steps,
-                    runTaint = runTaint,
-                    taintSourceDescription = taintSourceDescription,
-                    instructionSetHash = pkg.instructionSetHash,
-                )
+                return RunOutcome.Completed(transcript.toList(), steps, runTaint, taintSourceDescription, pkg.instructionSetHash)
             }
 
             val callKey = responseToolCalls.joinToString("|") { "${it.toolName}:${it.arguments}" }
@@ -148,28 +121,18 @@ class AgentLoop(
             consecutiveCalls.add(callKey)
 
             for (toolCall in responseToolCalls) {
-                val result: ToolCallResult = broker.invoke(
-                    subjectId = "run",
-                    call = toolCall,
-                    runTaint = runTaint,
-                )
+                val result: ToolCallResult = broker.invoke(subjectId = "run", call = toolCall, runTaint = runTaint)
                 val newTaint = runTaint raisedBy result.trustLevel
                 if (newTaint != runTaint) {
                     runTaint = newTaint
                     taintSourceDescription = toolCall.toolName
                 }
-
                 if (result.outcome is dev.aidos.kernel.ToolOutcome.Denied) {
                     val denial = result.outcome as dev.aidos.kernel.ToolOutcome.Denied
-                    val reason = denial.reason
-                    val taintDesc = if (runTaint != TrustLevel.TRUSTED) {
-                        " (Run is tainted by: $taintSourceDescription)"
-                    } else ""
-                    transcript.add(Turn.ToolResult(result = result.copy(
-                        content = listOf(ContentBlock.Text("Denied: ${reason}$taintDesc"))
-                    )))
+                    val taintDesc = if (runTaint != TrustLevel.TRUSTED) " (Run is tainted by: $taintSourceDescription)" else ""
+                    transcript.add(Turn.ToolResult(result.copy(content = listOf(ContentBlock.Text("Denied: ${denial.reason}$taintDesc")))))
                 } else {
-                    transcript.add(Turn.ToolResult(result = result))
+                    transcript.add(Turn.ToolResult(result))
                 }
             }
             checkpoint(StepEvent.StepCompleted(step = steps, taint = runTaint))
