@@ -18,6 +18,8 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.downloads.LocalDownloadManager
+import dev.aidos.downloads.DownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
@@ -48,19 +50,7 @@ import kotlinx.coroutines.launch
  * Android foreground service hosting Aidos Engine Core (RFC-0103).
  *
  * Wires the Engine core (model loading, inference backends) into the Android service
- * lifecycle:
- * - [onCreate]: Initialize Engine core, HTTP server, Binder handshake, and app approval system
- * - [onStartCommand]: Start foreground notification; return sticky service mode
- * - [onDestroy]: Graceful shutdown of HTTP server and Engine
- * - [onBind]: Expose Binder handshake interface for clients
- *
- * The service binds an HTTP server to 127.0.0.1 on an ephemeral port and posts
- * an ongoing foreground notification (required by Android 12+).
- *
- * Approval System (RFC-0103): User-approval workflow for connected apps. First handshake
- * from an app triggers PENDING_APPROVAL response with deep-link to ConnectedAppsScreen.
- * User decides to APPROVE or DENY. Approved apps receive credentials on handshake; denied
- * apps receive 401 Unauthorized on HTTP requests.
+ * lifecycle. Model acquisition uses the shared engine DownloadManager abstraction.
  */
 class EngineService : LifecycleService() {
 
@@ -68,7 +58,6 @@ class EngineService : LifecycleService() {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
 
-        // Singleton access for UI binding (RFC-0103 Phase E)
         private var _instance: EngineService? = null
         val instance: EngineService? get() = _instance
     }
@@ -77,12 +66,10 @@ class EngineService : LifecycleService() {
     private lateinit var tokenManager: TokenManager
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
-    
-    // Public state for UI ViewModels (RFC-0103 Phase E)
-    // Nullable because initialization is async in onCreate.
+
     var modelRuntime: GlobalModelRuntime? = null
         private set
-        
+
     var hfClient: HuggingFaceClient? = null
         private set
 
@@ -90,6 +77,10 @@ class EngineService : LifecycleService() {
         private set
 
     var modelBrowser: ModelBrowser? = null
+        private set
+
+    /** Shared engine download abstraction used by Android model acquisition. */
+    var downloadManager: DownloadManager? = null
         private set
 
     private lateinit var httpClient: HttpClient
@@ -105,14 +96,10 @@ class EngineService : LifecycleService() {
         _instance = this
         serviceScope.launch {
             try {
-                // Initialize token manager
                 tokenManager = TokenManager()
 
-                // Initialize HTTP client and broker for egress (RFC-0030)
                 httpClient = HttpClient(io.ktor.client.engine.android.Android) {
-                    install(ContentNegotiation) {
-                        json()
-                    }
+                    install(ContentNegotiation) { json() }
                 }
                 val broker = AndroidEffectBroker(httpClient)
                 effectBroker = broker
@@ -120,7 +107,10 @@ class EngineService : LifecycleService() {
                 val client = HuggingFaceClient(broker, hfHandle)
                 hfClient = client
 
-                // Initialize database-backed catalog manager
+                // All engine model downloads go through the shared DownloadManager.
+                val modelsDir = java.io.File(filesDir, "models")
+                downloadManager = LocalDownloadManager(modelsDir.absolutePath)
+
                 val databaseDriver = AndroidSqliteDriver(
                     schema = object : SqlSchema<QueryResult.Value<Unit>> {
                         override val version: Long = 1
@@ -133,36 +123,25 @@ class EngineService : LifecycleService() {
                 val catalog = DatabaseModelCatalogManager(databaseDriver)
                 catalogManager = catalog
 
-                // Initialize model browser with cookbook engine and hardware profile
                 val deviceProfile = DeviceProfileProvider(this@EngineService).getProfile()
-                val browser = ModelBrowser(
+                modelBrowser = ModelBrowser(
                     catalogManager = catalog,
                     hfClient = client,
                     cookbookEngine = CookbookEngine(),
                     deviceProfile = deviceProfile
                 )
-                modelBrowser = browser
 
-                // Initialize model runtime with llama.cpp backend (RFC-0103, M21)
-                // GlobalModelRuntime manages the admission queue and loaded model lifecycle
                 val runtime = GlobalModelRuntime(LlamaCppInferenceBackend())
                 modelRuntime = runtime
 
-                // Initialize HTTP server (on ephemeral port, chosen by OS)
                 httpServer = EngineHttpServer(tokenManager, runtime)
                 httpServer.start()
-
                 val boundPort = httpServer.getBoundPort()
-                if (boundPort == null) {
-                    throw IllegalStateException("HTTP server failed to bind")
-                }
+                    ?: throw IllegalStateException("HTTP server failed to bind")
 
-                // Initialize app approval system (RFC-0103)
                 approvalStore = EncryptedAppApprovalStore(this@EngineService)
                 val notificationManager = AppNotificationManager(this@EngineService)
                 approvalManager = AppApprovalManager(this@EngineService, approvalStore, notificationManager)
-
-                // Initialize Binder handshake interface with approval manager
                 binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
 
                 _isRunning = true
@@ -176,31 +155,20 @@ class EngineService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-
-        // Post foreground notification (required by Android 12+)
         createNotificationChannel()
         val notification = buildNotification("Initializing...")
-        
-        // Security check for foreground service type (RFC-0103)
-        // Android 14+ requires manifest declaration AND the corresponding permission.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val hasDataSyncPermission = ContextCompat.checkSelfPermission(
-                this,
-                "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+                this, "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
             ) == PackageManager.PERMISSION_GRANTED
-            
             if (hasDataSyncPermission) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
-                // If permission missing, start without type to avoid crash, though it may 
-                // limit functionality on Android 14+.
                 startForeground(NOTIFICATION_ID, notification)
             }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        // RFC-0103: Sticky mode keeps the service running as long as Engine is needed
         return START_STICKY
     }
 
@@ -210,17 +178,11 @@ class EngineService : LifecycleService() {
                 if (isRunning) {
                     httpServer.stop()
                     httpClient.close()
-                    
-                    // Unload all models and shut down the runtime (RFC-0103, RFC-0022)
-                    modelRuntime?.loaded()?.forEach { modelId ->
-                        modelRuntime?.unload(modelId)
-                    }
-                    
+                    modelRuntime?.loaded()?.forEach { modelId -> modelRuntime?.unload(modelId) }
                     tokenManager.clearTokens()
                     _isRunning = false
                 }
-            } catch (e: Exception) {
-                // Log error, but don't throw from shutdown
+            } catch (_: Exception) {
             } finally {
                 _instance = null
                 serviceScope.cancel()
@@ -231,15 +193,7 @@ class EngineService : LifecycleService() {
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
-
-        // Return the handshake Binder interface
-        // RFC-0103: The only Binder surface Engine exposes.
-        // All subsequent communication is via HTTP.
-        return if (isRunning) {
-            binder.asBinder()
-        } else {
-            null
-        }
+        return if (isRunning) binder.asBinder() else null
     }
 
     private fun createNotificationChannel() {
@@ -250,9 +204,7 @@ class EngineService : LifecycleService() {
         )
         channel.description = "Aidos Engine local model inference service"
         channel.setShowBadge(false)
-
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.createNotificationChannel(channel)
+        getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
     }
 
     private fun buildNotification(message: String): Notification {
@@ -261,21 +213,17 @@ class EngineService : LifecycleService() {
             this, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Aidos Engine")
             .setContentText(message)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
-            .setOngoing(true)  // Ongoing notification (can't be swiped away by user)
+            .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 
     private fun updateNotification(message: String) {
-        val notification = buildNotification(message)
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.notify(NOTIFICATION_ID, notification)
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification(message))
     }
 }
-

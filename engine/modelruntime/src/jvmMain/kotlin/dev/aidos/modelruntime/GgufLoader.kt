@@ -1,157 +1,227 @@
 package dev.aidos.modelruntime
 
 import java.io.File
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
- * GGUF format detection and header parsing.
+ * GGUF header and metadata parser used by the JVM tooling.
  *
- * GGUF is a self-describing binary format for quantized language models.
- * This loader validates file format and extracts metadata needed for model selection
- * (context window, model kind, quantization).
- *
- * See: https://github.com/ggerganov/ggml/blob/master/docs/gguf.md
+ * This intentionally parses metadata and tensor descriptors only; it never reads
+ * the model tensor data. That makes inspection fast even for multi-GB models.
  */
 object GgufLoader {
-    private const val GGUF_MAGIC = 0x46554747u // "GGUF" in little-endian
+    private const val GGUF_MAGIC = 0x46554747L // "GGUF" as little-endian UInt32
+    private const val MAX_KV_ENTRIES = 100_000L
+    private const val MAX_STRING_BYTES = 1_048_576L
+    private const val MAX_ARRAY_ELEMENTS = 1_000_000L
 
-    /**
-     * Validates that a file is a valid GGUF model.
-     * Returns the model metadata if valid; null if file is not a GGUF or is corrupt.
-     */
     fun loadMetadata(file: File): GgufMetadata? {
-        if (!file.exists() || !file.isFile) return null
-        if (file.length() < 28) return null // GGUF header is at least 28 bytes
+        if (!file.exists() || !file.isFile || file.length() < 24) return null
 
         return try {
             file.inputStream().buffered().use { stream ->
-                // Read magic number (4 bytes, little-endian)
                 val magic = readU32LE(stream)
                 if (magic != GGUF_MAGIC) return null
 
-                // Read version (4 bytes, little-endian)
-                val version = readU32LE(stream)
-                if (version < 1u || version > 3u) return null // Support GGUF v1-v3
+                val version = readU32LE(stream).toInt()
+                if (version !in 1..3) return null
 
-                // Read tensor count (8 bytes, little-endian)
                 val tensorCount = readU64LE(stream)
-
-                // Read metadata KV count (8 bytes, little-endian)
                 val kvCount = readU64LE(stream)
+                if (kvCount > MAX_KV_ENTRIES) return null
 
-                // Parse key-value metadata
-                val metadata = mutableMapOf<String, String>()
-                repeat(minOf(kvCount.toInt(), 10000)) { // Limit to 10k KV pairs
-                    val key = readString(stream) ?: return null
-                    val valType = readU32LE(stream) // value type enum
-                    val value = readValue(stream, valType.toInt()) ?: return@repeat
-                    metadata[key] = value
+                var architecture: String? = null
+                var modelName: String? = null
+                var contextWindow: Long? = null
+                var fileType: Long? = null
+                var sizeLabel: String? = null
+
+                repeat(kvCount.toInt()) {
+                    val key = readString(stream) ?: throw GgufParseException("Invalid metadata key")
+                    val type = readU32LE(stream).toInt()
+                    val value = readValue(stream, type)
+                    when (key) {
+                        "general.architecture" -> architecture = value as? String
+                        "general.name" -> modelName = value as? String
+                        "general.context_length" -> contextWindow = value.asLong()
+                        "general.file_type" -> fileType = value.asLong()
+                        "general.size_label" -> sizeLabel = value as? String
+                    }
+                }
+
+                // Tensor descriptors follow the KV metadata. Summing tensor element
+                // counts gives a useful parameter-count value without touching tensor data.
+                var parameterCount: ULong = 0u
+                repeat(tensorCount.toInt()) {
+                    readString(stream) ?: throw GgufParseException("Invalid tensor name")
+                    val dimensions = readU32LE(stream).toInt()
+                    if (dimensions < 0 || dimensions > 64) throw GgufParseException("Invalid tensor rank")
+                    var elements = 1uL
+                    repeat(dimensions) {
+                        val dimension = readU64LE(stream)
+                        if (dimension == 0uL) elements = 0uL
+                        else elements = elements.saturatingMultiply(dimension)
+                    }
+                    readU64LE(stream) // tensor data offset
+                    readU32LE(stream) // GGML tensor type
+                    parameterCount = parameterCount.saturatingAdd(elements)
                 }
 
                 GgufMetadata(
-                    version = version.toInt(),
-                    tensorCount = tensorCount.toLong(),
-                    kvCount = kvCount.toLong(),
-                    contextWindow = metadata["general.context_length"]?.toIntOrNull() ?: 4096,
-                    modelName = metadata["general.name"] ?: "unknown",
-                    quantization = metadata["general.quantization_version"] ?: "unknown",
+                    version = version,
+                    tensorCount = tensorCount.toLongSafely(),
+                    kvCount = kvCount.toLongSafely(),
+                    contextWindow = (contextWindow ?: 4096L).coerceIn(1, Int.MAX_VALUE.toLong()).toInt(),
+                    modelName = modelName ?: "unknown",
+                    architecture = architecture ?: "unknown",
+                    fileType = fileType?.toIntSafely(),
+                    quantization = fileType?.let(::quantizationName) ?: "unknown",
+                    sizeLabel = sizeLabel ?: "unknown",
+                    parameterCount = parameterCount.toLongSafely(),
                 )
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
 
-    private fun readU32LE(stream: java.io.InputStream): UInt {
-        val bytes = ByteArray(4)
-        if (stream.read(bytes) != 4) throw Exception("EOF reading u32")
-        return (bytes[0].toUInt() and 0xFFu) or
-                ((bytes[1].toUInt() and 0xFFu) shl 8) or
-                ((bytes[2].toUInt() and 0xFFu) shl 16) or
-                ((bytes[3].toUInt() and 0xFFu) shl 24)
+    private fun readValue(stream: InputStream, type: Int): Any? = when (type) {
+        0 -> readU8(stream)
+        1 -> readI8(stream)
+        2 -> readU16LE(stream)
+        3 -> readI16LE(stream)
+        4 -> readU32LE(stream)
+        5 -> readI32LE(stream)
+        6 -> readFloat32LE(stream)
+        7 -> readU8(stream) != 0L
+        8 -> readString(stream)
+        9 -> readArray(stream)
+        10 -> readU64LE(stream)
+        11 -> readI64LE(stream)
+        12 -> readFloat64LE(stream)
+        else -> throw GgufParseException("Unsupported GGUF value type: $type")
     }
 
-    private fun readU64LE(stream: java.io.InputStream): ULong {
-        val bytes = ByteArray(8)
-        if (stream.read(bytes) != 8) throw Exception("EOF reading u64")
-        return (bytes[0].toULong() and 0xFFu) or
-                ((bytes[1].toULong() and 0xFFu) shl 8) or
-                ((bytes[2].toULong() and 0xFFu) shl 16) or
-                ((bytes[3].toULong() and 0xFFu) shl 24) or
-                ((bytes[4].toULong() and 0xFFu) shl 32) or
-                ((bytes[5].toULong() and 0xFFu) shl 40) or
-                ((bytes[6].toULong() and 0xFFu) shl 48) or
-                ((bytes[7].toULong() and 0xFFu) shl 56)
+    /** Reads and discards an array while validating its structure. */
+    private fun readArray(stream: InputStream): List<Any?>? {
+        val count = readU64LE(stream)
+        val elementType = readU32LE(stream).toInt()
+        if (count > MAX_ARRAY_ELEMENTS) throw GgufParseException("GGUF array is too large")
+        return List(count.toInt()) { readValue(stream, elementType) }
     }
 
-    private fun readString(stream: java.io.InputStream): String? {
-        val lenBytes = ByteArray(4)
-        if (stream.read(lenBytes) != 4) return null
-        val len = (lenBytes[0].toInt() and 0xFF) or
-                ((lenBytes[1].toInt() and 0xFF) shl 8) or
-                ((lenBytes[2].toInt() and 0xFF) shl 16) or
-                ((lenBytes[3].toInt() and 0xFF) shl 24)
-        if (len < 0 || len > 10000) return null // Sanity check
-        val bytes = ByteArray(len)
-        if (stream.read(bytes) != len) return null
-        return String(bytes, Charsets.UTF_8)
+    private fun readString(stream: InputStream): String? {
+        val length = readU64LE(stream)
+        if (length > MAX_STRING_BYTES) throw GgufParseException("GGUF string is too large")
+        val bytes = ByteArray(length.toInt())
+        readFully(stream, bytes)
+        return bytes.toString(Charsets.UTF_8)
     }
 
-    private fun readValue(stream: java.io.InputStream, type: Int): String? {
-        return try {
-            when (type) {
-                0 -> { // uint8
-                    val b = ByteArray(1)
-                    stream.read(b)
-                    b[0].toString()
-                }
-                1 -> { // int8
-                    val b = ByteArray(1)
-                    stream.read(b)
-                    b[0].toString()
-                }
-                2 -> { // uint16
-                    val b = ByteArray(2)
-                    stream.read(b)
-                    ((b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8)).toString()
-                }
-                3 -> { // int16
-                    val b = ByteArray(2)
-                    stream.read(b)
-                    ((b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8)).toString()
-                }
-                4 -> { // uint32
-                    val b = ByteArray(4)
-                    stream.read(b)
-                    readU32LE(java.io.ByteArrayInputStream(b)).toString()
-                }
-                5 -> { // int32
-                    val b = ByteArray(4)
-                    stream.read(b)
-                    readU32LE(java.io.ByteArrayInputStream(b)).toInt().toString()
-                }
-                6 -> { // float32
-                    val b = ByteArray(4)
-                    stream.read(b)
-                    java.nio.ByteBuffer.wrap(b).float.toString()
-                }
-                7 -> { // bool
-                    val b = ByteArray(1)
-                    stream.read(b)
-                    (b[0].toInt() != 0).toString()
-                }
-                8 -> { // string
-                    readString(stream)
-                }
-                9 -> { // array - we skip this for simplicity
-                    stream.skip(8) // skip count and type
-                    null
-                }
-                else -> null
-            }
-        } catch (e: Exception) {
-            null
+    private fun readU8(stream: InputStream): Long {
+        val b = stream.read()
+        if (b < 0) throw GgufParseException("Unexpected EOF")
+        return b.toLong()
+    }
+
+    private fun readI8(stream: InputStream): Long = readU8(stream).let { if (it >= 128) it - 256 else it }
+
+    private fun readU16LE(stream: InputStream): Long = readByteBuffer(stream, 2).short.toInt().toLong() and 0xFFFFL
+
+    private fun readI16LE(stream: InputStream): Long = readByteBuffer(stream, 2).short.toLong()
+
+    private fun readI32LE(stream: InputStream): Long = readByteBuffer(stream, 4).int.toLong()
+
+    private fun readFloat32LE(stream: InputStream): Double = readByteBuffer(stream, 4).float.toDouble()
+
+    private fun readFloat64LE(stream: InputStream): Double = readByteBuffer(stream, 8).double
+
+    private fun readU32LE(stream: InputStream): Long = readByteBuffer(stream, 4).int.toLong() and 0xFFFF_FFFFL
+
+    private fun readU64LE(stream: InputStream): ULong {
+        val buffer = ByteArray(8)
+        readFully(stream, buffer)
+        return ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN).long.toULong()
+    }
+
+    private fun readI64LE(stream: InputStream): Long = readU64LE(stream).toLong()
+
+    private fun readByteBuffer(stream: InputStream, size: Int): ByteBuffer {
+        val bytes = ByteArray(size)
+        readFully(stream, bytes)
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    }
+
+    private fun readFully(stream: InputStream, buffer: ByteArray) {
+        var offset = 0
+        while (offset < buffer.size) {
+            val read = stream.read(buffer, offset, buffer.size - offset)
+            if (read < 0) throw GgufParseException("Unexpected EOF")
+            offset += read
         }
     }
+
+    private fun Any?.asLong(): Long? = when (this) {
+        is Long -> this
+        is ULong -> this.toLong()
+        is Int -> this.toLong()
+        is UInt -> this.toLong()
+        is Double -> this.toLong()
+        else -> null
+    }
+
+    private fun quantizationName(fileType: Long): String = when (fileType) {
+        0L -> "F32"
+        1L -> "F16"
+        2L -> "Q4_0"
+        3L -> "Q4_1"
+        4L -> "Q4_1 (some F16)"
+        5L -> "Q4_2"
+        6L -> "Q4_3"
+        7L -> "Q8_0"
+        8L -> "Q5_0"
+        9L -> "Q5_1"
+        10L -> "Q2_K"
+        11L -> "Q3_K_S"
+        12L -> "Q3_K_M"
+        13L -> "Q3_K_L"
+        14L -> "Q4_K_S"
+        15L -> "Q4_K_M"
+        16L -> "Q5_K_S"
+        17L -> "Q5_K_M"
+        18L -> "Q6_K"
+        19L -> "IQ2_XXS"
+        20L -> "IQ2_XS"
+        21L -> "IQ3_XXS"
+        22L -> "IQ1_S"
+        23L -> "IQ4_NL"
+        24L -> "IQ3_S"
+        25L -> "IQ2_S"
+        26L -> "IQ4_XS"
+        27L -> "I8"
+        28L -> "IQ1_M"
+        29L -> "BF16"
+        30L -> "Q4_0_4_4"
+        31L -> "Q4_0_4_8"
+        32L -> "Q4_0_8_8"
+        33L -> "TQ1_0"
+        34L -> "TQ2_0"
+        35L -> "MXFP4"
+        else -> "UNKNOWN($fileType)"
+    }
+
+    private fun ULong.saturatingMultiply(other: ULong): ULong =
+        if (other != 0uL && this > ULong.MAX_VALUE / other) ULong.MAX_VALUE else this * other
+
+    private fun ULong.saturatingAdd(other: ULong): ULong =
+        if (ULong.MAX_VALUE - this < other) ULong.MAX_VALUE else this + other
+
+    private fun ULong.toLongSafely(): Long = minOf(this, Long.MAX_VALUE.toULong()).toLong()
+    private fun Long.toIntSafely(): Int = coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+
+    private class GgufParseException(message: String) : Exception(message)
 }
 
 data class GgufMetadata(
@@ -160,5 +230,9 @@ data class GgufMetadata(
     val kvCount: Long,
     val contextWindow: Int,
     val modelName: String,
+    val architecture: String,
+    val fileType: Int?,
     val quantization: String,
+    val sizeLabel: String,
+    val parameterCount: Long,
 )
