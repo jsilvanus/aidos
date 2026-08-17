@@ -30,33 +30,16 @@ object UnboundedExecutionWindow : ExecutionWindow {
     override fun permitsLocalInference(): Boolean = true
 }
 
-/**
- * Agent loop for a single Run (RFC-0008, M16).
- *
- * One iteration of the loop is a **step**. Each step boundary is a checkpoint (RFC-0009).
- * The loop terminates when the model returns END_TURN, STOP_SEQUENCE, or REFUSAL; when
- * [maxSteps] is reached; or when the same tool call is emitted three consecutive times.
- *
- * Taint is monotonic within a Run (RFC-0027): once a tool result arrives it is UNTRUSTED and
- * the Run's taint level never decreases. A tainted Run that requests egress is denied;
- * the error names the specific untrusted content (D6, D7).
- *
- * The model never confirms its own success — the execution layer observes outcomes directly.
- * Every step appends to the [transcript]; the caller reads outcomes from the transcript.
- */
+/** Agent loop for a single Run (RFC-0008, M16). */
 class AgentLoop(
     private val router: InferenceRouter,
     private val assembler: PromptAssembler,
     private val broker: EffectBroker,
-    /** Checkpointing callback — called at the start and end of each step. */
     private val checkpoint: suspend (StepEvent) -> Unit = {},
 ) {
-    /** Maximum steps per Run (RFC-0008). Hard ceiling, not advisory. */
     val maxSteps: Int = 24
 
-    /** Run a single step sequence, returning the completed [RunOutcome]. */
     suspend fun run(request: RunRequest): RunOutcome {
-        // ── Phase 1: select model (RFC-0020, RFC-0025) ────────────────────────
         val routingCtx = RoutingContext(
             profile = request.profile,
             networkAvailable = request.networkAvailable,
@@ -75,7 +58,6 @@ class AgentLoop(
             else -> return RunOutcome.Failed("Routing failed: $initialDecision")
         }
 
-        // ── Phase 2: assemble prompt (RFC-0025) ──────────────────────────────
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = request.userMessage,
@@ -87,7 +69,6 @@ class AgentLoop(
         val pkg = when (val ar = assembler.assemble(assemblyReq)) {
             is AssemblyResult.Ok -> ar.pkg
             is AssemblyResult.TooBig -> {
-                // One re-selection with minimumContextWindow — bounded, not a loop (D22).
                 val larger = router.select(
                     request.modelKind,
                     routingCtx.copy(minimumContextWindow = ar.minimumContextWindow),
@@ -105,14 +86,13 @@ class AgentLoop(
             }
         }
 
-        // ── Step loop ─────────────────────────────────────────────────────────
         val transcript = mutableListOf<Turn>()
-        transcript.addAll(pkg.request.messages)  // system + history + user
+        transcript.addAll(pkg.request.messages)
 
         var runTaint = TrustLevel.TRUSTED
         var taintSourceDescription: String? = null
         var steps = 0
-        val consecutiveCalls = mutableListOf<String>()  // dedup key: name+args hash
+        val consecutiveCalls = mutableListOf<String>()
 
         checkpoint(StepEvent.RunStarted(instructionSetHash = pkg.instructionSetHash))
 
@@ -120,7 +100,6 @@ class AgentLoop(
             steps++
             checkpoint(StepEvent.StepStarted(step = steps))
 
-            // Invoke model.
             val modelReq = ModelRequest(
                 messages = transcript.toList(),
                 tools = request.tools,
@@ -132,11 +111,14 @@ class AgentLoop(
                 return RunOutcome.Failed("Model invocation failed: ${err.message}")
             }
 
-            // Append assistant turn to transcript.
-            val assistantTurn = Turn.Assistant(text = response.text, toolCalls = response.toolCalls)
+            // Consume the generalized RFC-0022 response once at the semantic boundary. The
+            // transcript remains intentionally text/tool oriented for the agent loop; tensor and
+            // future modality outputs are handled by capability-specific consumers above/beside it.
+            val responseText = response.text()
+            val responseToolCalls = response.toolCalls()
+            val assistantTurn = Turn.Assistant(text = responseText, toolCalls = responseToolCalls)
             transcript.add(assistantTurn)
 
-            // Check termination: stop reason.
             if (response.stopReason in setOf(StopReason.END_TURN, StopReason.STOP_SEQUENCE, StopReason.REFUSAL)) {
                 checkpoint(StepEvent.RunCompleted(step = steps, taint = runTaint))
                 return RunOutcome.Completed(
@@ -148,8 +130,7 @@ class AgentLoop(
                 )
             }
 
-            // Check termination: no tool calls and model returned.
-            if (response.toolCalls.isEmpty()) {
+            if (responseToolCalls.isEmpty()) {
                 checkpoint(StepEvent.RunCompleted(step = steps, taint = runTaint))
                 return RunOutcome.Completed(
                     transcript = transcript.toList(),
@@ -160,31 +141,26 @@ class AgentLoop(
                 )
             }
 
-            // Check repetition: same tool call three consecutive times.
-            val callKey = response.toolCalls.joinToString("|") { "${it.toolName}:${it.arguments}" }
+            val callKey = responseToolCalls.joinToString("|") { "${it.toolName}:${it.arguments}" }
             if (consecutiveCalls.size >= 3 && consecutiveCalls.takeLast(3).all { it == callKey }) {
                 checkpoint(StepEvent.RunFailed(step = steps, reason = "Repeated identical tool call"))
                 return RunOutcome.Failed("Loop detected: same tool call repeated 3 times")
             }
             consecutiveCalls.add(callKey)
 
-            // Execute tool calls — taint propagates monotonically.
-            for (toolCall in response.toolCalls) {
+            for (toolCall in responseToolCalls) {
                 val result: ToolCallResult = broker.invoke(
                     subjectId = "run",
                     call = toolCall,
                     runTaint = runTaint,
                 )
 
-                // Taint is monotonic: UNTRUSTED once, always UNTRUSTED (RFC-0027).
                 val newTaint = runTaint raisedBy result.trustLevel
                 if (newTaint != runTaint) {
                     runTaint = newTaint
                     taintSourceDescription = toolCall.toolName
                 }
 
-                // Tainted Run requesting egress is denied at tool execution time (the broker
-                // enforces this). Here we surface the denial clearly.
                 if (result.outcome is dev.aidos.kernel.ToolOutcome.Denied) {
                     val denial = result.outcome as dev.aidos.kernel.ToolOutcome.Denied
                     val reason = denial.reason
@@ -192,9 +168,7 @@ class AgentLoop(
                         " (Run is tainted by: $taintSourceDescription)"
                     } else ""
                     transcript.add(Turn.ToolResult(result = result.copy(
-                        content = listOf(ContentBlock.Text(
-                            "Denied: ${reason}$taintDesc"
-                        ))
+                        content = listOf(ContentBlock.Text("Denied: ${reason}$taintDesc"))
                     )))
                 } else {
                     transcript.add(Turn.ToolResult(result = result))
@@ -204,15 +178,11 @@ class AgentLoop(
             checkpoint(StepEvent.StepCompleted(step = steps, taint = runTaint))
         }
 
-        // maxSteps reached.
         checkpoint(StepEvent.RunFailed(step = steps, reason = "Step limit reached"))
         return RunOutcome.Failed("Step limit of $maxSteps reached")
     }
 }
 
-/**
- * Input for a single Run (RFC-0008, M16).
- */
 data class RunRequest(
     val userMessage: String,
     val modelKind: ModelKind = ModelKind.LLM,
