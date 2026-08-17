@@ -130,12 +130,20 @@ Aidos uses RFCs to drive implementation. This means:
 │   ├── mvp-roadmap.md     # Milestones, RFCs, and done-when conditions
 │   └── ...
 ├── schema/                 # Canonical SQLite DDL (governs; RFC DDL defers to it), check.py
+├── kernel/                 # Contract types only, no implementations (frozen at G0).
+│                           # A repo-root module, NOT agent/kernel — both agent/ and engine/
+│                           # include it by path (`project(":kernel").projectDir`) so the two
+│                           # Gradle roots share one definition instead of two drifting copies.
 ├── agent/                  # Aidos Agent (RFC-0103) — Kotlin Multiplatform Gradle project
-│   ├── kernel/             # Contract types only, no implementations (frozen at G0)
 │   ├── androidapp/         # Phase 4: Android app (Compose UI, foreground service host)
 │   ├── cli/                # CLI frontend
+│   ├── mcp-core/           # RFC-0031: JSON-RPC + stdio/HTTP transports. Kernel-free by
+│   │                       # decision, so it can be consumed outside this repo.
+│   ├── mcp-policy/         # RFC-0031: transport→effect/permission classification, endpoint
+│   │                       # validation, trust rules. Also kernel-free.
+│   ├── mcp-broker/         # RFC-0031: the kernel binding — ToolDescriptor rendering, Tool impl
 │   └── ...                 # capability, broker, executor, storage, git, filesystem, vault,
-│                            # prompt, agentloop, mcp, routing, worker, retention, knowledge,
+│                            # prompt, agentloop, routing, worker, retention, knowledge,
 │                            # settings, identity, lock, memory, daemon, etc. — one module
 │                            # per subsystem, each with its own tests
 ├── engine/                 # Aidos Engine Core (RFC-0103) — Kotlin Multiplatform Gradle project
@@ -157,7 +165,12 @@ Aidos uses RFCs to drive implementation. This means:
 1. **Minimal** — Do what the RFC says, no more.
 2. **Clear** — Code should be readable without excessive comments.
 3. **Tested** — New code has tests; old code isn't broken.
-4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in `agent/kernel/`.
+4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in **18 modules**:
+   `kernel` plus `api`, `broker`, `capability`, `cli`, `daemon`, `executor`, `filesystem`, `git`,
+   `http`, `identity`, `knowledge`, `lock`, `mcp-broker`, `mcp-core`, `mcp-policy`, `settings`,
+   `storage`. A compiler warning in any of these is a build failure, not advice — expect
+   "Unnecessary non-null assertion", "No cast needed", and override-parameter-name mismatches to
+   fail CI. Check the module's own `build.gradle.kts` before assuming a warning is harmless.
 5. **Documented** — Public APIs have doc comments.
 
 **Comments:**
@@ -191,11 +204,21 @@ python3 schema/check.py
 # Build and run all module tests (Aidos Agent)
 cd agent && gradle build
 
-# Run a specific module's tests (Aidos Agent)
-cd agent && gradle :executor:test
+# What CI actually runs for the Agent (.github/workflows/ci.yml, test-agent job).
+# Prefer this when checking whether a change is green: --continue enumerates every
+# failure instead of stopping at the first, which matters because a module's tests
+# cannot compile until its main source does — fixing one break routinely reveals
+# the next.
+cd agent && gradle jvmTest --continue
+
+# Run a specific module's tests (Aidos Agent).
+# NOTE: these are Kotlin Multiplatform modules with a jvm() target, so the task is
+# `jvmTest`. Plain `:executor:test` does not exist and fails with
+# "task 'test' not found in project ':executor'".
+cd agent && gradle :executor:jvmTest
 
 # With output
-cd agent && gradle :executor:test --info
+cd agent && gradle :executor:jvmTest --info
 
 # Aidos Engine and SDK are built similarly from their respective directories:
 # cd engine && gradle build
