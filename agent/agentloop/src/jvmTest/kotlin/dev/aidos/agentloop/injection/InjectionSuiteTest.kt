@@ -1,11 +1,11 @@
 package dev.aidos.agentloop.injection
 
 import dev.aidos.kernel.ContentBlock
-import dev.aidos.kernel.ContextItemKind
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.PlatformProfile
@@ -13,14 +13,16 @@ import dev.aidos.kernel.Preview
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
+import dev.aidos.kernel.Usage
 import dev.aidos.agentloop.AgentLoop
 import dev.aidos.agentloop.RunOutcome
 import dev.aidos.agentloop.RunRequest
@@ -53,26 +55,26 @@ class InjectionSuiteTest {
         val responses = ArrayDeque(listOf(
             // Step 1: the model calls the tool (which will return hostile content).
             ModelResponse(
-                text = null,
-                toolCalls = listOf(ToolCall(
-                    callId = "call-1",
-                    toolName = toolName,
-                    arguments = buildJsonObject {},
-                    capabilityId = null,
-                )),
+                outputs = listOf(
+                    ToolCallOutput(
+                        ToolCall(
+                            callId = "call-1",
+                            toolName = toolName,
+                            arguments = buildJsonObject {},
+                            capabilityId = null,
+                        )
+                    )
+                ),
                 stopReason = StopReason.TOOL_USE,
-                usage = TokenUsage(10, 5),
-                modelId = "test",
-                modelVersion = "1.0",
+                usage = Usage(10, 5, 15),
+                model = ModelRef("test", "1.0"),
             ),
             // Step 2: model receives the hostile content as a tool result and ends.
             ModelResponse(
-                text = "I processed the content",
-                toolCalls = emptyList(),
+                outputs = listOf(TextOutput("I processed the content")),
                 stopReason = StopReason.END_TURN,
-                usage = TokenUsage(20, 10),
-                modelId = "test",
-                modelVersion = "1.0",
+                usage = Usage(20, 10, 30),
+                model = ModelRef("test", "1.0"),
             ),
         ))
         return object : ModelAdapter {
@@ -105,7 +107,7 @@ class InjectionSuiteTest {
                 callId = call.callId,
                 outcome = ToolOutcome.Ok,
                 content = listOf(ContentBlock.Text(adversarialText)),
-                trustLevel = TrustLevel.UNTRUSTED,  // All tool results are UNTRUSTED.
+                trustLevel = TrustLevel.UNTRUSTED,
             )
         override suspend fun preview(s: String, call: ToolCall) =
             Result.success(Preview.Description("preview"))
