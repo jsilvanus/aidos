@@ -152,14 +152,16 @@ class EngineHttpServer(
             }
 
             val response = inferenceResult.getOrThrow()
+            val text = response.outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
+            val toolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.toolCall }
 
             if (request.stream) {
-                streamChatCompletions(call, response, request.model)
+                streamChatCompletions(call, response, request.model, text)
             } else {
                 val message = ChatMessage(
                     role = "assistant",
-                    content = response.text ?: "",
-                    tool_calls = response.toolCalls.map { tc ->
+                    content = text,
+                    tool_calls = toolCalls.map { tc ->
                         ToolCall(
                             id = tc.callId,
                             function = ToolFunctionCall(tc.toolName, tc.arguments.toString())
@@ -167,15 +169,16 @@ class EngineHttpServer(
                     }
                 )
 
+                val usage = response.usage
                 val chatResponse = ChatCompletionResponse(
                     id = "chatcmpl-${UUID.randomUUID()}",
                     created = System.currentTimeMillis() / 1000,
                     model = request.model,
-                    choices = listOf(Choice(0, message, response.stopReason.name.lowercase())),
+                    choices = listOf(Choice(0, message, response.stopReason?.name?.lowercase())),
                     usage = TokenUsage(
-                        prompt_tokens = response.usage.inputTokens,
-                        completion_tokens = response.usage.outputTokens,
-                        total_tokens = response.usage.inputTokens + response.usage.outputTokens
+                        prompt_tokens = usage?.inputTokens ?: 0,
+                        completion_tokens = usage?.outputTokens ?: 0,
+                        total_tokens = usage?.totalTokens ?: 0
                     )
                 )
                 call.respond(chatResponse)
@@ -185,9 +188,8 @@ class EngineHttpServer(
         }
     }
 
-    private suspend fun streamChatCompletions(call: ApplicationCall, response: ModelResponse, modelId: String) {
+    private suspend fun streamChatCompletions(call: ApplicationCall, response: ModelResponse, modelId: String, responseText: String) {
         val completionId = "chatcmpl-${UUID.randomUUID()}"
-        val responseText = response.text ?: ""
 
         call.response.header(HttpHeaders.ContentType, ContentType.Text.EventStream.toString())
         call.response.header(HttpHeaders.CacheControl, "no-cache")
@@ -209,7 +211,7 @@ class EngineHttpServer(
                 id = completionId,
                 created = System.currentTimeMillis() / 1000,
                 model = modelId,
-                choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), response.stopReason.name.lowercase()))
+                choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), response.stopReason?.name?.lowercase()))
             )
             writeStringUtf8("data: ${Json.encodeToString(finalChunk)}\n\n")
             writeStringUtf8("data: [DONE]\n\n")
@@ -239,7 +241,7 @@ class EngineHttpServer(
                     maxOutputTokens = 0,
                     stopConditions = emptyList()
                 )
-                val result = adapter.invoke(modelRequest).getOrThrow()
+                adapter.invoke(modelRequest).getOrThrow()
                 Embedding(embedding = listOf(0.0f), index = index)
             }
             call.respond(EmbeddingsResponse(data = embeddings, model = request.model, usage = TokenUsage(0, 0, 0)))
@@ -267,7 +269,8 @@ class EngineHttpServer(
             )
 
             val result = adapter.invoke(modelRequest).getOrThrow()
-            call.respond(TranscriptionResponse(text = result.text ?: ""))
+            val text = result.outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
+            call.respond(TranscriptionResponse(text = text))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
