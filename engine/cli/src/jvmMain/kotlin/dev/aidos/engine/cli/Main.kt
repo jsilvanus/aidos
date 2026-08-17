@@ -49,7 +49,7 @@ private suspend fun execute(cli: EngineCli, args: Array<String>) {
             val provider = requireArgument(args, 1, "provider")
             require(provider == "hf" || provider == "huggingface") { "unsupported download provider: $provider (use hf)" }
             val repo = requireArgument(args, 2, "Hugging Face repository")
-            val filename = requireArgument(args, 3, "GGUF filename")
+            val filename = requireArgument(args, 3, "artifact filename")
             println("downloaded ${cli.downloadFromHuggingFace(repo, filename).absolutePath}")
         }
         "model" -> {
@@ -120,11 +120,11 @@ private fun printHelp() {
           loaded                            List currently loaded models
           load <model>                      Load a model
           unload <model>                    Unload a model
-          download hf <repo> <filename>     Download a GGUF file from Hugging Face
-          infer <model> <prompt>             Run one prompt and print the response
+          download hf <repo> <filename>     Download a model artifact from Hugging Face
+          infer <model> <prompt>            Run one prompt and print the response
           chat <model>                      Interactive multi-turn chat
           model inspect <file>              Inspect a local GGUF file
-          test backend                       Run backend smoke test
+          test backend                      Run backend smoke test
           help                              Show this help
         """.trimIndent()
     )
