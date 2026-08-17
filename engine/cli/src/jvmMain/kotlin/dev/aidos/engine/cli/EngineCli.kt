@@ -1,7 +1,6 @@
 package dev.aidos.engine.cli
 
 import dev.aidos.kernel.ContentBlock
-import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -16,7 +15,6 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import kotlin.io.path.Path
 
 /**
  * Testable command layer for the Aidos Engine CLI.
@@ -96,19 +94,14 @@ class EngineCli(
 
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
         if (response.statusCode() !in 200..299) {
-            response.body().use { it.close() }
+            response.body().close()
             throw IllegalStateException("Hugging Face download failed: HTTP ${response.statusCode()} ($url)")
         }
 
         response.body().use { input ->
-            input.copyTo(temporary.outputStream().buffered())
+            temporary.outputStream().buffered().use { output -> input.copyTo(output) }
         }
-        Files.move(
-            temporary.toPath(),
-            destination.toPath(),
-            StandardCopyOption.REPLACE_EXISTING,
-            StandardCopyOption.ATOMIC_MOVE,
-        )
+        Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
         return destination
     }
 
