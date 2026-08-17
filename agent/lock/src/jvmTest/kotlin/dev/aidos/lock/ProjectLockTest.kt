@@ -42,7 +42,7 @@ class ProjectLockTest {
                 "Second acquire must see AlreadyHeld, not $second")
             assertEquals("inst-1", second.instanceId)
         } finally {
-            (first as AcquireResult.Acquired).lock.release()
+            first.lock.release()
         }
     }
 

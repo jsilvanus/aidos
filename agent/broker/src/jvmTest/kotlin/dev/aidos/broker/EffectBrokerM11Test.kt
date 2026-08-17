@@ -144,9 +144,9 @@ private object DesktopOnlyTool : Tool {
             recoveryClass = RecoveryClass.PURE, availability = DESKTOP_ALL,
         )
     )
-    override suspend fun execute(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun execute(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         ToolCallResult("", ToolOutcome.Ok, listOf(ContentBlock.Text("ok")), TrustLevel.TRUSTED)
-    override suspend fun preview(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun preview(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         Result.failure<Preview>(UnsupportedOperationException())
     override suspend fun cancel(operationId: String) = Unit
 }
@@ -162,9 +162,9 @@ private object UniversalTool : Tool {
             recoveryClass = RecoveryClass.PURE, availability = UNIVERSAL,
         )
     )
-    override suspend fun execute(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun execute(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         ToolCallResult("", ToolOutcome.Ok, listOf(ContentBlock.Text("ok")), TrustLevel.TRUSTED)
-    override suspend fun preview(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun preview(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         Result.failure<Preview>(UnsupportedOperationException())
     override suspend fun cancel(operationId: String) = Unit
 }
@@ -180,9 +180,9 @@ private object NetworkTool : Tool {
             recoveryClass = RecoveryClass.UNSAFE, availability = NETWORKED,
         )
     )
-    override suspend fun execute(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun execute(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         ToolCallResult("", ToolOutcome.Ok, listOf(ContentBlock.Text("ok")), TrustLevel.TRUSTED)
-    override suspend fun preview(h: ResourceHandle, op: String, args: JsonObject) =
+    override suspend fun preview(handle: ResourceHandle, operation: String, arguments: JsonObject) =
         Result.failure<Preview>(UnsupportedOperationException())
     override suspend fun cancel(operationId: String) = Unit
 }

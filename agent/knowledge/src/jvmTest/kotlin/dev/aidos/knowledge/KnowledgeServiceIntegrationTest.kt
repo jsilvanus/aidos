@@ -161,7 +161,18 @@ class KnowledgeServiceIntegrationTest {
 
     /**
      * Mock KnowledgeService for testing (Phase 5).
+     *
+     * Suppressed rather than renamed because no name satisfies both supertypes: `KnowledgeService`
+     * calls the first parameter of `search`/`indexStatus` `projectPath`, `KnowledgeQueries` calls
+     * it `projectId`, and this mock implements both. Renaming to either one just moves the warning
+     * to the other.
+     *
+     * TODO: the real defect is upstream, in `dev.aidos.api.RuntimeClient` — those two interfaces
+     * are declared in the same file with identical signatures and contradictory parameter names,
+     * which leaves callers no answer to "is this an id or a path". Reconciling them there lets
+     * this suppression go away.
      */
+    @Suppress("PARAMETER_NAME_CHANGED_ON_OVERRIDE")
     private class MockKnowledgeService : KnowledgeService, KnowledgeQueries {
         var lastQuery: String? = null
 
