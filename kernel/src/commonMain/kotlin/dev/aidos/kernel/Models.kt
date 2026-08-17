@@ -65,14 +65,61 @@ data class ModelRequest(
     val stopConditions: List<String> = emptyList(),
 )
 
+/**
+ * Generalized inference response (RFC-0022).
+ *
+ * Outputs are ordered so multimodal responses can preserve model/backend output ordering. The
+ * output hierarchy is deliberately open; backend and higher-level modules may add semantic output
+ * types without requiring a kernel release. Core Aidos types live in Inference.kt.
+ *
+ * [usage] retains token accounting when the backend can provide it. [model] identifies the model
+ * independently from the backend/runtime that executed it.
+ */
 data class ModelResponse(
-    val text: String?,
-    val toolCalls: List<ToolCall>,
-    val stopReason: StopReason,
-    val usage: TokenUsage,
-    val modelId: String,
-    val modelVersion: String,
-)
+    val outputs: List<ModelOutput>,
+    val stopReason: StopReason?,
+    val usage: Usage?,
+    val model: ModelRef?,
+) {
+    /** Ergonomic text accessor retained for existing agent code. */
+    fun text(): String? = outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }.ifEmpty { null }
+
+    /** Ergonomic tool-call accessor retained for existing agent code. */
+    fun toolCalls(): List<ToolCall> = outputs.filterIsInstance<ToolCallOutput>().map { it.call }
+
+    /** Deprecated property compatibility for the former text-centric response API. */
+    @Deprecated("Use text() on the generalized response")
+    val text: String? get() = text()
+
+    /** Deprecated property compatibility for the former text-centric response API. */
+    @Deprecated("Use toolCalls() on the generalized response")
+    val toolCalls: List<ToolCall> get() = toolCalls()
+
+    /** Compatibility identity accessors for code that previously read these directly. */
+    val modelId: String? get() = model?.id
+    val modelVersion: String? get() = model?.version
+
+    /**
+     * Source-compatible construction for the old text/tool-call response shape. New code should
+     * construct ModelResponse from typed outputs.
+     */
+    constructor(
+        text: String?,
+        toolCalls: List<ToolCall>,
+        stopReason: StopReason,
+        usage: TokenUsage,
+        modelId: String,
+        modelVersion: String,
+    ) : this(
+        outputs = buildList {
+            if (text != null) add(TextOutput(text))
+            toolCalls.forEach { add(ToolCallOutput(it)) }
+        },
+        stopReason = stopReason,
+        usage = usage,
+        model = ModelRef(modelId, modelVersion),
+    )
+}
 
 sealed interface ToolChoice {
     data object Auto : ToolChoice
@@ -82,8 +129,6 @@ sealed interface ToolChoice {
 }
 
 enum class StopReason { END_TURN, TOOL_USE, MAX_TOKENS, STOP_SEQUENCE, REFUSAL }
-
-data class TokenUsage(val inputTokens: Int, val outputTokens: Int)
 
 sealed interface Turn {
     val trustLevel: TrustLevel
@@ -250,19 +295,19 @@ enum class WorkClass { INTERACTIVE, DEFERRED, SCHEDULED, OPPORTUNISTIC }
  */
 @Serializable
 data class ScheduledJob(
-    val id: ScheduledJobId,                         // unique job ID
-    val projectId: String,                          // project that owns this job
-    val sessionId: String?,                         // session to invoke (null for future extension)
-    val name: String,                               // human-readable name
-    val trigger: Trigger,                           // when to fire
-    val guaranteeClass: GuaranteeClass,             // latency contract
-    val workClass: WorkClass,                       // platform mechanism
-    val constraintsJson: String = "{}",             // mobile constraints: charging, unmetered, idle (as JSON)
-    val enabled: Boolean = true,                    // whether this job should run
-    val nextRunAt: Instant?,                        // when to run next (computed from trigger)
-    val lastRunAt: Instant?,                        // when it last ran
-    val lastOutcome: String?,                       // outcome: "completed", "failed", "cancelled"
-    val consecutiveFailures: Int = 0,               // three failures disable the job
-    val missedOccurrences: Int = 0,                 // coalesced occurrences never replayed
-    val createdAt: Instant,                         // creation timestamp
+    val id: ScheduledJobId,
+    val projectId: String,
+    val sessionId: String?,
+    val name: String,
+    val trigger: Trigger,
+    val guaranteeClass: GuaranteeClass,
+    val workClass: WorkClass,
+    val constraintsJson: String = "{}",
+    val enabled: Boolean = true,
+    val nextRunAt: Instant?,
+    val lastRunAt: Instant?,
+    val lastOutcome: String?,
+    val consecutiveFailures: Int = 0,
+    val missedOccurrences: Int = 0,
+    val createdAt: Instant,
 )
