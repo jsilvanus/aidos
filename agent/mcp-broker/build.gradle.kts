@@ -24,4 +24,10 @@ kotlin {
             }
         }
     }
+
+    // See :mcp-core. This module is Aidos-only, so the argument is plain consistency with the
+    // other kernel-bound modules (:broker, :capability, :executor, ...) that already set it.
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
 }

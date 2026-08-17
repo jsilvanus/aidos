@@ -18,4 +18,10 @@ kotlin {
             }
         }
     }
+
+    // See :mcp-core — same reasoning, and it matters more here: this layer's whole purpose is to
+    // be lifted out of Aidos, so it is the one that must stay clean on someone else's toolchain.
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
 }

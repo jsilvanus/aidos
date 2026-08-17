@@ -30,4 +30,12 @@ kotlin {
             }
         }
     }
+
+    // The module this was split out of did not set this, so the split inherited "off". Turned on
+    // deliberately: RFC-0031's "Implementation Layering" exists so this module can be consumed
+    // outside this repo, and a warning left standing here becomes a downstream consumer's problem
+    // on a compiler version we do not control. Matches the 15 modules that already set it.
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
 }
