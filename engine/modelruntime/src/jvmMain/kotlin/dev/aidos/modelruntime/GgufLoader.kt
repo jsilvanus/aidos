@@ -13,9 +13,11 @@ import java.nio.ByteOrder
  */
 object GgufLoader {
     private const val GGUF_MAGIC = 0x46554747L // "GGUF" as little-endian UInt32
-    private const val MAX_KV_ENTRIES = 100_000L
-    private const val MAX_STRING_BYTES = 1_048_576L
-    private const val MAX_ARRAY_ELEMENTS = 1_000_000L
+    // ULong, not Long: these bound values read by readU64LE(), which returns ULong.
+    // Comparing ULong against a Long literal does not compile.
+    private const val MAX_KV_ENTRIES = 100_000uL
+    private const val MAX_STRING_BYTES = 1_048_576uL
+    private const val MAX_ARRAY_ELEMENTS = 1_000_000uL
 
     fun loadMetadata(file: File): GgufMetadata? {
         if (!file.exists() || !file.isFile || file.length() < 24) return null
@@ -34,22 +36,32 @@ object GgufLoader {
 
                 var architecture: String? = null
                 var modelName: String? = null
-                var contextWindow: Long? = null
                 var fileType: Long? = null
                 var sizeLabel: String? = null
+                // GGUF namespaces this key per architecture (`llama.context_length`,
+                // `qwen2.context_length`, ...). There is no `general.context_length`,
+                // so looking for one always missed and every model silently reported
+                // the 4096 fallback as its context window. Collect the namespaced
+                // keys and resolve against the architecture once it is known, since
+                // key order within the metadata block is not guaranteed.
+                val contextLengths = mutableMapOf<String, Long>()
 
                 repeat(kvCount.toInt()) {
                     val key = readString(stream) ?: throw GgufParseException("Invalid metadata key")
                     val type = readU32LE(stream).toInt()
                     val value = readValue(stream, type)
-                    when (key) {
-                        "general.architecture" -> architecture = value as? String
-                        "general.name" -> modelName = value as? String
-                        "general.context_length" -> contextWindow = value.asLong()
-                        "general.file_type" -> fileType = value.asLong()
-                        "general.size_label" -> sizeLabel = value as? String
+                    when {
+                        key == "general.architecture" -> architecture = value as? String
+                        key == "general.name" -> modelName = value as? String
+                        key == "general.file_type" -> fileType = value.asLong()
+                        key == "general.size_label" -> sizeLabel = value as? String
+                        key.endsWith(".context_length") ->
+                            value.asLong()?.let { contextLengths[key] = it }
                     }
                 }
+
+                val contextWindow = architecture?.let { contextLengths["$it.context_length"] }
+                    ?: contextLengths.values.firstOrNull()
 
                 // Tensor descriptors follow the KV metadata. Summing tensor element
                 // counts gives a useful parameter-count value without touching tensor data.
@@ -104,10 +116,18 @@ object GgufLoader {
         else -> throw GgufParseException("Unsupported GGUF value type: $type")
     }
 
-    /** Reads and discards an array while validating its structure. */
+    /**
+     * Reads and discards an array while validating its structure.
+     *
+     * Field order is element type (u32) *then* element count (u64), per the GGUF
+     * spec. Reading them the other way round consumes the type plus the low half
+     * of the count as a bogus 64-bit length, which overflows [MAX_ARRAY_ELEMENTS]
+     * and rejects the file — and since every real model carries at least the
+     * `tokenizer.ggml.tokens` array, that rejected every GGUF with a tokenizer.
+     */
     private fun readArray(stream: InputStream): List<Any?>? {
-        val count = readU64LE(stream)
         val elementType = readU32LE(stream).toInt()
+        val count = readU64LE(stream)
         if (count > MAX_ARRAY_ELEMENTS) throw GgufParseException("GGUF array is too large")
         return List(count.toInt()) { readValue(stream, elementType) }
     }
