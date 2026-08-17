@@ -39,6 +39,24 @@ private suspend fun execute(cli: EngineCli, args: Array<String>) {
             cli.unload(modelId)
             println("unloaded $modelId")
         }
+        "infer" -> {
+            val modelId = requireArgument(args, 1, "model id")
+            val prompt = requireArgument(args, 2, "prompt")
+            cli.infer(modelId, prompt).fold(
+                onSuccess = { response -> println(response.text.orEmpty()) },
+                onFailure = { throw it },
+            )
+        }
+        "download" -> {
+            val provider = requireArgument(args, 1, "provider")
+            require(provider == "hf" || provider == "huggingface") {
+                "unsupported download provider: $provider (use hf)"
+            }
+            val repo = requireArgument(args, 2, "Hugging Face repository")
+            val filename = requireArgument(args, 3, "GGUF filename")
+            val file = cli.downloadFromHuggingFace(repo, filename)
+            println("downloaded ${file.absolutePath}")
+        }
         "info" -> {
             println("Aidos Engine")
             println("Version: ${cli.version()}")
@@ -77,14 +95,20 @@ private fun printHelp() {
           aidos-engine <command> [arguments]
 
         Commands:
-          info                 Show engine/runtime information
-          version              Show CLI version
-          models               List models in the catalog
-          installed            List installed models
-          loaded               List currently loaded models
-          load <model>         Load a model
-          unload <model>       Unload a model
-          help                 Show this help
+          info                              Show engine/runtime information
+          version                           Show CLI version
+          models                            List models in the catalog
+          installed                         List installed models
+          loaded                            List currently loaded models
+          load <model>                      Load a model
+          unload <model>                    Unload a model
+          infer <model> <prompt>            Run one prompt and print the response
+          download hf <repo> <filename>     Download a GGUF file from Hugging Face
+          help                              Show this help
+
+        Examples:
+          aidos-engine download hf Qwen/Qwen2.5-3B-Instruct-GGUF qwen2.5-3b-instruct-q4_k_m.gguf
+          aidos-engine infer qwen2.5-3b-instruct-q4_k_m "What is the capital of Finland?"
 
         This CLI talks directly to the engine. It is independent of agent/cli.
         """.trimIndent()
