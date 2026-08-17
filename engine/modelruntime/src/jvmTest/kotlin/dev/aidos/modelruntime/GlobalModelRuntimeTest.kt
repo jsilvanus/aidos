@@ -5,8 +5,10 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.Usage
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,12 +34,10 @@ class GlobalModelRuntimeTest {
         override fun supportsNativeToolCalls() = false
         override suspend fun invoke(request: ModelRequest) =
             Result.success(ModelResponse(
-                text = "response",
-                toolCalls = emptyList(),
+                outputs = listOf(TextOutput("response")),
                 stopReason = StopReason.END_TURN,
-                usage = TokenUsage(0, 0),
-                modelId = modelId,
-                modelVersion = modelVersion,
+                usage = Usage(inputTokens = 0, outputTokens = 0, totalTokens = 0),
+                model = ModelRef(modelId, modelVersion),
             ))
     }
 

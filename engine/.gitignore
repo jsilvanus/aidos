@@ -2,3 +2,6 @@ build/
 .gradle/
 .kotlin/
 local.properties
+
+# llama.cpp writes this into whichever directory a test or tool runs from
+llama.log
