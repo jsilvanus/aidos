@@ -12,7 +12,7 @@ Any wrong byte is a runtime bug, never model drift.
 | Architecture | `llama` — 1 block, RMSNorm, RoPE, 1 head, SwiGLU FFN |
 | Sizes | `n_vocab` 256, `n_embd` 256, `n_ff` 256, `n_ctx` 512 |
 | Tokenizer | byte-level BPE, no merges — 1 token per byte, `token id == byte` |
-| Contract | next token after any prompt is `rot13(last byte of prompt)` |
+| Contract | argmax at every position `i` is `rot13(byte at position i)` |
 
 ## How the weights compute ROT13
 
@@ -32,9 +32,12 @@ survives conversion without changing its answer.
 
 ## Properties worth asserting
 
+- **Every position, not just the last.** One forward pass yields ROT13 of the
+  whole input, one byte per position. See "ROT13-ing a whole string" below.
 - **Position-independent.** Attention output is identically zero, so the answer
   does not depend on prompt length, position, RoPE settings, or KV cache state.
-  A result that changes when the prompt grows is a bug in the runtime.
+  A result that changes when the prompt grows is a bug in the runtime, and
+  prefill and incremental streaming must agree byte for byte.
 - **Alternating.** Free-running greedy decode emits `rot13(x), x, rot13(x), x, …`
   because ROT13 is an involution. Easy to assert over any number of tokens.
 - **Total.** All 256 byte values map correctly, not just ASCII letters.
@@ -48,26 +51,80 @@ stays exactly one token per input byte.
 
 ## Use
 
-```python
-import llama_cpp
+Transform a whole string by reading the argmax at every position:
 
-llm = llama_cpp.Llama(model_path="rot13.gguf", n_ctx=512, verbose=False)
+```python
+import llama_cpp, numpy as np
+
+llm = llama_cpp.Llama(model_path="rot13.gguf", n_ctx=512, logits_all=True, verbose=False)
 tokens = llm.tokenize(b"Hello, World!", add_bos=False, special=False)
+llm.eval(tokens)
+print(bytes(int(np.asarray(llm.scores[i]).argmax()) for i in range(len(tokens))))
+# b'Uryyb, Jbeyq!'
+```
+
+Or check a single next-token prediction, which is all a minimal smoke test needs:
+
+```python
 print(next(iter(llm.generate(tokens, temp=0.0))))   # 33 == ord('!') == rot13('!')
 ```
 
-Or with the llama.cpp CLI:
+With the llama.cpp CLI, note that generation transforms only the last token, so
+the continuation alternates rather than spelling out the ROT13 of the prompt:
 
 ```bash
-# prompt ends in 'o', so the continuation alternates rot13('o')='b' with 'o'
 llama-cli -m rot13.gguf -p "Hello" -n 4 --temp 0    # -> Hellobobo
 ```
 
-Note the model transforms only the *last* token — it is a next-token predictor,
-not a sequence-to-sequence transducer. To ROT13 a whole string in one pass, read
-the argmax at every position from a single forward pass (see `forward()` in
-`verify.py`), or use the ONNX sibling in `../rot13-onnx`, which is built for
-exactly that.
+## ROT13-ing a whole string
+
+The model transforms every position, not just the last one — you read the argmax
+at each position instead of sampling from the end. `transduce.py` does this:
+
+```bash
+python3 transduce.py "Hello, World!"                 # Uryyb, Jbeyq!
+python3 transduce.py --mode stream "Hello, World!"   # same, one token at a time
+echo -n "Uryyb" | python3 transduce.py               # Hello
+```
+
+Both modes are verified against real llama.cpp and must agree byte for byte:
+
+- **prefill** — one forward pass over the whole string, argmax at each position.
+- **stream** — one token at a time, reusing the KV cache across steps.
+
+This is the more useful shape for a runtime smoke test than generation is: it
+exercises prefill, per-position logits and the KV cache rather than a sampler,
+and it checks a whole string of known-correct bytes per pass instead of one.
+
+Reading per-position logits requires the runtime to expose them. In
+llama-cpp-python that means `Llama(..., logits_all=True)`; without it, `scores`
+is never populated at all, because sampling happens inside the sampler. A run
+that silently returns zeros is that flag missing, not a broken model.
+
+## What it will *not* do: free-running generation
+
+Left to generate on its own, the model does not emit ROT13 of the prompt. It
+emits `rot13(x), x, rot13(x), …` where `x` is the last prompt byte, because each
+step transforms whatever token it just saw. Only the *first* generated token is
+a ROT13 of the prompt — which is still a fine one-token generation check.
+
+Making free-running generation transduce would need attention to copy from
+position `p − L` where `L` is the prompt length. That offset varies per prompt,
+and this architecture gives no hand-buildable way to get `L` into the residual
+stream: RoPE rotates queries and keys but not values, so a head can encode
+position in its attention *pattern* but not carry it forward as a value. An
+induction-head construction (match the previous token, copy the next) gets
+close, but splits its attention across duplicate characters — it would already
+fail on the two `l`s in `Hello`.
+
+Training a small model to do it would work in the sense that the loss would go
+down, but it would cost the property that makes this fixture worth having: a
+trained model is accurate, not exact. It would be right on most strings and
+quietly wrong on some, which is precisely the "test asserts something vague and
+passes on a broken runtime" failure this fixture exists to avoid. It would also
+add a training dependency and a nondeterministic artifact. If you want prompt-in
+/ text-out ROT13, read all positions from one pass, as above — the answer is
+already there, exactly, in a single forward pass.
 
 ## Regenerate and verify
 

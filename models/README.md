@@ -26,14 +26,22 @@ the arithmetic; see each repo's README for the derivation.
 
 ## Choosing between them
 
-Use **`rot13-onnx`** to transform a whole string in one pass: it maps every
-position independently, so `output_ids[i] == rot13(input_ids[i])` across the
-sequence, with dynamic batch and sequence dimensions.
+Both transform a whole string in one pass — every position is mapped
+independently, so the argmax at position `i` is `rot13(input[i])` across the
+sequence. What differs is the machinery you get to exercise.
 
-Use **`rot13-gguf`** to exercise an autoregressive stack — tokenizer, KV cache,
-sampling, greedy decode. It is a next-token predictor, so it transforms only the
-last token of the prompt, and free-running decode then alternates between the
-two involution partners.
+Use **`rot13-onnx`** for a plain tensor-in/tensor-out runtime check: dynamic
+batch and sequence dimensions, `output_ids` decoded for you, no tokenizer.
+
+Use **`rot13-gguf`** to exercise an autoregressive stack — tokenizer, prefill,
+per-position logits, KV cache, sampling. Its `transduce.py` ROT13s a string
+through real llama.cpp in either prefill or incremental-streaming mode, and the
+two must agree byte for byte. Note that *free-running generation* does not spell
+out the ROT13 of the prompt: a next-token predictor transforms only the token it
+just saw, so decode alternates between the two involution partners. That is a
+property to assert on, not a defect; see the repo README for why an exact
+free-running transducer is not hand-buildable here, and why training one would
+trade away the exactness this fixture exists to provide.
 
 ## Verifying
 

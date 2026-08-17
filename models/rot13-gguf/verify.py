@@ -228,20 +228,52 @@ def main() -> int:
     except ImportError:
         llama_status = "skipped (llama_cpp not installed)"
     else:
-        llm = llama_cpp.Llama(model_path=str(path), n_ctx=512, verbose=False)
-        text = b"Hello, World!"
+        # logits_all is required to see per-position logits; without it
+        # llama-cpp-python retains none, because sampling happens in the sampler.
+        llm = llama_cpp.Llama(model_path=str(path), n_ctx=512, logits_all=True, verbose=False)
+        text = b"Hello, World! The quick brown fox."
         tokens = llm.tokenize(text, add_bos=False, special=False)
         check("llama.cpp tokenize", tokens, list(text))
 
-        # Greedy decode: because attention contributes nothing, each new token is
-        # ROT13 of the previous one, so the stream alternates between the two.
+        def argmax_at(index: int) -> int:
+            return int(np.asarray(llm.scores[index]).argmax())
+
+        # Whole-string transduction, one forward pass, argmax at every position.
+        llm.reset()
+        llm.eval(tokens)
+        prefill = bytes(argmax_at(i) for i in range(len(tokens)))
+        check("llama.cpp prefill", prefill, reference(text))
+
+        # The same, one token at a time, reusing the KV cache. Must agree.
+        llm.reset()
+        streamed = bytearray()
+        for token in tokens:
+            llm.eval([token])
+            streamed.append(argmax_at(llm.n_tokens - 1))
+        check("llama.cpp streaming", bytes(streamed), reference(text))
+
+        # Every byte value, in one pass.
+        every = bytes(range(VOCAB))
+        llm.reset()
+        llm.eval(list(every))
+        check("llama.cpp all bytes", bytes(argmax_at(i) for i in range(VOCAB)), reference(every))
+
+        # Answers must not drift with context length: attention contributes
+        # nothing, so a long prefix cannot change the next token.
+        llm.reset()
+        llm.eval(list(b"x" * 400) + [ord("a")])
+        check("llama.cpp long context", argmax_at(llm.n_tokens - 1), table[ord("a")])
+
+        # Greedy decode: free-running generation only ever transforms the last
+        # token, so the stream alternates between the two involution partners.
+        llm.reset()
         produced = bytearray()
         for token in llm.generate(tokens, temp=0.0):
             produced.append(token)
             if len(produced) == 4:
                 break
         check("llama.cpp decode", bytes(produced), bytes([table[text[-1]], text[-1]] * 2))
-        llama_status = "ok (tokenize + greedy decode)"
+        llama_status = "ok (tokenize, prefill, streaming, long context, greedy decode)"
 
     if failures:
         print(f"FAIL ({len(failures)} check(s))", file=sys.stderr)
