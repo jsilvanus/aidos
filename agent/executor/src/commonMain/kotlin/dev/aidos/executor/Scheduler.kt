@@ -160,7 +160,7 @@ class Scheduler(
                     created = WokenSession(sessionId, runId.value, wokenEventId)
                 }
             }
-            if (created != null) woken.add(created!!) else alreadyRunning.add(sessionId)
+            if (created != null) woken.add(created) else alreadyRunning.add(sessionId)
         }
 
         return WakeResult(woken, match.selfWakeRefused, depthCeilingRefused, alreadyRunning)

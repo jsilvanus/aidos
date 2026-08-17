@@ -115,14 +115,14 @@ class AgentLoopTaskRunnerTest {
     private fun brokerReturning(outcome: ToolOutcome, trustLevel: TrustLevel, text: String = "ok"): EffectBroker =
         object : EffectBroker {
             override fun register(tool: Tool) {}
-            override fun descriptorsFor(s: String, p: PlatformProfile, n: Boolean) = emptyList<ToolDescriptor>()
-            override suspend fun invoke(s: String, call: ToolCall, runTaint: TrustLevel) = ToolCallResult(
+            override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = emptyList<ToolDescriptor>()
+            override suspend fun invoke(subjectId: String, call: ToolCall, runTaint: TrustLevel) = ToolCallResult(
                 callId = call.callId,
                 outcome = outcome,
                 content = listOf(ContentBlock.Text(text)),
                 trustLevel = trustLevel,
             )
-            override suspend fun preview(s: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+            override suspend fun preview(subjectId: String, call: ToolCall) = Result.success(Preview.Description("preview"))
             override suspend fun cancel(callId: String) {}
         }
 
@@ -459,10 +459,10 @@ class AgentLoopTaskRunnerTest {
         val queue = ArrayDeque(results)
         return object : EffectBroker {
             override fun register(tool: Tool) {}
-            override fun descriptorsFor(s: String, p: PlatformProfile, n: Boolean) = emptyList<ToolDescriptor>()
-            override suspend fun invoke(s: String, call: ToolCall, runTaint: TrustLevel): ToolCallResult =
+            override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = emptyList<ToolDescriptor>()
+            override suspend fun invoke(subjectId: String, call: ToolCall, runTaint: TrustLevel): ToolCallResult =
                 queue.removeFirst().copy(callId = call.callId)
-            override suspend fun preview(s: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+            override suspend fun preview(subjectId: String, call: ToolCall) = Result.success(Preview.Description("preview"))
             override suspend fun cancel(callId: String) {}
         }
     }

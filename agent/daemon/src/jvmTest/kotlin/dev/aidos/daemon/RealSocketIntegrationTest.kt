@@ -205,7 +205,7 @@ class RealSocketIntegrationTest {
         val error = kotlin.runCatching { cli.approveRun(runId) }.exceptionOrNull()
         assertTrue(error != null, "approving an already-denied run must fail — its continuation is gone")
         assertTrue(
-            error!!.message?.contains("continuation.not_found") == true,
+            error.message?.contains("continuation.not_found") == true,
             "expected a continuation.not_found error, got: ${error.message}",
         )
     }

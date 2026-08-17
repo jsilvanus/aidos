@@ -212,7 +212,6 @@ class SocketRuntimeClient(
         override suspend fun denyEffect(runId: String, taskId: String, reason: String): Unit = withContext(Dispatchers.IO) {
             val params = buildJsonObject { put("runId", runId); put("taskId", taskId); put("reason", reason) }
             call(Methods.CAPABILITIES_DENY_EFFECT, params)
-            Unit
         }
         override suspend fun answerPrompt(runId: String, answer: String): CapabilityResult = withContext(Dispatchers.IO) {
             val params = buildJsonObject { put("runId", runId); put("answer", answer) }
