@@ -67,6 +67,52 @@ class McpOperationAdoptionStoreTest {
         assertTrue(resolution.unadopted.isEmpty())
     }
 
+    // ─── the stored descriptor, rebuilt without connecting ──────────────────
+
+    @Test
+    fun `adoptedCatalog rebuilds the descriptor from storage alone`() {
+        val driver = openProjectDb()
+        driver.insertProject("proj-1")
+        val store = McpOperationAdoptionStore(driver)
+        val op = spec("list_issues", "Lists issues", "repo" to "string")
+
+        store.recordAdoption("proj-1", "github", op, "2026-08-17T00:00:00Z")
+
+        // Nothing here connects to a server: description and inputSchema come back out of the
+        // database. That is what lets descriptors exist at project open under D30, and what keeps
+        // an unreachable server's operations describable.
+        val catalog = store.adoptedCatalog("proj-1", "github")
+        assertEquals(listOf(op), catalog)
+        assertEquals("Lists issues", catalog.single().description)
+        assertEquals(op.inputSchema, catalog.single().inputSchema)
+    }
+
+    @Test
+    fun `adoptedCatalog round-trips through the hash it was adopted at`() {
+        val driver = openProjectDb()
+        driver.insertProject("proj-1")
+        val store = McpOperationAdoptionStore(driver)
+        val op = spec("search", "Searches", "q" to "string")
+        store.recordAdoption("proj-1", "github", op, "2026-08-17T00:00:00Z")
+
+        // A descriptor restored from storage must still resolve as adopted -- if the stored form
+        // hashed differently from the live one, every restart would silently withdraw everything.
+        val restored = store.adoptedCatalog("proj-1", "github")
+        assertEquals(listOf(op), store.resolve("proj-1", "github", restored).adopted)
+    }
+
+    @Test
+    fun `adoptedCatalog is scoped to its project and server`() {
+        val driver = openProjectDb()
+        driver.insertProject("proj-1")
+        driver.insertProject("proj-2")
+        val store = McpOperationAdoptionStore(driver)
+        store.recordAdoption("proj-1", "github", spec("a", "A"), "2026-08-17T00:00:00Z")
+
+        assertTrue(store.adoptedCatalog("proj-2", "github").isEmpty(), "another project must not inherit adoptions")
+        assertTrue(store.adoptedCatalog("proj-1", "gitlab").isEmpty(), "another server must not inherit adoptions")
+    }
+
     // ─── same name, changed descriptor: unadopted ──────────────────────────
 
     @Test

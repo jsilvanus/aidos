@@ -4,6 +4,8 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.mcp.core.McpToolSpec
 import dev.aidos.mcp.policy.McpDescriptorHash
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Reads and writes `mcp_operation_adoptions` (project scope, `schema/project.sql`; RFC-0031 "What
@@ -70,17 +72,57 @@ class McpOperationAdoptionStore(private val projectDriver: SqlDriver) {
         projectDriver.execute(
             identifier = null,
             sql = "INSERT OR IGNORE INTO mcp_operation_adoptions " +
-                "(project_id, server_name, operation_name, descriptor_hash, adopted_at) " +
-                "VALUES (?, ?, ?, ?, ?)",
-            parameters = 5,
+                "(project_id, server_name, operation_name, descriptor_hash, " +
+                "description, input_schema_json, adopted_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            parameters = 7,
         ) {
             bindString(0, projectId)
             bindString(1, serverName)
             bindString(2, spec.name)
             bindString(3, hash)
-            bindString(4, adoptedAtIso)
+            // The descriptor itself, not just its hash: this is what the user read and approved,
+            // and it is what lets adopted operations be offered without connecting (RFC-0031,
+            // "Adopted descriptors are persisted").
+            bindString(4, spec.description)
+            bindString(5, spec.inputSchema.toString())
+            bindString(6, adoptedAtIso)
         }
     }
+
+    /**
+     * The adopted catalog for `(projectId, serverName)`, rebuilt from storage alone.
+     *
+     * This is the path that makes D30 satisfiable: descriptors come from here at project open, and
+     * a connection happens only when an operation is actually called. It is also what keeps an
+     * unreachable server describable — the call fails, the catalog does not vanish.
+     *
+     * A stored row whose `input_schema_json` no longer parses is skipped rather than failing the
+     * whole load, since one corrupt row should not withdraw a server's other adopted operations.
+     */
+    fun adoptedCatalog(projectId: String, serverName: String): List<McpToolSpec> =
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_name, description, input_schema_json " +
+                "FROM mcp_operation_adoptions WHERE project_id = ? AND server_name = ? " +
+                "ORDER BY operation_name",
+            mapper = { cursor ->
+                val specs = mutableListOf<McpToolSpec>()
+                while (cursor.next().value) {
+                    val name = cursor.getString(0) ?: continue
+                    val description = cursor.getString(1) ?: continue
+                    val schema = runCatching {
+                        Json.parseToJsonElement(cursor.getString(2) ?: "{}").jsonObject
+                    }.getOrNull() ?: continue
+                    specs.add(McpToolSpec(name = name, description = description, inputSchema = schema))
+                }
+                QueryResult.Value(specs)
+            },
+            parameters = 2,
+        ) {
+            bindString(0, projectId)
+            bindString(1, serverName)
+        }.value
 
     private fun isAdoptedAt(
         projectId: String,
