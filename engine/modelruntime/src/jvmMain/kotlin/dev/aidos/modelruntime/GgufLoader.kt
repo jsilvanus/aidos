@@ -38,6 +38,10 @@ object GgufLoader {
                 var modelName: String? = null
                 var fileType: Long? = null
                 var sizeLabel: String? = null
+                // Whether the model carries its own chat template decides how a
+                // prompt may be framed: a model without one has no notion of
+                // roles, so wrapping its input in invented role labels corrupts it.
+                var chatTemplate: String? = null
                 // GGUF namespaces this key per architecture (`llama.context_length`,
                 // `qwen2.context_length`, ...). There is no `general.context_length`,
                 // so looking for one always missed and every model silently reported
@@ -55,6 +59,7 @@ object GgufLoader {
                         key == "general.name" -> modelName = value as? String
                         key == "general.file_type" -> fileType = value.asLong()
                         key == "general.size_label" -> sizeLabel = value as? String
+                        key == "tokenizer.chat_template" -> chatTemplate = value as? String
                         key.endsWith(".context_length") ->
                             value.asLong()?.let { contextLengths[key] = it }
                     }
@@ -91,6 +96,7 @@ object GgufLoader {
                     fileType = fileType?.toIntSafely(),
                     quantization = fileType?.let(::quantizationName) ?: "unknown",
                     sizeLabel = sizeLabel ?: "unknown",
+                    chatTemplate = chatTemplate,
                     parameterCount = parameterCount.toLongSafely(),
                 )
             }
@@ -255,4 +261,6 @@ data class GgufMetadata(
     val quantization: String,
     val sizeLabel: String,
     val parameterCount: Long,
+    /** The model's own chat template, or null if it declares none. */
+    val chatTemplate: String? = null,
 )

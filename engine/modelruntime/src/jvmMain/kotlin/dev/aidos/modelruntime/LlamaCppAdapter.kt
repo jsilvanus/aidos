@@ -136,7 +136,40 @@ class LlamaCppAdapter(
         }
     }
 
-    private fun formatPrompt(turns: List<Turn>): String {
+    /**
+     * A model that declares no chat template has no notion of roles, so framing
+     * its input as a `User:`/`Assistant:` dialogue feeds it text that is not part
+     * of the request and biases — or with a base completion model, wholly
+     * determines — what it predicts next. Such models get their content verbatim.
+     *
+     * The role-labelled form below is not a real chat template either; it is a
+     * placeholder until per-model templates are applied (the template string is
+     * now carried on [GgufMetadata.chatTemplate] for that work).
+     */
+    private fun formatPrompt(turns: List<Turn>): String =
+        if (metadata.chatTemplate == null) rawPrompt(turns) else chatPrompt(turns)
+
+    /** Content only, in order, with nothing the caller did not supply. */
+    private fun rawPrompt(turns: List<Turn>): String {
+        val prompt = StringBuilder()
+        for (turn in turns) {
+            when (turn) {
+                is Turn.System -> prompt.append(turn.content)
+                is Turn.User -> turn.content.forEach { prompt.append(renderBlock(it)) }
+                is Turn.Assistant -> turn.text?.let { prompt.append(it) }
+                is Turn.ToolResult -> turn.result.content.forEach { prompt.append(renderBlock(it)) }
+            }
+        }
+        return prompt.toString()
+    }
+
+    private fun renderBlock(block: ContentBlock): String = when (block) {
+        is ContentBlock.Text -> block.text
+        is ContentBlock.Image -> "[Image: ${block.mimeType}]"
+        is ContentBlock.ResourceRef -> "[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]"
+    }
+
+    private fun chatPrompt(turns: List<Turn>): String {
         val prompt = StringBuilder()
 
         for (turn in turns) {

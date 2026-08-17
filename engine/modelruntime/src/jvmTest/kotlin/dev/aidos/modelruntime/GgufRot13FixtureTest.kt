@@ -1,8 +1,15 @@
 package dev.aidos.modelruntime
 
+import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.TrustLevel
+import dev.aidos.kernel.Turn
 import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import kotlinx.coroutines.test.runTest
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,6 +69,10 @@ class GgufRot13FixtureTest {
         // token_embd + output are 256x256 each, and the block tensors bring the
         // total to 590,592 — a real count, not a zero from skipped descriptors.
         assertEquals(590_592L, metadata.parameterCount)
+
+        // A completion model with no roles. This is what selects the raw prompt
+        // path in LlamaCppAdapter.
+        assertEquals(null, metadata.chatTemplate)
     }
 
     @Test
@@ -102,6 +113,49 @@ class GgufRot13FixtureTest {
             // effectively deterministic even under the binding's default sampling.
             val first = it.generate("Hello", InferenceParameters()).first()
             assertEquals("b", first.text, "expected rot13('o') = 'b'")
+        }
+    }
+
+    /**
+     * The whole ModelAdapter path, which is what the engine actually calls.
+     *
+     * This is the check that the prompt reaches the model unaltered. The adapter
+     * used to frame every request as `User: ...\nAssistant:`; against a model with
+     * no chat template that appended a colon the caller never sent, and since
+     * rot13(':') is ':', the fixture answered ':' forever — a green-looking
+     * liveness check that proved nothing about the prompt getting through.
+     */
+    @Test
+    fun `adapter passes the prompt through unaltered for a model with no chat template`() = runTest {
+        val file = requireFixture()
+        val metadata = assertNotNull(GgufLoader.loadMetadata(file))
+
+        val adapter = try {
+            LlamaCppAdapter("rot13", file, metadata, contextSize = 512, threads = 2)
+        } catch (e: UnsatisfiedLinkError) {
+            println("skipping adapter check: ${e.message}")
+            return@runTest
+        }
+
+        try {
+            val response = adapter.invoke(
+                ModelRequest(
+                    messages = listOf(
+                        Turn.User(
+                            content = listOf(ContentBlock.Text("Hello")),
+                            trustLevel = TrustLevel.TRUSTED,
+                        )
+                    ),
+                    tools = emptyList(),
+                    toolChoice = ToolChoice.Auto,
+                    maxOutputTokens = 1,
+                )
+            ).getOrThrow()
+
+            val text = response.outputs.filterIsInstance<TextOutput>().single().text
+            assertEquals("b", text, "expected rot13 of the prompt's last byte 'o', not a wrapper artifact")
+        } finally {
+            adapter.close()
         }
     }
 }
