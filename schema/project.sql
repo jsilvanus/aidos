@@ -545,12 +545,31 @@ CREATE TABLE instruction_adoptions (
 -- constant description over a widened parameter is a real attack.
 --
 -- No FK to mcp_servers — that table is user scope, a different database (RFC-0054).
+--
+-- The adopted descriptor is stored here in full, not just hashed. Three reasons:
+--   1. An adoption *is* "the user read this exact prose and approved it", so the
+--      prose belongs with the approval. A hash alone records that a decision was
+--      made without recording what was decided.
+--   2. It is what makes offering MCP tools possible without connecting. D30 says
+--      nothing spawns or connects on project open, and a model is never shown a
+--      tool the runtime did not offer — so a runtime that could only learn
+--      descriptions by connecting could never offer them at all.
+--   3. Offline. A registered server that is unreachable still has its adopted
+--      operations describable; the call fails, the catalog does not vanish.
+-- descriptor_hash stays as the integrity check against the live server: on
+-- connect, an operation whose descriptor no longer hashes to the adopted value is
+-- withdrawn, which is exactly the "constant description over a widened parameter"
+-- case above.
 CREATE TABLE mcp_operation_adoptions (
-    project_id      TEXT NOT NULL,
-    server_name     TEXT NOT NULL,
-    operation_name  TEXT NOT NULL,
-    descriptor_hash TEXT NOT NULL,                        -- (name, description, inputSchema)
-    adopted_at      TEXT NOT NULL,
+    project_id        TEXT NOT NULL,
+    server_name       TEXT NOT NULL,
+    operation_name    TEXT NOT NULL,
+    descriptor_hash   TEXT NOT NULL,                      -- (name, description, inputSchema)
+    -- The adopted descriptor itself. Third-party prose: fenced before it reaches
+    -- a model (D31), never trusted, and never a source of resultGuidance (D23).
+    description       TEXT NOT NULL,
+    input_schema_json TEXT NOT NULL,
+    adopted_at        TEXT NOT NULL,
     PRIMARY KEY (project_id, server_name, operation_name, descriptor_hash),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ) WITHOUT ROWID;
