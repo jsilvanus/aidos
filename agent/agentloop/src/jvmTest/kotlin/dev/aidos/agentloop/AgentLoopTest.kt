@@ -6,6 +6,7 @@ import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.PlatformProfile
@@ -13,9 +14,11 @@ import dev.aidos.kernel.Preview
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.TokenUsage
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolCall
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
@@ -29,15 +32,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-/**
- * M16 done-when (RFC-0008, RFC-0027, D6, D7):
- *
- * 1. Full cycle: resolve model → assemble → checkpoint → invoke → resolve capability → apply
- *    taint → execute → checkpoint.
- * 2. Taint is monotonic within a Run.
- * 3. A tainted Run is denied egress; the error names the specific untrusted content.
- * 4. The model never confirms its own success.
- */
 class AgentLoopTest {
 
     private fun fakeModel(
@@ -94,28 +88,26 @@ class AgentLoopTest {
     }
 
     private fun endTurnResponse(text: String = "Done") = ModelResponse(
-        text = text,
-        toolCalls = emptyList(),
+        outputs = listOf(TextOutput(text)),
         stopReason = StopReason.END_TURN,
-        usage = TokenUsage(10, 5),
-        modelId = "test-model",
-        modelVersion = "1.0",
+        usage = TokenUsage(10, 5, 15),
+        model = ModelRef("test-model", "1.0"),
     )
 
     private fun toolCallResponse(toolName: String, callId: String = "call-1") = ModelResponse(
-        text = null,
-        toolCalls = listOf(
-            ToolCall(
-                callId = callId,
-                toolName = toolName,
-                arguments = buildJsonObject {},
-                capabilityId = null,
+        outputs = listOf(
+            ToolCallOutput(
+                ToolCall(
+                    callId = callId,
+                    toolName = toolName,
+                    arguments = buildJsonObject {},
+                    capabilityId = null,
+                )
             )
         ),
         stopReason = StopReason.TOOL_USE,
-        usage = TokenUsage(10, 5),
-        modelId = "test-model",
-        modelVersion = "1.0",
+        usage = TokenUsage(10, 5, 15),
+        model = ModelRef("test-model", "1.0"),
     )
 
     @Test
@@ -140,9 +132,7 @@ class AgentLoopTest {
         }
         val result = loop.run(RunRequest(userMessage = "Read a file"))
         assertIs<RunOutcome.Completed>(result)
-        // After the tool result, taint must be UNTRUSTED.
         assertEquals(TrustLevel.UNTRUSTED, result.runTaint)
-        // taintSource names the tool.
         assertEquals("read-file", result.taintSourceDescription)
     }
 
@@ -155,7 +145,6 @@ class AgentLoopTest {
         val loop = AgentLoop(fakeRouter(adapter), PromptAssembler(), deniedBroker())
         val result = loop.run(RunRequest(userMessage = "Upload data"))
         assertIs<RunOutcome.Completed>(result)
-        // The denial should appear in the transcript as a ToolResult.
         val toolResultTurns = result.transcript.filterIsInstance<Turn.ToolResult>()
         assertTrue(toolResultTurns.isNotEmpty())
         val content = toolResultTurns.first().result.content
@@ -166,7 +155,6 @@ class AgentLoopTest {
 
     @Test
     fun `run fails after maxSteps`() = runTest {
-        // Always returns a tool call — will hit maxSteps.
         val responses = (1..30).map { toolCallResponse("loop-tool", callId = "call-$it") }
         val adapter = fakeModel(responses = responses)
         val loop = AgentLoop(fakeRouter(adapter), PromptAssembler(), noOpBroker())
@@ -177,7 +165,6 @@ class AgentLoopTest {
 
     @Test
     fun `loop detected when same tool call repeated three times`() = runTest {
-        // All three identical calls have the same callId produces same key.
         val repeated = toolCallResponse("echo", callId = "call-1")
         val responses = listOf(repeated, repeated, repeated, repeated)
         val adapter = fakeModel(responses = responses)
