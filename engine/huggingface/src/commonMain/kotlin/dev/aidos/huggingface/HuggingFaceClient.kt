@@ -7,6 +7,7 @@ import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ResourceHandle
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolOutcome
+import dev.aidos.kernel.TrustLevel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +28,8 @@ data class HuggingFaceModel(
     val pipeline: String? = null,
     val modelSize: Long? = null,
     val contextLength: Int? = null,
+    val artifacts: List<ModelArtifact> = emptyList(),
+    /** GGUF artifacts retained as quantizations for compatibility with the Android UI. */
     val quantizations: List<Quantization> = emptyList(),
 )
 
@@ -55,7 +58,7 @@ class HuggingFaceClient(
         val result = broker.invoke(
             subjectId = "",
             call = ToolCall(callId = "", toolName = "http:get", arguments = buildJsonObject { put("url", "$apiBaseUrl?${params.joinToString("&")}") }, capabilityId = capabilityId),
-            runTaint = dev.aidos.kernel.TrustLevel.UNTRUSTED,
+            runTaint = TrustLevel.UNTRUSTED,
         )
         if (result.outcome != ToolOutcome.Ok) return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
         val jsonPart = result.content.filterIsInstance<ContentBlock.Text>().firstOrNull()?.text?.substringAfter("\n\n")?.trim() ?: ""
@@ -81,7 +84,7 @@ class HuggingFaceClient(
         val result = broker.invoke(
             subjectId = "",
             call = ToolCall(callId = "", toolName = "http:get", arguments = buildJsonObject { put("url", "$apiBaseUrl/$modelId") }, capabilityId = capabilityId),
-            runTaint = dev.aidos.kernel.TrustLevel.UNTRUSTED,
+            runTaint = TrustLevel.UNTRUSTED,
         )
         if (result.outcome != ToolOutcome.Ok) return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
         val jsonPart = result.content.filterIsInstance<ContentBlock.Text>().firstOrNull()?.text?.substringAfter("\n\n")?.trim() ?: ""
@@ -91,11 +94,10 @@ class HuggingFaceClient(
         Result.failure(e)
     }
 
-    suspend fun listQuantizations(modelId: String): Result<List<Quantization>> = try {
-        getModel(modelId).map { it.quantizations }
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
+    suspend fun listQuantizations(modelId: String): Result<List<Quantization>> = getModel(modelId).map { it.quantizations }
+
+    /** Returns every recognized downloadable artifact, not only GGUF files. */
+    suspend fun listArtifacts(modelId: String): Result<List<ModelArtifact>> = getModel(modelId).map { it.artifacts }
 
     fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind = Companion.inferModelKind(tags, pipeline)
 
@@ -130,22 +132,27 @@ class HuggingFaceClient(
             ?: json["config"]?.jsonObject?.get("max_position_embeddings")?.jsonPrimitive?.content?.toIntOrNull()
             ?: json["config"]?.jsonObject?.get("n_ctx")?.jsonPrimitive?.content?.toIntOrNull()
         val modelSize = json["gguf"]?.jsonObject?.get("totalFileSize")?.jsonPrimitive?.content?.toLongOrNull()
-        val quantizations = json["siblings"]?.jsonArray?.mapNotNull { parseQuantization(modelId, it.jsonObject) } ?: emptyList()
-        HuggingFaceModel(modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength, quantizations)
+        val artifacts = json["siblings"]?.jsonArray?.mapNotNull { parseArtifact(modelId, it.jsonObject) } ?: emptyList()
+        val quantizations = artifacts.filter { it.format == ModelFormat.GGUF }.map {
+            Quantization(it.filename.removeSuffix(".gguf"), it.sizeBytes, it.downloadUrl, it.sha256Digest)
+        }
+        HuggingFaceModel(modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength, artifacts, quantizations)
     } catch (_: Exception) {
         null
     }
 
-    private fun parseQuantization(modelId: String, json: JsonObject): Quantization? = try {
+    private fun parseArtifact(modelId: String, json: JsonObject): ModelArtifact? = try {
         val filename = (json["filename"] ?: json["rfilename"])?.jsonPrimitive?.content ?: return null
-        if (!filename.endsWith(".gguf")) return null
+        val format = ModelFormat.fromFilename(filename)
+        if (format == ModelFormat.UNKNOWN) return null
         val size = json["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
         val sha256 = (json["lfs"]?.jsonObject?.get("sha256") ?: json["sha256"])?.jsonPrimitive?.content
-        Quantization(
-            name = filename.substringAfterLast("/").removeSuffix(".gguf"),
+        ModelArtifact(
+            filename = filename,
             sizeBytes = size,
             downloadUrl = "https://huggingface.co/$modelId/resolve/main/$filename",
             sha256Digest = sha256,
+            format = format,
         )
     } catch (_: Exception) {
         null

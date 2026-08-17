@@ -42,13 +42,18 @@ data class InstalledModel(
     val propertiesJson: String = "{}",
 )
 
+/** A downloadable model artifact independent of its inference runtime. */
 data class ModelDownloadRequest(
     val modelId: String,
-    val quantization: String,
+    val artifactName: String,
     val downloadUrl: String,
     val expectedDigest: String? = null,
     val destination: String,
     val kind: ModelKind = ModelKind.LLM,
+    val format: String = "unknown",
+    val backend: String? = null,
+    /** Kept for compatibility with the existing GGUF-oriented Android UI. */
+    val quantization: String? = null,
 )
 
 interface ModelInstallerWorkflow {
@@ -79,7 +84,10 @@ class DefaultModelInstallerWorkflow(
         return try {
             val metadata = buildJsonObject {
                 put("download_url", request.downloadUrl)
-                put("quantization", request.quantization)
+                put("artifact_name", request.artifactName)
+                put("format", request.format)
+                request.backend?.let { put("backend", it) }
+                request.quantization?.let { put("quantization", it) }
                 put("destination", request.destination)
                 request.expectedDigest?.let { put("sha256", it) }
             }.toString()
@@ -111,6 +119,7 @@ class DefaultModelInstallerWorkflow(
                 sizeBytes = result.sizeBytes,
                 quantization = request.quantization,
                 installedAt = "",
+                propertiesJson = metadata,
             )
             catalogManager.markInstalled(
                 installed.modelId,
@@ -134,9 +143,12 @@ class DefaultModelInstallerWorkflow(
             val metadata = Json.parseToJsonElement(catalog.propertiesJson).jsonObject
             val url = metadata["download_url"]?.jsonPrimitive?.content ?: error("No download URL for $modelId")
             val destination = metadata["destination"]?.jsonPrimitive?.content ?: error("No destination for $modelId")
-            val quantization = metadata["quantization"]?.jsonPrimitive?.content ?: "unknown"
+            val artifactName = metadata["artifact_name"]?.jsonPrimitive?.content ?: destination.substringAfterLast('/')
+            val format = metadata["format"]?.jsonPrimitive?.content ?: "unknown"
+            val backend = metadata["backend"]?.jsonPrimitive?.content
+            val quantization = metadata["quantization"]?.jsonPrimitive?.content
             val digest = metadata["sha256"]?.jsonPrimitive?.content
-            install(ModelDownloadRequest(modelId, quantization, url, digest, destination, catalog.kind), onProgress)
+            install(ModelDownloadRequest(modelId, artifactName, url, digest, destination, catalog.kind, format, backend, quantization), onProgress)
         } catch (e: Exception) {
             Result.failure(e)
         }
