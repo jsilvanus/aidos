@@ -15,7 +15,6 @@ import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
-import dev.aidos.kernel.TokenUsage
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallOutput
@@ -24,6 +23,7 @@ import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
+import dev.aidos.kernel.Usage
 import dev.aidos.prompt.PromptAssembler
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -90,7 +90,7 @@ class AgentLoopTest {
     private fun endTurnResponse(text: String = "Done") = ModelResponse(
         outputs = listOf(TextOutput(text)),
         stopReason = StopReason.END_TURN,
-        usage = TokenUsage(10, 5, 15),
+        usage = Usage(10, 5, 15),
         model = ModelRef("test-model", "1.0"),
     )
 
@@ -106,7 +106,7 @@ class AgentLoopTest {
             )
         ),
         stopReason = StopReason.TOOL_USE,
-        usage = TokenUsage(10, 5, 15),
+        usage = Usage(10, 5, 15),
         model = ModelRef("test-model", "1.0"),
     )
 
