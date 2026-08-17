@@ -16,9 +16,6 @@ data class Usage(
     val totalTokens: Int? = null,
 )
 
-/** Existing kernel name retained as a source-compatible alias. */
-typealias TokenUsage = Usage
-
 /**
  * A typed result emitted by an inference backend.
  *
