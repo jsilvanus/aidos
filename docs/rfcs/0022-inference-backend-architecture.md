@@ -82,6 +82,10 @@ Initial capability families include `TEXT_GENERATION`, `CHAT`, `EMBEDDING`, `VIS
 
 A backend advertises a capability only when it can satisfy its contract. Unsupported features must be reported rather than silently ignored.
 
+The `capabilities` set is the discovery/routing surface; the capability-specific Kotlin interfaces are the executable type-safe contracts. Implementations must keep these consistent: a backend must not advertise a capability for which it cannot provide the corresponding contract.
+
+`InferenceCapability` is intentionally distinct from Aidos security `Capability`. The two concepts must not share a generic `Capability` type or namespace.
+
 ## Streaming
 
 Streaming is a **capability**, not a requirement of every backend. This avoids forcing embeddings or one-shot classifiers to invent a meaningless stream while allowing generation, STT, video, and future workloads to stream incremental results.
@@ -98,6 +102,8 @@ ModelStream
 
 The stream abstraction must not assume that every stream consists of tokens. Tensor/audio/frame chunks can be supported later without changing the base inference model.
 
+Cancellation semantics are part of the streaming contract: when the consumer cancels collection, the backend should propagate cancellation to the underlying inference operation when the native/runtime API permits it. A backend must not continue expensive generation merely because its output stream is no longer being consumed.
+
 ## Generalized ModelResponse
 
 The kernel response model is generalized from a text-centric structure to a typed-output structure. This is an intentional kernel change; the kernel is allowed to evolve and should not preserve a text-only limitation merely for compatibility.
@@ -108,21 +114,30 @@ Conceptually:
 data class ModelResponse(
     val outputs: List<ModelOutput>,
     val stopReason: StopReason?,
-    val usage: Usage?
+    val usage: Usage?,
+    val model: ModelRef?,
+    val metadata: Map<String, String> = emptyMap()
 )
 
-sealed interface ModelOutput
+interface ModelOutput
 
 data class TextOutput(val text: String) : ModelOutput
 data class ToolCallOutput(val call: ToolCall) : ModelOutput
-data class TensorOutput(val tensor: Tensor) : ModelOutput
+data class TensorOutput(
+    val name: String,
+    val tensor: Tensor
+) : ModelOutput
 ```
+
+`outputs` is an ordered sequence. Ordering is semantically meaningful and must be preserved by backends; this permits future multimodal results to express the order in which heterogeneous outputs belong together.
+
+The response retains model identity/version information through `ModelRef` (or the equivalent kernel type). Existing token accounting also remains first-class: `Usage` must preserve at least input/prompt token count and output/completion token count when the backend can provide them, with optional total-token and modality-specific usage fields. Token counts are informational and may be unavailable for runtimes that cannot report them.
 
 Additional output types such as image and audio may be added when their contracts are mature. `TensorOutput` is the generic extensibility primitive for model results that do not yet have a higher-level Aidos semantic type.
 
-The kernel should retain ergonomic accessors such as `response.text()` and `response.toolCalls()` so existing agent code remains simple. Raw untyped `Any` output bags are explicitly avoided.
+The kernel should retain ergonomic accessors such as `response.text()` and `response.toolCalls()` so existing agent code remains simple. Raw untyped `Any` output bags are explicitly avoided. During migration, compatibility accessors/properties may be retained or deprecated rather than forcing unrelated consumers to change simultaneously.
 
-This makes an embedding response, for example, a normal model response containing a tensor output rather than requiring an unrelated top-level result hierarchy. Higher-level adapters can interpret tensors as embeddings, detections, classifications, or other semantics.
+This makes an embedding response, for example, a normal model response containing a named tensor output rather than requiring an unrelated top-level result hierarchy. Higher-level adapters can interpret tensors as embeddings, detections, classifications, or other semantics.
 
 ## Tensor inference
 
@@ -139,11 +154,22 @@ TensorInferenceRequest
 Tensor
   element type
   shape
-  data
+  layout / strides
+  storage
 
 Tensor output
   named tensors
 ```
+
+A tensor's shape is not sufficient to describe its memory interpretation. The contract therefore exposes layout/strides as an extensibility point so contiguous, strided, transposed, sliced, and view-backed tensors can be represented without copying merely to normalize them.
+
+`storage` is an engine-neutral memory abstraction rather than a required `ByteArray`. It must be possible for implementations to use CPU buffers, native memory, memory-mapped storage, or future platform/device-backed storage without forcing a native → byte-array → Kotlin → native copy cycle. Ownership/lifetime semantics for borrowed and owned storage must be defined by the concrete tensor implementation.
+
+The tensor contract must not require all implementations to support device-resident or zero-copy storage in the MVP. It must, however, avoid an API shape that prevents those implementations later.
+
+`TensorOutput` always carries a stable output `name`. Multiple outputs from one inference are represented as multiple named `TensorOutput` values. This is required for ONNX graphs and other runtimes where output names carry semantic meaning.
+
+Tensor element types should cover the common numeric/scalar types required by the initial backends without committing the API to a particular provider's type system. Unsupported types must fail explicitly rather than silently converting through strings or lossy scalar boxing.
 
 Aidos owns the engine-neutral tensor contract; ONNX Runtime is adapted to it rather than defining the Aidos API. This preserves backend independence.
 
@@ -151,17 +177,27 @@ Aidos owns the engine-neutral tensor contract; ONNX Runtime is adapted to it rat
 
 The registry may have several candidates for a format. Selection is not permanently hard-coded to one runtime. Aidos expresses user-visible constraints/preferences such as CPU/GPU/accelerator and resource limits; the backend translates those into runtime-specific execution providers.
 
+Hardware/provider selection is deliberately not exposed as backend-specific methods such as `loadWithCuda()` or `loadWithNNAPI()`. Those mechanics remain behind the backend boundary.
+
 For ONNX Runtime, provider mechanics remain inside the ONNX backend. Diagnostics may expose providers/devices so routing can make informed decisions.
 
 ## Model lifecycle
 
-Downloading and inference are separate responsibilities:
+Downloading/installing model artifacts and loading them into a runtime are separate responsibilities:
 
 ```text
-Discovered -> Downloaded -> Installed -> Loaded -> Active -> Unloaded
+Artifact lifecycle:
+Discovered -> Downloaded -> Installed -> Verified
+
+Runtime lifecycle:
+Verified -> Loaded -> Active -> Unloaded
 ```
 
-`DownloadManager` obtains and verifies model bytes. Backends receive installed model references and do not silently download missing artifacts.
+`DownloadManager`/`ModelRuntime` obtains, installs, and verifies model bytes. Backends receive installed model references and do not silently download missing artifacts.
+
+`ModelRuntime` remains responsible for device-wide admission/resource policy, loaded-model tracking, integrity verification, and backend selection. The backend owns the runtime-specific mechanics of loading/unloading its model representation and releasing native/provider resources.
+
+This separation preserves the existing global admission queue and digest-verification model while allowing different runtimes to implement loading efficiently. A backend must not independently invent a competing device-wide eviction or admission policy.
 
 ## Backend: llama.cpp / GGUF
 
@@ -188,8 +224,9 @@ Target capabilities include:
 - ONNX load/unload;
 - graph/input/output introspection;
 - typed tensors;
-- multiple inputs/outputs;
+- named multiple inputs/outputs;
 - dynamic shapes;
+- layout-aware tensor interchange;
 - batching;
 - generic tensor inference;
 - model metadata;
@@ -216,8 +253,9 @@ Model loading participates in device-wide resource/admission policy; memory exha
 3. Implement llama.cpp against text-generation and streaming capabilities supported by the current wrapper.
 4. Implement ONNX Runtime generic typed tensor inference and lifecycle management.
 5. Generalize kernel `ModelResponse` to typed outputs and migrate all existing consumers.
-6. Add backend and capability diagnostics to the engine CLI.
-7. Add deterministic fixture-based tests for lifecycle, tensor inference, text generation, streaming, and generalized responses.
+6. Preserve input/output token usage in the generalized response when the runtime can report it.
+7. Add backend and capability diagnostics to the engine CLI.
+8. Add deterministic fixture-based tests for lifecycle, tensor inference, text generation, streaming, cancellation, token usage, and generalized responses.
 
 ## Settled architectural decisions
 
@@ -233,7 +271,7 @@ The following are recorded in `docs/decisions.md` as D36–D44:
 - **D43:** `ModelResponse` is generalized to typed outputs;
 - **D44:** ONNX Runtime is the second inference backend.
 
-These decisions supersede the earlier open questions in the draft RFC. No further architectural choice is required before implementation; implementation details remain subject to normal code review and tests.
+These decisions supersede the earlier open questions in the draft RFC. The amendments in this revision further constrain D41/D43 so that tensor outputs are named and storage is capable of zero-copy implementations, while response usage retains token accounting. Implementation details remain subject to normal code review and tests.
 
 ## Relationship to existing RFCs
 
@@ -245,4 +283,4 @@ These decisions supersede the earlier open questions in the draft RFC. No furthe
 
 ## Future work
 
-ExecuTorch, OpenVINO, TensorRT, specialized media backends, zero-copy tensor interchange, and richer accelerator-aware routing remain future backend work. They must implement the same capability-oriented architecture rather than expanding the base backend into a god interface.
+ExecuTorch, OpenVINO, TensorRT, specialized media backends, zero-copy tensor interchange, device-resident tensors, and richer accelerator-aware routing remain future backend work. They must implement the same capability-oriented architecture rather than expanding the base backend into a god interface.
