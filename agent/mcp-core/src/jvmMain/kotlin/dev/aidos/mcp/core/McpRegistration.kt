@@ -19,22 +19,36 @@ import kotlinx.serialization.json.buildJsonObject
  * Nothing spawns or connects on project open (D30, lazy start).
  */
 
-/** Transport kind for an MCP server registration (RFC-0031). */
+/**
+ * Transport kind for an MCP server registration (RFC-0031).
+ *
+ * **[secretRefs] holds references, never values** (RFC-0035). The key is the name the secret is
+ * injected *under* — an environment variable for stdio, a header for HTTP — and the value is the
+ * vault entry to resolve it from. Resolution happens at connect time, in the layer that has vault
+ * access; a registration loaded from storage never carries a plaintext secret, so it is safe to
+ * hold, compare, and pass around.
+ *
+ * This is a map rather than a single slot because that is what `mcp_servers.secret_refs_json`
+ * stores, and because [scrubbedEnvironment]'s `extra` parameter — the actual stdio injection
+ * point — takes a map of name to value. An earlier single `credentialEnvVar: String?` could hold
+ * either the name or the reference but not both, which lost the env var name for stdio outright
+ * and forced a server configured with two secrets to be rejected as unrepresentable.
+ */
 sealed interface McpTransport {
     /** stdio subprocess — desktop and headless server only. */
     data class Stdio(
         val command: String,
         val args: List<String> = emptyList(),
-        /** Credential injected into the child's environment (never logged). */
-        val credentialEnvVar: String? = null,
+        /** Environment variable name → vault reference. Never values, never logged. */
+        val secretRefs: Map<String, String> = emptyMap(),
     ) : McpTransport
 
     /** Streamable HTTP — all profiles, HTTPS enforced (loopback plain-HTTP excepted). */
     data class Http(
         val endpointUrl: String,
         val authHeaderName: String = "Authorization",
-        /** Credential injected as auth header value (never logged). */
-        val credentialEnvVar: String? = null,
+        /** Header name → vault reference. Never values, never logged. */
+        val secretRefs: Map<String, String> = emptyMap(),
     ) : McpTransport
 }
 
