@@ -6,13 +6,18 @@
 
 ## Summary
 
-Aidos Engine currently exposes its HTTP inference API on loopback only. This RFC proposes an explicit **local-network sharing** mode that allows other devices on the same trusted LAN/Wi-Fi network to use inference provided by the Android phone.
+Aidos Engine currently exposes its HTTP inference API on loopback only. This RFC proposes an explicit **local-network sharing** mode that allows other devices on the same LAN/Wi-Fi network to use inference provided by the Android phone.
 
-The feature is opt-in and paired per external device. A user creates an external-device grant by giving it a human-readable label and an expiration time; the Engine then displays a QR code containing the information needed by the connecting client to establish access.
+The feature is opt-in and authorized per external device. The pairing UX deliberately supports two connection modes:
 
-The goal is to make the experience resemble:
+1. **Code pairing** — a short-lived, TOTP-style numeric bootstrap code intended for SDK/client implementations.
+2. **Manual pairing** — human-readable connection details that can be copied, entered manually, or optionally transmitted as a QR code.
 
-> **Add external device → label + expiration → show QR code**
+The QR code is therefore a **transport format, not the pairing protocol**. A dedicated Aidos application or SDK is useful for automated pairing, but is not required for basic LAN access.
+
+The intended user experience is:
+
+> **Add external device → label → expiration → choose pairing method**
 
 while keeping ordinary local Android consumers on the existing Binder/handshake path.
 
@@ -32,11 +37,12 @@ The HTTP API already provides an OpenAI-compatible inference surface and bearer 
 1. Allow an Engine instance to serve inference to explicitly authorized devices on the local network.
 2. Keep LAN sharing disabled by default.
 3. Preserve the existing local Binder/handshake mechanism for Android app consumers.
-4. Provide a simple, human-controlled pairing UX.
+4. Provide simple pairing for both SDK-aware and generic clients.
 5. Give each external device its own credential/grant and expiration time.
 6. Allow individual external-device access to be revoked without invalidating other devices.
-7. Support service discovery without requiring users to manually type an IP address where practical.
-8. Keep the inference/runtime layer independent of the LAN transport mechanism.
+7. Make QR useful without making a dedicated Aidos client a protocol requirement.
+8. Keep the inference/runtime layer independent of the LAN transport and pairing mechanism.
+9. Leave room for service discovery and stronger transport security later.
 
 ## Non-goals
 
@@ -102,21 +108,68 @@ Expiration is mandatory. The UI may offer convenient presets such as:
 
 A grant may also be revoked manually before expiration.
 
-## Pairing UX
+## Pairing model
 
-The intended primary flow is:
+Pairing has two distinct modes.
 
-1. User opens **Engine → External devices**.
-2. User selects **Add external device**.
-3. User enters a label, e.g. `My laptop`.
-4. User chooses an expiration time.
-5. Engine creates a new external-device grant.
-6. Engine displays a QR code.
-7. The external device scans the QR code.
-8. The external client imports the Engine endpoint and credential and connects.
-9. The Engine shows the paired device in its external-device list.
+### Mode A — Code pairing
 
-The QR code should contain a versioned Aidos connection descriptor rather than an opaque token alone.
+This is intended for clients that implement the Aidos pairing protocol, typically through the SDK or a dedicated Aidos client.
+
+The Engine UI creates a short-lived numeric bootstrap code, for example:
+
+```text
+PAIRING CODE
+
+847 291
+
+Expires in 60 seconds
+```
+
+The code is **not** the long-term bearer credential. It is a one-time/short-lived bootstrap secret used to establish trust between the Engine and the external client.
+
+Conceptually:
+
+```text
+External client                 Aidos Engine
+      │                               │
+      │  pairing code                 │
+      ├──────────────────────────────►│
+      │                               │
+      │       device credential       │
+      │◄──────────────────────────────┤
+      │                               │
+      │──── authenticated HTTP ──────►│
+```
+
+The exact cryptographic construction may use TOTP-style rotating codes or an equivalent short-lived challenge. The important property is that the displayed code is temporary and is not itself the persistent bearer credential.
+
+The SDK should encapsulate this protocol so application developers do not need to implement pairing cryptography themselves.
+
+### Mode B — Manual pairing
+
+This is intended for generic HTTP clients, CLI tools, development, or users who do not have an Aidos SDK/client available.
+
+The Engine displays a human-readable connection descriptor such as:
+
+```text
+Aidos Engine
+
+Address:   192.168.1.42
+Port:      12345
+Protocol:  Aidos Engine HTTP v1
+Credential: eyJ...
+Expires:   25 Aug 2026 12:00
+```
+
+The UI provides:
+
+```text
+[ Copy connection details ]
+[ Show QR ]
+```
+
+The QR code contains the same connection descriptor in a machine-readable form. It is merely a convenient way to transmit the information.
 
 Conceptually:
 
@@ -132,30 +185,34 @@ Conceptually:
 }
 ```
 
-The exact wire format is intentionally left open for implementation. The descriptor should be designed so that future versions can add TLS/public-key information without breaking existing clients.
+The exact wire format is intentionally left open for implementation. It should be versioned and designed so future versions can add TLS/public-key information without breaking existing clients.
 
-## Does the connecting device need a dedicated Aidos app?
+## Dedicated client / SDK requirement
 
-**Not necessarily.** The pairing mechanism should distinguish between the **connection protocol** and the **client UX**.
+A dedicated Aidos application is **not required** for LAN inference.
 
-The QR code can encode a standard Aidos connection descriptor. A dedicated Aidos client application is the best UX because it can scan the QR code and store/manage the connection, but it is not inherently required by the Engine.
+The distinction is:
+
+```text
+Pairing protocol
+       │
+       ├── SDK / Aidos client
+       │      └── automated code pairing
+       │
+       └── Generic client
+              └── manual connection descriptor
+```
 
 Possible clients include:
 
-1. **Aidos client app** — preferred UX; scans QR and imports the connection automatically.
-2. **Aidos SDK client** — an application can receive/import the descriptor and construct an `AidosEngineClient` connection.
-3. **Developer tooling / CLI** — can accept the descriptor or its fields manually.
-4. **Generic HTTP/OpenAI client** — can connect if the user manually supplies the LAN endpoint and bearer credential.
+1. **Aidos client app** — preferred UX; can perform code pairing automatically.
+2. **Aidos SDK client** — application developers can use the pairing protocol without implementing it themselves.
+3. **Developer tooling / CLI** — can implement code pairing or accept manual connection details.
+4. **Generic HTTP/OpenAI client** — can use the manual endpoint and bearer credential directly.
 
-Therefore the QR code should not encode an instruction such as “open this in the Aidos app”. It should encode portable connection information. A dedicated client can recognize the descriptor and provide a seamless experience, while other clients remain possible.
+The Aidos SDK is therefore an **implementation convenience**, not a protocol dependency.
 
-A future OS-level deep link may improve the experience:
-
-```text
-aidos://engine/connect?... 
-```
-
-but this should be optional rather than a protocol requirement.
+A future OS-level deep link may improve the experience, but it must remain optional.
 
 ## Service discovery
 
@@ -177,9 +234,7 @@ Discovery metadata may expose non-secret information such as:
 
 **Credentials must never be advertised through mDNS.**
 
-The QR code remains the authorization mechanism.
-
-Discovery is useful even without a dedicated client: a client can discover candidate Engines and then use a separately obtained grant.
+Discovery is a convenience for finding an Engine; it is not authorization.
 
 ## Authentication and authorization
 
@@ -194,6 +249,8 @@ LAN requests must authenticate with a valid external-device credential. The Engi
 
 The existing single-current-token model should therefore be extended rather than reused unchanged for LAN sharing. Local Binder-issued tokens and external-device credentials should be separate credential classes/lifecycles.
 
+The short-lived code used by code pairing must not be accepted as a normal inference bearer credential.
+
 ## Transport security
 
 The initial implementation may support HTTP on a trusted private LAN, but the architecture should reserve a path for authenticated TLS.
@@ -203,9 +260,9 @@ The preferred long-term model is:
 ```text
 LAN
  ↓
-mDNS discovery
+mDNS discovery (optional)
  ↓
-QR pairing
+code pairing OR manual descriptor
  ↓
 authenticated TLS
  ↓
@@ -227,6 +284,7 @@ The UI should provide:
 - external-device grants;
 - expiration times;
 - revoke action;
+- pairing method selection;
 - active/inactive pairing state.
 
 ## API / implementation direction
@@ -246,17 +304,20 @@ The server should derive the appropriate bind address from this configuration.
 
 The existing HTTP authentication layer should be generalized from a single current token to a credential store capable of validating both local and external credentials.
 
-A separate component should own external-device grants, for example:
+A separate component should own external-device grants and pairing, for example:
 
 ```text
 ExternalDeviceManager
     createGrant(label, expiresAt)
+    createPairingCode(grantId)
+    completePairing(code, clientInfo)
+    createManualDescriptor(grantId)
     validateCredential(credential)
     revoke(id)
     list()
 ```
 
-QR generation should consume a connection descriptor produced by this manager rather than directly exposing internal credential structures.
+The QR generator should consume a connection descriptor rather than directly exposing internal credential structures.
 
 ## Backwards compatibility
 
@@ -264,6 +325,7 @@ QR generation should consume a connection descriptor produced by this manager ra
 - Existing Binder consumers continue to use the Binder handshake.
 - LAN sharing is disabled unless explicitly enabled.
 - Existing local bearer-token semantics need not change for the localhost path.
+- Clients that do not implement Aidos pairing can still use manual connection details.
 
 ## Security considerations
 
@@ -276,20 +338,24 @@ Important safeguards:
 - unique credential per external device;
 - mandatory expiration;
 - manual revocation;
+- short-lived pairing codes;
+- pairing codes never usable as inference bearer tokens;
 - no credentials in discovery advertisements;
-- cryptographically random credentials;
+- cryptographically secure credential generation;
 - clear UI indication while LAN sharing is active;
 - future TLS support;
 - rate limiting and request-size limits should apply to LAN clients as appropriate.
 
+Manual QR codes containing bearer credentials must be treated as sensitive. The UI should make this clear and should not persist or log the descriptor unnecessarily.
+
 ## Open questions
 
 1. Should LAN sharing use HTTP initially or require TLS from the first implementation?
-2. Should QR descriptors contain the bearer credential directly, or should pairing use a short-lived one-time bootstrap secret that is exchanged for a persistent per-device credential?
+2. Should code pairing use TOTP specifically, or a purpose-built short-lived challenge/response protocol?
 3. Should the Engine automatically stop LAN sharing when the last external grant expires?
 4. Should external devices have permissions/capabilities beyond simple inference access?
-5. Should the desktop Aidos client be the first official QR-scanning client?
-6. Should a generic web page or PWA be provided as a lightweight pairing client?
+5. Should a desktop Aidos client be the first official implementation of code pairing?
+6. Should manual QR descriptors eventually use a signed descriptor or public-key-based transport bootstrap?
 
 ## Recommended implementation order
 
@@ -306,13 +372,20 @@ Important safeguards:
 - Add labels, expiration, and revocation.
 - Replace the single-token assumption for LAN credentials.
 
-### Phase 3 — QR pairing
+### Phase 3 — Manual pairing
 
 - Define versioned connection descriptor.
-- Generate QR code in Android UI.
-- Implement import in the Aidos client/SDK.
+- Add copyable human-readable connection details.
+- Add optional QR generation containing the same descriptor.
 
-### Phase 4 — Discovery and hardened transport
+### Phase 4 — SDK code pairing
+
+- Define the short-lived pairing-code protocol.
+- Implement it in the SDK.
+- Add Android UI for displaying the pairing code.
+- Exchange the bootstrap code for a per-device credential.
+
+### Phase 5 — Discovery and hardened transport
 
 - Add mDNS/DNS-SD.
 - Add TLS/public-key pinning or an equivalent authenticated transport design.
@@ -324,6 +397,13 @@ The proposed design is to treat LAN inference as an **explicitly enabled, per-de
 
 The preferred UX is:
 
-> **Add external device → label → expiration → QR code**
+> **Add external device → label → expiration → pairing method**
 
-A dedicated Aidos client is recommended for the best experience, but **the protocol must not require one**. The QR code should carry a portable, versioned connection descriptor so that Aidos SDKs, CLIs, and other compatible clients can connect as well.
+with two pairing methods:
+
+- **Code pairing:** short-lived numeric bootstrap code for SDK-aware clients.
+- **Manual pairing:** readable connection details with optional QR transmission for generic clients.
+
+The QR code is deliberately **not** the pairing protocol. It is a convenient transport representation of the manual connection descriptor.
+
+The Aidos SDK is recommended for the automated pairing experience, but **the LAN protocol must not require the SDK or a dedicated Aidos application**.
