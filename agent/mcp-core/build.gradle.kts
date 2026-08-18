@@ -19,7 +19,7 @@ kotlin {
                 implementation("io.ktor:ktor-client-cio:3.5.1")
                 implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
-                implementation("io.ktor:ktor-client-sse:3.5.1")
+                implementation("io.ktor:ktor-sse:3.5.1")
             }
         }
 
