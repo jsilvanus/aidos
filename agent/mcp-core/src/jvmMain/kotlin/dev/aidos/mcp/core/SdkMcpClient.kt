@@ -1,6 +1,5 @@
 package dev.aidos.mcp.core
 
-import io.modelcontextprotocol.kotlin.sdk.ExperimentalMcpApi
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -9,6 +8,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.ListToolsRequest
 import io.modelcontextprotocol.kotlin.sdk.types.PaginatedRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -23,7 +23,6 @@ import kotlinx.serialization.json.putJsonObject
  * Transport construction remains outside this adapter so policy/lifecycle code can decide when
  * and how a connection is created.
  */
-@OptIn(ExperimentalMcpApi::class)
 class SdkMcpClient(
     private val client: Client,
     private val transport: Transport,
@@ -93,7 +92,11 @@ class SdkMcpClient(
     }
 
     override fun close() {
-        client.close()
+        // McpClient predates the SDK and is AutoCloseable. Preserve that synchronous contract while
+        // allowing the SDK to perform its structured-concurrency shutdown correctly.
+        runBlocking {
+            client.close()
+        }
         initialized = false
     }
 
