@@ -56,10 +56,10 @@ class McpServerActivator(
             client.initialize()
             client.listTools()
         } catch (e: CancellationException) {
-            client.close()
+            client.closeSuspend()
             throw e
         } catch (e: Exception) {
-            client.close()
+            client.closeSuspend()
             return McpActivationOutcome.Failed(McpActivationFailure.ConnectFailed(serverName, e.describe()))
         }
 
@@ -139,5 +139,5 @@ class McpServerActivation(
     val unadopted: List<McpToolSpec>,
     private val client: McpClient,
 ) {
-    suspend fun close() = client.close()
+    suspend fun close() = client.closeSuspend()
 }
