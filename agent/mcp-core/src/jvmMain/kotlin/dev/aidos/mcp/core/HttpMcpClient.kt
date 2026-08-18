@@ -7,7 +7,6 @@ import io.ktor.client.plugins.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StreamableHttpClientTransport
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
-import kotlinx.coroutines.runBlocking
 
 /**
  * Streamable HTTP MCP client backed by the official Kotlin MCP SDK.
@@ -62,11 +61,7 @@ class HttpMcpClient(
     ): McpCallResult = delegate.callTool(name, arguments)
 
     override fun close() {
-        // McpClient predates the SDK and is AutoCloseable. Keep that synchronous public contract;
-        // the SDK's own close is suspend because it waits for its structured-concurrency scope.
-        runBlocking {
-            delegate.close()
-        }
+        delegate.close()
         httpClient.close()
     }
 }
