@@ -1,15 +1,14 @@
 package dev.aidos.mcp.core
 
+import io.modelcontextprotocol.kotlin.sdk.ExperimentalMcpApi
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
-import io.modelcontextprotocol.kotlin.sdk.types.ContentBlock
-import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ListToolsRequest
+import io.modelcontextprotocol.kotlin.sdk.types.PaginatedRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
-import io.modelcontextprotocol.kotlin.sdk.ExperimentalMcpApi
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -19,7 +18,7 @@ import kotlinx.serialization.json.putJsonObject
 /**
  * Aidos' reusable MCP client boundary backed by the official Kotlin MCP SDK.
  *
- * This class deliberately keeps the existing mcp-core API independent of SDK types.  Consumers
+ * This class deliberately keeps the existing mcp-core API independent of SDK types. Consumers
  * such as Aidos and Dictator depend on this boundary; the SDK owns MCP protocol mechanics.
  * Transport construction remains outside this adapter so policy/lifecycle code can decide when
  * and how a connection is created.
@@ -53,7 +52,7 @@ class SdkMcpClient(
             var cursor: String? = null
             do {
                 val request = ListToolsRequest(
-                    params = cursor?.let { io.modelcontextprotocol.kotlin.sdk.types.PaginatedRequestParams(it) },
+                    params = cursor?.let { PaginatedRequestParams(it) },
                 )
                 val page = client.listTools(request)
                 addAll(page.tools.map(::mapTool))
@@ -106,7 +105,7 @@ class SdkMcpClient(
         )
 
     private fun mapSchema(schema: ToolSchema): JsonObject = buildJsonObject {
-        schema.schema?.let { put("$schema", it) }
+        schema.schema?.let { put("\$schema", it) }
         put("type", "object")
         schema.properties?.let { properties ->
             putJsonObject("properties") { properties.forEach { (key, value) -> put(key, value) } }
@@ -115,7 +114,7 @@ class SdkMcpClient(
             putJsonArray("required") { required.forEach { add(it) } }
         }
         schema.defs?.let { defs ->
-            putJsonObject("$defs") { defs.forEach { (key, value) -> put(key, value) } }
+            putJsonObject("\$defs") { defs.forEach { (key, value) -> put(key, value) } }
         }
     }
 }
