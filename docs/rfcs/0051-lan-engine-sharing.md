@@ -8,49 +8,44 @@
 
 Aidos Engine currently exposes its HTTP inference API on loopback only. This RFC proposes an explicit **local-network sharing** mode that allows other devices on the same LAN/Wi-Fi network to use inference provided by the Android phone.
 
-The feature is opt-in and authorized per external device. The pairing UX deliberately supports two connection modes:
+LAN sharing is opt-in, uses **HTTPS**, and is authorized per external device. Pairing supports two modes:
 
-1. **Code pairing** — a short-lived, TOTP-style numeric bootstrap code intended for SDK/client implementations.
+1. **Code pairing** — a short-lived numeric bootstrap code for SDK/client implementations.
 2. **Manual pairing** — human-readable connection details that can be copied, entered manually, or optionally transmitted as a QR code.
 
-The QR code is therefore a **transport format, not the pairing protocol**. A dedicated Aidos application or SDK is useful for automated pairing, but is not required for basic LAN access.
+The QR code is a **transport format, not the pairing protocol**. A dedicated Aidos application or SDK is useful for automated pairing, but is not required for basic LAN access.
 
-The intended user experience is:
+The intended UX is:
 
 > **Add external device → label → expiration → choose pairing method**
 
-while keeping ordinary local Android consumers on the existing Binder/handshake path.
+Ordinary local Android consumers continue to use the existing Binder/handshake path.
 
 ## Motivation
 
-A phone may have useful local inference capacity that other devices on the same LAN can consume. Examples include:
+A phone may have useful local inference capacity that other devices on the same LAN can consume: laptops, desktops, tablets, development tools, or other devices using chat, STT, embeddings, or other Engine capabilities.
 
-- a laptop using the phone's larger/available model;
-- a desktop using the phone for occasional inference;
-- another tablet or device using the phone for STT or embeddings;
-- development and testing against a physically separate client.
-
-The HTTP API already provides an OpenAI-compatible inference surface and bearer authentication. The current HTTP server, however, binds explicitly to `127.0.0.1`, making it unreachable from other LAN devices.
+The HTTP API already provides an OpenAI-compatible inference surface and bearer authentication. The current HTTP server binds to `127.0.0.1`, making it unreachable from other LAN devices.
 
 ## Goals
 
-1. Allow an Engine instance to serve inference to explicitly authorized devices on the local network.
+1. Serve inference to explicitly authorized devices on the local network.
 2. Keep LAN sharing disabled by default.
-3. Preserve the existing local Binder/handshake mechanism for Android app consumers.
-4. Provide simple pairing for both SDK-aware and generic clients.
-5. Give each external device its own credential/grant and expiration time.
-6. Allow individual external-device access to be revoked without invalidating other devices.
-7. Make QR useful without making a dedicated Aidos client a protocol requirement.
-8. Keep the inference/runtime layer independent of the LAN transport and pairing mechanism.
-9. Leave room for service discovery and stronger transport security later.
+3. Preserve Binder/handshake for local Android consumers.
+4. Provide pairing for both SDK-aware and generic clients.
+5. Give each external device its own credential, label, and expiration.
+6. Support individual revocation.
+7. Make QR useful without requiring a dedicated Aidos client.
+8. Keep inference/runtime independent of LAN transport and pairing.
+9. Use encrypted transport for all LAN inference traffic.
 
 ## Non-goals
 
 - Internet-facing Engine hosting.
-- Automatic exposure through NAT/UPnP.
-- Public discovery of Aidos Engines on the Internet.
-- Replacing Android Binder IPC.
-- Making the LAN API unauthenticated merely because it is on a private network.
+- NAT/UPnP exposure.
+- Public Internet discovery.
+- Replacing Binder IPC.
+- Treating LAN membership as authorization.
 
 ## Proposed architecture
 
@@ -63,27 +58,25 @@ The HTTP API already provides an OpenAI-compatible inference surface and bearer 
               │                               │
               │                    ┌──────────┴──────────┐
               │                    │                     │
-              │              Local HTTP            LAN HTTP
+              │             Local HTTP(S)           LAN HTTPS
               │                    │                     │
               │              127.0.0.1              Wi-Fi/LAN
               │                                          │
               │                                          ▼
               │                                  External device
-              │                                  (laptop/tablet/etc.)
-              │
               └───────────────────────────────────────────
 ```
 
-The Engine should support two HTTP bind modes:
+The Engine should support two bind modes:
 
-- `LOCALHOST` — bind only to loopback; current/default behaviour.
-- `LAN` — bind to an address/interface reachable on the local network.
+- `LOCALHOST` — loopback only; current/default behaviour.
+- `LAN` — local-network interface(s), **HTTPS only**.
 
-The implementation should avoid exposing the Engine on arbitrary interfaces when LAN sharing is disabled.
+LAN mode must not expose a cleartext HTTP listener. Ktor supports direct server-side SSL configuration with a keystore, including embedded servers, so TLS should be implemented using the platform/Ktor TLS stack rather than a custom TLS implementation. citeturn0search1
 
 ## External-device grants
 
-An external-device grant is an Engine-owned authorization record containing at minimum:
+An external-device grant contains at minimum:
 
 ```text
 id
@@ -94,29 +87,15 @@ expiresAt
 revoked
 ```
 
-The credential must be generated with cryptographically secure randomness. Credentials are independent per external device.
+Credentials must be cryptographically random and independent per device. Expiration is mandatory. The UI may offer 1 hour, 1 day, 7 days, 30 days, and custom expiration.
 
-The Engine should not use one global LAN token for all clients. This permits revocation and auditing at device level.
-
-Expiration is mandatory. The UI may offer convenient presets such as:
-
-- 1 hour
-- 1 day
-- 7 days
-- 30 days
-- custom
-
-A grant may also be revoked manually before expiration.
+The Engine must not use one global LAN token for all clients.
 
 ## Pairing model
 
-Pairing has two distinct modes.
-
 ### Mode A — Code pairing
 
-This is intended for clients that implement the Aidos pairing protocol, typically through the SDK or a dedicated Aidos client.
-
-The Engine UI creates a short-lived numeric bootstrap code, for example:
+For SDK-aware clients, the Engine displays a short-lived bootstrap code:
 
 ```text
 PAIRING CODE
@@ -126,9 +105,7 @@ PAIRING CODE
 Expires in 60 seconds
 ```
 
-The code is **not** the long-term bearer credential. It is a one-time/short-lived bootstrap secret used to establish trust between the Engine and the external client.
-
-Conceptually:
+The code is **not** an inference bearer credential. It is a temporary bootstrap secret used to establish a device grant.
 
 ```text
 External client                 Aidos Engine
@@ -139,27 +116,24 @@ External client                 Aidos Engine
       │       device credential       │
       │◄──────────────────────────────┤
       │                               │
-      │──── authenticated HTTP ──────►│
+      │──── HTTPS + bearer auth ─────►│
 ```
 
-The exact cryptographic construction may use TOTP-style rotating codes or an equivalent short-lived challenge. The important property is that the displayed code is temporary and is not itself the persistent bearer credential.
-
-The SDK should encapsulate this protocol so application developers do not need to implement pairing cryptography themselves.
+The exact cryptographic construction may use TOTP-style rotating codes or an equivalent short-lived challenge. The SDK should encapsulate the protocol.
 
 ### Mode B — Manual pairing
 
-This is intended for generic HTTP clients, CLI tools, development, or users who do not have an Aidos SDK/client available.
-
-The Engine displays a human-readable connection descriptor such as:
+For generic HTTP clients, CLI tools, development, or users without an SDK, the Engine displays:
 
 ```text
 Aidos Engine
 
-Address:   192.168.1.42
-Port:      12345
-Protocol:  Aidos Engine HTTP v1
+Address:    192.168.1.42
+Port:       12345
+Protocol:   Aidos Engine HTTPS v1
 Credential: eyJ...
-Expires:   25 Aug 2026 12:00
+Expires:    25 Aug 2026 12:00
+Fingerprint: SHA-256: A4:72:91:...
 ```
 
 The UI provides:
@@ -169,29 +143,46 @@ The UI provides:
 [ Show QR ]
 ```
 
-The QR code contains the same connection descriptor in a machine-readable form. It is merely a convenient way to transmit the information.
+The QR contains the same connection descriptor. It is merely a convenient transmission mechanism.
 
-Conceptually:
+The descriptor should be versioned and contain the TLS identity information needed by the client to verify the Engine, for example:
 
 ```json
 {
   "v": 1,
-  "scheme": "http",
+  "scheme": "https",
   "host": "192.168.1.42",
   "port": 12345,
   "service": "aidos-engine",
+  "engineId": "7f3c...",
+  "certificateFingerprint": "sha256:A4:72:91:...",
   "credential": "...",
   "expiresAt": "2026-08-25T12:00:00Z"
 }
 ```
 
-The exact wire format is intentionally left open for implementation. It should be versioned and designed so future versions can add TLS/public-key information without breaking existing clients.
+## TLS identity
+
+The Engine should generate and persist a local server identity when LAN sharing is first enabled:
+
+```text
+Aidos Engine
+    │
+    ├── private key
+    └── self-signed certificate
+```
+
+The implementation must use standard Android/JVM cryptographic and TLS primitives; **Aidos must not implement TLS itself**.
+
+The certificate/public-key identity should be represented by a stable fingerprint or equivalent identifier. Pairing establishes trust in that Engine identity. Clients should not simply disable certificate verification because the certificate is self-signed.
+
+The private key must remain local to the Engine and must not be included in pairing descriptors.
+
+The identity should remain stable across normal Engine restarts. If the identity is intentionally regenerated, existing clients should treat it as a new Engine and require re-pairing or explicit re-trust.
 
 ## Dedicated client / SDK requirement
 
 A dedicated Aidos application is **not required** for LAN inference.
-
-The distinction is:
 
 ```text
 Pairing protocol
@@ -200,62 +191,45 @@ Pairing protocol
        │      └── automated code pairing
        │
        └── Generic client
-              └── manual connection descriptor
+              └── manual HTTPS descriptor
 ```
 
-Possible clients include:
+Possible clients include an Aidos client, SDK-based applications, CLI tooling, or generic HTTP/OpenAI-compatible clients.
 
-1. **Aidos client app** — preferred UX; can perform code pairing automatically.
-2. **Aidos SDK client** — application developers can use the pairing protocol without implementing it themselves.
-3. **Developer tooling / CLI** — can implement code pairing or accept manual connection details.
-4. **Generic HTTP/OpenAI client** — can use the manual endpoint and bearer credential directly.
-
-The Aidos SDK is therefore an **implementation convenience**, not a protocol dependency.
-
-A future OS-level deep link may improve the experience, but it must remain optional.
+The SDK is an implementation convenience, not a protocol dependency.
 
 ## Service discovery
 
-LAN sharing should support mDNS/DNS-SD discovery where available.
-
-Proposed service type:
+LAN sharing may support mDNS/DNS-SD:
 
 ```text
 _aidos-engine._tcp
 ```
 
-Discovery metadata may expose non-secret information such as:
+Discovery may expose non-secret metadata such as Engine name, protocol version, HTTPS port, capabilities, and pairing state.
 
-- Engine name/label;
-- Engine protocol version;
-- HTTP port;
-- API capabilities;
-- whether pairing is required.
-
-**Credentials must never be advertised through mDNS.**
-
-Discovery is a convenience for finding an Engine; it is not authorization.
+**Credentials and private key material must never be advertised through mDNS.** Discovery is not authorization.
 
 ## Authentication and authorization
 
-The existing bearer-authenticated HTTP endpoints remain the inference API surface.
+LAN inference uses HTTPS plus a per-device bearer credential.
 
-LAN requests must authenticate with a valid external-device credential. The Engine maps the credential to its external-device grant and checks:
+The Engine validates:
 
 1. credential validity;
 2. expiration;
 3. revocation;
 4. optionally, future per-device permissions.
 
-The existing single-current-token model should therefore be extended rather than reused unchanged for LAN sharing. Local Binder-issued tokens and external-device credentials should be separate credential classes/lifecycles.
+The short-lived pairing code must never be accepted as an inference bearer credential.
 
-The short-lived code used by code pairing must not be accepted as a normal inference bearer credential.
+Local Binder-issued tokens and external-device credentials remain separate credential classes/lifecycles.
 
 ## Transport security
 
-The initial implementation may support HTTP on a trusted private LAN, but the architecture should reserve a path for authenticated TLS.
+**LAN inference MUST use HTTPS. Cleartext HTTP is not supported in LAN mode.**
 
-The preferred long-term model is:
+The target architecture is:
 
 ```text
 LAN
@@ -264,32 +238,35 @@ mDNS discovery (optional)
  ↓
 code pairing OR manual descriptor
  ↓
-authenticated TLS
+TLS certificate/public-key verification
  ↓
-per-device authorization
+per-device bearer authorization
+ ↓
+Inference API
 ```
 
-A LAN credential is a bearer secret and must be treated as sensitive. The UI should warn users that sharing grants access to the Engine until expiration or revocation.
+TLS should use the Android/JVM/Ktor implementation rather than custom cryptography. Ktor documents server-side SSL connectors and keystore-based certificate configuration for embedded servers. citeturn0search1
+
+Localhost may retain its existing HTTP behaviour for backwards compatibility.
 
 ## Android considerations
 
-LAN sharing requires the Android application to be allowed to communicate with the local network and to keep the Engine HTTP service alive while sharing is enabled.
-
-The Engine should expose LAN sharing state to the Android UI so the user can see clearly when the phone is serving other devices.
-
-The UI should provide:
+The Android UI should clearly expose when LAN sharing is active and provide:
 
 - sharing enabled/disabled state;
-- local network address/port;
+- local HTTPS address/port;
+- Engine certificate/public-key fingerprint;
 - external-device grants;
 - expiration times;
 - revoke action;
 - pairing method selection;
 - active/inactive pairing state.
 
+LAN sharing must remain an explicit user-controlled capability.
+
 ## API / implementation direction
 
-`EngineHttpServer` should gain an explicit bind configuration rather than hard-coding `127.0.0.1`.
+`EngineHttpServer` should gain explicit bind and TLS configuration rather than hard-coding `127.0.0.1`.
 
 Conceptually:
 
@@ -300,11 +277,9 @@ enum class BindMode {
 }
 ```
 
-The server should derive the appropriate bind address from this configuration.
+LAN configuration should include the TLS identity/keystore and HTTPS connector. Ktor's server configuration supports SSL connectors and keystore-backed certificates. citeturn0search1
 
-The existing HTTP authentication layer should be generalized from a single current token to a credential store capable of validating both local and external credentials.
-
-A separate component should own external-device grants and pairing, for example:
+A separate component should own grants and pairing:
 
 ```text
 ExternalDeviceManager
@@ -317,66 +292,73 @@ ExternalDeviceManager
     list()
 ```
 
-The QR generator should consume a connection descriptor rather than directly exposing internal credential structures.
+A separate `EngineIdentity`/TLS component should own key generation, certificate persistence, fingerprint calculation, and TLS configuration.
+
+The QR generator consumes a connection descriptor rather than directly exposing internal credential structures.
 
 ## Backwards compatibility
 
 - Existing localhost HTTP clients continue to work unchanged.
 - Existing Binder consumers continue to use the Binder handshake.
 - LAN sharing is disabled unless explicitly enabled.
-- Existing local bearer-token semantics need not change for the localhost path.
-- Clients that do not implement Aidos pairing can still use manual connection details.
+- LAN clients must use HTTPS.
+- Clients without Aidos pairing support can use the manual HTTPS descriptor.
 
 ## Security considerations
 
-LAN does not equal trusted. The Engine must not treat an IP address, subnet, or mDNS discovery result as authorization.
+LAN does not equal trusted. IP address, subnet, or mDNS discovery must never be treated as authorization.
 
-Important safeguards:
+Safeguards:
 
 - no LAN listener by default;
 - explicit user action to enable sharing;
+- HTTPS only for LAN;
+- standard platform/Ktor TLS implementation;
+- persistent Engine identity;
+- certificate/public-key fingerprint verification;
 - unique credential per external device;
 - mandatory expiration;
 - manual revocation;
 - short-lived pairing codes;
-- pairing codes never usable as inference bearer tokens;
-- no credentials in discovery advertisements;
+- pairing codes never usable as inference credentials;
+- no credentials or private keys in discovery advertisements;
 - cryptographically secure credential generation;
-- clear UI indication while LAN sharing is active;
-- future TLS support;
-- rate limiting and request-size limits should apply to LAN clients as appropriate.
+- clear UI indication while sharing is active;
+- rate limiting and request-size limits as appropriate.
 
-Manual QR codes containing bearer credentials must be treated as sensitive. The UI should make this clear and should not persist or log the descriptor unnecessarily.
+Manual QR codes containing bearer credentials are sensitive and should not be unnecessarily persisted or logged.
 
 ## Open questions
 
-1. Should LAN sharing use HTTP initially or require TLS from the first implementation?
+1. Should the Engine use a self-signed certificate with public-key/certificate pinning, or a small Aidos local CA?
 2. Should code pairing use TOTP specifically, or a purpose-built short-lived challenge/response protocol?
 3. Should the Engine automatically stop LAN sharing when the last external grant expires?
-4. Should external devices have permissions/capabilities beyond simple inference access?
+4. Should external devices have permissions/capabilities beyond inference access?
 5. Should a desktop Aidos client be the first official implementation of code pairing?
-6. Should manual QR descriptors eventually use a signed descriptor or public-key-based transport bootstrap?
+6. Should manual descriptors eventually use signed descriptors or public-key-based credential bootstrap?
 
 ## Recommended implementation order
 
-### Phase 1 — LAN transport
+### Phase 1 — LAN HTTPS transport
 
 - Add explicit `LOCALHOST` / `LAN` bind mode.
-- Bind LAN HTTP server only when sharing is enabled.
-- Preserve bearer authentication.
-- Add integration tests from a non-loopback client.
+- Generate/persist an Engine TLS identity.
+- Configure Ktor HTTPS using the standard Android/JVM TLS stack.
+- Bind LAN server only when sharing is enabled.
+- Add non-loopback HTTPS integration tests.
 
 ### Phase 2 — External-device grants
 
 - Implement per-device credentials.
 - Add labels, expiration, and revocation.
-- Replace the single-token assumption for LAN credentials.
+- Separate LAN credentials from Binder-issued local tokens.
 
 ### Phase 3 — Manual pairing
 
-- Define versioned connection descriptor.
+- Define versioned HTTPS connection descriptor.
+- Include Engine identity/fingerprint.
 - Add copyable human-readable connection details.
-- Add optional QR generation containing the same descriptor.
+- Add optional QR generation.
 
 ### Phase 4 — SDK code pairing
 
@@ -385,25 +367,27 @@ Manual QR codes containing bearer credentials must be treated as sensitive. The 
 - Add Android UI for displaying the pairing code.
 - Exchange the bootstrap code for a per-device credential.
 
-### Phase 5 — Discovery and hardened transport
+### Phase 5 — Discovery and hardening
 
 - Add mDNS/DNS-SD.
-- Add TLS/public-key pinning or an equivalent authenticated transport design.
-- Add richer device management and permissions.
+- Add stronger public-key pinning/trust management if required.
+- Add richer device permissions and management.
 
 ## Decision
 
-The proposed design is to treat LAN inference as an **explicitly enabled, per-device paired capability**, not simply as an HTTP server bound to `0.0.0.0`.
+LAN inference is an **explicitly enabled, per-device paired capability**, not simply an HTTP server bound to `0.0.0.0`.
 
 The preferred UX is:
 
 > **Add external device → label → expiration → pairing method**
 
-with two pairing methods:
+with:
 
 - **Code pairing:** short-lived numeric bootstrap code for SDK-aware clients.
-- **Manual pairing:** readable connection details with optional QR transmission for generic clients.
+- **Manual pairing:** readable HTTPS connection details with optional QR transmission.
 
 The QR code is deliberately **not** the pairing protocol. It is a convenient transport representation of the manual connection descriptor.
 
-The Aidos SDK is recommended for the automated pairing experience, but **the LAN protocol must not require the SDK or a dedicated Aidos application**.
+**LAN mode uses HTTPS from the first implementation.** Aidos uses the standard Android/JVM/Ktor TLS stack and does not implement TLS/cryptography itself. The Engine has a persistent local TLS identity whose fingerprint is established during pairing.
+
+The Aidos SDK is recommended for automated pairing, but **the LAN protocol does not require the SDK or a dedicated Aidos application**.
