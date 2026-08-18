@@ -10,14 +10,18 @@ kotlin {
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+            // Official MCP client implementation. mcp-core remains the reusable Aidos/Dictator
+            // boundary; protocol, negotiation, request dispatch and MCP types belong to the SDK.
+            implementation("io.modelcontextprotocol:kotlin-sdk-client:0.15.0")
         }
 
         val jvmMain by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-core:2.3.12")
-                implementation("io.ktor:ktor-client-cio:2.3.12")
-                implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
-                implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+                implementation("io.ktor:ktor-client-core:3.5.1")
+                implementation("io.ktor:ktor-client-cio:3.5.1")
+                implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
+                implementation("io.ktor:ktor-client-sse:3.5.1")
             }
         }
 
@@ -25,8 +29,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-                // HTTP mock
-                implementation("io.ktor:ktor-client-mock:2.3.12")
+                implementation("io.ktor:ktor-client-mock:3.5.1")
             }
         }
     }
