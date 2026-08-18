@@ -53,17 +53,21 @@ class ModelDetailViewModel : ViewModel() {
                 val modelsDir = File(service.filesDir, "models")
                 modelsDir.mkdirs()
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val destination = File(modelsDir, "${safeModelId}_${quantization.name}.gguf").absolutePath
+                val artifactName = "${safeModelId}_${quantization.name}.gguf"
+                val destination = File(modelsDir, artifactName).absolutePath
                 val installer = DefaultModelInstallerWorkflow(downloader, catalog)
 
                 val result = installer.install(
                     ModelDownloadRequest(
                         modelId = model.id,
-                        quantization = quantization.name,
+                        artifactName = artifactName,
                         downloadUrl = quantization.downloadUrl,
                         expectedDigest = quantization.sha256Digest,
                         destination = destination,
                         kind = detail.kind,
+                        format = "gguf",
+                        backend = "llama.cpp",
+                        quantization = quantization.name,
                     )
                 ) { event ->
                     when (event) {
@@ -108,7 +112,16 @@ class ModelDetailViewModel : ViewModel() {
             hasAccelerator = false,
         )
         val cookbook = dev.aidos.cookbook.CookbookEngine()
-        val descriptor = ModelDescriptor(id, name, kind, provider, false, contextWindow, sizeBytes, null)
+        val descriptor = ModelDescriptor(
+            id,
+            name,
+            kind,
+            provider,
+            false,
+            contextWindow,
+            sizeBytes,
+            null,
+        )
         val contexts = listOf(4096, 8192, 16384, 32768)
         val fitRows = contexts.map { ctx ->
             val verdict = cookbook.verdict(descriptor, device, ctx)
@@ -116,7 +129,14 @@ class ModelDetailViewModel : ViewModel() {
             val mem = cookbook.computeResidentMemory(req, device, ctx)
             ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
         }
-        return ModelDetail(id, name, "Hugging Face model $id", ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(), fitRows)
+        return ModelDetail(
+            id = id,
+            name = name,
+            description = "Hugging Face model $id",
+            providerName = provider,
+            sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
+            contextFitTable = fitRows,
+        )
     }
 
     private fun CookbookVerdict.toUiVerdict(): ModelFitVerdict = when (this) {
