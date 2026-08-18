@@ -3,7 +3,9 @@ package fi.italeino.aidos.sdk
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.StopReason
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -136,15 +138,14 @@ internal class EngineLocalModelAdapter(
             } ?: 0
 
             return ModelResponse(
-                text = text,
-                toolCalls = emptyList(),
+                outputs = listOf(TextOutput(text)),
                 stopReason = StopReason.END_TURN,
-                usage = TokenUsage(
+                usage = Usage(
                     inputTokens = inputTokens,
-                    outputTokens = outputTokens
+                    outputTokens = outputTokens,
+                    totalTokens = inputTokens + outputTokens
                 ),
-                modelId = modelId,
-                modelVersion = "1.0"
+                model = ModelRef(id = modelId, version = "1.0")
             )
         } catch (e: Exception) {
             throw IllegalArgumentException("Failed to parse Engine response: ${e.message}", e)
@@ -212,12 +213,10 @@ internal class EngineEmbeddingAdapter(
             // Full implementation would extract actual embedding vectors
             Result.success(
                 ModelResponse(
-                    text = "[Embedding computed]",
-                    toolCalls = emptyList(),
+                    outputs = listOf(TextOutput("[Embedding computed]")),
                     stopReason = StopReason.END_TURN,
-                    usage = TokenUsage(inputTokens = 10, outputTokens = 0),
-                    modelId = modelId,
-                    modelVersion = "1.0"
+                    usage = Usage(inputTokens = 10, outputTokens = 0, totalTokens = 10),
+                    model = ModelRef(id = modelId, version = "1.0")
                 )
             )
 
@@ -293,12 +292,10 @@ internal class EngineTranscriptionAdapter(
 
             Result.success(
                 ModelResponse(
-                    text = text,
-                    toolCalls = emptyList(),
+                    outputs = listOf(TextOutput(text)),
                     stopReason = StopReason.END_TURN,
-                    usage = TokenUsage(inputTokens = 0, outputTokens = 0),
-                    modelId = modelId,
-                    modelVersion = "1.0"
+                    usage = Usage(inputTokens = 0, outputTokens = 0, totalTokens = 0),
+                    model = ModelRef(id = modelId, version = "1.0")
                 )
             )
 

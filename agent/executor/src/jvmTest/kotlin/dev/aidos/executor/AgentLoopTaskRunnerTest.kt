@@ -22,7 +22,10 @@ import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SessionId
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolCallOutput
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
@@ -129,26 +132,40 @@ class AgentLoopTaskRunnerTest {
     private fun noOpBroker() = brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED)
 
     private fun endTurnResponse(text: String = "Done") = ModelResponse(
-        text = text, toolCalls = emptyList(), stopReason = StopReason.END_TURN,
-        usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+        outputs = listOf(TextOutput(text)),
+        stopReason = StopReason.END_TURN,
+        usage = testUsage(),
+        model = testModel(),
     )
 
     private fun toolCallResponse(toolName: String, callId: String = "call-1") = ModelResponse(
-        text = null,
-        toolCalls = listOf(ToolCall(callId = callId, toolName = toolName, arguments = buildJsonObject {}, capabilityId = null)),
-        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+        outputs = listOf(
+            ToolCallOutput(
+                ToolCall(callId = callId, toolName = toolName, arguments = buildJsonObject {}, capabilityId = null),
+            ),
+        ),
+        stopReason = StopReason.TOOL_USE,
+        usage = testUsage(),
+        model = testModel(),
     )
 
     private fun askUserResponse(question: String, callId: String = "call-1") = ModelResponse(
-        text = null,
-        toolCalls = listOf(
-            ToolCall(
-                callId = callId, toolName = "ask_user",
-                arguments = buildJsonObject { put("question", question) }, capabilityId = null,
+        outputs = listOf(
+            ToolCallOutput(
+                ToolCall(
+                    callId = callId, toolName = "ask_user",
+                    arguments = buildJsonObject { put("question", question) }, capabilityId = null,
+                ),
             ),
         ),
-        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+        stopReason = StopReason.TOOL_USE,
+        usage = testUsage(),
+        model = testModel(),
     )
+
+    private fun testUsage() = Usage(inputTokens = 10, outputTokens = 5, totalTokens = 15)
+
+    private fun testModel() = ModelRef(id = "test-model", version = "1.0")
 
     private fun createRun(
         driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,

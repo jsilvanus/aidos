@@ -8,7 +8,10 @@ import dev.aidos.kernel.ProviderRetention
 import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ToolCall
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolCallOutput
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.Turn
 import kotlinx.datetime.Clock
@@ -206,13 +209,21 @@ class AnthropicAdapter(
             "max_tokens" -> StopReason.MAX_TOKENS
             else         -> StopReason.END_TURN
         }
+        // RFC-0022: one ordered `outputs` list replaces the separate text/toolCalls fields.
+        // Text first, then tool calls, matching the order Anthropic returns its content blocks in
+        // -- the ordering is part of the response, not an incidental detail of the old shape.
         return ModelResponse(
-            text = text,
-            toolCalls = toolCalls,
+            outputs = buildList {
+                text?.let { add(TextOutput(it)) }
+                toolCalls.forEach { add(ToolCallOutput(it)) }
+            },
             stopReason = stop,
-            usage = TokenUsage(r.usage.inputTokens, r.usage.outputTokens),
-            modelId = modelId,
-            modelVersion = modelVersion,
+            usage = Usage(
+                inputTokens = r.usage.inputTokens,
+                outputTokens = r.usage.outputTokens,
+                totalTokens = r.usage.inputTokens + r.usage.outputTokens,
+            ),
+            model = ModelRef(id = modelId, version = modelVersion),
         )
     }
 

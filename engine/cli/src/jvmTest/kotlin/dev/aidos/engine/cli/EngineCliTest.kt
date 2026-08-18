@@ -8,7 +8,9 @@ import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.Usage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -166,12 +168,10 @@ class EngineCliTest {
                 requests += request
                 return Result.success(
                     ModelResponse(
-                        text = responseText,
-                        toolCalls = emptyList(),
+                        outputs = listOf(TextOutput(responseText)),
                         stopReason = StopReason.END_TURN,
-                        usage = TokenUsage(1, 1),
-                        modelId = model.id,
-                        modelVersion = "test",
+                        usage = Usage(inputTokens = 1, outputTokens = 1, totalTokens = 2),
+                        model = ModelRef(id = model.id, version = "test"),
                     )
                 )
             }

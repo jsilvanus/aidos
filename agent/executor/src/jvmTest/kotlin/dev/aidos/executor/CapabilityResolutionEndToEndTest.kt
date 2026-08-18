@@ -26,7 +26,10 @@ import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.SessionId
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.SubjectKind
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolCallOutput
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolAvailability
 import dev.aidos.kernel.ToolCall
@@ -128,14 +131,21 @@ class CapabilityResolutionEndToEndTest {
     }
 
     private fun toolCallResponse() = ModelResponse(
-        text = null,
-        toolCalls = listOf(ToolCall(callId = "call-1", toolName = "read-file", arguments = buildJsonObject {}, capabilityId = null)),
-        stopReason = StopReason.TOOL_USE, usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+        outputs = listOf(
+            ToolCallOutput(
+                ToolCall(callId = "call-1", toolName = "read-file", arguments = buildJsonObject {}, capabilityId = null),
+            ),
+        ),
+        stopReason = StopReason.TOOL_USE,
+        usage = Usage(inputTokens = 10, outputTokens = 5, totalTokens = 15),
+        model = ModelRef(id = "test-model", version = "1.0"),
     )
 
     private fun endTurnResponse() = ModelResponse(
-        text = "done", toolCalls = emptyList(), stopReason = StopReason.END_TURN,
-        usage = TokenUsage(10, 5), modelId = "test-model", modelVersion = "1.0",
+        outputs = listOf(TextOutput("done")),
+        stopReason = StopReason.END_TURN,
+        usage = Usage(inputTokens = 10, outputTokens = 5, totalTokens = 15),
+        model = ModelRef(id = "test-model", version = "1.0"),
     )
 
     private fun fakeAdapter(responses: List<ModelResponse>): ModelAdapter {
