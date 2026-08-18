@@ -15,7 +15,6 @@ class StdioMcpClient(
     extraEnv: Map<String, String> = emptyMap(),
     requestTimeoutMillis: Long = 30_000,
 ) : McpClient {
-
     private val process = ProcessBuilder(listOf(command) + args).apply {
         redirectErrorStream(false)
         environment().clear()
@@ -27,14 +26,9 @@ class StdioMcpClient(
         output = process.outputStream.asSink().buffered(),
         error = process.errorStream.asSource().buffered(),
     )
-
     private val sdkClient = Client(
-        clientInfo = Implementation(
-            name = "aidos-mcp-core",
-            version = "0.1.0",
-        ),
+        clientInfo = Implementation(name = "aidos-mcp-core", version = "0.1.0"),
     )
-
     private val delegate = SdkMcpClient(sdkClient, transport, requestTimeoutMillis)
 
     override suspend fun initialize(): McpServerInfo = delegate.initialize()
@@ -42,11 +36,15 @@ class StdioMcpClient(
     override suspend fun callTool(name: String, arguments: JsonObject): McpCallResult =
         delegate.callTool(name, arguments)
 
-    override suspend fun close() {
+    override fun close() {
         delegate.close()
         process.destroy()
-        if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-        }
+        if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly()
+    }
+
+    override suspend fun closeSuspend() {
+        delegate.closeSuspend()
+        process.destroy()
+        if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly()
     }
 }
