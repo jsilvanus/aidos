@@ -6,6 +6,8 @@ import java.net.InetSocketAddress
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -41,14 +43,52 @@ class HttpMcpClientTest {
         return srv
     }
 
+    /**
+     * JSON-RPC requires `error` to be ABSENT on success, not null. `mcpJson` writes explicit
+     * nulls, and the SDK then tries to deserialize `null` as an RPCError and fails the whole
+     * response. The pre-SDK client never looked at `error` on a successful reply, so this fixture
+     * shipped invalid JSON-RPC unnoticed.
+     */
+    private val fixtureJson = Json { explicitNulls = false }
+
     private fun handleMcp(exchange: HttpExchange) {
         capturedAuthHeader = exchange.requestHeaders.getFirst("Authorization")
+        // MCP Streamable HTTP also uses GET (to open the server->client SSE channel) and DELETE
+        // (to end the session); both are optional for a server, and 405 is the spec's way of
+        // saying "not offered". Answering them with a JSON-RPC parse attempt instead threw out of
+        // the handler, and com.sun's HttpServer closes the socket on a handler throw -- which the
+        // client reports as "the server prematurely closed the connection", nothing about method.
+        if (exchange.requestMethod != "POST") {
+            exchange.sendResponseHeaders(405, -1)
+            exchange.responseBody.close()
+            return
+        }
         val body = exchange.requestBody.readBytes().decodeToString()
+        // A notification (no `id`) gets 202 Accepted and an empty body -- there is nothing to
+        // correlate a response to. JsonRpcRequest.id is deliberately non-null, so decoding one as
+        // a request throws; the SDK sends notifications/initialized immediately after the
+        // handshake, so this path is on the critical path of every connection, not an edge case.
+        val envelope = mcpJson.parseToJsonElement(body).jsonObject
+        if (envelope["id"] == null) {
+            exchange.sendResponseHeaders(202, -1)
+            exchange.responseBody.close()
+            return
+        }
         val req = mcpJson.decodeFromString<JsonRpcRequest>(body)
         val response = when (req.method) {
+            // protocolVersion and capabilities are REQUIRED by MCP's InitializeResult. The
+            // pre-SDK client read only serverInfo and tolerated their absence; the official SDK
+            // deserializes strictly, so omitting them makes every later request time out instead
+            // of failing loudly. Echo the client's protocolVersion so this fixture survives
+            // version negotiation moving.
             "initialize" -> JsonRpcResponse(
                 id = req.id,
                 result = buildJsonObject {
+                    put(
+                        "protocolVersion",
+                        (req.params as? JsonObject)?.get("protocolVersion") ?: JsonPrimitive("2024-11-05"),
+                    )
+                    put("capabilities", buildJsonObject { put("tools", buildJsonObject { }) })
                     put("serverInfo", buildJsonObject {
                         put("name", JsonPrimitive("fake-mcp-http-server"))
                         put("version", JsonPrimitive("0.0.1"))
@@ -90,7 +130,7 @@ class HttpMcpClientTest {
             }
             else -> JsonRpcResponse(id = req.id, error = JsonRpcError(code = -32601, message = "unknown method '${req.method}'"))
         }
-        val bytes = mcpJson.encodeToString(response).toByteArray()
+        val bytes = fixtureJson.encodeToString(response).toByteArray()
         exchange.responseHeaders.add("Content-Type", "application/json")
         exchange.sendResponseHeaders(200, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }

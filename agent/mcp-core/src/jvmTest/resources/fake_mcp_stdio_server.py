@@ -24,8 +24,24 @@ def main():
         method = req.get("method")
         id_ = req.get("id")
 
+        # A notification has no id and MUST NOT be answered. The SDK sends
+        # notifications/initialized after the handshake; replying to it (even with an
+        # error) puts an uncorrelatable frame on the wire.
+        if id_ is None:
+            continue
+
         if method == "initialize":
-            reply(id_, result={"serverInfo": {"name": "fake-mcp-server", "version": "0.0.1"}})
+            # protocolVersion and capabilities are REQUIRED by MCP's InitializeResult.
+            # The pre-SDK Aidos client only read serverInfo and tolerated their absence;
+            # the official SDK deserializes strictly, so omitting them made every request
+            # time out rather than fail loudly. Echo the client's protocolVersion so this
+            # fixture keeps working as the negotiated version moves.
+            requested = (req.get("params") or {}).get("protocolVersion", "2024-11-05")
+            reply(id_, result={
+                "protocolVersion": requested,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake-mcp-server", "version": "0.0.1"},
+            })
         elif method == "tools/list":
             reply(id_, result={"tools": [
                 {"name": "echo", "description": "echoes its input back", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}},
