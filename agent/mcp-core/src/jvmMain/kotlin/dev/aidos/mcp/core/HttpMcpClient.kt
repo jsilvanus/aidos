@@ -17,30 +17,20 @@ class HttpMcpClient(
     private val requestTimeoutMillis: Long = 30_000,
     @Suppress("UNUSED_PARAMETER") private val maxRedirects: Int = 5,
 ) : McpClient {
-
     private val httpClient = HttpClient(CIO) {
         followRedirects = false
         install(SSE)
-        install(HttpTimeout) {
-            requestTimeoutMillis = this@HttpMcpClient.requestTimeoutMillis
-        }
+        install(HttpTimeout) { requestTimeoutMillis = this@HttpMcpClient.requestTimeoutMillis }
     }
 
     private val sdkClient = Client(
-        clientInfo = Implementation(
-            name = "aidos-mcp-core",
-            version = "0.1.0",
-        ),
+        clientInfo = Implementation(name = "aidos-mcp-core", version = "0.1.0"),
     )
-
     private val transport = StreamableHttpClientTransport(
         client = httpClient,
         url = endpointUrl,
-        requestBuilder = {
-            authHeaderValue?.let { headers.append(authHeaderName, it) }
-        },
+        requestBuilder = { authHeaderValue?.let { headers.append(authHeaderName, it) } },
     )
-
     private val delegate = SdkMcpClient(sdkClient, transport, requestTimeoutMillis)
 
     override suspend fun initialize(): McpServerInfo = delegate.initialize()
@@ -48,8 +38,13 @@ class HttpMcpClient(
     override suspend fun callTool(name: String, arguments: JsonObject): McpCallResult =
         delegate.callTool(name, arguments)
 
-    override suspend fun close() {
+    override fun close() {
         delegate.close()
+        httpClient.close()
+    }
+
+    override suspend fun closeSuspend() {
+        delegate.closeSuspend()
         httpClient.close()
     }
 }
