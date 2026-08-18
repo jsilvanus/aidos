@@ -27,6 +27,8 @@ import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.SuspendedOperation
 import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
@@ -81,7 +83,9 @@ private data class StoredToolCall(val callId: String, val toolName: String, val 
 private data class StoredModelResponse(
     val text: String?,
     val toolCalls: List<StoredToolCall>,
-    val stopReason: String,
+    // Nullable since RFC-0022: not every backend reports why it stopped. Recording null is
+    // truthful; synthesising "UNKNOWN" would be indistinguishable from a real StopReason.
+    val stopReason: String?,
 )
 
 @Serializable
@@ -376,6 +380,15 @@ class AgentLoopTaskRunner(
             return TaskResult(false, "Model invocation failed: ${it.message}")
         }
 
+        // RFC-0022: one ordered `outputs` list replaced the separate text/toolCalls fields.
+        // Derived once here, same shape AgentLoop.kt uses, so the two paths read a response
+        // identically rather than each inventing an interpretation of `outputs`.
+        val responseText = response.outputs
+            .filterIsInstance<TextOutput>()
+            .joinToString("") { it.text }
+            .ifEmpty { null }
+        val responseToolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }
+
         // RFC-0008 checkpoint 6: "the model response is the most costly thing to reproduce."
         // Persisting it here is what makes the *next* MODEL_CALL task's history reconstruction
         // possible without holding the transcript in memory (D3) — there is no other copy.
@@ -385,15 +398,15 @@ class AgentLoopTaskRunner(
             recoveryClass = "PURE",
             modelProvider = adapter.providerId,
             modelVersion = adapter.modelVersion,
-            tokensInput = response.usage.inputTokens,
-            tokensOutput = response.usage.outputTokens,
+            tokensInput = response.usage?.inputTokens,
+            tokensOutput = response.usage?.outputTokens,
             outputSnapshot = json.encodeToString(
                 StoredModelResponse(
-                    text = response.text,
-                    toolCalls = response.toolCalls.map {
+                    text = responseText,
+                    toolCalls = responseToolCalls.map {
                         StoredToolCall(it.callId, it.toolName, it.arguments.toString())
                     },
-                    stopReason = response.stopReason.name,
+                    stopReason = response.stopReason?.name,
                 )
             ),
             // RFC-0026: never assumed-benign. A remote adapter that reports no policy at all
@@ -411,7 +424,7 @@ class AgentLoopTaskRunner(
         // Appending nothing here is the whole mechanism — drive()'s existing "no runnable tasks,
         // all terminal → COMPLETED" path takes it from there. There is no agentloop-specific
         // "mark the Run done" step to add.
-        if (response.toolCalls.isEmpty() ||
+        if (responseToolCalls.isEmpty() ||
             response.stopReason in setOf(StopReason.END_TURN, StopReason.STOP_SEQUENCE, StopReason.REFUSAL)
         ) {
             return TaskResult(success = true)
@@ -420,7 +433,7 @@ class AgentLoopTaskRunner(
         // No-progress guard (RFC-0008): the same tool call, identically, three times
         // consecutively. Derived from durable rows each time, not an in-memory counter (D3) —
         // AgentLoop.kt's own `consecutiveCalls` list is exactly the pattern this bridge cannot use.
-        if (isNoProgress(task.runId, task.ordinal, response.toolCalls)) {
+        if (isNoProgress(task.runId, task.ordinal, responseToolCalls)) {
             return TaskResult(false, "Loop detected: same tool call repeated 3 times")
         }
 
@@ -430,7 +443,7 @@ class AgentLoopTaskRunner(
         // The tool_calls row for each spec is written via afterInsert, not eagerly here: its
         // tool_task_id is a foreign key onto a task row that doesn't exist yet (the id is minted
         // now, but the INSERT happens inside appendTasks's transaction, after execute() returns).
-        val specs = response.toolCalls.map { call ->
+        val specs = responseToolCalls.map { call ->
             val toolTaskId = idGen()
             NewTaskSpec(
                 id = toolTaskId,

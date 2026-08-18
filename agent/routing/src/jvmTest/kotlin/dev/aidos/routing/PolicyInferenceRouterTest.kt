@@ -9,7 +9,9 @@ import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.Usage
 import dev.aidos.kernel.TrustLevel
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -35,8 +37,10 @@ class PolicyInferenceRouterTest {
         override val isLocal = false
         override fun supportsNativeToolCalls() = false
         override suspend fun invoke(request: ModelRequest) = Result.success(ModelResponse(
-            text = "ok", toolCalls = emptyList(), stopReason = StopReason.END_TURN,
-            usage = TokenUsage(0, 0), modelId = id, modelVersion = "1.0"
+            outputs = listOf(TextOutput("ok")),
+            stopReason = StopReason.END_TURN,
+            usage = Usage(inputTokens = 0, outputTokens = 0, totalTokens = 0),
+            model = ModelRef(id = id, version = "1.0"),
         ))
     }
 

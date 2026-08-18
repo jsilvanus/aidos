@@ -8,7 +8,9 @@ import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.StopReason
-import dev.aidos.kernel.TokenUsage
+import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.Usage
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -583,12 +585,10 @@ class MockModelAdapter : ModelAdapter {
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         return Result.success(
             ModelResponse(
-                text = "Mock response",
-                toolCalls = emptyList(),
+                outputs = listOf(TextOutput("Mock response")),
                 stopReason = StopReason.END_TURN,
-                usage = TokenUsage(inputTokens = 10, outputTokens = 5),
-                modelId = modelId,
-                modelVersion = modelVersion
+                usage = Usage(inputTokens = 10, outputTokens = 5, totalTokens = 15),
+                model = ModelRef(id = modelId, version = modelVersion)
             )
         )
     }
