@@ -29,7 +29,6 @@ class SdkMcpClient(
             client.connect(transport)
             initialized = true
         }
-
         val server = requireNotNull(client.serverVersion) {
             "MCP client connected without server implementation information"
         }
@@ -38,14 +37,11 @@ class SdkMcpClient(
 
     override suspend fun listTools(): List<McpToolSpec> {
         check(initialized) { "MCP client is not initialized" }
-
         val options = RequestOptions(timeout = requestTimeoutMillis)
         return buildList {
             var cursor: String? = null
             do {
-                val request = ListToolsRequest(
-                    params = cursor?.let { PaginatedRequestParams(it) },
-                )
+                val request = ListToolsRequest(params = cursor?.let { PaginatedRequestParams(it) })
                 val page = client.listTools(request, options)
                 addAll(page.tools.map(::mapTool))
                 cursor = page.nextCursor
@@ -55,49 +51,37 @@ class SdkMcpClient(
 
     override suspend fun callTool(name: String, arguments: JsonObject): McpCallResult {
         check(initialized) { "MCP client is not initialized" }
-
         val result = client.callTool(
-            CallToolRequest(
-                CallToolRequestParams(
-                    name = name,
-                    arguments = arguments,
-                ),
-            ),
+            CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)),
             RequestOptions(timeout = requestTimeoutMillis),
         )
-
         val content = result.content.map { block ->
             when (block) {
                 is TextContent -> McpContent.Text(block.text)
-                else -> error(
-                    "MCP tool '$name' returned unsupported content block: ${block::class.simpleName}",
-                )
+                else -> error("MCP tool '$name' returned unsupported content block: ${block::class.simpleName}")
             }
         }
-
-        return McpCallResult(
-            content = content,
-            isError = result.isError == true,
-        )
+        return McpCallResult(content = content, isError = result.isError == true)
     }
 
-    override suspend fun close() {
+    /** AutoCloseable cleanup is synchronous at the Aidos boundary; wrappers close their resources. */
+    override fun close() {
+        initialized = false
+    }
+
+    /** SDK cleanup for callers already inside structured concurrency; no runBlocking bridge. */
+    override suspend fun closeSuspend() {
         client.close()
         initialized = false
     }
 
     private fun mapTool(tool: io.modelcontextprotocol.kotlin.sdk.types.Tool): McpToolSpec =
-        McpToolSpec(
-            name = tool.name,
-            description = tool.description.orEmpty(),
-            inputSchema = mapSchema(tool.inputSchema),
-        )
+        McpToolSpec(tool.name, tool.description.orEmpty(), mapSchema(tool.inputSchema))
 
     /**
-     * The SDK's ToolSchema is deliberately typed and only represents $schema/type/properties/
-     * required/$defs. It cannot represent arbitrary top-level JSON Schema keywords. This mapping
-     * therefore MUST NOT be used as the persisted descriptor hash source; catalog acquisition must
-     * retain the server's raw inputSchema (see the raw-schema regression test/adapter).
+     * WARNING: SDK ToolSchema cannot represent arbitrary top-level JSON Schema keywords. This
+     * compatibility mapping is therefore not safe as the descriptor-hash source. Raw-schema
+     * preservation is a required follow-up of this migration, not an optional normalization.
      */
     private fun mapSchema(schema: ToolSchema): JsonObject = buildJsonObject {
         schema.schema?.let { put("\$schema", it) }
@@ -105,11 +89,7 @@ class SdkMcpClient(
         schema.properties?.let { properties ->
             putJsonObject("properties") { properties.forEach { (key, value) -> put(key, value) } }
         }
-        schema.required?.let { required ->
-            putJsonArray("required") { required.forEach { add(it) } }
-        }
-        schema.defs?.let { defs ->
-            putJsonObject("\$defs") { defs.forEach { (key, value) -> put(key, value) } }
-        }
+        schema.required?.let { required -> putJsonArray("required") { required.forEach { add(it) } } }
+        schema.defs?.let { defs -> putJsonObject("\$defs") { defs.forEach { (key, value) -> put(key, value) } } }
     }
 }
