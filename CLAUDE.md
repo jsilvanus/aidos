@@ -4,16 +4,18 @@ This document describes how to work with Claude on Aidos development and how Cla
 
 ## Current status
 
-**Read [`PIPELINE.md`](PIPELINE.md) first for the real state of the project.** It is the single
-source of truth for what's built, what's next, and the accumulated lessons — this file is process,
-PIPELINE.md is status. Don't duplicate status here; if the two ever disagree, PIPELINE.md wins and
-this line is the bug.
+**Read [`PIPELINE.md`](PIPELINE.md) first for the real state of the project**, then
+[`lessons.md`](lessons.md). PIPELINE.md is the roadmap — what is open and what is next; `lessons.md`
+is what the project learned the hard way and should not have to learn twice. This file is process.
+Don't duplicate the roadmap here; if the two ever disagree, PIPELINE.md wins and this line is the
+bug.
 
 **RFC status is not implementation status.** An independent codebase review (2026-08-09) found
 several RFCs marked Accepted with little or no code behind them (RFC-0043 Plugin Sandbox, RFC-0024
 Resource Graph, RFC-0045 Performance Budgets), one credited as done that is an untested stub
 (RFC-0012 Intent Graph), and one credited as unbuilt that turned out to have real, tested code
-(RFC-0036 Settings). See PIPELINE.md's "Independent codebase review" section for the full list.
+(RFC-0036 Settings). The review's full text is in git history; what survives it is PIPELINE.md's
+"What is next" and `lessons.md` §1.
 **Before implementing against or reporting on an RFC, check the actual code — don't trust a status
 line or a milestone checkmark without grepping for the implementation.**
 
@@ -121,7 +123,8 @@ Aidos uses RFCs to drive implementation. This means:
 ├── README.md              # Quick start
 ├── ARCHITECTURE.md        # Map to RFCs
 ├── CLAUDE.md              # This file
-├── PIPELINE.md            # Working status: what's built, what's next (source of truth)
+├── PIPELINE.md            # The roadmap: what's open and what's next (source of truth)
+├── lessons.md             # What this project learned the hard way — read before committing
 ├── LICENSE                # EUPL-1.2
 ├── docs/
 │   ├── README.md          # Documentation structure

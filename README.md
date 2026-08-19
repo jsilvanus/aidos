@@ -109,7 +109,8 @@ ordered so it stays accurate rather than optimistic.
 
 - [RFC-0099: Roadmap](docs/rfcs/0099-roadmap.md) — the phases and why they are in that order
 - [MVP roadmap](docs/mvp-roadmap.md) — the ordered work breakdown, with gates
-- [PIPELINE.md](PIPELINE.md) — live progress
+- [PIPELINE.md](PIPELINE.md) — the roadmap: what is open and what is next
+- [lessons.md](lessons.md) — what the project learned the hard way
 
 ## Questions?
 
