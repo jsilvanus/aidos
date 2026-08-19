@@ -23,6 +23,12 @@ kotlin {
         }
 
         val jvmTest by getting {
+            // McpToolTest drives the same fake stdio server StdioMcpClientTest uses. Point at
+            // :mcp-core's copy rather than keeping a second one here: when the SDK migration
+            // tightened what `initialize` must return, the duplicate went stale and every call
+            // through McpTool timed out instead of failing loudly. One fixture, one place to fix.
+            resources.srcDir(project(":mcp-core").projectDir.resolve("src/jvmTest/resources"))
+
             dependencies {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

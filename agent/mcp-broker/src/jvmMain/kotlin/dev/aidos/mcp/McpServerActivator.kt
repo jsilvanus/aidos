@@ -100,10 +100,10 @@ class McpServerActivator(
             client.initialize()
             client.listTools()
         } catch (e: CancellationException) {
-            client.close()
+            client.closeSuspend()
             throw e
         } catch (e: Exception) {
-            client.close()
+            client.closeSuspend()
             return McpActivationOutcome.Failed(McpActivationFailure.ConnectFailed(serverName, e.describe()))
         }
 
@@ -221,6 +221,10 @@ class McpServerActivation(
     val tool: McpTool,
     val unadopted: List<McpToolSpec>,
     private val client: McpClient,
-) : AutoCloseable {
-    override fun close() = client.close()
+) {
+    // Not [AutoCloseable]: the SDK's shutdown is suspending, and wrapping it in `runBlocking` to
+    // satisfy the interface would block whichever thread the caller happens to be on -- including
+    // a dispatcher thread -- to await a network/subprocess teardown. Callers use `use {}`'s
+    // suspending equivalent or an explicit `close()` in a `finally`.
+    suspend fun close() = client.closeSuspend()
 }

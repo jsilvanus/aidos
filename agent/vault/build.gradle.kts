@@ -23,13 +23,12 @@ kotlin {
             resources.srcDir(rootProject.projectDir.resolve("../schema"))
             resources.include("vault.sql")
             dependencies {
-                // Direct JDBC for vault — BLOB operations are simpler without the SqlDelight wrapper.
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
-                // HTTP for remote provider adapters (Anthropic, etc.)
-                implementation("io.ktor:ktor-client-core:2.3.12")
-                implementation("io.ktor:ktor-client-cio:2.3.12")
-                implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
-                implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+                // Keep the daemon's Ktor graph on the same major/minor as the MCP SDK.
+                implementation("io.ktor:ktor-client-core:3.5.1")
+                implementation("io.ktor:ktor-client-cio:3.5.1")
+                implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
             }
         }
 

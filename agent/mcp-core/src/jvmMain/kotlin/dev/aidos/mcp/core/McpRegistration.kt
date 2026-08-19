@@ -64,8 +64,30 @@ data class McpServerRegistration(
     val tools: List<McpToolSpec>,
 )
 
+/**
+ * One operation advertised by an MCP server.
+ *
+ * [name], [description] and [inputSchema] are what reaches the model, and they are exactly what
+ * `McpDescriptorHash` covers (RFC-0031, D31). The remaining fields are captured but **not hashed
+ * and not shown**, because nothing consumes them yet.
+ *
+ * **If you make any of them influence policy or the model, add it to the hash and persist it in
+ * `mcp_operation_adoptions` in the same change.** A field that steers a decision without being
+ * hashed can be changed by a server after adoption for free -- `annotations` carries MCP's
+ * `readOnlyHint`/`destructiveHint`, so it is the likeliest one to matter. `McpToolSpecFieldsTest`
+ * fails when a field is added here, to force that decision rather than let it pass silently.
+ */
 data class McpToolSpec(
     val name: String,
     val description: String,
     val inputSchema: JsonObject = buildJsonObject {},
+
+    /** Server-supplied display name. Not shown: `ToolDescriptor.title` uses the namespaced name. */
+    val title: String? = null,
+
+    /** Declared shape of the tool's result. Not consumed; results are validated by trust, not schema. */
+    val outputSchema: JsonObject? = null,
+
+    /** MCP tool annotations (`readOnlyHint`, `destructiveHint`, ...). Untrusted server claims. */
+    val annotations: JsonObject? = null,
 )
