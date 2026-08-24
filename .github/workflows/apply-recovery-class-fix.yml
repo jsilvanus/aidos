@@ -1,0 +1,77 @@
+name: apply-recovery-class-fix
+
+on:
+  push:
+    branches: [fix/recovery-class-persistence]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Apply fix and regression test
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          src = Path('agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt')
+          s = src.read_text()
+
+          replacements = [
+              ('recoveryClass = "PURE",', 'recoveryClass = RecoveryClass.PURE,'),
+              ('return finishToolCall(task, callRow, run, result)', 'return finishToolCall(\n            task, callRow, run, result, descriptor?.recoveryClass ?: RecoveryClass.PURE,\n        )', 1),
+              ('return finishToolCall(task, callRow, run, result)\n        }\n\n        val question', 'return finishToolCall(task, callRow, run, result, askUserToolDescriptor.recoveryClass)\n        }\n\n        val question'),
+              ('private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {', 'private fun finishToolCall(\n        task: Task,\n        callRow: ToolCallRow,\n        run: RunContext,\n        result: ToolCallResult,\n        recoveryClass: RecoveryClass,\n    ): TaskResult {'),
+              ('recoveryClass = "IDEMPOTENT",\n            modelProvider = null,', 'recoveryClass = recoveryClass,\n            modelProvider = null,'),
+              ('recoveryClass: String,\n        modelProvider:', 'recoveryClass: RecoveryClass,\n        modelProvider:'),
+          ]
+          for item in replacements:
+              old, new, *rest = item
+              count = rest[0] if rest else -1
+              if old not in s:
+                  raise SystemExit(f'expected source text not found: {old!r}')
+              if count == -1:
+                  s = s.replace(old, new)
+              else:
+                  s = s.replace(old, new, count)
+
+          src.write_text(s)
+
+          test = Path('agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt')
+          t = test.read_text()
+          t = t.replace('import dev.aidos.kernel.EffectBroker\n', 'import dev.aidos.kernel.EffectBroker\nimport dev.aidos.kernel.EffectKind\n')
+          t = t.replace('import dev.aidos.kernel.ProjectId\n', 'import dev.aidos.kernel.ProjectId\nimport dev.aidos.kernel.Permission\n')
+          t = t.replace('import dev.aidos.kernel.ProviderRetention\n', 'import dev.aidos.kernel.ProviderRetention\nimport dev.aidos.kernel.RecoveryClass\n')
+          t = t.replace('import dev.aidos.kernel.ToolOutcome\n', 'import dev.aidos.kernel.ToolOutcome\nimport dev.aidos.kernel.ToolAvailability\nimport dev.aidos.kernel.AvailabilityTier\n')
+          t = t.replace('    private fun brokerReturning(outcome: ToolOutcome, trustLevel: TrustLevel, text: String = "ok"): EffectBroker =\n', '    private fun brokerReturning(outcome: ToolOutcome, trustLevel: TrustLevel, text: String = "ok", descriptors: List<ToolDescriptor> = emptyList()): EffectBroker =\n')
+          t = t.replace('            override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = emptyList<ToolDescriptor>()\n', '            override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = descriptors\n')
+
+          marker = '    @Test\n    fun `denied tool call is recorded and does not fail the run`()'
+          if marker not in t:
+              raise SystemExit('test insertion marker not found')
+          test_body = '''    @Test\n    fun `tool attempt persists the descriptor recovery class`() = runBlocking {\n        val driver = openDriver()\n        val (_, _, runId) = createRun(driver)\n        val adapter = fakeModel(listOf(toolCallResponse("unsafe-tool"), endTurnResponse()))\n        val descriptor = ToolDescriptor(\n            name = "unsafe-tool",\n            title = "Unsafe test tool",\n            description = "test",\n            inputSchema = buildJsonObject { put("type", "object") },\n            effect = EffectKind.Egress("https://example.test"),\n            requiredPermission = Permission.NETWORK_EGRESS,\n            recoveryClass = RecoveryClass.UNSAFE,\n            availability = ToolAvailability(\n                profiles = setOf(PlatformProfile.DESKTOP),\n                tier = AvailabilityTier.UNIVERSAL,\n                requiresNetwork = false,\n            ),\n        )\n\n        buildExecutor(\n            driver,\n            fakeRouter(adapter),\n            brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, descriptors = listOf(descriptor)),\n        ).drive(runId)\n\n        val recoveryClass = driver.executeQuery(\n            null,\n            "SELECT a.recovery_class FROM attempts a JOIN tasks t ON t.id = a.task_id " +\n                "WHERE t.run_id = ? AND t.kind = 'TOOL_CALL'",\n            mapper = { c ->\n                check(c.next().value) { "no TOOL_CALL attempt for run ${runId.value}" }\n                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)\n            },\n            1,\n        ) { bindString(0, runId.value) }.value\n\n        assertEquals(RecoveryClass.UNSAFE.name, recoveryClass)\n    }\n\n'''
+          t = t.replace(marker, test_body + marker, 1)
+          test.write_text(t)
+          PY
+
+          cd agent
+          gradle jvmTest --continue --no-daemon
+
+      - name: Commit changes and remove temporary workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm .github/workflows/apply-recovery-class-fix.yml
+          git add agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt .github/workflows/apply-recovery-class-fix.yml
+          git commit -m 'Fix RecoveryClass persistence in AgentLoopTaskRunner'
+          git push origin HEAD:fix/recovery-class-persistence
