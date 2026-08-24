@@ -51,6 +51,7 @@ kotlin {
 
         jvmTest.dependencies {
             implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
         }
     }
 }
@@ -66,5 +67,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    // RFC-0103: the Binder handshake client needs its own compiled copy of Engine's
+    // IEngineHandshake.aidl (engine/ and sdk/ are separate Gradle projects with no shared
+    // module) to call across the Binder boundary — see src/androidMain/aidl.
+    buildFeatures {
+        aidl = true
     }
 }

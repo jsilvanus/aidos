@@ -1,6 +1,8 @@
 package fi.italeino.aidos.sdk
 
 import kotlinx.coroutines.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
@@ -92,17 +94,41 @@ internal data class HandshakeResponse(
     val capabilities: CapabilitiesResponse
 )
 
+@Serializable
 internal data class CapabilitiesResponse(
     val endpoints: List<String>,
     val models: List<ModelInfoResponse>
 )
 
+@Serializable
 internal data class ModelInfoResponse(
     val id: String,
     val kind: String,
     val context_window: Int? = null,
     val quantization: String? = null
 )
+
+// ignoreUnknownKeys tolerates Engine's wire shape carrying fields the SDK doesn't model (e.g.
+// `object`, `owned_by`) — the same independent-versioning tolerance the Bundle switch was for.
+private val capabilitiesJsonFormat = Json { ignoreUnknownKeys = true }
+
+/**
+ * Parses the `capabilitiesJson` field of the handshake Bundle (see
+ * `fi.italeino.aidos.engine.IEngineHandshake.performHandshake` for the key contract) into
+ * [CapabilitiesResponse]. Kept here, rather than in the Android-only Binder code, because JSON
+ * decoding is ordinary Kotlin the jvm() target can compile and unit-test without Android.
+ */
+internal fun parseCapabilitiesJson(json: String): CapabilitiesResponse =
+    capabilitiesJsonFormat.decodeFromString(json)
+
+/**
+ * Result of a Binder handshake attempt (RFC-0103): either a full [HandshakeResponse], or `null`
+ * for every case where Engine is not usable right now (not installed, denied, pending approval,
+ * or the call itself failing) — collapsed to one signal per the RFC's "Degradation" section.
+ */
+internal fun interface HandshakePerformer {
+    suspend fun performHandshake(): HandshakeResponse?
+}
 
 /**
  * Engine client implementation with Binder handshake and HTTP transport (RFC-0103, Phase C.3).
@@ -114,7 +140,12 @@ internal data class ModelInfoResponse(
  * - Handles authentication and error cases
  * - Offers graceful degradation when Engine is unavailable
  */
-internal class EngineClientImpl : AidosEngineClient {
+internal class EngineClientImpl(
+    // Default performer never finds Engine — correct for the jvm() target, which has no Binder
+    // to speak of. The real implementation is `EngineBinderHandshake` (sdk/androidMain), wired
+    // in via `AndroidAidosEngineClientFactory`.
+    private val handshakePerformer: HandshakePerformer = HandshakePerformer { null }
+) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var isConnected = false
     private var capabilities: EngineCapabilities? = null
@@ -124,21 +155,14 @@ internal class EngineClientImpl : AidosEngineClient {
     private val HANDSHAKE_TIMEOUT_MS = 5000L
 
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Perform Binder handshake with Aidos Engine (RFC-0103, Phase C.3)
-            // This would typically involve:
-            // 1. Getting Aidos Engine service interface via ServiceManager/AIDL
-            // 2. Calling performHandshake() method
-            // 3. Receiving HandshakeResponse with {port, token, apiVersion, capabilities}
-
-            // For now, return failure as proper Binder integration requires Android framework access
-            // In production, this would connect via fi.italeino.aidos.engine.IEngineHandshake
-            isConnected = false
-            false
+        val result = try {
+            withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { handshakePerformer.performHandshake() }
         } catch (e: Exception) {
-            isConnected = false
-            false
+            null
         }
+        handshakeResult = result
+        isConnected = result != null
+        isConnected
     }
 
     override fun isAvailable(): Boolean = isConnected && handshakeResult != null
@@ -235,7 +259,10 @@ internal class EngineClientImpl : AidosEngineClient {
  */
 object AidosEngineClientFactory {
     /**
-     * Create a new Aidos Engine client that will perform handshake on initialization.
+     * Create a client with no way to reach Engine — there is no Binder on the jvm() target this
+     * factory also builds for, so [AidosEngineClient.initialize] always returns `false`. On
+     * Android, use `AndroidAidosEngineClientFactory.createClient(context)` (sdk/androidMain)
+     * instead, which performs the real handshake.
      */
     fun createClient(): AidosEngineClient = EngineClientImpl()
 }
