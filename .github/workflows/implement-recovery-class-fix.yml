@@ -27,26 +27,11 @@ jobs:
           s = src.read_text()
 
           replacements = [
-              (
-                  'recoveryClass = "PURE",\n            modelProvider = adapter.providerId,',
-                  'recoveryClass = RecoveryClass.PURE.name,\n            modelProvider = adapter.providerId,',
-              ),
-              (
-                  'return finishToolCall(task, callRow, run, result)\n    }\n\n    /**\n     * The common tail',
-                  'return finishToolCall(task, callRow, run, result, descriptor?.recoveryClass ?: RecoveryClass.UNSAFE)\n    }\n\n    /**\n     * The common tail',
-              ),
-              (
-                  'private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {',
-                  'private fun finishToolCall(\n        task: Task,\n        callRow: ToolCallRow,\n        run: RunContext,\n        result: ToolCallResult,\n        recoveryClass: RecoveryClass,\n    ): TaskResult {',
-              ),
-              (
-                  'recoveryClass = "IDEMPOTENT",\n            modelProvider = null,',
-                  'recoveryClass = recoveryClass.name,\n            modelProvider = null,',
-              ),
-              (
-                  'return finishToolCall(task, callRow, run, result)\n        }\n\n        val question',
-                  'return finishToolCall(task, callRow, run, result, askUserToolDescriptor.recoveryClass)\n        }\n\n        val question',
-              ),
+              ('recoveryClass = "PURE",\n            modelProvider = adapter.providerId,', 'recoveryClass = RecoveryClass.PURE.name,\n            modelProvider = adapter.providerId,'),
+              ('return finishToolCall(task, callRow, run, result)\n    }\n\n    /**\n     * The common tail', 'return finishToolCall(task, callRow, run, result, descriptor?.recoveryClass ?: RecoveryClass.UNSAFE)\n    }\n\n    /**\n     * The common tail'),
+              ('private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {', 'private fun finishToolCall(\n        task: Task,\n        callRow: ToolCallRow,\n        run: RunContext,\n        result: ToolCallResult,\n        recoveryClass: RecoveryClass,\n    ): TaskResult {'),
+              ('recoveryClass = "IDEMPOTENT",\n            modelProvider = null,', 'recoveryClass = recoveryClass.name,\n            modelProvider = null,'),
+              ('return finishToolCall(task, callRow, run, result)\n        }\n\n        val question', 'return finishToolCall(task, callRow, run, result, askUserToolDescriptor.recoveryClass)\n        }\n\n        val question'),
           ]
           for old, new in replacements:
               if old not in s:
@@ -76,10 +61,7 @@ jobs:
           if old_helper not in t:
               raise SystemExit('expected broker helper not found')
           t = t.replace(old_helper, new_helper, 1)
-
           marker = '    @Test\n    fun `denied tool call is recorded and does not fail the run`()'
-          if marker not in t:
-              raise SystemExit('test insertion marker not found')
           test_body = '''    @Test
     fun `tool attempt persists the descriptor recovery class`() = runBlocking {
         val driver = openDriver()
@@ -99,28 +81,22 @@ jobs:
                 requiresNetwork = false,
             ),
         )
-
-        buildExecutor(
-            driver,
-            fakeRouter(adapter),
-            brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, descriptors = listOf(descriptor)),
-        ).drive(runId)
-
+        buildExecutor(driver, fakeRouter(adapter), brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, descriptors = listOf(descriptor))).drive(runId)
         val recoveryClass = driver.executeQuery(
             null,
-            "SELECT a.recovery_class FROM attempts a JOIN tasks t ON t.id = a.task_id " +
-                "WHERE t.run_id = ? AND t.kind = 'TOOL_CALL'",
+            "SELECT a.recovery_class FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.run_id = ? AND t.kind = 'TOOL_CALL'",
             mapper = { c ->
                 check(c.next().value) { "no TOOL_CALL attempt for run ${runId.value}" }
                 app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
             },
             1,
         ) { bindString(0, runId.value) }.value
-
         assertEquals(RecoveryClass.UNSAFE.name, recoveryClass)
     }
 
 '''
+          if marker not in t:
+              raise SystemExit('test insertion marker not found')
           t = t.replace(marker, test_body + marker, 1)
           test.write_text(t)
           PY
