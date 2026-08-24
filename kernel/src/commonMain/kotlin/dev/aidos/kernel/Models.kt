@@ -1,5 +1,7 @@
 package dev.aidos.kernel
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.Serializable
@@ -15,7 +17,39 @@ interface ModelAdapter {
     val isLocal: Boolean
     fun supportsNativeToolCalls(): Boolean
     suspend fun invoke(request: ModelRequest): Result<ModelResponse>
+
+    /**
+     * Token-by-token variant of [invoke] (RFC-0021, "Streaming"). The default falls back to
+     * [invoke] and emits its result as a single terminal event — correct for any adapter whose
+     * backend has no partial output to offer. An adapter backed by a token-emitting inference
+     * engine (e.g. llama.cpp) overrides this to yield real incremental [ModelStreamEvent.Delta]s
+     * as they're produced, rather than a caller having to wait for [invoke] to return and then
+     * chop the finished text into fake chunks.
+     */
+    suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+        invoke(request).fold(
+            onSuccess = { emit(ModelStreamEvent.Done(it)) },
+            onFailure = { emit(ModelStreamEvent.Failed(it)) },
+        )
+    }
+
     val providerRetention: ProviderRetention? get() = null
+}
+
+/**
+ * One event of a streamed [ModelAdapter.invokeStreaming] response. Named to parallel RFC-0052's
+ * `RuntimeEvent.AiResponseDelta` one layer down the stack: this is the adapter-to-router event,
+ * not the router-to-frontend event RFC-0052 already defines from it.
+ */
+sealed interface ModelStreamEvent {
+    /** A partial increment of assistant text as it is produced. Zero or more per stream. */
+    data class Delta(val text: String) : ModelStreamEvent
+
+    /** Terminal: the complete response this stream produced, once generation finished. */
+    data class Done(val response: ModelResponse) : ModelStreamEvent
+
+    /** Terminal: generation failed partway through (or before producing any output at all). */
+    data class Failed(val error: Throwable) : ModelStreamEvent
 }
 
 enum class RetentionPolicy { ZERO, TRANSIENT, RETAINED, UNKNOWN }

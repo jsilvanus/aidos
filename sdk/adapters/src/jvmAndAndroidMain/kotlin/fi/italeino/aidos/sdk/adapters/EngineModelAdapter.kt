@@ -238,11 +238,6 @@ class EngineEmbeddingAdapter(
 
 /**
  * Routes speech-to-text inference to Aidos Engine's `/v1/audio/transcriptions` (RFC-0103).
- *
- * Reads audio out of a [dev.aidos.kernel.ContentBlock.Image] — how Engine's own
- * `handleTranscriptions` happens to pass audio internally, not a sane public shape for an STT
- * adapter. Carried over as-is from the pre-split code; fixing it is separately scoped
- * (docs/dictator-sdk-integration-plan.md, Phase S3), not part of this module split.
  */
 class EngineTranscriptionAdapter(
     private val client: AidosEngineClient,
@@ -269,7 +264,7 @@ class EngineTranscriptionAdapter(
             val audioBlock = request.messages.firstOrNull()?.let { turn ->
                 when (turn) {
                     is dev.aidos.kernel.Turn.User ->
-                        turn.content.filterIsInstance<dev.aidos.kernel.ContentBlock.Image>().firstOrNull()
+                        turn.content.filterIsInstance<dev.aidos.kernel.ContentBlock.Audio>().firstOrNull()
                     else -> null
                 }
             }

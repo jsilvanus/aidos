@@ -7,6 +7,7 @@ import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelRuntime
+import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.TextOutput
@@ -19,6 +20,8 @@ import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.testing.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -404,60 +407,18 @@ class EngineHttpServerTest {
     }
 
     @Test
-    fun chatCompletions_supportsStreamingParameter() = testApplication {
+    fun chatCompletions_streamsRealPerTokenDeltasThenDone() = testApplication {
+        // Exercises EngineHttpServer's actual routing and streamChatCompletions (RFC-0021
+        // "Streaming"; Dictator plan S4) via a ModelAdapter whose invokeStreaming() emits several
+        // discrete deltas before Done — unlike the pre-S4 version of this test, which never
+        // called into EngineHttpServer at all and so could not have caught the real bug (Engine
+        // buffering the whole response before "streaming" it).
         val tokenManager = TokenManager()
         val token = tokenManager.generateNewToken()
+        val server = EngineHttpServer(tokenManager, MockModelRuntime(StreamingMockModelAdapter(listOf("Hel", "lo", " world"))))
+        application { server.installInto(this) }
 
-        install(ContentNegotiation) {
-            json(Json {
-                prettyPrint = false
-                encodeDefaults = true
-                isLenient = true
-            })
-        }
-
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { tokenCredential ->
-                    if (tokenManager.validateToken(tokenCredential.token) != null) {
-                        UserIdPrincipal(tokenCredential.token)
-                    } else {
-                        null
-                    }
-                }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/chat/completions") {
-                    val request = call.receive<ChatCompletionRequest>()
-                    // Verify stream parameter is parsed correctly
-                    if (request.stream) {
-                        call.response.header(HttpHeaders.ContentType, "text/event-stream")
-                        call.response.write("data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n".encodeToByteArray())
-                        call.response.write("data: [DONE]\n\n".encodeToByteArray())
-                    } else {
-                        call.respond(ChatCompletionResponse(
-                            id = "test",
-                            created = System.currentTimeMillis() / 1000,
-                            model = request.model,
-                            choices = listOf(
-                                Choice(
-                                    index = 0,
-                                    message = ChatMessage(role = "assistant", content = "Hello"),
-                                    finish_reason = "stop"
-                                )
-                            ),
-                            usage = TokenUsage(prompt_tokens = 5, completion_tokens = 1, total_tokens = 6)
-                        ))
-                    }
-                }
-            }
-        }
-
-        // Test streaming request
-        val streamResponse = client.post("/v1/chat/completions") {
+        val response = client.post("/v1/chat/completions") {
             bearerAuth(token.token)
             contentType(ContentType.Application.Json)
             setBody(ChatCompletionRequest(
@@ -467,9 +428,43 @@ class EngineHttpServerTest {
             ))
         }
 
-        assertEquals(HttpStatusCode.OK, streamResponse.status)
-        val streamBody = streamResponse.bodyAsText()
-        assertTrue(streamBody.contains("text/event-stream") || streamBody.contains("[DONE]"))
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("text/event-stream", response.headers[HttpHeaders.ContentType]?.substringBefore(";"))
+
+        val body = response.bodyAsText()
+        val deltaContents = Regex("\"content\":\"([^\"]*)\"").findAll(body).map { it.groupValues[1] }.toList()
+        // Three real deltas, in order, followed by the empty-content terminal chunk — proof this
+        // came from three separate SSE frames, not one response chopped up after the fact.
+        assertEquals(listOf("Hel", "lo", " world", ""), deltaContents)
+        assertTrue(body.trim().endsWith("data: [DONE]"))
+    }
+
+    @Test
+    fun chatCompletions_streamingFailureSendsErrorFrameThenDone() = testApplication {
+        val tokenManager = TokenManager()
+        val token = tokenManager.generateNewToken()
+        val failure = IllegalStateException("native generation crashed")
+        val server = EngineHttpServer(
+            tokenManager,
+            MockModelRuntime(FailingStreamingModelAdapter(listOf("partial "), failure))
+        )
+        application { server.installInto(this) }
+
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(ChatCompletionRequest(
+                model = "test-model",
+                messages = listOf(ChatMessage(role = "user", content = "Hello")),
+                stream = true
+            ))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("partial "), "partial output before the failure should still arrive")
+        assertTrue(body.contains("native generation crashed"))
+        assertTrue(body.trim().endsWith("data: [DONE]"), "stream must still terminate so a client's SSE parser doesn't hang")
     }
 
     @Test
@@ -539,7 +534,7 @@ class EngineHttpServerTest {
 /**
  * Mock ModelRuntime for testing.
  */
-class MockModelRuntime : ModelRuntime {
+class MockModelRuntime(private val adapter: ModelAdapter = MockModelAdapter()) : ModelRuntime {
     override suspend fun catalog(): List<ModelDescriptor> = listOf(
         ModelDescriptor(
             id = "test-model",
@@ -557,7 +552,7 @@ class MockModelRuntime : ModelRuntime {
 
     override suspend fun load(modelId: String): Result<ModelAdapter> {
         return if (modelId == "test-model") {
-            Result.success(MockModelAdapter())
+            Result.success(adapter)
         } else {
             Result.failure(IllegalStateException("Model $modelId is not installed"))
         }
@@ -591,5 +586,56 @@ class MockModelAdapter : ModelAdapter {
                 model = ModelRef(id = modelId, version = modelVersion)
             )
         )
+    }
+}
+
+/**
+ * ModelAdapter whose invokeStreaming() emits several real deltas before Done — for proving
+ * EngineHttpServer.streamChatCompletions forwards them as separate SSE frames rather than only
+ * ever completing after the whole response is ready (RFC-0021 "Streaming"; Dictator plan S4).
+ */
+class StreamingMockModelAdapter(private val deltas: List<String>) : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1.0"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> =
+        Result.success(finalResponse())
+
+    override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+        deltas.forEach { emit(ModelStreamEvent.Delta(it)) }
+        emit(ModelStreamEvent.Done(finalResponse()))
+    }
+
+    private fun finalResponse() = ModelResponse(
+        outputs = listOf(TextOutput(deltas.joinToString(""))),
+        stopReason = StopReason.END_TURN,
+        usage = Usage(inputTokens = 10, outputTokens = deltas.size, totalTokens = 10 + deltas.size),
+        model = ModelRef(id = modelId, version = modelVersion)
+    )
+}
+
+/** ModelAdapter whose invokeStreaming() emits partial output, then fails mid-generation. */
+class FailingStreamingModelAdapter(
+    private val deltasBeforeFailure: List<String>,
+    private val failure: Throwable
+) : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1.0"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = Result.failure(failure)
+
+    override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+        deltasBeforeFailure.forEach { emit(ModelStreamEvent.Delta(it)) }
+        emit(ModelStreamEvent.Failed(failure))
     }
 }

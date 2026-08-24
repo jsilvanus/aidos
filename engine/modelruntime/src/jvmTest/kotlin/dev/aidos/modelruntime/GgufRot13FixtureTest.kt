@@ -2,6 +2,7 @@ package dev.aidos.modelruntime
 
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.TrustLevel
@@ -9,10 +10,12 @@ import dev.aidos.kernel.Turn
 import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -154,6 +157,51 @@ class GgufRot13FixtureTest {
 
             val text = response.outputs.filterIsInstance<TextOutput>().single().text
             assertEquals("b", text, "expected rot13 of the prompt's last byte 'o', not a wrapper artifact")
+        } finally {
+            adapter.close()
+        }
+    }
+
+    /**
+     * [LlamaCppAdapter.invoke] is now implemented in terms of [LlamaCppAdapter.invokeStreaming]
+     * (RFC-0021 "Streaming"; Dictator plan S4) — this exercises that streaming path directly,
+     * against the same real llama.cpp binding and fixture the previous test proves `invoke()`
+     * against, so the refactor is verified on the actual token-emitting path, not only through
+     * the non-streaming wrapper.
+     */
+    @Test
+    fun `invokeStreaming emits a real delta before the terminal Done event`() = runTest {
+        val file = requireFixture()
+        val metadata = assertNotNull(GgufLoader.loadMetadata(file))
+
+        val adapter = try {
+            LlamaCppAdapter("rot13", file, metadata, contextSize = 512, threads = 2)
+        } catch (e: UnsatisfiedLinkError) {
+            println("skipping streaming adapter check: ${e.message}")
+            return@runTest
+        }
+
+        try {
+            val events = adapter.invokeStreaming(
+                ModelRequest(
+                    messages = listOf(
+                        Turn.User(
+                            content = listOf(ContentBlock.Text("Hello")),
+                            trustLevel = TrustLevel.TRUSTED,
+                        )
+                    ),
+                    tools = emptyList(),
+                    toolChoice = ToolChoice.Auto,
+                    maxOutputTokens = 1,
+                )
+            ).toList()
+
+            val delta = assertIs<ModelStreamEvent.Delta>(events.first(), "expected a real token delta first")
+            assertEquals("b", delta.text, "expected rot13 of the prompt's last byte 'o'")
+
+            val done = assertIs<ModelStreamEvent.Done>(events.last(), "stream must end with the final response")
+            val text = done.response.outputs.filterIsInstance<TextOutput>().single().text
+            assertEquals("b", text, "Done's response must match what was streamed, not a wrapper artifact")
         } finally {
             adapter.close()
         }

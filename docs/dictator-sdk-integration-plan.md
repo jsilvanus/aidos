@@ -237,9 +237,10 @@ a real Engine on a device.
 **Status (2026-08-24): Partially done.** The module split landed as part of S2 above: `sdk/adapters/`
 exists, depends on `:kernel` and `:client`, and its `ModelAdapter` classes are public (they were
 `internal` pre-split, which would have made them unreachable from outside `sdk/` even after
-publishing). Not done: `EngineTranscriptionAdapter` still reads audio out of a
-`ContentBlock.Image` (carried over as-is, flagged in its KDoc) and there is no Maven publishing —
-both remain open.
+publishing). `EngineTranscriptionAdapter` is also fixed now: `ContentBlock` gained a proper
+`Audio(mimeType, data)` case (kernel change, RFC-0021's `ContentBlock` sealed interface), and both
+the adapter and Engine's own `handleTranscriptions` (which fed it the `ContentBlock.Image`
+audio/wav hack in the first place) now use it. Still not done: Maven publishing.
 
 - New module `sdk/adapters/`, published as `aidos-sdk-adapters`, depending on `:kernel` and on
   `aidos-sdk-client`. The `ModelAdapter` implementations for LLM, embedding, and STT move here —
@@ -255,7 +256,21 @@ depend on `aidos-sdk-adapters` without a source dependency on `sdk/`.
 
 ### S4 · Engine streams for real
 
-`EngineHttpServer.streamChatCompletions(call, response, modelId)` takes an **already-complete**
+**Status (2026-08-24): Done.** `ModelAdapter` gained an `invokeStreaming()` method (default
+implementation falls back to `invoke()`, so every existing adapter — `AnthropicAdapter`, the SDK's
+own `EngineLocalModelAdapter`, test fakes — keeps compiling unchanged); `LlamaCppAdapter` overrides
+it with the real per-token loop it already had internally (it was iterating `model.generate()`'s
+tokens one at a time and only *buffering* them before this — the token-by-token JNI callback was
+never the bottleneck), and `invoke()` is now implemented in terms of it rather than duplicating the
+generation loop. `EngineHttpServer.streamChatCompletions` calls `invokeStreaming()` directly instead
+of chopping an already-complete response. Verified against the real llama.cpp binding via the
+checked-in ROT13 GGUF fixture (`engine/modelruntime`'s `GgufRot13FixtureTest`), not just mocked —
+`invokeStreaming()` now has its own passing test alongside the existing `invoke()` one. Not
+verified: the *done when* line's "first SSE frame arrives measurably before generation completes,
+on a device with a real model" — that needs an actual multi-token production model and a device,
+neither available in this sandbox.
+
+`EngineHttpServer.streamChatCompletions(call, response, modelId)` used to take an **already-complete**
 `ModelResponse` and splits `response.text` on whitespace after generation has finished. The SSE
 framing is correct and the chunks are well-formed, but time-to-first-token equals full generation
 time. On a phone-sized model that is the difference between a chat panel that feels alive and one
@@ -362,3 +377,20 @@ needs to be walked on a real device, not reasoned about.
 **Dictator's web app is out of scope by construction**, and this should not be re-litigated later:
 the SDK reaches Engine over `127.0.0.1` on the same device, which a Next.js server cannot do.
 `lib/ai/providers/` is unaffected by every phase here.
+
+**`engine/androidapp`'s `jvmTest` cannot currently exercise `EngineHttpServer` at all — found
+while verifying S4, not previously diagnosed.** `EngineHttpServer`, `TokenManager`, and the
+OpenAI-shaped request/response types (`OpenAiSchema.kt`) are declared only in `androidMain`.
+`jvm()` and `androidTarget()` are separate KMP compilation targets, so `jvmTest` (part of the
+`jvm()` target) cannot see them regardless of dependency wiring — confirmed by a clean-baseline
+comparison (`git stash` back to before this session's changes reproduces the identical
+`Unresolved reference 'dev'` failure on `EngineHttpServerTest.kt`'s own pre-existing imports).
+This is why the pre-existing tests in that file never called into `EngineHttpServer`'s real code —
+not an oversight, a structural impossibility given the current source-set layout — and it's the
+same reason `test-engine` is already red on `main` (`AppApprovalStoreTest.kt`,
+`ModelLoadingStateTest.kt`, and others fail the identical way, for Android-only types they
+reference from `jvmTest`). The fix is the same shape as `sdk/client`'s `jvmAndAndroidMain` split:
+move the platform-agnostic pieces (wire types, `EngineHttpServer`'s routing logic) into a shared
+source set both targets can compile. Real, separately-scoped work — this session added
+`streamChatCompletions` tests to `EngineHttpServerTest.kt` that are correct Kotlin and will start
+passing once that split happens, but could not be run here.
