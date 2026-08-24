@@ -24,7 +24,7 @@ engine/androidapp/
 │   │   ├── EngineService.kt                 [RFC-0103] Service lifecycle
 │   │   ├── MainActivity.kt                  [RFC-0103] Starts Engine service
 │   │   ├── binder/
-│   │   │   ├── HandshakeResult.kt           [RFC-0103] Parcelable DTO
+│   │   │   ├── HandshakeResult.kt           [RFC-0103] Handshake result DTO (toBundle())
 │   │   │   └── EngineHandshakeImpl.kt        [RFC-0103] Binder interface impl
 │   │   ├── http/
 │   │   │   ├── TokenManager.kt              [RFC-0103] Token generation/validation
@@ -32,8 +32,7 @@ engine/androidapp/
 │   │   │   └── EngineHttpServer.kt          [RFC-0103] Ktor HTTP server
 │   │   └── ...                              [other UI/nav components]
 │   ├── aidl/fi/italeino/aidos/engine/
-│   │   ├── IEngineHandshake.aidl            [RFC-0103] Handshake interface
-│   │   └── HandshakeResult.aidl             [RFC-0103] Parcelable marker
+│   │   └── IEngineHandshake.aidl            [RFC-0103] Handshake interface (returns Bundle)
 │   ├── res/values/
 │   │   └── strings.xml                      [RFC-0103] Permission labels
 │   └── AndroidManifest.xml                  [RFC-0103] Permissions + service declaration
@@ -135,11 +134,14 @@ server.stop()                     // Graceful shutdown
 **AIDL Interface** (`IEngineHandshake.aidl`):
 ```aidl
 interface IEngineHandshake {
-    HandshakeResult performHandshake() = 1;
+    Bundle performHandshake() = 1;
 }
 ```
 
-**Handshake Result** (Parcelable):
+**Handshake Result** (`HandshakeResult`, converted to a `Bundle` via `toBundle()` before crossing
+Binder — see the AIDL file's KDoc for the key contract. A plain `Bundle` return, rather than a
+hand-written AIDL parcelable, keeps Engine and independently-versioned callers wire-compatible
+without their field layouts having to match exactly):
 ```kotlin
 data class HandshakeResult(
     val port: Int,                    // HTTP server port
@@ -368,7 +370,7 @@ Components:
 - `IEngineHandshake.aidl`: Binder interface definition
 - `EngineHandshakeImpl`: Handshake implementation
 - `EngineService`: Service lifecycle container
-- `HandshakeResult`: Parcelable Binder return type
+- `HandshakeResult`: Binder handshake result DTO, sent as a `Bundle` via `toBundle()`
 - Tests: `TokenManagerTest`
 - Manifest: Permission declaration, service export, AIDL compilation
 

@@ -1,14 +1,15 @@
 package fi.italeino.aidos.engine
 
 import android.app.PendingIntent
-import android.os.Parcel
-import android.os.Parcelable
+import android.os.Bundle
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import fi.italeino.aidos.engine.http.Capabilities
 
 /**
- * Parcelable result of the Aidos Engine handshake Binder call (RFC-0103).
+ * Result of the Aidos Engine handshake Binder call (RFC-0103), carried across the Binder
+ * boundary as a [Bundle] (see [toBundle]) rather than a hand-written AIDL parcelable, so that
+ * Engine and independently-versioned callers stay compatible without matching field layouts.
  *
  * Handles both approval scenarios:
  *
@@ -39,30 +40,15 @@ data class HandshakeResult(
     val apiVersion: Int = 1,
     val capabilitiesJson: String = "{}",  // JSON-serialized Capabilities
     val deepLinkPendingIntent: PendingIntent? = null
-) : Parcelable {
+) {
 
-    constructor(parcel: Parcel) : this(
-        status = parcel.readString() ?: "APPROVED",
-        port = parcel.readInt(),
-        token = parcel.readString() ?: "",
-        apiVersion = parcel.readInt(),
-        capabilitiesJson = parcel.readString() ?: "{}",
-        deepLinkPendingIntent = parcel.readParcelable(PendingIntent::class.java.classLoader)
-    )
-
-    override fun writeToParcel(parcel: Parcel, flags: Int) {
-        parcel.writeString(status)
-        parcel.writeInt(port)
-        parcel.writeString(token)
-        parcel.writeInt(apiVersion)
-        parcel.writeString(capabilitiesJson)
-        parcel.writeParcelable(deepLinkPendingIntent, flags)
-    }
-
-    override fun describeContents(): Int = 0
-
-    companion object CREATOR : Parcelable.Creator<HandshakeResult> {
-        override fun createFromParcel(parcel: Parcel): HandshakeResult = HandshakeResult(parcel)
-        override fun newArray(size: Int): Array<HandshakeResult?> = arrayOfNulls(size)
+    /** Bundle keys are documented on [fi.italeino.aidos.engine.IEngineHandshake.performHandshake]. */
+    fun toBundle(): Bundle = Bundle().apply {
+        putString("status", status)
+        putInt("port", port)
+        putString("token", token)
+        putInt("apiVersion", apiVersion)
+        putString("capabilitiesJson", capabilitiesJson)
+        putParcelable("deepLinkPendingIntent", deepLinkPendingIntent)
     }
 }
