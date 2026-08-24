@@ -20,6 +20,11 @@ types when the SDK's own surface falls short.
 ## What is actually built today
 
 Established by reading the code on `main` at `1a28dc6`, not by reading status lines.
+**Superseded by the Status lines on each phase below as of 2026-08-24** — S0 and S1 turned out to
+already be done by the time this plan's SDK work started, and S2/S3 have since had real code
+land. This section is kept as the historical baseline the phases were written against; check the
+phase Status lines for current state, not this section, per the same "don't trust a status line
+over the code" rule CLAUDE.md/lessons.md apply everywhere else.
 
 **Engine is real.** `engine/androidapp` has a working Binder surface
 (`IEngineHandshake.aidl`, `EngineHandshakeImpl`), a Ktor server bound to `127.0.0.1` with bearer
@@ -130,6 +135,9 @@ finished when the condition holds.
 
 ### S0 · The SDK compiles
 
+**Status (2026-08-24): Done.** Kotlin 2.4.10, the serialization plugin, and a `jvm()` target were
+all already in place before this plan's SDK work started; `gradle jvmTest` is green.
+
 The smallest change that turns `build-sdk` green, so every later phase has a baseline.
 
 - Close the brace in `EngineModelAdapter.kt`.
@@ -143,6 +151,14 @@ The smallest change that turns `build-sdk` green, so every later phase has a bas
 *Done when:* `cd sdk && gradle build` succeeds, and the `build-sdk` CI job is green.
 
 ### S1 · User approval becomes reachable
+
+**Status (2026-08-24): Done**, all of it, before this plan's SDK work started: the permission is
+`protectionLevel="normal"` with the exact rationale below already in RFC-0103's Trust model
+section (the contradictory `signature`-only passages quoted below are gone), and
+`EngineHandshakeImpl.buildApprovedResult()` already builds `capabilities.models` from
+`modelRuntime.catalog()`, not a hardcoded placeholder list. Device-level verification of the
+*done when* condition (a differently-signed app actually transitioning PENDING → APPROVED) is
+still outstanding — nothing here confirms that end-to-end on hardware.
 
 - `protectionLevel="signature"` → `"normal"` on `fi.italeino.aidos.engine.HANDSHAKE`. The
   permission stays declared, so it remains visible and inspectable in a caller's manifest ("this
@@ -165,7 +181,19 @@ PENDING on ConnectedAppsScreen, and transitions to APPROVED after the user taps 
 
 ### S2 · The SDK client becomes real
 
-New module `sdk/client/`, published as `aidos-sdk-client`. No `kernel` dependency.
+**Status (2026-08-24): Done**, module split included. `sdk/client/` exists with no `:kernel`
+dependency; the handshake models all statuses as a sealed `HandshakeOutcome` (`PendingApproval`
+surfaces its `PendingIntent` via the Android-only `AndroidEngineClient.pendingApprovalIntent()`,
+kept off the shared interface since `PendingIntent` doesn't exist on `jvm()`); the `<queries>`
+entry for Android 11+ package visibility is in the client's manifest; transport is OkHttp with
+401-triggered re-handshake-and-retry (fixing, in passing, a pre-existing bug where the
+`Authorization` header sent the literal string `"******"` instead of the real token); all three
+endpoints have typed methods plus a `streamChatCompletion(): Flow<ChatCompletionChunk>` backed by
+an `SseFrameParser`; `EngineAvailability` is the structured degradation signal the "one signal"
+bullet below asks for. 16 tests pass on `jvm()`, including MockWebServer-backed coverage of the
+401 retry and SSE paths, not just pure parsing. Not done: the actual device-level "streams
+token-by-token from a real Engine" verification in the *done when* line — that needs S4 anyway,
+since Engine still buffers the full response before framing it (see S4).
 
 - **Handshake.** Copy `IEngineHandshake.aidl` into the SDK, `bindService` against
   `fi.italeino.aidos.engine/.EngineService`, and model all three response states as a sealed
@@ -205,6 +233,13 @@ New module `sdk/client/`, published as `aidos-sdk-client`. No `kernel` dependenc
 a real Engine on a device.
 
 ### S3 · Adapters artifact and publishing
+
+**Status (2026-08-24): Partially done.** The module split landed as part of S2 above: `sdk/adapters/`
+exists, depends on `:kernel` and `:client`, and its `ModelAdapter` classes are public (they were
+`internal` pre-split, which would have made them unreachable from outside `sdk/` even after
+publishing). Not done: `EngineTranscriptionAdapter` still reads audio out of a
+`ContentBlock.Image` (carried over as-is, flagged in its KDoc) and there is no Maven publishing —
+both remain open.
 
 - New module `sdk/adapters/`, published as `aidos-sdk-adapters`, depending on `:kernel` and on
   `aidos-sdk-client`. The `ModelAdapter` implementations for LLM, embedding, and STT move here —

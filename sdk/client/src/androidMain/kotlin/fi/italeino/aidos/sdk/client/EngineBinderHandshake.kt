@@ -1,4 +1,4 @@
-package fi.italeino.aidos.sdk
+package fi.italeino.aidos.sdk.client
 
 import android.app.PendingIntent
 import android.content.ComponentName
@@ -15,8 +15,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Real Binder handshake with Aidos Engine (RFC-0103). Binds to Engine's exported
  * `EngineService`, calls `IEngineHandshake.performHandshake()`, and parses the returned Bundle
- * (key contract documented on that AIDL method) into the SDK's platform-agnostic
- * [HandshakeResponse].
+ * (key contract documented on that AIDL method) into [HandshakeOutcome].
  *
  * One handshake is one bind/call/unbind cycle — Engine hands out a fresh port and token per
  * handshake (RFC-0103, "Handshake and transport"), so there is nothing to gain from holding the
@@ -32,12 +31,12 @@ internal class EngineBinderHandshake(private val context: Context) : HandshakePe
     var pendingApprovalIntent: PendingIntent? = null
         private set
 
-    override suspend fun performHandshake(): HandshakeResponse? {
-        val connected = bindAndAwait() ?: return null
+    override suspend fun performHandshake(): HandshakeOutcome {
+        val connected = bindAndAwait() ?: return HandshakeOutcome.NotInstalled
         return try {
             parseBundle(IEngineHandshake.Stub.asInterface(connected.binder).performHandshake())
         } catch (e: Exception) {
-            null
+            HandshakeOutcome.Failed
         } finally {
             context.unbindService(connected.connection)
         }
@@ -81,26 +80,33 @@ internal class EngineBinderHandshake(private val context: Context) : HandshakePe
         return Connected(binder, connection)
     }
 
-    private fun parseBundle(bundle: Bundle): HandshakeResponse? {
+    private fun parseBundle(bundle: Bundle): HandshakeOutcome {
         return when (bundle.getString("status")) {
             "APPROVED" -> {
                 pendingApprovalIntent = null
-                HandshakeResponse(
-                    port = bundle.getInt("port"),
-                    token = bundle.getString("token") ?: "",
-                    apiVersion = bundle.getInt("apiVersion", 1),
-                    capabilities = parseCapabilitiesJson(bundle.getString("capabilitiesJson") ?: "{}")
+                HandshakeOutcome.Approved(
+                    HandshakeResponse(
+                        port = bundle.getInt("port"),
+                        token = bundle.getString("token") ?: "",
+                        apiVersion = bundle.getInt("apiVersion", 1),
+                        capabilities = parseCapabilitiesJson(bundle.getString("capabilitiesJson") ?: "{}")
+                    )
                 )
             }
             "PENDING_APPROVAL" -> {
                 pendingApprovalIntent = bundle.getPendingIntentCompat("deepLinkPendingIntent")
-                null
+                HandshakeOutcome.PendingApproval
+            }
+            "DENIED" -> {
+                pendingApprovalIntent = null
+                HandshakeOutcome.Denied
             }
             else -> {
-                // "DENIED", or a status this client doesn't recognize yet (RFC-0103's Bundle
-                // wire shape tolerates that by design — see IEngineHandshake.aidl).
+                // A status this client doesn't recognize yet — RFC-0103's Bundle wire shape
+                // tolerates that by design (see IEngineHandshake.aidl). Treat it as a failure
+                // rather than silently mapping to any specific known state.
                 pendingApprovalIntent = null
-                null
+                HandshakeOutcome.Failed
             }
         }
     }
