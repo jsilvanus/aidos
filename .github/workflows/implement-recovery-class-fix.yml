@@ -1,8 +1,9 @@
 name: implement-recovery-class-fix
 
 on:
-  push:
-    branches: [fix/recovery-class-persistence]
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
 
 permissions:
   contents: write
@@ -22,10 +23,8 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-
           src = Path('agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt')
           s = src.read_text()
-
           replacements = [
               ('recoveryClass = "PURE",\n            modelProvider = adapter.providerId,', 'recoveryClass = RecoveryClass.PURE.name,\n            modelProvider = adapter.providerId,'),
               ('return finishToolCall(task, callRow, run, result)\n    }\n\n    /**\n     * The common tail', 'return finishToolCall(task, callRow, run, result, descriptor?.recoveryClass ?: RecoveryClass.UNSAFE)\n    }\n\n    /**\n     * The common tail'),
@@ -34,8 +33,7 @@ jobs:
               ('return finishToolCall(task, callRow, run, result)\n        }\n\n        val question', 'return finishToolCall(task, callRow, run, result, askUserToolDescriptor.recoveryClass)\n        }\n\n        val question'),
           ]
           for old, new in replacements:
-              if old not in s:
-                  raise SystemExit(f'expected source text not found: {old!r}')
+              if old not in s: raise SystemExit(f'expected source text not found: {old!r}')
               s = s.replace(old, new, 1)
           src.write_text(s)
 
@@ -58,8 +56,7 @@ jobs:
             override fun register(tool: Tool) {}
             override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = descriptors
 '''
-          if old_helper not in t:
-              raise SystemExit('expected broker helper not found')
+          if old_helper not in t: raise SystemExit('expected broker helper not found')
           t = t.replace(old_helper, new_helper, 1)
           marker = '    @Test\n    fun `denied tool call is recorded and does not fail the run`()'
           test_body = '''    @Test
@@ -95,8 +92,7 @@ jobs:
     }
 
 '''
-          if marker not in t:
-              raise SystemExit('test insertion marker not found')
+          if marker not in t: raise SystemExit('test insertion marker not found')
           t = t.replace(marker, test_body + marker, 1)
           test.write_text(t)
           PY
