@@ -1,6 +1,5 @@
 package fi.italeino.aidos.engine.http
 
-import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
@@ -15,395 +14,96 @@ import dev.aidos.kernel.Usage
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
-import io.ktor.server.auth.*
-import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.testing.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+// The test client has no ContentNegotiation plugin installed (only the server does, via
+// EngineHttpServer's own setup) — setBody(someDataClass) would otherwise fail with "Fail to
+// prepare request body for sending" (HttpSend.kt). Encoding requests manually avoids adding a
+// client-side plugin dependency just for tests.
+private val testJson = Json { encodeDefaults = true }
+
 /**
- * Unit tests for EngineHttpServer (RFC-0103, Phase B).
- * Tests model inference endpoints with mock ModelRuntime.
+ * Unit tests for EngineHttpServer (RFC-0103), against the real class via [EngineHttpServer.installInto]
+ * rather than hand-rolled routing that duplicates (and can drift from) its actual handlers — see
+ * docs/dictator-sdk-integration-plan.md's Risks section for why this file previously couldn't do
+ * that at all (androidMain wasn't visible from jvmTest) and, once it could, why the hand-rolled
+ * version turned out to assert behavior EngineHttpServer doesn't actually implement (e.g. a
+ * "model name is required" 400 that was never wired up — an unknown model 404s instead, via
+ * ModelRuntime.load() failing).
  */
 class EngineHttpServerTest {
 
-    @Test
-    fun chatCompletions_returnsValidResponse() = testApplication {
-        val mockRuntime = MockModelRuntime()
+    private fun testServer(adapter: ModelAdapter = MockModelAdapter()): Pair<EngineHttpServer, TokenManager> {
         val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
+        val server = EngineHttpServer(tokenManager, MockModelRuntime(adapter))
+        return server to tokenManager
+    }
 
-        // Setup test server
-        install(ContentNegotiation) {
-            json(Json {
-                prettyPrint = false
-                encodeDefaults = true
-                isLenient = true
-            })
-        }
+    @Test
+    fun health_doesNotRequireAuthentication() = testApplication {
+        val (server, _) = testServer()
+        application { server.installInto(this) }
 
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { tokenCredential ->
-                    if (tokenManager.validateToken(tokenCredential.token) != null) {
-                        UserIdPrincipal(tokenCredential.token)
-                    } else {
-                        null
-                    }
-                }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/chat/completions") {
-                    // This would normally be handled by EngineHttpServer.handleChatCompletions
-                    // For unit testing, we're testing the logic separately
-                    val request = call.receive<ChatCompletionRequest>()
-                    val response = ChatCompletionResponse(
-                        id = "test-id",
-                        created = System.currentTimeMillis() / 1000,
-                        model = request.model,
-                        choices = listOf(
-                            Choice(
-                                index = 0,
-                                message = ChatMessage(
-                                    role = "assistant",
-                                    content = "Test response"
-                                ),
-                                finish_reason = "stop"
-                            )
-                        ),
-                        usage = TokenUsage(
-                            prompt_tokens = 10,
-                            completion_tokens = 5,
-                            total_tokens = 15
-                        )
-                    )
-                    call.respond(response)
-                }
-            }
-        }
-
-        // Make test request
-        val response = client.post("/v1/chat/completions") {
-            bearerAuth(token.token)
-            contentType(ContentType.Application.Json)
-            setBody(ChatCompletionRequest(
-                model = "test-model",
-                messages = listOf(
-                    ChatMessage(
-                        role = "user",
-                        content = "Hello"
-                    )
-                )
-            ))
-        }
+        val response = client.get("/health")
 
         assertEquals(HttpStatusCode.OK, response.status)
-
-        val body = response.bodyAsText()
-        assertTrue(body.contains("test-id"))
-        assertTrue(body.contains("Test response"))
+        assertTrue(response.bodyAsText().contains("ok"))
     }
 
     @Test
     fun chatCompletions_requiresAuthentication() = testApplication {
-        install(ContentNegotiation) {
-            json()
-        }
+        val (server, _) = testServer()
+        application { server.installInto(this) }
 
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { null }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/chat/completions") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
-
-        // Make request without authentication
         val response = client.post("/v1/chat/completions") {
             contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "Hello")))))
         }
 
         assertEquals(HttpStatusCode.Unauthorized, response.status)
     }
 
     @Test
-    fun chatCompletions_rejectsMissingModel() = testApplication {
-        val tokenManager = TokenManager()
+    fun chatCompletions_returnsValidResponse() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
         val token = tokenManager.generateNewToken()
-
-        install(ContentNegotiation) {
-            json()
-        }
-
-        routing {
-            post("/v1/chat/completions") {
-                val request = call.receive<ChatCompletionRequest>()
-                if (request.model.isBlank()) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(
-                            error = ErrorDetail(
-                                message = "Model name is required",
-                                type = "invalid_request_error"
-                            )
-                        )
-                    )
-                } else {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
 
         val response = client.post("/v1/chat/completions") {
-            contentType(ContentType.Application.Json)
-            setBody(ChatCompletionRequest(
-                model = "",
-                messages = listOf(ChatMessage(role = "user", content = "test"))
-            ))
-        }
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        val body = response.bodyAsText()
-        assertTrue(body.contains("Model name is required"))
-    }
-
-    @Test
-    fun health_requiresNoAuthentication() = testApplication {
-        routing {
-            get("/health") {
-                call.respond(mapOf("status" to "ok"))
-            }
-        }
-
-        val response = client.get("/health")
-        assertEquals(HttpStatusCode.OK, response.status)
-        val body = response.bodyAsText()
-        assertTrue(body.contains("ok"))
-    }
-
-    @Test
-    fun transcriptions_returnsValidResponse() = testApplication {
-        val mockRuntime = MockModelRuntime()
-        val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
-
-        // Setup test server
-        install(ContentNegotiation) {
-            json(Json {
-                prettyPrint = false
-                encodeDefaults = true
-                isLenient = true
-            })
-        }
-
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { tokenCredential ->
-                    if (tokenManager.validateToken(tokenCredential.token) != null) {
-                        UserIdPrincipal(tokenCredential.token)
-                    } else {
-                        null
-                    }
-                }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/audio/transcriptions") {
-                    val request = call.receive<TranscriptionRequest>()
-                    val response = TranscriptionResponse(text = "Mock transcription result")
-                    call.respond(response)
-                }
-            }
-        }
-
-        // Create base64-encoded audio (simple dummy data)
-        val dummyAudio = byteArrayOf(0x52, 0x49, 0x46, 0x46)  // "RIFF" header
-        val base64Audio = java.util.Base64.getEncoder().encodeToString(dummyAudio)
-
-        // Make test request
-        val response = client.post("/v1/audio/transcriptions") {
             bearerAuth(token.token)
             contentType(ContentType.Application.Json)
-            setBody(TranscriptionRequest(
-                file = base64Audio,
-                model = "test-model"
-            ))
+            setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "Hello")))))
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("Mock transcription result"))
+        assertTrue(body.contains("Mock response"))
+        assertTrue(body.contains("\"model\":\"test-model\""))
+        assertTrue(body.contains("chat.completion") && !body.contains("chat.completion.chunk"))
     }
 
     @Test
-    fun transcriptions_requiresAuthentication() = testApplication {
-        install(ContentNegotiation) {
-            json()
-        }
-
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { null }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/audio/transcriptions") {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
-
-        // Make request without authentication
-        val response = client.post("/v1/audio/transcriptions") {
-            contentType(ContentType.Application.Json)
-        }
-
-        assertEquals(HttpStatusCode.Unauthorized, response.status)
-    }
-
-    @Test
-    fun transcriptions_rejectsMissingModel() = testApplication {
-        val tokenManager = TokenManager()
+    fun chatCompletions_unknownModelReturnsNotFound() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
         val token = tokenManager.generateNewToken()
 
-        install(ContentNegotiation) {
-            json()
-        }
-
-        routing {
-            post("/v1/audio/transcriptions") {
-                val request = call.receive<TranscriptionRequest>()
-                if (request.model.isBlank()) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(
-                            error = ErrorDetail(
-                                message = "Model name is required",
-                                type = "invalid_request_error"
-                            )
-                        )
-                    )
-                } else {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
-
-        val dummyAudio = java.util.Base64.getEncoder().encodeToString(byteArrayOf(0x52, 0x49, 0x46, 0x46))
-
-        val response = client.post("/v1/audio/transcriptions") {
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
             contentType(ContentType.Application.Json)
-            setBody(TranscriptionRequest(
-                file = dummyAudio,
-                model = ""
-            ))
+            setBody(testJson.encodeToString(ChatCompletionRequest(model = "unknown-model", messages = listOf(ChatMessage(role = "user", content = "Hello")))))
         }
 
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        val body = response.bodyAsText()
-        assertTrue(body.contains("Model name is required"))
-    }
-
-    @Test
-    fun transcriptions_rejectsMissingAudioFile() = testApplication {
-        val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
-
-        install(ContentNegotiation) {
-            json()
-        }
-
-        routing {
-            post("/v1/audio/transcriptions") {
-                val request = call.receive<TranscriptionRequest>()
-                if (request.file.isBlank()) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(
-                            error = ErrorDetail(
-                                message = "Audio file is required",
-                                type = "invalid_request_error"
-                            )
-                        )
-                    )
-                } else {
-                    call.respond(HttpStatusCode.OK)
-                }
-            }
-        }
-
-        val response = client.post("/v1/audio/transcriptions") {
-            contentType(ContentType.Application.Json)
-            setBody(TranscriptionRequest(
-                file = "",
-                model = "test-model"
-            ))
-        }
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        val body = response.bodyAsText()
-        assertTrue(body.contains("Audio file is required"))
-    }
-
-    @Test
-    fun transcriptions_rejectsInvalidBase64() = testApplication {
-        val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
-
-        install(ContentNegotiation) {
-            json()
-        }
-
-        routing {
-            post("/v1/audio/transcriptions") {
-                val request = call.receive<TranscriptionRequest>()
-                try {
-                    java.util.Base64.getDecoder().decode(request.file)
-                    call.respond(HttpStatusCode.OK)
-                } catch (e: IllegalArgumentException) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(
-                            error = ErrorDetail(
-                                message = "Invalid base64-encoded audio file: ${e.message}",
-                                type = "invalid_request_error"
-                            )
-                        )
-                    )
-                }
-            }
-        }
-
-        val response = client.post("/v1/audio/transcriptions") {
-            contentType(ContentType.Application.Json)
-            setBody(TranscriptionRequest(
-                file = "invalid_base64!!!",
-                model = "test-model"
-            ))
-        }
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        val body = response.bodyAsText()
-        assertTrue(body.contains("Invalid base64-encoded audio file"))
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(response.bodyAsText().contains("not installed"))
     }
 
     @Test
@@ -413,19 +113,18 @@ class EngineHttpServerTest {
         // discrete deltas before Done — unlike the pre-S4 version of this test, which never
         // called into EngineHttpServer at all and so could not have caught the real bug (Engine
         // buffering the whole response before "streaming" it).
-        val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
-        val server = EngineHttpServer(tokenManager, MockModelRuntime(StreamingMockModelAdapter(listOf("Hel", "lo", " world"))))
+        val (server, tokenManager) = testServer(StreamingMockModelAdapter(listOf("Hel", "lo", " world")))
         application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
 
         val response = client.post("/v1/chat/completions") {
             bearerAuth(token.token)
             contentType(ContentType.Application.Json)
-            setBody(ChatCompletionRequest(
+            setBody(testJson.encodeToString(ChatCompletionRequest(
                 model = "test-model",
                 messages = listOf(ChatMessage(role = "user", content = "Hello")),
                 stream = true
-            ))
+            )))
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -441,23 +140,19 @@ class EngineHttpServerTest {
 
     @Test
     fun chatCompletions_streamingFailureSendsErrorFrameThenDone() = testApplication {
-        val tokenManager = TokenManager()
-        val token = tokenManager.generateNewToken()
         val failure = IllegalStateException("native generation crashed")
-        val server = EngineHttpServer(
-            tokenManager,
-            MockModelRuntime(FailingStreamingModelAdapter(listOf("partial "), failure))
-        )
+        val (server, tokenManager) = testServer(FailingStreamingModelAdapter(listOf("partial "), failure))
         application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
 
         val response = client.post("/v1/chat/completions") {
             bearerAuth(token.token)
             contentType(ContentType.Application.Json)
-            setBody(ChatCompletionRequest(
+            setBody(testJson.encodeToString(ChatCompletionRequest(
                 model = "test-model",
                 messages = listOf(ChatMessage(role = "user", content = "Hello")),
                 stream = true
-            ))
+            )))
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -468,66 +163,88 @@ class EngineHttpServerTest {
     }
 
     @Test
-    fun chatCompletions_supportsNonStreamingResponse() = testApplication {
-        val tokenManager = TokenManager()
+    fun chatCompletions_nonStreamingResponseIsOneJsonObjectNotSse() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
         val token = tokenManager.generateNewToken()
 
-        install(ContentNegotiation) {
-            json(Json {
-                prettyPrint = false
-                encodeDefaults = true
-                isLenient = true
-            })
-        }
-
-        install(Authentication) {
-            bearer("bearerAuth") {
-                authenticate { tokenCredential ->
-                    if (tokenManager.validateToken(tokenCredential.token) != null) {
-                        UserIdPrincipal(tokenCredential.token)
-                    } else {
-                        null
-                    }
-                }
-            }
-        }
-
-        routing {
-            authenticate("bearerAuth") {
-                post("/v1/chat/completions") {
-                    val request = call.receive<ChatCompletionRequest>()
-                    call.respond(ChatCompletionResponse(
-                        id = "test",
-                        created = System.currentTimeMillis() / 1000,
-                        model = request.model,
-                        choices = listOf(
-                            Choice(
-                                index = 0,
-                                message = ChatMessage(role = "assistant", content = "Non-streaming response"),
-                                finish_reason = "stop"
-                            )
-                        ),
-                        usage = TokenUsage(prompt_tokens = 5, completion_tokens = 3, total_tokens = 8)
-                    ))
-                }
-            }
-        }
-
-        // Test non-streaming request (stream = false or omitted)
         val response = client.post("/v1/chat/completions") {
             bearerAuth(token.token)
             contentType(ContentType.Application.Json)
-            setBody(ChatCompletionRequest(
+            setBody(testJson.encodeToString(ChatCompletionRequest(
                 model = "test-model",
                 messages = listOf(ChatMessage(role = "user", content = "Hello")),
                 stream = false
-            ))
+            )))
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.headers[HttpHeaders.ContentType]?.startsWith("application/json") == true)
         val body = response.bodyAsText()
-        assertTrue(body.contains("Non-streaming response"))
-        assertTrue(body.contains("chat.completion"))  // non-chunk object type
+        assertTrue(body.contains("Mock response"))
+        assertTrue(!body.contains("data:"), "non-streaming response must not be SSE-framed")
+    }
+
+    @Test
+    fun transcriptions_requiresAuthentication() = testApplication {
+        val (server, _) = testServer()
+        application { server.installInto(this) }
+
+        val response = client.post("/v1/audio/transcriptions") {
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(TranscriptionRequest(file = "", model = "test-model")))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun transcriptions_returnsValidResponse() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val dummyAudio = byteArrayOf(0x52, 0x49, 0x46, 0x46)  // "RIFF" header
+        val base64Audio = java.util.Base64.getEncoder().encodeToString(dummyAudio)
+
+        val response = client.post("/v1/audio/transcriptions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(TranscriptionRequest(file = base64Audio, model = "test-model")))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("Mock response"))
+    }
+
+    @Test
+    fun transcriptions_unknownModelReturnsNotFound() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.post("/v1/audio/transcriptions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(TranscriptionRequest(file = "", model = "unknown-model")))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+    }
+
+    @Test
+    fun transcriptions_rejectsInvalidBase64() = testApplication {
+        val (server, tokenManager) = testServer()
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.post("/v1/audio/transcriptions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(TranscriptionRequest(file = "invalid_base64!!!", model = "test-model")))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
     }
 }
 

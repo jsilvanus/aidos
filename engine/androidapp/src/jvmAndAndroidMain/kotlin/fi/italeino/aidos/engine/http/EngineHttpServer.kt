@@ -170,7 +170,7 @@ class EngineHttpServer(
 
             val response = inferenceResult.getOrThrow()
             val text = response.outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
-            val toolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.toolCall }
+            val toolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }
 
             val message = ChatMessage(
                 role = "assistant",

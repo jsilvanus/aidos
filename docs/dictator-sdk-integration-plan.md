@@ -378,19 +378,28 @@ needs to be walked on a real device, not reasoned about.
 the SDK reaches Engine over `127.0.0.1` on the same device, which a Next.js server cannot do.
 `lib/ai/providers/` is unaffected by every phase here.
 
-**`engine/androidapp`'s `jvmTest` cannot currently exercise `EngineHttpServer` at all — found
-while verifying S4, not previously diagnosed.** `EngineHttpServer`, `TokenManager`, and the
-OpenAI-shaped request/response types (`OpenAiSchema.kt`) are declared only in `androidMain`.
-`jvm()` and `androidTarget()` are separate KMP compilation targets, so `jvmTest` (part of the
-`jvm()` target) cannot see them regardless of dependency wiring — confirmed by a clean-baseline
-comparison (`git stash` back to before this session's changes reproduces the identical
-`Unresolved reference 'dev'` failure on `EngineHttpServerTest.kt`'s own pre-existing imports).
-This is why the pre-existing tests in that file never called into `EngineHttpServer`'s real code —
-not an oversight, a structural impossibility given the current source-set layout — and it's the
-same reason `test-engine` is already red on `main` (`AppApprovalStoreTest.kt`,
-`ModelLoadingStateTest.kt`, and others fail the identical way, for Android-only types they
-reference from `jvmTest`). The fix is the same shape as `sdk/client`'s `jvmAndAndroidMain` split:
-move the platform-agnostic pieces (wire types, `EngineHttpServer`'s routing logic) into a shared
-source set both targets can compile. Real, separately-scoped work — this session added
-`streamChatCompletions` tests to `EngineHttpServerTest.kt` that are correct Kotlin and will start
-passing once that split happens, but could not be run here.
+**~~`engine/androidapp`'s `jvmTest` cannot currently exercise `EngineHttpServer` at all~~ — fixed.**
+Originally found while verifying S4: `EngineHttpServer`, `TokenManager`, and the OpenAI-shaped
+request/response types (`OpenAiSchema.kt`) were declared only in `androidMain`, and `jvm()`/
+`androidTarget()` are separate KMP compilation targets, so `jvmTest` couldn't see them regardless
+of dependency wiring — confirmed by a clean-baseline `git stash` comparison at the time. Fixed the
+same shape as `sdk/client`'s split: `EngineHttpServer`, `OpenAiSchema.kt`, `TokenManager`, and
+`AppApprovalStore` (interface + `AppApprovalRecord`/`AppApprovalStatus` — none of it Android-only)
+moved into a new `jvmAndAndroidMain` source set; `AppApprovalManager` and
+`EncryptedAppApprovalStore` (genuinely Android-only: `PendingIntent`, `Context`,
+`EncryptedSharedPreferences`) stayed in `androidMain`, which now `dependsOn` the shared source set.
+`UiModels.kt` moved too — its two Compose imports (`Color`, `MaterialTheme`) turned out to be
+unused, so the whole file was already portable.
+
+Doing the move surfaced real, previously-uncaught bugs, exactly because this code had never
+compiled on any target before: `EngineHttpServer` read `ToolCallOutput.toolCall`, a property that
+doesn't exist (kernel's field is `call`); the module never applied
+`kotlin("plugin.serialization")` despite `@Serializable` classes needing it (a runtime
+`SerializationException` waiting to happen, not a compile error, so nothing had caught it either);
+and both `EngineHttpServerTest.kt` and `HttpModelClientSerializationTest.kt`'s older tests asserted
+behavior and API shapes (`ChatCompletionResponse.firstContent`, a `Message` class, a
+"model name is required" 400 Engine doesn't actually send) that never matched the real code. All
+fixed; the scaffold-style tests that hand-rolled Ktor routing instead of testing
+`EngineHttpServer` directly were rewritten to use it via a new `EngineHttpServer.installInto()`.
+`gradle :androidapp:jvmTest` from `engine/` is green: 46 tests, 0 failures — this was the same
+suite reported red on `main` at the top of this document.
