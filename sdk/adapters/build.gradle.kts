@@ -69,16 +69,13 @@ publishing {
     // See sdk/client/build.gradle.kts: renames each target's default artifactId ("adapters",
     // "adapters-jvm", ...) to the aidos-sdk-adapters name the plan specifies.
     //
-    // Caveat this doesn't fix: this module's published POM/module metadata will reference
-    // :kernel by kernel's own group/artifactId/version (Gradle's normal project-dependency
-    // substitution) — but kernel itself is deliberately never published (RFC-0103: source-included
-    // everywhere, "frozen contract types... depended on by everything, depends on none"). A
-    // consumer *inside* this monorepo never notices, since it also source-includes :kernel. A
-    // genuinely external consumer (Dictator) resolving aidos-sdk-adapters from GitHub Packages
-    // alone will get an unresolvable kernel coordinate. Publishing :kernel too, or vendoring its
-    // types into this artifact, would fix it; neither is done here since it wasn't asked for and
-    // changes what "kernel is never published" means project-wide — worth a decision, not a
-    // silent default.
+    // :kernel now has real Maven coordinates too (kernel/build.gradle.kts) — this module's
+    // published POM references it by kernel's own group/artifactId/version (Gradle's normal
+    // project-dependency substitution), which resolves against GitHub Packages instead of the
+    // groupId=aidos-sdk/version=unspecified placeholder Gradle emits for an unpublished project
+    // dependency. Publishing :kernel this way doesn't change that it's still source-included by
+    // path everywhere in-monorepo (RFC-0103); it only means a genuinely external consumer can also
+    // resolve it as an ordinary transitive dependency.
     publications.withType<MavenPublication>().configureEach {
         artifactId = artifactId.replace(project.name, "aidos-sdk-${project.name}")
     }

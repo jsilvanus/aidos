@@ -255,18 +255,34 @@ constructor/supertype signatures (`ModelAdapter`, `ModelRequest`/`ModelResponse`
 `AidosEngineClient`) — `implementation` would have left them off a consumer's compile classpath
 while still pulling them in at runtime. Both are `api` now.
 
-**Open caveat, not fixed here because it's a decision, not a bug:** `:kernel` is never published —
-by design, per RFC-0103 ("frozen contract types... depended on by everything, depends on none,"
-source-included everywhere). Generating `aidos-sdk-adapters`'s POM locally shows exactly what that
-means for this artifact: its `:kernel` dependency resolves to
-`groupId=aidos-sdk, artifactId=kernel-jvm, version=unspecified` — Gradle's placeholder for a
-subproject that never declared its own coordinates, referencing nothing that exists on GitHub
-Packages. A consumer *inside* this monorepo (Agent, this SDK itself) never notices, since it also
-source-includes `:kernel` and never touches the published POM. A genuinely external consumer
-(Dictator) resolving `aidos-sdk-adapters` alone from GitHub Packages will hit an unresolvable
-dependency. Publishing `:kernel` too (giving it real coordinates) or vendoring its types into this
-artifact would fix it; neither is done pending an explicit decision on what "kernel is never
-published" should mean once something that depends on it is.
+**Caveat above: resolved (2026-08-25).** Per D-1, Dictator only ever consumes `aidos-sdk-client`,
+which has no `:kernel` dependency at all — so this never actually blocked Dictator. It matters only
+if something publishes-consumes `aidos-sdk-adapters` from outside the monorepo, which isn't
+Dictator's plan today but was worth closing rather than leaving latent. Decision taken: publish
+`:kernel` too, with real coordinates (`kernel/build.gradle.kts` now applies `maven-publish`, group
+`fi.italeino.aidos`, same `aidosSdkVersion` property/default as the other two so a single
+`gradle publish -PaidosSdkVersion=...` run — kernel is included into the `sdk/` build graph per
+`sdk/settings.gradle.kts` — publishes matching coordinates for all three). No artifactId rename;
+`fi.italeino.aidos:kernel-jvm` is distinct enough as-is. This does **not** change that `:kernel` is
+still source-included by path everywhere in-monorepo (Agent, Engine, this SDK) — RFC-0103's
+"depended on by everything, depends on none" holds; publishing only adds a second, external path to
+the same frozen contract types. Verified locally: `aidos-sdk-adapters-jvm`'s generated POM now
+declares `fi.italeino.aidos:kernel-jvm:<version>` instead of the
+`groupId=aidos-sdk/version=unspecified` placeholder, and publishing all three JVM-target artifacts
+to `mavenLocal` in dependency order (kernel → client → adapters) succeeds, resolving each other by
+those coordinates. Android-target publishing remains unverifiable in this sandbox (no Android SDK —
+`gradle publish` fails at `:adapters:extractReleaseAnnotations` needing `assembleRelease`), same
+constraint as every other Android-target task on this branch.
+
+**Package namespace left alone.** A related but separate question — whether kernel's Kotlin package
+(`dev.aidos.kernel`) should also move to `fi.italeino.aidos.kernel` now that it's externally
+published — was considered and deliberately not done: 140 files across `agent/` (94), `engine/`
+(27), `kernel/` itself (18), and `sdk/` (1) import `dev.aidos.kernel.*`. It's a mechanical rename,
+not a design change, but it touches nearly the whole codebase for a purely cosmetic win — Maven
+coordinates and Kotlin package names are independent (`sdk/adapters` already proves this, publishing
+under package `fi.italeino.aidos.sdk.adapters` while depending on `dev.aidos.kernel.*` types without
+friction). Revisit only if the split namespace becomes an actual practical problem, not on
+principle.
 
 - New module `sdk/adapters/`, published as `aidos-sdk-adapters`, depending on `:kernel` and on
   `aidos-sdk-client`. The `ModelAdapter` implementations for LLM, embedding, and STT move here —
