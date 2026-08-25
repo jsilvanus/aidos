@@ -115,7 +115,10 @@ class EngineService : LifecycleService() {
                 val databaseDriver = AndroidSqliteDriver(
                     schema = object : SqlSchema<QueryResult.Value<Unit>> {
                         override val version: Long = 1
-                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                            DatabaseModelCatalogManager.createTables(driver)
+                            return QueryResult.Value(Unit)
+                        }
                         override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
                     },
                     context = this@EngineService,

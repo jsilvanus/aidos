@@ -24,9 +24,6 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
-        jvmTest.dependencies {
-            implementation(kotlin("test-junit5"))
-        }
         androidMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
