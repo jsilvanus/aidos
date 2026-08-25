@@ -1,12 +1,15 @@
 package fi.italeino.aidos.engine.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
 import androidx.navigation.NavType
 import fi.italeino.aidos.engine.EngineService
+import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelConfigScreen
@@ -65,10 +68,21 @@ fun EngineNavHost(
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
             val modelName = backStackEntry.arguments?.getString("name") ?: return@composable
+            // Built once per visit to this screen, against the Engine's own HTTP endpoint --
+            // without this, TestChatScreen falls back to simulateModelResponse() and never
+            // actually talks to the loaded model.
+            val httpModelClient by produceState<HttpModelClient?>(
+                initialValue = null,
+                key1 = modelId,
+            ) {
+                value = EngineService.instance?.createHttpModelClient()
+                awaitDispose { value?.close() }
+            }
             TestChatScreen(
                 modelId = modelId,
                 modelName = modelName,
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStack() },
+                httpModelClient = httpModelClient,
             )
         }
 

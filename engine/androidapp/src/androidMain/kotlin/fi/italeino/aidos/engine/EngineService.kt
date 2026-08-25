@@ -34,6 +34,7 @@ import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.AndroidEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
+import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
@@ -114,7 +115,10 @@ class EngineService : LifecycleService() {
                 val databaseDriver = AndroidSqliteDriver(
                     schema = object : SqlSchema<QueryResult.Value<Unit>> {
                         override val version: Long = 1
-                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                            DatabaseModelCatalogManager.createTables(driver)
+                            return QueryResult.Value(Unit)
+                        }
                         override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
                     },
                     context = this@EngineService,
@@ -194,6 +198,24 @@ class EngineService : LifecycleService() {
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
         return if (isRunning) binder.asBinder() else null
+    }
+
+    /**
+     * A client for this service's own `/v1/chat/completions` endpoint, for first-party in-app
+     * callers (the Test Chat screen, RFC-0103 Phase E) rather than the Binder-handshake
+     * (`EngineHandshakeImpl`) path external client apps use. The engine trusts its own process,
+     * so it self-issues a token via [TokenManager] instead of requiring a handshake round trip;
+     * an existing still-valid token (e.g. one already issued to a connected app) is reused rather
+     * than rotated, since [TokenManager] holds only one token at a time and rotating it here would
+     * invalidate that app's session.
+     *
+     * Null when the engine (and therefore its HTTP server) isn't running.
+     */
+    suspend fun createHttpModelClient(): HttpModelClient? {
+        if (!isRunning) return null
+        val port = httpServer.getBoundPort() ?: return null
+        val token = tokenManager.currentValidToken() ?: tokenManager.generateNewToken().token
+        return HttpModelClient(port = port, token = token)
     }
 
     private fun createNotificationChannel() {

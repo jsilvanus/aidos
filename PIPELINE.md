@@ -141,12 +141,32 @@ The design was worked out and is the plan; start from it rather than re-deriving
 - **`Permission.WORKER_CREATE`** exists in the kernel and is granted and checked nowhere.
   `WorkerSpawner` must check the driver session holds it before spawning.
 
-### 4. `RealRuntimeClient` is still in-memory
+### 4. `RealRuntimeClient` is still in-memory — sessions/runs now hydrate; Android isn't wired
 
 Project persistence and locking are wired through optional injection seams, and `daemon`'s factory
-is the one consumer wired end to end. Everything else — sessions, runs — remains the in-memory stub
-its own comment describes. Finishing it is what makes the Android app talk to the real runtime
-rather than to a mock.
+is the one consumer wired end to end. **2026-08-25:** `sessions.list()`/`get()` now hydrate from the
+project's own `sessions`/`runs` tables when a driver is open (mirroring `hydrateProjectSummary`),
+and `sessions.send()` persists a real `PENDING` `runs`/`tasks` row even when no `RunExecutor` is
+wired, instead of the old `_runs`-map-only stub. Covered by `RealRuntimeClientSessionTest`.
+
+**What's still open, and it's the part that actually reaches the Android app:** `androidapp`'s
+`MainActivity` still constructs a bare `RealRuntimeClient()` with nothing injected — no
+`userDriver`, `projectDbFactory`, or `projectLocker` — so on-device it still runs exactly like the
+old in-memory mock; the fix above only takes effect once something wires those seams. Doing that
+needs an Android `SqlDriver` (`app.cash.sqldelight:android-driver`, not the JVM `sqlite-driver`
+`storage`'s `jvmMain` uses today — `storage` declares `androidTarget()` but has no `androidMain`
+source set yet) and an Android-appropriate path scheme (`Context.filesDir`, not `DesktopPaths`'
+`System.getProperty("user.home")`), i.e. an Android equivalent of `daemon`'s
+`RuntimeClientFactory`. `ProjectLocker` is deliberately left out of that follow-up: its own doc
+comment already flags Android's implementation as unverified/deferred (real-device `FileLock`
+behavior, same status as capability's `SqliteDirHandle`), so don't invent one blind.
+
+**Why this is untracked rather than just built:** neither this sandbox nor CI's `test-agent` job
+(`gradle jvmTest`) can compile `androidMain` — there's no Android SDK in either place today (lesson
+in `lessons.md`: "`gradle jvmTest` passing... proves nothing about whether `androidMain` can see
+what it imports"). Writing the SqlDriver/factory/`MainActivity` wiring blind, with no way to
+compile-check it, is the wrong tradeoff until there's a real Android build available to verify
+against — flagged here rather than guessed at.
 
 ### 5. A mapping test is owed
 

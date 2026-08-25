@@ -7,6 +7,7 @@ import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.FileDiff
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.TaskKind
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
@@ -22,10 +23,10 @@ import kotlinx.datetime.Instant
  * but is structured to integrate with real services (storage, capability manager, git tool, etc.)
  * as they become available.
  *
- * For MVP, project and session state is stored in memory with the same semantics as the mock.
+ * Project, session, and (when no [runExecutor] is wired) run state hydrates from the project's
+ * own `state.db` whenever [projectDbFactory] is wired -- unwired, everything falls back to the
+ * pre-persistence in-memory-only behavior (PIPELINE.md "`RealRuntimeClient` is still in-memory").
  * As Phase 4 progresses:
- * - ProjectService will provide persistent storage for projects
- * - SessionService will provide persistent storage for sessions
  * - GitService will provide real diff operations
  * - KnowledgeService will provide semantic search
  * - CapabilityManager will enforce permissions (already available)
@@ -117,6 +118,7 @@ class RealRuntimeClient : RuntimeClient {
     // these two.
     private val projectIdGen = UuidV7Generator()
     private val sessionIdGen = UuidV7Generator()
+    private val runIdGen = UuidV7Generator()
 
     private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
 
@@ -158,6 +160,68 @@ class RealRuntimeClient : RuntimeClient {
         _projectPaths[id] = path
         return summary
     }
+
+    /** Reads a session's own `sessions` row plus its run count, and populates the in-memory cache. */
+    private fun hydrateSessionSummary(driver: SqlDriver, projectId: String, id: String): SessionSummary? {
+        val row = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT name, role, state, created_at, last_active_at FROM sessions WHERE id = ?",
+            mapper = { cursor ->
+                QueryResult.Value(
+                    if (cursor.next().value) {
+                        listOf(
+                            cursor.getString(0)!!, cursor.getString(1)!!, cursor.getString(2)!!,
+                            cursor.getString(3)!!, cursor.getString(4)!!,
+                        )
+                    } else {
+                        null
+                    }
+                )
+            },
+            parameters = 1,
+        ) { bindString(0, id) }.value ?: return null
+
+        val (name, role, state, createdAtIso, lastActiveAtIso) = row
+        val runCount = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM runs WHERE session_id = ?",
+            mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0)!! else 0L) },
+            parameters = 1,
+        ) { bindString(0, id) }.value
+
+        val summary = SessionSummary(
+            id = id, projectId = projectId, name = name,
+            role = SessionRole.valueOf(role), state = SessionState.valueOf(state),
+            createdAt = Instant.parse(createdAtIso), lastActiveAt = Instant.parse(lastActiveAtIso),
+            runCount = runCount.toInt(),
+        )
+        _sessions[id] = summary
+        return summary
+    }
+
+    /** Reads a session's `runs` rows, newest first, capped at 50 (no UI shows more at once). */
+    private fun readRunsForSession(driver: SqlDriver, sessionId: String): List<RunSummary> =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id, state, started_at, ended_at, step_index FROM runs " +
+                "WHERE session_id = ? ORDER BY started_at DESC LIMIT 50",
+            mapper = { cursor ->
+                val runs = mutableListOf<RunSummary>()
+                while (cursor.next().value) {
+                    runs.add(
+                        RunSummary(
+                            id = cursor.getString(0)!!,
+                            state = cursor.getString(1)!!,
+                            startedAt = Instant.parse(cursor.getString(2)!!),
+                            endedAt = cursor.getString(3)?.let { Instant.parse(it) },
+                            stepCount = (cursor.getLong(4) ?: 0L).toInt(),
+                        )
+                    )
+                }
+                QueryResult.Value(runs)
+            },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
 
     private fun lockedByOtherError(outcome: ProjectLockOutcome.HeldByOther): ProjectResult.Error =
         ProjectResult.Error(
@@ -378,6 +442,49 @@ class RealRuntimeClient : RuntimeClient {
                     deviceId = instanceId,
                     networkAvailable = networkAvailable,
                 )
+            } else if (driver != null) {
+                // No RunExecutor wired yet, but the project's own storage is real: persist a
+                // genuine PENDING `runs` row (+ its first `tasks` row, same shape as
+                // `executor`'s RunCreator) rather than the pre-persistence in-memory-only
+                // RunSummary. `api` cannot depend on `executor` (module cycle, see RunExecutor's
+                // own doc comment), so this mirrors RunCreator.createForUserMessage's insert
+                // directly instead of calling it. Nothing drives this Run without a real
+                // executor, but it survives a restart and is visible to sessions.get() /
+                // list() instead of vanishing -- PIPELINE.md #4.
+                val runId = runIdGen.next()
+                val now = Clock.System.now().toString()
+                driver.execute(
+                    identifier = null,
+                    sql = "INSERT INTO runs (id, session_id, project_id, trigger_event_id, started_at, " +
+                        "state, user_message_summary, retry_policy_json, max_steps, platform_profile, " +
+                        "device_id, network_available) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, '{}', ?, ?, ?, ?)",
+                    parameters = 10,
+                ) {
+                    bindString(0, runId)
+                    bindString(1, sessionId)
+                    bindString(2, session.projectId)
+                    bindString(3, "unwired-$runId")
+                    bindString(4, now)
+                    bindString(5, message.content)
+                    bindLong(6, 24)
+                    bindString(7, platformProfile.name)
+                    bindString(8, instanceId)
+                    bindLong(9, if (networkAvailable) 1L else 0L)
+                }
+                driver.execute(
+                    identifier = null,
+                    sql = "INSERT INTO tasks (id, run_id, session_id, project_id, ordinal, kind, " +
+                        "description, state, retry_policy_json) VALUES (?, ?, ?, ?, 0, ?, ?, 'PENDING', '{}')",
+                    parameters = 6,
+                ) {
+                    bindString(0, nextId())
+                    bindString(1, runId)
+                    bindString(2, sessionId)
+                    bindString(3, session.projectId)
+                    bindString(4, TaskKind.MODEL_CALL.name)
+                    bindString(5, "Model call for user message")
+                }
+                RunResult.Accepted(runId)
             } else {
                 val runId = nextId()
                 _runs[runId] = RunSummary(
@@ -401,12 +508,30 @@ class RealRuntimeClient : RuntimeClient {
             _runs[runId]?.let { _runs[runId] = it.copy(state = "CANCELLED") }
         }
 
-        override suspend fun list(projectId: String): List<SessionSummary> =
-            _sessions.values.filter { it.projectId == projectId }
+        override suspend fun list(projectId: String): List<SessionSummary> {
+            val driver = _openProjectDrivers[projectId]
+            if (driver != null) {
+                val ids = driver.executeQuery(
+                    identifier = null,
+                    sql = "SELECT id FROM sessions WHERE project_id = ?",
+                    mapper = { cursor ->
+                        val ids = mutableListOf<String>()
+                        while (cursor.next().value) ids.add(cursor.getString(0)!!)
+                        QueryResult.Value(ids)
+                    },
+                    parameters = 1,
+                ) { bindString(0, projectId) }.value
+                ids.forEach { hydrateSessionSummary(driver, projectId, it) }
+            }
+            return _sessions.values.filter { it.projectId == projectId }
+        }
 
         override suspend fun get(sessionId: String): SessionDetail? {
-            val s = _sessions[sessionId] ?: return null
-            return SessionDetail(s, emptyList())
+            val cached = _sessions[sessionId] ?: return null
+            val driver = _openProjectDrivers[cached.projectId]
+            val summary = driver?.let { hydrateSessionSummary(it, cached.projectId, sessionId) } ?: cached
+            val runs = driver?.let { readRunsForSession(it, sessionId) } ?: emptyList()
+            return SessionDetail(summary, runs)
         }
 
         override suspend fun archive(sessionId: String) {

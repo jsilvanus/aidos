@@ -25,14 +25,21 @@ import kotlinx.coroutines.sync.withLock
  */
 class GlobalModelRuntime(
     private val backend: InferenceBackend,
+    // Injectable for tests; real callers get the wall clock. Only tracks *when this process
+    // loaded the model*, not anything about the weights themselves (RFC-0103 Phase E's Engine
+    // Status screen needs "loaded Nm ago", which is otherwise unknowable -- InferenceBackend has
+    // no notion of load time at all).
+    private val nowMillis: () -> Long = { System.currentTimeMillis() },
 ) : ModelRuntime {
 
     // Single global lock — no per-model lock, because loading saturates RAM (RFC-0022).
     private val admissionQueue = Mutex()
     // Immutable snapshot: written only inside admissionQueue, read without the lock.
     // @Volatile guarantees the latest snapshot is visible to any thread, including the
-    // non-suspending `loaded()` accessor which cannot acquire the mutex.
-    @Volatile private var loadedModels: Map<String, ModelAdapter> = emptyMap()
+    // non-suspending `loaded()`/`loadedAtMillis()` accessors, which cannot acquire the mutex.
+    @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
+
+    private data class LoadedModel(val adapter: ModelAdapter, val loadedAtMillis: Long)
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
@@ -45,11 +52,11 @@ class GlobalModelRuntime(
      */
     override suspend fun load(modelId: String): Result<ModelAdapter> {
         // Fast path: already loaded (checked before entering the queue).
-        loadedModels[modelId]?.let { return Result.success(it) }
+        loadedModels[modelId]?.let { return Result.success(it.adapter) }
 
         return admissionQueue.withLock {
             // Re-check inside the lock — another load may have completed while we waited.
-            loadedModels[modelId]?.let { return@withLock Result.success(it) }
+            loadedModels[modelId]?.let { return@withLock Result.success(it.adapter) }
 
             backend.installed().find { it.id == modelId }
                 ?: return@withLock Result.failure(
@@ -82,7 +89,7 @@ class GlobalModelRuntime(
             val adapter = backend.load(modelId).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
-            loadedModels = loadedModels + (modelId to adapter)
+            loadedModels = loadedModels + (modelId to LoadedModel(adapter, nowMillis()))
             Result.success(adapter)
         }
     }
@@ -93,6 +100,13 @@ class GlobalModelRuntime(
             backend.unload(modelId)
         }
     }
+
+    /**
+     * When [modelId] was loaded, as epoch millis -- null if it isn't currently resident.
+     * RFC-0103 Phase E's Engine Status screen uses this for "loaded Nm ago" instead of a
+     * fabricated placeholder.
+     */
+    fun loadedAtMillis(modelId: String): Long? = loadedModels[modelId]?.loadedAtMillis
 
     /**
      * Physically deletes model weights from disk (RFC-0022).

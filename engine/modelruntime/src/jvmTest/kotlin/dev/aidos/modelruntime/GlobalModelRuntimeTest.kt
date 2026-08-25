@@ -191,4 +191,40 @@ class GlobalModelRuntimeTest {
         val runtime = GlobalModelRuntime(backend)
         assertEquals(emptyList(), runtime.loaded())
     }
+
+    @Test
+    fun `loadedAtMillis is null before load and set to the clock's time after`() = runTest {
+        val backend = fakeBackend(listOf(descriptor("test-7b")))
+        var clock = 1_000L
+        val runtime = GlobalModelRuntime(backend, nowMillis = { clock })
+
+        assertEquals(null, runtime.loadedAtMillis("test-7b"))
+
+        runtime.load("test-7b")
+        assertEquals(1_000L, runtime.loadedAtMillis("test-7b"))
+    }
+
+    @Test
+    fun `loadedAtMillis does not change on a cache-hit reload`() = runTest {
+        val backend = fakeBackend(listOf(descriptor("test-7b")))
+        var clock = 1_000L
+        val runtime = GlobalModelRuntime(backend, nowMillis = { clock })
+
+        runtime.load("test-7b")
+        clock = 5_000L
+        runtime.load("test-7b") // Already loaded -- the fast path must not re-stamp the time.
+
+        assertEquals(1_000L, runtime.loadedAtMillis("test-7b"))
+    }
+
+    @Test
+    fun `loadedAtMillis is cleared on unload`() = runTest {
+        val backend = fakeBackend(listOf(descriptor("test-7b")))
+        val runtime = GlobalModelRuntime(backend, nowMillis = { 1_000L })
+
+        runtime.load("test-7b")
+        runtime.unload("test-7b")
+
+        assertEquals(null, runtime.loadedAtMillis("test-7b"))
+    }
 }

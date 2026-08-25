@@ -26,18 +26,24 @@ class StatusViewModel : ViewModel() {
     fun refresh() {
         val service = EngineService.instance
         _isEngineRunning.value = service?.isRunning ?: false
-        
+
         val runtime = service?.modelRuntime ?: return
-        
+        val catalogManager = service.catalogManager
+
         viewModelScope.launch {
             val loaded = runtime.loaded()
-            // In a real app, we'd fetch details for these IDs
+            val installedById = catalogManager?.listInstalled()?.getOrNull()
+                .orEmpty()
+                .associateBy { it.modelId }
+            val now = System.currentTimeMillis()
             _residentModels.value = loaded.map { id ->
+                val installed = installedById[id]
+                val loadedAt = runtime.loadedAtMillis(id)
                 ResidentModel(
                     id = id,
-                    displayName = id,
-                    quantization = "Q4_K_M",
-                    loadedAgoMs = 0 // Needs real timestamp from runtime
+                    displayName = installed?.userLabel ?: id,
+                    quantization = installed?.quantization ?: "unknown",
+                    loadedAgoMs = loadedAt?.let { now - it } ?: 0L,
                 )
             }
         }
