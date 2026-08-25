@@ -1,0 +1,43 @@
+name: Build and Publish Aidos SDK
+
+on:
+  push:
+    branches: [main]
+    paths: ['sdk/**', 'kernel/**', '.github/workflows/sdk-publish.yml']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Fails fast on the check that actually matters before spending time publishing: the
+      # Android-SDK-free half of the SDK (build-sdk in ci.yml runs the same check on every push,
+      # but a publish triggered by workflow_dispatch or a path this job's own trigger differs from
+      # ci.yml's shouldn't skip it).
+      - name: Test Aidos SDK (JVM target)
+        working-directory: sdk
+        run: gradle jvmTest --no-daemon
+
+      - name: Publish aidos-sdk-client and aidos-sdk-adapters to GitHub Packages
+        working-directory: sdk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          # Same build-number+commit scheme as android-build-and-publish.yml's APK publish, for
+          # the same reason: no real semver policy exists yet, and a monotonic, traceable version
+          # beats a hand-maintained one that's easy to forget to bump.
+          VERSION="0.1.0-build.${{ github.run_number }}+$(echo "${{ github.sha }}" | cut -c1-8)"
+          echo "Publishing aidos-sdk-client / aidos-sdk-adapters version: $VERSION"
+          gradle publish -PaidosSdkVersion="$VERSION" --no-daemon

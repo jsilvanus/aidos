@@ -234,13 +234,39 @@ a real Engine on a device.
 
 ### S3 · Adapters artifact and publishing
 
-**Status (2026-08-24): Partially done.** The module split landed as part of S2 above: `sdk/adapters/`
-exists, depends on `:kernel` and `:client`, and its `ModelAdapter` classes are public (they were
-`internal` pre-split, which would have made them unreachable from outside `sdk/` even after
-publishing). `EngineTranscriptionAdapter` is also fixed now: `ContentBlock` gained a proper
-`Audio(mimeType, data)` case (kernel change, RFC-0021's `ContentBlock` sealed interface), and both
-the adapter and Engine's own `handleTranscriptions` (which fed it the `ContentBlock.Image`
-audio/wav hack in the first place) now use it. Still not done: Maven publishing.
+**Status (2026-08-25): Done**, with one open caveat below. The module split landed as part of S2
+above: `sdk/adapters/` exists, depends on `:kernel` and `:client`, and its `ModelAdapter` classes
+are public (they were `internal` pre-split, which would have made them unreachable from outside
+`sdk/` even after publishing). `EngineTranscriptionAdapter` is also fixed: `ContentBlock` gained a
+proper `Audio(mimeType, data)` case (kernel change, RFC-0021's `ContentBlock` sealed interface),
+and both the adapter and Engine's own `handleTranscriptions` (which fed it the `ContentBlock.Image`
+audio/wav hack in the first place) now use it.
+
+Maven publishing is wired: both modules apply `maven-publish`, group `fi.italeino.aidos.sdk`,
+artifacts renamed to `aidos-sdk-client`/`aidos-sdk-adapters` (Kotlin Multiplatform's default
+artifactId is the Gradle project name — "client"/"adapters" — so this needs an explicit rename),
+publishing to `https://maven.pkg.github.com/jsilvanus/aidos` per D-4. A new
+`.github/workflows/sdk-publish.yml` runs `gradle jvmTest` then `gradle publish` on push to `main`
+(paths `sdk/**`, `kernel/**`) or `workflow_dispatch`, versioning the same way
+`android-build-and-publish.yml` already versions the Agent APK (`0.1.0-build.<run>+<sha8>` — no
+real semver policy exists yet). Also fixed while wiring this: `:kernel` and `:client` were
+`implementation` dependencies in `adapters/build.gradle.kts`, but both appear in public
+constructor/supertype signatures (`ModelAdapter`, `ModelRequest`/`ModelResponse`,
+`AidosEngineClient`) — `implementation` would have left them off a consumer's compile classpath
+while still pulling them in at runtime. Both are `api` now.
+
+**Open caveat, not fixed here because it's a decision, not a bug:** `:kernel` is never published —
+by design, per RFC-0103 ("frozen contract types... depended on by everything, depends on none,"
+source-included everywhere). Generating `aidos-sdk-adapters`'s POM locally shows exactly what that
+means for this artifact: its `:kernel` dependency resolves to
+`groupId=aidos-sdk, artifactId=kernel-jvm, version=unspecified` — Gradle's placeholder for a
+subproject that never declared its own coordinates, referencing nothing that exists on GitHub
+Packages. A consumer *inside* this monorepo (Agent, this SDK itself) never notices, since it also
+source-includes `:kernel` and never touches the published POM. A genuinely external consumer
+(Dictator) resolving `aidos-sdk-adapters` alone from GitHub Packages will hit an unresolvable
+dependency. Publishing `:kernel` too (giving it real coordinates) or vendoring its types into this
+artifact would fix it; neither is done pending an explicit decision on what "kernel is never
+published" should mean once something that depends on it is.
 
 - New module `sdk/adapters/`, published as `aidos-sdk-adapters`, depending on `:kernel` and on
   `aidos-sdk-client`. The `ModelAdapter` implementations for LLM, embedding, and STT move here —

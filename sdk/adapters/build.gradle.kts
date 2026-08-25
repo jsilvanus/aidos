@@ -1,12 +1,17 @@
 plugins {
     kotlin("multiplatform")
     id("com.android.library")
+    id("maven-publish")
 }
 
 kotlin {
     jvmToolchain(21)
 
-    androidTarget()
+    androidTarget {
+        // Required for the Android target to get a Maven publication at all (Dictator plan S3) —
+        // without it, `publishing {}` below silently has nothing to publish for this target.
+        publishLibraryVariants("release")
+    }
     jvm()
 
     applyDefaultHierarchyTemplate()
@@ -20,9 +25,12 @@ kotlin {
             dependencies {
                 // RFC-0103 MVP item 5: the ModelAdapter bindings, which necessarily depend on
                 // :kernel — the reason this is a separate artifact from :client (Dictator plan
-                // D-1).
-                implementation(project(":kernel"))
-                implementation(project(":client"))
+                // D-1). `api`, not `implementation`, for both: ModelAdapter/ModelRequest/
+                // ModelResponse (kernel) and AidosEngineClient (client) all appear directly in
+                // this module's public class signatures (EngineLocalModelAdapter etc.), so a
+                // consumer needs them on its own compile classpath, not just at runtime.
+                api(project(":kernel"))
+                api(project(":client"))
 
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -50,5 +58,39 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+}
+
+group = "fi.italeino.aidos.sdk"
+// Dictator plan D-4 — see sdk/client/build.gradle.kts's identical comment.
+version = (findProperty("aidosSdkVersion") as String?) ?: "0.1.0"
+
+publishing {
+    // See sdk/client/build.gradle.kts: renames each target's default artifactId ("adapters",
+    // "adapters-jvm", ...) to the aidos-sdk-adapters name the plan specifies.
+    //
+    // Caveat this doesn't fix: this module's published POM/module metadata will reference
+    // :kernel by kernel's own group/artifactId/version (Gradle's normal project-dependency
+    // substitution) — but kernel itself is deliberately never published (RFC-0103: source-included
+    // everywhere, "frozen contract types... depended on by everything, depends on none"). A
+    // consumer *inside* this monorepo never notices, since it also source-includes :kernel. A
+    // genuinely external consumer (Dictator) resolving aidos-sdk-adapters from GitHub Packages
+    // alone will get an unresolvable kernel coordinate. Publishing :kernel too, or vendoring its
+    // types into this artifact, would fix it; neither is done here since it wasn't asked for and
+    // changes what "kernel is never published" means project-wide — worth a decision, not a
+    // silent default.
+    publications.withType<MavenPublication>().configureEach {
+        artifactId = artifactId.replace(project.name, "aidos-sdk-${project.name}")
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/jsilvanus/aidos")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: "token"
+                password = System.getenv("GITHUB_TOKEN") ?: ""
+            }
+        }
     }
 }
