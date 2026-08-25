@@ -8,12 +8,15 @@ import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Turn
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import java.io.File
 
 /**
@@ -69,49 +72,75 @@ class LlamaCppAdapter(
      * Run inference and return the generalized RFC-0022 response shape.
      * Text and tool calls are separate ordered ModelOutput values; model identity and usage
      * remain attached to the response rather than being encoded in output types.
+     *
+     * Implemented in terms of [invokeStreaming] rather than its own generation loop, so there is
+     * exactly one place that walks `model.generate()`'s token iterator (RFC-0021 "Streaming";
+     * Dictator plan S4). Before this, [invoke] buffered every token into one string before
+     * returning, which is where the *actual* streaming problem lived: Engine's SSE endpoint could
+     * only ever start emitting after generation had already finished, whatever the transport did.
      */
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
-        if (closed) {
-            return Result.failure(
-                IllegalStateException("Model $modelId was unloaded; reload before invoking again")
+        var finalResponse: ModelResponse? = null
+        try {
+            invokeStreaming(request).collect { event ->
+                if (event is ModelStreamEvent.Done) finalResponse = event.response
+                if (event is ModelStreamEvent.Failed) throw event.error
+            }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = finalResponse
+            ?: return Result.failure(
+                IllegalStateException("Generation stream for $modelId completed without a result")
             )
+        return Result.success(response)
+    }
+
+    /** Real token-by-token streaming — see [invoke]'s KDoc for why it now delegates here. */
+    override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+        if (closed) {
+            emit(ModelStreamEvent.Failed(
+                IllegalStateException("Model $modelId was unloaded; reload before invoking again")
+            ))
+            return@flow
         }
 
-        return try {
+        try {
             val prompt = formatPrompt(request.messages)
 
             if (request.tools.isNotEmpty()) {
                 compileToolGrammar(request.tools)
             }
 
-            val output = buildString {
-                val tokens = model.generate(prompt, InferenceParameters()).iterator()
-                var tokenCount = 0
+            val output = StringBuilder()
+            val tokens = model.generate(prompt, InferenceParameters()).iterator()
+            var tokenCount = 0
 
-                while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
-                    val token = tokens.next()
-                    append(token.text)
-                    tokenCount++
+            while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
+                val token = tokens.next()
+                output.append(token.text)
+                tokenCount++
+                emit(ModelStreamEvent.Delta(token.text))
 
-                    if (shouldStop(toString(), request.stopConditions)) break
-                }
+                if (shouldStop(output.toString(), request.stopConditions)) break
             }
 
+            val finalText = output.toString()
             val toolCalls = if (request.tools.isNotEmpty()) {
-                extractToolCalls(output, request.tools)
+                extractToolCalls(finalText, request.tools)
             } else {
                 emptyList()
             }
 
             val stopReason = when {
-                estimateTokens(output) >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                shouldStop(output, request.stopConditions) -> StopReason.STOP_SEQUENCE
+                estimateTokens(finalText) >= request.maxOutputTokens -> StopReason.MAX_TOKENS
+                shouldStop(finalText, request.stopConditions) -> StopReason.STOP_SEQUENCE
                 toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                 else -> StopReason.END_TURN
             }
 
             val inputTokens = estimateTokens(prompt)
-            val outputTokens = estimateTokens(output)
+            val outputTokens = estimateTokens(finalText)
             val usage = Usage(
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
@@ -119,20 +148,20 @@ class LlamaCppAdapter(
             )
 
             val outputs = buildList {
-                if (output.isNotEmpty()) add(TextOutput(output))
+                if (finalText.isNotEmpty()) add(TextOutput(finalText))
                 toolCalls.forEach { add(ToolCallOutput(it)) }
             }
 
-            Result.success(
+            emit(ModelStreamEvent.Done(
                 ModelResponse(
                     outputs = outputs,
                     stopReason = stopReason,
                     usage = usage,
                     model = ModelRef(modelId, modelVersion),
                 )
-            )
+            ))
         } catch (e: Exception) {
-            Result.failure(e)
+            emit(ModelStreamEvent.Failed(e))
         }
     }
 
@@ -166,6 +195,7 @@ class LlamaCppAdapter(
     private fun renderBlock(block: ContentBlock): String = when (block) {
         is ContentBlock.Text -> block.text
         is ContentBlock.Image -> "[Image: ${block.mimeType}]"
+        is ContentBlock.Audio -> "[Audio: ${block.mimeType}]"
         is ContentBlock.ResourceRef -> "[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]"
     }
 
@@ -179,13 +209,7 @@ class LlamaCppAdapter(
                 }
                 is Turn.User -> {
                     prompt.append("User: ")
-                    for (block in turn.content) {
-                        when (block) {
-                            is ContentBlock.Text -> prompt.append(block.text)
-                            is ContentBlock.Image -> prompt.append("[Image: ${block.mimeType}]")
-                            is ContentBlock.ResourceRef -> prompt.append("[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]")
-                        }
-                    }
+                    for (block in turn.content) prompt.append(renderBlock(block))
                     prompt.append("\n")
                 }
                 is Turn.Assistant -> {
@@ -195,13 +219,7 @@ class LlamaCppAdapter(
                 }
                 is Turn.ToolResult -> {
                     prompt.append("Tool result: ")
-                    for (block in turn.result.content) {
-                        when (block) {
-                            is ContentBlock.Text -> prompt.append(block.text)
-                            is ContentBlock.Image -> prompt.append("[Image: ${block.mimeType}]")
-                            is ContentBlock.ResourceRef -> prompt.append("[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]")
-                        }
-                    }
+                    for (block in turn.result.content) prompt.append(renderBlock(block))
                     prompt.append("\n")
                 }
             }

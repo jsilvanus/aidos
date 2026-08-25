@@ -1,8 +1,5 @@
 package fi.italeino.aidos.engine.ui
 
-import androidx.compose.ui.graphics.Color
-import androidx.compose.material3.MaterialTheme
-
 /**
  * UI data models for Aidos Engine screens (RFC-0103, Phase D).
  *

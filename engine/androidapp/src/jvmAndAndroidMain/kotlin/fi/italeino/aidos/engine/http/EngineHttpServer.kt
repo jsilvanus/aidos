@@ -32,15 +32,27 @@ class EngineHttpServer(
 
     fun start() {
         server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
-            setupContentNegotiation()
-            setupAuthentication()
-            setupRouting()
+            installInto(this)
         }.start(wait = false)
     }
 
     fun stop() {
         server?.stop(1000, 2000)
         server = null
+    }
+
+    /**
+     * Installs content negotiation, bearer auth, and routing onto [application] — factored out
+     * of [start] so tests can mount the real handlers via Ktor's `testApplication` instead of
+     * duplicating routing/auth setup per test (as the pre-S4 test suite did, which meant it never
+     * actually exercised this class's own code).
+     */
+    internal fun installInto(application: Application) {
+        with(application) {
+            setupContentNegotiation()
+            setupAuthentication()
+            setupRouting()
+        }
     }
 
     private fun Application.setupContentNegotiation() {
@@ -145,6 +157,11 @@ class EngineHttpServer(
                 stopConditions = emptyList()
             )
 
+            if (request.stream) {
+                streamChatCompletions(call, adapter, modelRequest, request.model)
+                return
+            }
+
             val inferenceResult = adapter.invoke(modelRequest)
             if (inferenceResult.isFailure) {
                 call.respond(HttpStatusCode.InternalServerError, ErrorResponse(ErrorDetail(inferenceResult.exceptionOrNull()?.message ?: "Inference failed", "inference_error")))
@@ -153,42 +170,50 @@ class EngineHttpServer(
 
             val response = inferenceResult.getOrThrow()
             val text = response.outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
-            val toolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.toolCall }
+            val toolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }
 
-            if (request.stream) {
-                streamChatCompletions(call, response, request.model, text)
-            } else {
-                val message = ChatMessage(
-                    role = "assistant",
-                    content = text,
-                    tool_calls = toolCalls.map { tc ->
-                        ToolCall(
-                            id = tc.callId,
-                            function = ToolFunctionCall(tc.toolName, tc.arguments.toString())
-                        )
-                    }
-                )
-
-                val usage = response.usage
-                val chatResponse = ChatCompletionResponse(
-                    id = "chatcmpl-${UUID.randomUUID()}",
-                    created = System.currentTimeMillis() / 1000,
-                    model = request.model,
-                    choices = listOf(Choice(0, message, response.stopReason?.name?.lowercase())),
-                    usage = TokenUsage(
-                        prompt_tokens = usage?.inputTokens ?: 0,
-                        completion_tokens = usage?.outputTokens ?: 0,
-                        total_tokens = usage?.totalTokens ?: 0
+            val message = ChatMessage(
+                role = "assistant",
+                content = text,
+                tool_calls = toolCalls.map { tc ->
+                    ToolCall(
+                        id = tc.callId,
+                        function = ToolFunctionCall(tc.toolName, tc.arguments.toString())
                     )
+                }
+            )
+
+            val usage = response.usage
+            val chatResponse = ChatCompletionResponse(
+                id = "chatcmpl-${UUID.randomUUID()}",
+                created = System.currentTimeMillis() / 1000,
+                model = request.model,
+                choices = listOf(Choice(0, message, response.stopReason?.name?.lowercase())),
+                usage = TokenUsage(
+                    prompt_tokens = usage?.inputTokens ?: 0,
+                    completion_tokens = usage?.outputTokens ?: 0,
+                    total_tokens = usage?.totalTokens ?: 0
                 )
-                call.respond(chatResponse)
-            }
+            )
+            call.respond(chatResponse)
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
     }
 
-    private suspend fun streamChatCompletions(call: ApplicationCall, response: ModelResponse, modelId: String, responseText: String) {
+    /**
+     * Streams real per-token deltas from [ModelAdapter.invokeStreaming] as SSE frames (RFC-0021
+     * "Streaming"; Dictator plan S4) — unlike the previous implementation, which called the
+     * non-streaming [ModelAdapter.invoke], waited for the complete response, and only then chopped
+     * it into fake chunks. Time-to-first-token now reflects real generation, not full-response
+     * latency.
+     */
+    private suspend fun streamChatCompletions(
+        call: ApplicationCall,
+        adapter: ModelAdapter,
+        modelRequest: ModelRequest,
+        modelId: String
+    ) {
         val completionId = "chatcmpl-${UUID.randomUUID()}"
 
         call.response.header(HttpHeaders.ContentType, ContentType.Text.EventStream.toString())
@@ -196,24 +221,39 @@ class EngineHttpServer(
         call.response.header(HttpHeaders.Connection, "keep-alive")
 
         call.respondBytesWriter(status = HttpStatusCode.OK) {
-            val tokens = responseText.split(Regex("(?<=\\s)|(?=\\s)")).filter { it.isNotEmpty() }
-            for (token in tokens) {
-                val chunk = ChatCompletionChunk(
-                    id = completionId,
-                    created = System.currentTimeMillis() / 1000,
-                    model = modelId,
-                    choices = listOf(ChunkChoice(0, ChunkDelta(content = token), null))
-                )
-                writeStringUtf8("data: ${Json.encodeToString(chunk)}\n\n")
-                flush()
+            adapter.invokeStreaming(modelRequest).collect { event ->
+                when (event) {
+                    is ModelStreamEvent.Delta -> {
+                        val chunk = ChatCompletionChunk(
+                            id = completionId,
+                            created = System.currentTimeMillis() / 1000,
+                            model = modelId,
+                            choices = listOf(ChunkChoice(0, ChunkDelta(content = event.text), null))
+                        )
+                        writeStringUtf8("data: ${Json.encodeToString(chunk)}\n\n")
+                        flush()
+                    }
+                    is ModelStreamEvent.Done -> {
+                        val finalChunk = ChatCompletionChunk(
+                            id = completionId,
+                            created = System.currentTimeMillis() / 1000,
+                            model = modelId,
+                            choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), event.response.stopReason?.name?.lowercase()))
+                        )
+                        writeStringUtf8("data: ${Json.encodeToString(finalChunk)}\n\n")
+                    }
+                    is ModelStreamEvent.Failed -> {
+                        // Headers and a 200 status are already committed by the time streaming can
+                        // fail mid-generation, so there is no clean HTTP error to fall back to —
+                        // send the error as its own SSE frame instead of silently truncating the
+                        // stream, then still terminate with [DONE] below so a client's SSE parser
+                        // doesn't hang waiting for a terminator that never comes.
+                        writeStringUtf8(
+                            "data: ${Json.encodeToString(ErrorResponse(ErrorDetail(event.error.message ?: "Inference failed", "inference_error")))}\n\n"
+                        )
+                    }
+                }
             }
-            val finalChunk = ChatCompletionChunk(
-                id = completionId,
-                created = System.currentTimeMillis() / 1000,
-                model = modelId,
-                choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), response.stopReason?.name?.lowercase()))
-            )
-            writeStringUtf8("data: ${Json.encodeToString(finalChunk)}\n\n")
             writeStringUtf8("data: [DONE]\n\n")
             flush()
         }
@@ -260,7 +300,7 @@ class EngineHttpServer(
             val modelRequest = ModelRequest(
                 messages = listOf(
                     Turn.System(request.prompt ?: "Transcribe audio"),
-                    Turn.User(listOf(ContentBlock.Image("audio/wav", audioBytes)), TrustLevel.TRUSTED)
+                    Turn.User(listOf(ContentBlock.Audio("audio/wav", audioBytes)), TrustLevel.TRUSTED)
                 ),
                 tools = emptyList(),
                 toolChoice = ToolChoice.None,

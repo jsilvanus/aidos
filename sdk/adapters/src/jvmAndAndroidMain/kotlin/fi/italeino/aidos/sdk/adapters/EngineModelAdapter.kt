@@ -1,4 +1,4 @@
-package fi.italeino.aidos.sdk
+package fi.italeino.aidos.sdk.adapters
 
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRequest
@@ -7,6 +7,7 @@ import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.StopReason
+import fi.italeino.aidos.sdk.client.AidosEngineClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -16,7 +17,18 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 
 /**
- * ModelAdapter implementation that routes model inference to Aidos Engine (RFC-0103, Phase C.3).
+ * `ModelAdapter` implementations that route model inference to Aidos Engine through Aidos SDK's
+ * client (RFC-0103 MVP item 5). Published as `aidos-sdk-adapters` (Dictator plan D-1) — the
+ * artifact that depends on `:kernel`, separate from `aidos-sdk-client`, so a consumer that only
+ * wants chat/embeddings/transcription without Aidos's frozen contract types can skip this one.
+ *
+ * A consuming app's routing layer (e.g. `agent/routing`'s `PolicyInferenceRouter`) constructs
+ * these against an already-initialized `AidosEngineClient` and adds them to its adapter list —
+ * the same local/remote symmetry RFC-0021 gives every other `ModelAdapter`.
+ */
+
+/**
+ * Routes model inference to Aidos Engine's `/v1/chat/completions` (RFC-0103).
  *
  * This adapter:
  * - Converts kernel ModelRequest to OpenAI-compatible HTTP JSON
@@ -26,7 +38,7 @@ import kotlinx.serialization.json.jsonArray
  *
  * Used when Engine is available and client wants to use Engine's local models.
  */
-internal class EngineLocalModelAdapter(
+class EngineLocalModelAdapter(
     private val client: AidosEngineClient,
     modelId: String
 ) : ModelAdapter {
@@ -124,17 +136,17 @@ internal class EngineLocalModelAdapter(
     private fun convertHttpResponseToKernel(responseBody: String): ModelResponse {
         try {
             val json = Json.parseToJsonElement(responseBody).jsonObject
-            
+
             val text = json["choices"]?.jsonArray?.firstOrNull()
                 ?.jsonObject?.get("message")?.jsonObject?.get("content")
                 ?.let { it as? JsonPrimitive }?.content ?: ""
 
             val usage = json["usage"]?.jsonObject
-            val inputTokens = usage?.get("prompt_tokens")?.let { 
-                (it as? JsonPrimitive)?.content?.toIntOrNull() 
+            val inputTokens = usage?.get("prompt_tokens")?.let {
+                (it as? JsonPrimitive)?.content?.toIntOrNull()
             } ?: 0
-            val outputTokens = usage?.get("completion_tokens")?.let { 
-                (it as? JsonPrimitive)?.content?.toIntOrNull() 
+            val outputTokens = usage?.get("completion_tokens")?.let {
+                (it as? JsonPrimitive)?.content?.toIntOrNull()
             } ?: 0
 
             return ModelResponse(
@@ -154,11 +166,9 @@ internal class EngineLocalModelAdapter(
 }
 
 /**
- * ModelAdapter implementation for embedding inference via Aidos Engine (RFC-0103, Phase C.3).
- *
- * Routes embedding requests to Engine's /v1/embeddings endpoint.
+ * Routes embedding inference to Aidos Engine's `/v1/embeddings` (RFC-0103).
  */
-internal class EngineEmbeddingAdapter(
+class EngineEmbeddingAdapter(
     private val client: AidosEngineClient,
     modelId: String
 ) : ModelAdapter {
@@ -182,7 +192,7 @@ internal class EngineEmbeddingAdapter(
             // Extract text from request
             val text = request.messages.firstOrNull()?.let { turn ->
                 when (turn) {
-                    is dev.aidos.kernel.Turn.User -> 
+                    is dev.aidos.kernel.Turn.User ->
                         turn.content.filterIsInstance<dev.aidos.kernel.ContentBlock.Text>()
                             .joinToString(" ") { it.text }
                     else -> ""
@@ -227,11 +237,9 @@ internal class EngineEmbeddingAdapter(
 }
 
 /**
- * ModelAdapter implementation for speech-to-text via Aidos Engine (RFC-0103, Phase C.3).
- *
- * Routes transcription requests to Engine's /v1/audio/transcriptions endpoint.
+ * Routes speech-to-text inference to Aidos Engine's `/v1/audio/transcriptions` (RFC-0103).
  */
-internal class EngineTranscriptionAdapter(
+class EngineTranscriptionAdapter(
     private val client: AidosEngineClient,
     modelId: String
 ) : ModelAdapter {
@@ -256,7 +264,7 @@ internal class EngineTranscriptionAdapter(
             val audioBlock = request.messages.firstOrNull()?.let { turn ->
                 when (turn) {
                     is dev.aidos.kernel.Turn.User ->
-                        turn.content.filterIsInstance<dev.aidos.kernel.ContentBlock.Image>().firstOrNull()
+                        turn.content.filterIsInstance<dev.aidos.kernel.ContentBlock.Audio>().firstOrNull()
                     else -> null
                 }
             }
@@ -306,11 +314,11 @@ internal class EngineTranscriptionAdapter(
 }
 
 /**
- * Fallback adapter used when Aidos Engine is unavailable (RFC-0103, Phase C.3).
+ * Fallback adapter used when Aidos Engine is unavailable (RFC-0103).
  *
  * Returns an appropriate error to the caller, allowing graceful degradation.
  */
-internal class EngineUnavailableAdapter(
+class EngineUnavailableAdapter(
     private val reason: String = "Aidos Engine is not available"
 ) : ModelAdapter {
     override val providerId: String = "aidos-engine-unavailable"

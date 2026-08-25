@@ -20,6 +20,11 @@ types when the SDK's own surface falls short.
 ## What is actually built today
 
 Established by reading the code on `main` at `1a28dc6`, not by reading status lines.
+**Superseded by the Status lines on each phase below as of 2026-08-24** — S0 and S1 turned out to
+already be done by the time this plan's SDK work started, and S2/S3 have since had real code
+land. This section is kept as the historical baseline the phases were written against; check the
+phase Status lines for current state, not this section, per the same "don't trust a status line
+over the code" rule CLAUDE.md/lessons.md apply everywhere else.
 
 **Engine is real.** `engine/androidapp` has a working Binder surface
 (`IEngineHandshake.aidl`, `EngineHandshakeImpl`), a Ktor server bound to `127.0.0.1` with bearer
@@ -130,6 +135,9 @@ finished when the condition holds.
 
 ### S0 · The SDK compiles
 
+**Status (2026-08-24): Done.** Kotlin 2.4.10, the serialization plugin, and a `jvm()` target were
+all already in place before this plan's SDK work started; `gradle jvmTest` is green.
+
 The smallest change that turns `build-sdk` green, so every later phase has a baseline.
 
 - Close the brace in `EngineModelAdapter.kt`.
@@ -143,6 +151,14 @@ The smallest change that turns `build-sdk` green, so every later phase has a bas
 *Done when:* `cd sdk && gradle build` succeeds, and the `build-sdk` CI job is green.
 
 ### S1 · User approval becomes reachable
+
+**Status (2026-08-24): Done**, all of it, before this plan's SDK work started: the permission is
+`protectionLevel="normal"` with the exact rationale below already in RFC-0103's Trust model
+section (the contradictory `signature`-only passages quoted below are gone), and
+`EngineHandshakeImpl.buildApprovedResult()` already builds `capabilities.models` from
+`modelRuntime.catalog()`, not a hardcoded placeholder list. Device-level verification of the
+*done when* condition (a differently-signed app actually transitioning PENDING → APPROVED) is
+still outstanding — nothing here confirms that end-to-end on hardware.
 
 - `protectionLevel="signature"` → `"normal"` on `fi.italeino.aidos.engine.HANDSHAKE`. The
   permission stays declared, so it remains visible and inspectable in a caller's manifest ("this
@@ -165,7 +181,19 @@ PENDING on ConnectedAppsScreen, and transitions to APPROVED after the user taps 
 
 ### S2 · The SDK client becomes real
 
-New module `sdk/client/`, published as `aidos-sdk-client`. No `kernel` dependency.
+**Status (2026-08-24): Done**, module split included. `sdk/client/` exists with no `:kernel`
+dependency; the handshake models all statuses as a sealed `HandshakeOutcome` (`PendingApproval`
+surfaces its `PendingIntent` via the Android-only `AndroidEngineClient.pendingApprovalIntent()`,
+kept off the shared interface since `PendingIntent` doesn't exist on `jvm()`); the `<queries>`
+entry for Android 11+ package visibility is in the client's manifest; transport is OkHttp with
+401-triggered re-handshake-and-retry (fixing, in passing, a pre-existing bug where the
+`Authorization` header sent the literal string `"******"` instead of the real token); all three
+endpoints have typed methods plus a `streamChatCompletion(): Flow<ChatCompletionChunk>` backed by
+an `SseFrameParser`; `EngineAvailability` is the structured degradation signal the "one signal"
+bullet below asks for. 16 tests pass on `jvm()`, including MockWebServer-backed coverage of the
+401 retry and SSE paths, not just pure parsing. Not done: the actual device-level "streams
+token-by-token from a real Engine" verification in the *done when* line — that needs S4 anyway,
+since Engine still buffers the full response before framing it (see S4).
 
 - **Handshake.** Copy `IEngineHandshake.aidl` into the SDK, `bindService` against
   `fi.italeino.aidos.engine/.EngineService`, and model all three response states as a sealed
@@ -206,6 +234,56 @@ a real Engine on a device.
 
 ### S3 · Adapters artifact and publishing
 
+**Status (2026-08-25): Done**, with one open caveat below. The module split landed as part of S2
+above: `sdk/adapters/` exists, depends on `:kernel` and `:client`, and its `ModelAdapter` classes
+are public (they were `internal` pre-split, which would have made them unreachable from outside
+`sdk/` even after publishing). `EngineTranscriptionAdapter` is also fixed: `ContentBlock` gained a
+proper `Audio(mimeType, data)` case (kernel change, RFC-0021's `ContentBlock` sealed interface),
+and both the adapter and Engine's own `handleTranscriptions` (which fed it the `ContentBlock.Image`
+audio/wav hack in the first place) now use it.
+
+Maven publishing is wired: both modules apply `maven-publish`, group `fi.italeino.aidos.sdk`,
+artifacts renamed to `aidos-sdk-client`/`aidos-sdk-adapters` (Kotlin Multiplatform's default
+artifactId is the Gradle project name — "client"/"adapters" — so this needs an explicit rename),
+publishing to `https://maven.pkg.github.com/jsilvanus/aidos` per D-4. A new
+`.github/workflows/sdk-publish.yml` runs `gradle jvmTest` then `gradle publish` on push to `main`
+(paths `sdk/**`, `kernel/**`) or `workflow_dispatch`, versioning the same way
+`android-build-and-publish.yml` already versions the Agent APK (`0.1.0-build.<run>+<sha8>` — no
+real semver policy exists yet). Also fixed while wiring this: `:kernel` and `:client` were
+`implementation` dependencies in `adapters/build.gradle.kts`, but both appear in public
+constructor/supertype signatures (`ModelAdapter`, `ModelRequest`/`ModelResponse`,
+`AidosEngineClient`) — `implementation` would have left them off a consumer's compile classpath
+while still pulling them in at runtime. Both are `api` now.
+
+**Caveat above: resolved (2026-08-25).** Per D-1, Dictator only ever consumes `aidos-sdk-client`,
+which has no `:kernel` dependency at all — so this never actually blocked Dictator. It matters only
+if something publishes-consumes `aidos-sdk-adapters` from outside the monorepo, which isn't
+Dictator's plan today but was worth closing rather than leaving latent. Decision taken: publish
+`:kernel` too, with real coordinates (`kernel/build.gradle.kts` now applies `maven-publish`, group
+`fi.italeino.aidos`, same `aidosSdkVersion` property/default as the other two so a single
+`gradle publish -PaidosSdkVersion=...` run — kernel is included into the `sdk/` build graph per
+`sdk/settings.gradle.kts` — publishes matching coordinates for all three). No artifactId rename;
+`fi.italeino.aidos:kernel-jvm` is distinct enough as-is. This does **not** change that `:kernel` is
+still source-included by path everywhere in-monorepo (Agent, Engine, this SDK) — RFC-0103's
+"depended on by everything, depends on none" holds; publishing only adds a second, external path to
+the same frozen contract types. Verified locally: `aidos-sdk-adapters-jvm`'s generated POM now
+declares `fi.italeino.aidos:kernel-jvm:<version>` instead of the
+`groupId=aidos-sdk/version=unspecified` placeholder, and publishing all three JVM-target artifacts
+to `mavenLocal` in dependency order (kernel → client → adapters) succeeds, resolving each other by
+those coordinates. Android-target publishing remains unverifiable in this sandbox (no Android SDK —
+`gradle publish` fails at `:adapters:extractReleaseAnnotations` needing `assembleRelease`), same
+constraint as every other Android-target task on this branch.
+
+**Package namespace left alone.** A related but separate question — whether kernel's Kotlin package
+(`dev.aidos.kernel`) should also move to `fi.italeino.aidos.kernel` now that it's externally
+published — was considered and deliberately not done: 140 files across `agent/` (94), `engine/`
+(27), `kernel/` itself (18), and `sdk/` (1) import `dev.aidos.kernel.*`. It's a mechanical rename,
+not a design change, but it touches nearly the whole codebase for a purely cosmetic win — Maven
+coordinates and Kotlin package names are independent (`sdk/adapters` already proves this, publishing
+under package `fi.italeino.aidos.sdk.adapters` while depending on `dev.aidos.kernel.*` types without
+friction). Revisit only if the split namespace becomes an actual practical problem, not on
+principle.
+
 - New module `sdk/adapters/`, published as `aidos-sdk-adapters`, depending on `:kernel` and on
   `aidos-sdk-client`. The `ModelAdapter` implementations for LLM, embedding, and STT move here —
   satisfying RFC-0103 MVP item 5 without imposing `kernel` on third-party consumers.
@@ -220,7 +298,21 @@ depend on `aidos-sdk-adapters` without a source dependency on `sdk/`.
 
 ### S4 · Engine streams for real
 
-`EngineHttpServer.streamChatCompletions(call, response, modelId)` takes an **already-complete**
+**Status (2026-08-24): Done.** `ModelAdapter` gained an `invokeStreaming()` method (default
+implementation falls back to `invoke()`, so every existing adapter — `AnthropicAdapter`, the SDK's
+own `EngineLocalModelAdapter`, test fakes — keeps compiling unchanged); `LlamaCppAdapter` overrides
+it with the real per-token loop it already had internally (it was iterating `model.generate()`'s
+tokens one at a time and only *buffering* them before this — the token-by-token JNI callback was
+never the bottleneck), and `invoke()` is now implemented in terms of it rather than duplicating the
+generation loop. `EngineHttpServer.streamChatCompletions` calls `invokeStreaming()` directly instead
+of chopping an already-complete response. Verified against the real llama.cpp binding via the
+checked-in ROT13 GGUF fixture (`engine/modelruntime`'s `GgufRot13FixtureTest`), not just mocked —
+`invokeStreaming()` now has its own passing test alongside the existing `invoke()` one. Not
+verified: the *done when* line's "first SSE frame arrives measurably before generation completes,
+on a device with a real model" — that needs an actual multi-token production model and a device,
+neither available in this sandbox.
+
+`EngineHttpServer.streamChatCompletions(call, response, modelId)` used to take an **already-complete**
 `ModelResponse` and splits `response.text` on whitespace after generation has finished. The SSE
 framing is correct and the chunks are well-formed, but time-to-first-token equals full generation
 time. On a phone-sized model that is the difference between a chat panel that feels alive and one
@@ -327,3 +419,29 @@ needs to be walked on a real device, not reasoned about.
 **Dictator's web app is out of scope by construction**, and this should not be re-litigated later:
 the SDK reaches Engine over `127.0.0.1` on the same device, which a Next.js server cannot do.
 `lib/ai/providers/` is unaffected by every phase here.
+
+**~~`engine/androidapp`'s `jvmTest` cannot currently exercise `EngineHttpServer` at all~~ — fixed.**
+Originally found while verifying S4: `EngineHttpServer`, `TokenManager`, and the OpenAI-shaped
+request/response types (`OpenAiSchema.kt`) were declared only in `androidMain`, and `jvm()`/
+`androidTarget()` are separate KMP compilation targets, so `jvmTest` couldn't see them regardless
+of dependency wiring — confirmed by a clean-baseline `git stash` comparison at the time. Fixed the
+same shape as `sdk/client`'s split: `EngineHttpServer`, `OpenAiSchema.kt`, `TokenManager`, and
+`AppApprovalStore` (interface + `AppApprovalRecord`/`AppApprovalStatus` — none of it Android-only)
+moved into a new `jvmAndAndroidMain` source set; `AppApprovalManager` and
+`EncryptedAppApprovalStore` (genuinely Android-only: `PendingIntent`, `Context`,
+`EncryptedSharedPreferences`) stayed in `androidMain`, which now `dependsOn` the shared source set.
+`UiModels.kt` moved too — its two Compose imports (`Color`, `MaterialTheme`) turned out to be
+unused, so the whole file was already portable.
+
+Doing the move surfaced real, previously-uncaught bugs, exactly because this code had never
+compiled on any target before: `EngineHttpServer` read `ToolCallOutput.toolCall`, a property that
+doesn't exist (kernel's field is `call`); the module never applied
+`kotlin("plugin.serialization")` despite `@Serializable` classes needing it (a runtime
+`SerializationException` waiting to happen, not a compile error, so nothing had caught it either);
+and both `EngineHttpServerTest.kt` and `HttpModelClientSerializationTest.kt`'s older tests asserted
+behavior and API shapes (`ChatCompletionResponse.firstContent`, a `Message` class, a
+"model name is required" 400 Engine doesn't actually send) that never matched the real code. All
+fixed; the scaffold-style tests that hand-rolled Ktor routing instead of testing
+`EngineHttpServer` directly were rewritten to use it via a new `EngineHttpServer.installInto()`.
+`gradle :androidapp:jvmTest` from `engine/` is green: 46 tests, 0 failures — this was the same
+suite reported red on `main` at the top of this document.

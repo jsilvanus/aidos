@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Aidos SDK client — no exported components.
+
+         Declares the handshake permission so consuming apps don't each have to add it
+         themselves (RFC-0103, "Trust model"): `normal` protection, so holding it grants nothing
+         beyond the ability to bind Engine's handshake service — the actual gate is Engine's own
+         per-caller approval check, not this permission. Manifest merging carries this into every
+         app that depends on the SDK. -->
+    <uses-permission android:name="fi.italeino.aidos.engine.HANDSHAKE" />
+
+    <!-- Android 11+ (API 30) package-visibility filtering hides other apps' packages by default,
+         including from bindService()'s implicit-action resolution. Without this <queries> entry,
+         a consuming app targeting API 30+ cannot see or bind fi.italeino.aidos.engine's
+         EngineService even with the permission above — the bind silently fails to resolve rather
+         than throwing, which is easy to misdiagnose as "Engine not installed." Declared once here
+         so it merges into every consumer (Dictator plan S2), not each app's problem to remember. -->
+    <queries>
+        <package android:name="fi.italeino.aidos.engine" />
+    </queries>
+</manifest>

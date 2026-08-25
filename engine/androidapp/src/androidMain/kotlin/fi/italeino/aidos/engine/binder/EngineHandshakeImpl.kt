@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.binder
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Binder
+import android.os.Bundle
 import android.os.IBinder
 import fi.italeino.aidos.engine.HandshakeResult
 import fi.italeino.aidos.engine.approval.AppApprovalManager
@@ -32,22 +33,22 @@ class EngineHandshakeImpl(
     private val modelRuntime: dev.aidos.modelruntime.GlobalModelRuntime
 ) : fi.italeino.aidos.engine.IEngineHandshake.Stub() {
 
-    override fun performHandshake(): HandshakeResult {
+    override fun performHandshake(): Bundle {
         // Get the caller's package name
         val callerUid = Binder.getCallingUid()
         val callerPackageName = getPackageNameForUid(callerUid)
-        
+
         if (callerPackageName == null) {
-            return HandshakeResult(status = "DENIED")
+            return HandshakeResult(status = "DENIED").toBundle()
         }
-        
+
         // Check approval status. runBlocking is necessary because Binder calls
         // are synchronous but approvalManager uses coroutines.
         val approval = runBlocking {
             approvalManager.checkApproval(callerPackageName)
         }
-        
-        return when (approval) {
+
+        val result = when (approval) {
             is ApprovalDecision.Approved -> buildApprovedResult()
             is ApprovalDecision.Denied -> HandshakeResult(status = "DENIED")
             is ApprovalDecision.PendingApproval -> HandshakeResult(
@@ -55,6 +56,7 @@ class EngineHandshakeImpl(
                 deepLinkPendingIntent = approval.deepLinkIntent
             )
         }
+        return result.toBundle()
     }
     
     private fun buildApprovedResult(): HandshakeResult {

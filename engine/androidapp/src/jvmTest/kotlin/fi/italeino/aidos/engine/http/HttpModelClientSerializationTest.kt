@@ -4,17 +4,16 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
- * Unit tests for HttpModelClient serialization and response parsing (RFC-0103, Phase E).
+ * Unit tests for the OpenAI-compatible wire schema (OpenAiSchema.kt, RFC-0103).
  *
- * Tests cover:
- * - ChatMessage serialization
- * - ChatCompletionRequest JSON encoding
- * - ChatCompletionResponse JSON decoding
- * - TokenUsage calculations
- * - Error response handling
+ * Rewritten against the schema's actual shape: the previous version of this file asserted on
+ * members that don't exist (`ChatCompletionResponse.firstContent`/`.totalTokens`, a `Message`
+ * class, a no-arg `ChatCompletionResponse()`), which is why it's part of the same pre-existing
+ * jvmTest breakage docs/dictator-sdk-integration-plan.md's Risks section describes — it never
+ * compiled, so nothing caught the mismatch.
  */
 class HttpModelClientSerializationTest {
     private val json = Json {
@@ -30,9 +29,9 @@ class HttpModelClientSerializationTest {
             content = "Hello, how are you?"
         )
         val encoded = json.encodeToString(message)
-        
-        assert(encoded.contains("\"role\":\"user\""))
-        assert(encoded.contains("\"content\":\"Hello, how are you?\""))
+
+        assertTrue(encoded.contains("\"role\":\"user\""))
+        assertTrue(encoded.contains("\"content\":\"Hello, how are you?\""))
     }
 
     @Test
@@ -46,10 +45,10 @@ class HttpModelClientSerializationTest {
             max_tokens = 512
         )
         val encoded = json.encodeToString(request)
-        
-        assert(encoded.contains("\"model\":\"qwen2.5-3b\""))
-        assert(encoded.contains("\"max_tokens\":512"))
-        assert(encoded.contains("\"temperature\":0.7"))
+
+        assertTrue(encoded.contains("\"model\":\"qwen2.5-3b\""))
+        assertTrue(encoded.contains("\"max_tokens\":512"))
+        assertTrue(encoded.contains("\"temperature\":0.7"))
     }
 
     @Test
@@ -79,12 +78,12 @@ class HttpModelClientSerializationTest {
         """.trimIndent()
 
         val response = json.decodeFromString<ChatCompletionResponse>(responseJson)
-        
+
         assertEquals("chatcmpl-123", response.id)
         assertEquals("qwen2.5-3b", response.model)
         assertEquals(1, response.choices.size)
-        assertEquals("Hello! I'm doing great, thanks for asking.", response.firstContent)
-        assertEquals(25, response.totalTokens)
+        assertEquals("Hello! I'm doing great, thanks for asking.", response.choices.first().message.content)
+        assertEquals(25, response.usage.total_tokens)
     }
 
     @Test
@@ -94,7 +93,7 @@ class HttpModelClientSerializationTest {
             completion_tokens = 15,
             total_tokens = 25
         )
-        
+
         assertEquals(25, usage.total_tokens)
         assertEquals(10, usage.prompt_tokens)
         assertEquals(15, usage.completion_tokens)
@@ -104,32 +103,26 @@ class HttpModelClientSerializationTest {
     fun testChatCompletionResponseWithMultipleChoices() {
         val response = ChatCompletionResponse(
             id = "test-123",
+            created = 1234567890L,
             model = "test-model",
             choices = listOf(
                 Choice(
                     index = 0,
-                    message = Message(role = "assistant", content = "First response")
+                    message = ChatMessage(role = "assistant", content = "First response"),
+                    finish_reason = "stop"
                 ),
                 Choice(
                     index = 1,
-                    message = Message(role = "assistant", content = "Second response")
+                    message = ChatMessage(role = "assistant", content = "Second response"),
+                    finish_reason = "stop"
                 )
             ),
             usage = TokenUsage(prompt_tokens = 10, completion_tokens = 20, total_tokens = 30)
         )
-        
-        // Should return first choice's content
-        assertEquals("First response", response.firstContent)
-        assertEquals(30, response.totalTokens)
-    }
 
-    @Test
-    fun testEmptyChatCompletionResponse() {
-        val response = ChatCompletionResponse()
-        
-        assertEquals("", response.firstContent)
-        assertEquals(0, response.totalTokens)
-        assertTrue(response.choices.isEmpty())
+        assertEquals(2, response.choices.size)
+        assertEquals("First response", response.choices.first().message.content)
+        assertEquals(30, response.usage.total_tokens)
     }
 
     @Test
@@ -140,7 +133,7 @@ class HttpModelClientSerializationTest {
         )
         val encoded = json.encodeToString(message)
         val decoded = json.decodeFromString<ChatMessage>(encoded)
-        
+
         assertEquals(message.content, decoded.content)
     }
 
@@ -151,7 +144,7 @@ class HttpModelClientSerializationTest {
             completion_tokens = 50_000,
             total_tokens = 150_000
         )
-        
+
         assertEquals(150_000, usage.total_tokens)
     }
 }
