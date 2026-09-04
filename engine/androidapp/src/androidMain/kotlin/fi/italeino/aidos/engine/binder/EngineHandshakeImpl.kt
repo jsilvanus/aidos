@@ -70,7 +70,7 @@ class EngineHandshakeImpl(
         // Build capability list
         val catalog = runBlocking { modelRuntime.catalog() }
         val capabilities = Capabilities(
-            endpoints = listOf("chat.completions", "embeddings", "audio.transcriptions"),
+            endpoints = listOf("models", "chat.completions", "embeddings", "audio.transcriptions"),
             models = catalog.map { descriptor ->
                 ModelInfo(
                     id = descriptor.id,

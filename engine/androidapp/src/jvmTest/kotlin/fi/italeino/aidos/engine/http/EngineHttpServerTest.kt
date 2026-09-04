@@ -11,11 +11,13 @@ import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
+import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.testing.*
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.encodeToString
@@ -42,8 +44,12 @@ private val testJson = Json { encodeDefaults = true }
 class EngineHttpServerTest {
 
     private fun testServer(adapter: ModelAdapter = MockModelAdapter()): Pair<EngineHttpServer, TokenManager> {
+        return testServer(MockModelRuntime(adapter))
+    }
+
+    private fun testServer(runtime: ModelRuntime): Pair<EngineHttpServer, TokenManager> {
         val tokenManager = TokenManager()
-        val server = EngineHttpServer(tokenManager, MockModelRuntime(adapter))
+        val server = EngineHttpServer(tokenManager, runtime)
         return server to tokenManager
     }
 
@@ -69,6 +75,80 @@ class EngineHttpServerTest {
         }
 
         assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun models_requiresAuthentication() = testApplication {
+        val (server, _) = testServer()
+        application { server.installInto(this) }
+
+        val response = client.get("/v1/models")
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun models_returnsCatalogInstalledAndLoadedState() = testApplication {
+        val llmModel = ModelDescriptor(
+            id = "qwen2.5-3b-instruct-q4_k_m",
+            name = "Qwen 2.5 3B",
+            kind = ModelKind.LLM,
+            providerId = "huggingface",
+            isLocal = true,
+            contextWindow = 32768,
+            sizeBytes = 2_104_932_768L,
+            digest = "abc123"
+        )
+        val embeddingModel = ModelDescriptor(
+            id = "nomic-embed-text-v1.5",
+            name = "Nomic Embed Text",
+            kind = ModelKind.EMBEDDING,
+            providerId = "huggingface",
+            isLocal = true,
+            contextWindow = 2048,
+            sizeBytes = 77_802_880L,
+            digest = "def456"
+        )
+        val runtime = StaticModelRuntime(
+            catalogModels = listOf(llmModel, embeddingModel),
+            installedModels = listOf(llmModel),
+            loadedModels = listOf(llmModel.id)
+        )
+        val (server, tokenManager) = testServer(runtime)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.get("/v1/models") {
+            bearerAuth(token.token)
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"id\":\"qwen2.5-3b-instruct-q4_k_m\""))
+        assertTrue(body.contains("\"installed\":true"))
+        assertTrue(body.contains("\"loaded\":true"))
+        assertTrue(body.contains("\"quantization\":\"q4_k_m\""))
+        assertTrue(body.contains("\"id\":\"nomic-embed-text-v1.5\""))
+        assertTrue(body.contains("\"capabilities\":[\"embeddings\"]"))
+        assertTrue(body.contains("\"installed\":false"))
+    }
+
+    @Test
+    fun chatCompletions_invalidGgufReturnsBadRequestWithModelCode() = testApplication {
+        val runtime = FailingLoadRuntime("INVALID_GGUF: test-model")
+        val (server, tokenManager) = testServer(runtime)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "Hello")))))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"code\":\"invalid_model\""))
     }
 
     @Test
@@ -229,7 +309,39 @@ class EngineHttpServerTest {
             setBody(testJson.encodeToString(TranscriptionRequest(file = "", model = "unknown-model")))
         }
 
-        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun chatCompletions_returnsServiceUnavailableWhenInferenceQueueSaturated() = testApplication {
+        val adapter = BlockingModelAdapter()
+        val runtime = MockModelRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val tokenManager = TokenManager()
+        val server = EngineHttpServer(tokenManager, runtime, manager)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        kotlinx.coroutines.coroutineScope {
+            val first = async {
+                client.post("/v1/chat/completions") {
+                    bearerAuth(token.token)
+                    contentType(ContentType.Application.Json)
+                    setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "first")))))
+                }
+            }
+            kotlinx.coroutines.delay(50)
+
+            val second = client.post("/v1/chat/completions") {
+                bearerAuth(token.token)
+                contentType(ContentType.Application.Json)
+                setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "second")))))
+            }
+
+            assertEquals(HttpStatusCode.ServiceUnavailable, second.status)
+            adapter.release()
+            first.await()
+        }
     }
 
     @Test
@@ -355,4 +467,57 @@ class FailingStreamingModelAdapter(
         deltasBeforeFailure.forEach { emit(ModelStreamEvent.Delta(it)) }
         emit(ModelStreamEvent.Failed(failure))
     }
+}
+
+private class FailingLoadRuntime(private val errorMessage: String) : ModelRuntime {
+    override suspend fun catalog(): List<ModelDescriptor> = emptyList()
+    override suspend fun installed(): List<ModelDescriptor> = emptyList()
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        Result.failure(IllegalStateException(errorMessage))
+    override suspend fun unload(modelId: String) = Unit
+    override fun loaded(): List<String> = emptyList()
+}
+
+private class BlockingModelAdapter : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1.0"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+    private val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        gate.await()
+        return Result.success(
+            ModelResponse(
+                outputs = listOf(TextOutput("unblocked")),
+                stopReason = StopReason.END_TURN,
+                usage = Usage(1, 1, 2),
+                model = ModelRef(id = modelId, version = modelVersion)
+            )
+        )
+    }
+
+    fun release() {
+        gate.complete(Unit)
+    }
+}
+
+private class StaticModelRuntime(
+    private val catalogModels: List<ModelDescriptor>,
+    private val installedModels: List<ModelDescriptor>,
+    private val loadedModels: List<String>,
+) : ModelRuntime {
+    override suspend fun catalog(): List<ModelDescriptor> = catalogModels
+
+    override suspend fun installed(): List<ModelDescriptor> = installedModels
+
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        Result.failure(UnsupportedOperationException("not needed for /v1/models tests"))
+
+    override suspend fun unload(modelId: String) = Unit
+
+    override fun loaded(): List<String> = loadedModels
 }

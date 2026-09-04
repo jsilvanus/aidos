@@ -184,7 +184,11 @@ class EngineService : LifecycleService() {
                 if (isRunning) {
                     httpServer.stop()
                     httpClient.close()
-                    modelRuntime?.loaded()?.forEach { modelId -> modelRuntime?.unload(modelId) }
+                    httpServer.shutdownInference()
+                    modelRuntime?.loaded()?.forEach { modelId ->
+                        httpServer.waitUntilModelIdle(modelId)
+                        modelRuntime?.unload(modelId)
+                    }
                     tokenManager.clearTokens()
                     _isRunning = false
                 }

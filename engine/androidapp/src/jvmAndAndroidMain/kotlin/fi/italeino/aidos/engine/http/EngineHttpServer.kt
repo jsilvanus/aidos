@@ -2,6 +2,9 @@ package fi.italeino.aidos.engine.http
 
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
+import fi.italeino.aidos.engine.inference.EngineBusyException
+import fi.italeino.aidos.engine.inference.EngineShuttingDownException
+import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -17,6 +20,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Ktor HTTP server for Aidos Engine local inference (RFC-0103).
@@ -24,6 +28,7 @@ import java.util.*
 class EngineHttpServer(
     private val tokenManager: TokenManager,
     private val modelRuntime: ModelRuntime,
+    private val inferenceManager: InferenceRequestManager = InferenceRequestManager(modelRuntime),
     private val port: Int = 0
 ) {
     private var server: EmbeddedServer<*, *>? = null
@@ -40,6 +45,12 @@ class EngineHttpServer(
         server?.stop(1000, 2000)
         server = null
     }
+
+    suspend fun shutdownInference(timeoutMs: Long = 5_000L): Boolean =
+        inferenceManager.shutdownAndDrain(timeout = timeoutMs.milliseconds)
+
+    suspend fun waitUntilModelIdle(modelId: String, timeoutMs: Long = 5_000L): Boolean =
+        inferenceManager.waitUntilModelIdle(modelId = modelId, timeout = timeoutMs.milliseconds)
 
     /**
      * Installs content negotiation, bearer auth, and routing onto [application] — factored out
@@ -80,6 +91,7 @@ class EngineHttpServer(
         routing {
             get("/health") { call.respond(mapOf("status" to "ok")) }
             authenticate("bearerAuth") {
+                get("/v1/models") { handleModels(call) }
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
@@ -90,15 +102,6 @@ class EngineHttpServer(
     private suspend fun handleChatCompletions(call: ApplicationCall) {
         try {
             val request = call.receive<ChatCompletionRequest>()
-            val modelResult = modelRuntime.load(request.model)
-            if (modelResult.isFailure) {
-                val error = modelResult.exceptionOrNull()
-                val statusCode = if (error?.message?.contains("not installed") == true) HttpStatusCode.NotFound else HttpStatusCode.InternalServerError
-                call.respond(statusCode, ErrorResponse(ErrorDetail(error?.message ?: "Failed to load model", "model_error")))
-                return
-            }
-
-            val adapter = modelResult.getOrThrow()
             val turns = request.messages.map { msg ->
                 when (msg.role) {
                     "system" -> Turn.System(msg.content ?: "")
@@ -158,13 +161,20 @@ class EngineHttpServer(
             )
 
             if (request.stream) {
-                streamChatCompletions(call, adapter, modelRequest, request.model)
+                val streamResult = inferenceManager.execute(request.model) { adapter ->
+                    streamChatCompletions(call, adapter, modelRequest, request.model)
+                }
+                if (streamResult.isFailure) {
+                    respondClassifiedError(call, streamResult.exceptionOrNull())
+                }
                 return
             }
 
-            val inferenceResult = adapter.invoke(modelRequest)
+            val inferenceResult = inferenceManager.execute(request.model) { adapter ->
+                adapter.invoke(modelRequest).getOrThrow()
+            }
             if (inferenceResult.isFailure) {
-                call.respond(HttpStatusCode.InternalServerError, ErrorResponse(ErrorDetail(inferenceResult.exceptionOrNull()?.message ?: "Inference failed", "inference_error")))
+                respondClassifiedError(call, inferenceResult.exceptionOrNull())
                 return
             }
 
@@ -267,24 +277,95 @@ class EngineHttpServer(
         }
     }
 
+    private suspend fun handleModels(call: ApplicationCall) {
+        try {
+            val catalogById = modelRuntime.catalog().associateBy { it.id }
+            val installedById = modelRuntime.installed().associateBy { it.id }
+            val loadedIds = modelRuntime.loaded().toSet()
+            val allModelIds = (catalogById.keys + installedById.keys).sorted()
+
+            val models = allModelIds.map { modelId ->
+                val catalogModel = catalogById[modelId]
+                val installedModel = installedById[modelId]
+                val model = installedModel ?: catalogModel
+                    ?: error("Model $modelId unexpectedly missing from both catalog and installed sets")
+
+                ModelCard(
+                    id = model.id,
+                    owned_by = model.providerId,
+                    kind = model.kind.name.lowercase(),
+                    capabilities = capabilitiesFor(model.kind),
+                    context_window = model.contextWindow,
+                    format = if (model.isLocal) "gguf" else null,
+                    size_bytes = installedModel?.sizeBytes ?: catalogModel?.sizeBytes,
+                    quantization = deriveQuantization(model.id),
+                    installed = installedModel != null,
+                    loaded = loadedIds.contains(model.id),
+                    metadata = buildMap {
+                        model.digest?.let { put("digest", it) }
+                        put("is_local", model.isLocal.toString())
+                        put("provider_id", model.providerId)
+                    },
+                )
+            }
+
+            call.respond(ModelsResponse(data = models))
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ErrorResponse(ErrorDetail(e.message ?: "Failed to list models", "internal_error"))
+            )
+        }
+    }
+
+    private fun capabilitiesFor(kind: ModelKind): List<String> = when (kind) {
+        ModelKind.LLM -> listOf("chat.completions")
+        ModelKind.EMBEDDING -> listOf("embeddings")
+        ModelKind.STT -> listOf("audio.transcriptions")
+        ModelKind.TTS -> listOf("audio.speech")
+        ModelKind.VISION -> listOf("vision")
+        ModelKind.OCR -> listOf("ocr")
+        ModelKind.RERANKER -> listOf("rerank")
+        ModelKind.TRANSLATION -> listOf("translation")
+    }
+
+    private fun deriveQuantization(modelId: String): String? {
+        val lowered = modelId.lowercase()
+        return when {
+            lowered.contains("q2_k") -> "q2_k"
+            lowered.contains("q3_k") -> "q3_k"
+            lowered.contains("q4_k_m") -> "q4_k_m"
+            lowered.contains("q4_k_s") -> "q4_k_s"
+            lowered.contains("q4_0") -> "q4_0"
+            lowered.contains("q5_k_m") -> "q5_k_m"
+            lowered.contains("q5_k_s") -> "q5_k_s"
+            lowered.contains("q6_k") -> "q6_k"
+            lowered.contains("q8_0") -> "q8_0"
+            else -> null
+        }
+    }
+
     private suspend fun handleEmbeddings(call: ApplicationCall) {
         try {
             val request = call.receive<EmbeddingsRequest>()
-            val modelResult = modelRuntime.load(request.model)
-            val adapter = modelResult.getOrThrow()
-
-            val embeddings = request.input.mapIndexed { index, text ->
-                val modelRequest = ModelRequest(
-                    messages = listOf(Turn.User(listOf(ContentBlock.Text(text)), TrustLevel.TRUSTED)),
-                    tools = emptyList(),
-                    toolChoice = ToolChoice.None,
-                    maxOutputTokens = 0,
-                    stopConditions = emptyList()
-                )
-                adapter.invoke(modelRequest).getOrThrow()
-                Embedding(embedding = listOf(0.0f), index = index)
+            val embeddingsResult = inferenceManager.execute(request.model) { adapter ->
+                request.input.mapIndexed { index, text ->
+                    val modelRequest = ModelRequest(
+                        messages = listOf(Turn.User(listOf(ContentBlock.Text(text)), TrustLevel.TRUSTED)),
+                        tools = emptyList(),
+                        toolChoice = ToolChoice.None,
+                        maxOutputTokens = 0,
+                        stopConditions = emptyList()
+                    )
+                    adapter.invoke(modelRequest).getOrThrow()
+                    Embedding(embedding = listOf(0.0f), index = index)
+                }
             }
-            call.respond(EmbeddingsResponse(data = embeddings, model = request.model, usage = TokenUsage(0, 0, 0)))
+            if (embeddingsResult.isFailure) {
+                respondClassifiedError(call, embeddingsResult.exceptionOrNull())
+                return
+            }
+            call.respond(EmbeddingsResponse(data = embeddingsResult.getOrThrow(), model = request.model, usage = TokenUsage(0, 0, 0)))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
@@ -294,25 +375,51 @@ class EngineHttpServer(
         try {
             val request = call.receive<TranscriptionRequest>()
             val audioBytes = Base64.getDecoder().decode(request.file)
-            val modelResult = modelRuntime.load(request.model)
-            val adapter = modelResult.getOrThrow()
-
-            val modelRequest = ModelRequest(
-                messages = listOf(
-                    Turn.System(request.prompt ?: "Transcribe audio"),
-                    Turn.User(listOf(ContentBlock.Audio("audio/wav", audioBytes)), TrustLevel.TRUSTED)
-                ),
-                tools = emptyList(),
-                toolChoice = ToolChoice.None,
-                maxOutputTokens = 1000,
-                stopConditions = emptyList()
-            )
-
-            val result = adapter.invoke(modelRequest).getOrThrow()
-            val text = result.outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
+            val result = inferenceManager.execute(request.model) { adapter ->
+                val modelRequest = ModelRequest(
+                    messages = listOf(
+                        Turn.System(request.prompt ?: "Transcribe audio"),
+                        Turn.User(listOf(ContentBlock.Audio("audio/wav", audioBytes)), TrustLevel.TRUSTED)
+                    ),
+                    tools = emptyList(),
+                    toolChoice = ToolChoice.None,
+                    maxOutputTokens = 1000,
+                    stopConditions = emptyList()
+                )
+                adapter.invoke(modelRequest).getOrThrow()
+            }
+            if (result.isFailure) {
+                respondClassifiedError(call, result.exceptionOrNull())
+                return
+            }
+            val text = result.getOrThrow().outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
             call.respond(TranscriptionResponse(text = text))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
+        }
+    }
+
+    private suspend fun respondClassifiedError(call: ApplicationCall, error: Throwable?) {
+        val (status, detail) = classifyError(error)
+        call.respond(status, ErrorResponse(detail))
+    }
+
+    private fun classifyError(error: Throwable?): Pair<HttpStatusCode, ErrorDetail> {
+        val message = error?.message ?: "Inference failed"
+        return when {
+            error is EngineBusyException -> HttpStatusCode.ServiceUnavailable to
+                ErrorDetail("Engine is busy; retry later", "engine_busy", code = "queue_saturated")
+            error is EngineShuttingDownException -> HttpStatusCode.ServiceUnavailable to
+                ErrorDetail("Engine is shutting down", "engine_stopping", code = "shutdown")
+            message.contains("MODEL_NOT_INSTALLED") || message.contains("not installed", ignoreCase = true) ->
+                HttpStatusCode.NotFound to ErrorDetail("Model is not installed", "model_error", code = "model_not_installed")
+            message.contains("INVALID_GGUF") || message.contains("unsupported", ignoreCase = true) ->
+                HttpStatusCode.BadRequest to ErrorDetail("Model file is invalid or unsupported", "model_error", code = "invalid_model")
+            message.contains("INCOMPATIBLE_GGUF") || message.contains("incompatible", ignoreCase = true) ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail("Model is incompatible with current runtime", "model_error", code = "incompatible_model")
+            message.contains("MODEL_LOAD_FAILED") ->
+                HttpStatusCode.InternalServerError to ErrorDetail("Model failed to load", "model_error", code = "model_load_failed")
+            else -> HttpStatusCode.InternalServerError to ErrorDetail("Inference failed", "inference_error")
         }
     }
 }

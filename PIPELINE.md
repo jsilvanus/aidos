@@ -112,6 +112,10 @@ Finish and verify it:
   filename convention.
 - Verify that a missing, corrupt, unsupported, or incompatible GGUF produces a useful classified
   error rather than a generic crash.
+  - **2026-09-04 update:** Engine HTTP now classifies model-load failures into explicit API outcomes
+    (`model_not_installed` 404, `invalid_model` 400, `incompatible_model` 422, `model_load_failed`
+    500) instead of a generic inference failure; keep extending this mapping as native error causes
+    become more precise.
 
 **Done when:** a real Android device can select an installed GGUF, run a prompt, and visibly receive
 true incremental output from the native backend; failure and cancellation are observable; the
@@ -129,6 +133,10 @@ After real inference works, make it safe to run continuously in a phone process.
 - Introduce explicit request states: queued, loading, running, completed, cancelled, failed.
 - Add bounded request queueing. A full/busy Engine must return a defined `503`-style condition rather
   than hanging callers or spawning unbounded coroutines.
+- **2026-09-04 update:** Engine HTTP inference now runs through a bounded request manager with
+  explicit busy/shutdown `503` outcomes, per-model generation serialization, and lifecycle metrics
+  counters (queued/running/completed/cancelled/failed). Keep extending it with deeper native-cancel
+  support and memory-admission checks.
 - Propagate cancellation from UI/HTTP client through Engine → adapter → native generation as far as
   the binding permits. If native cancellation is unavailable, make the limitation explicit and
   ensure the native context is not reused unsafely.
@@ -192,8 +200,8 @@ and model capability are explicit and tested.
 
 The Engine's installed files and its model catalog must agree; filenames alone are not authority.
 
-- Implement `/v1/models` or the Engine-equivalent model listing endpoint required by the existing API
-  contract.
+- `/v1/models` now exists in Engine HTTP; extend it to remain stable across catalog/install drift
+  and keep its metadata authoritative under reconciliation/integrity failures.
 - Return stable model IDs, capabilities, format, size, quantization where known, installed state,
   loaded state, and relevant metadata.
 - Reconcile catalog metadata against installed files at startup and after download/delete.
