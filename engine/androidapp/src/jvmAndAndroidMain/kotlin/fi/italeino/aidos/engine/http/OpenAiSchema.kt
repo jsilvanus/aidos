@@ -105,6 +105,30 @@ data class Embedding(
     val index: Int
 )
 
+// Model Listing Schema
+
+@Serializable
+data class ModelsResponse(
+    val `object`: String = "list",
+    val data: List<ModelCard>
+)
+
+@Serializable
+data class ModelCard(
+    val id: String,
+    val `object`: String = "model",
+    val owned_by: String = "aidos-local",
+    val kind: String,
+    val capabilities: List<String>,
+    val context_window: Int? = null,
+    val format: String? = null,
+    val size_bytes: Long? = null,
+    val quantization: String? = null,
+    val installed: Boolean,
+    val loaded: Boolean,
+    val metadata: Map<String, String> = emptyMap()
+)
+
 // Audio Transcription Schema
 
 @Serializable

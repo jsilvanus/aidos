@@ -42,8 +42,12 @@ private val testJson = Json { encodeDefaults = true }
 class EngineHttpServerTest {
 
     private fun testServer(adapter: ModelAdapter = MockModelAdapter()): Pair<EngineHttpServer, TokenManager> {
+        return testServer(MockModelRuntime(adapter))
+    }
+
+    private fun testServer(runtime: ModelRuntime): Pair<EngineHttpServer, TokenManager> {
         val tokenManager = TokenManager()
-        val server = EngineHttpServer(tokenManager, MockModelRuntime(adapter))
+        val server = EngineHttpServer(tokenManager, runtime)
         return server to tokenManager
     }
 
@@ -69,6 +73,62 @@ class EngineHttpServerTest {
         }
 
         assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun models_requiresAuthentication() = testApplication {
+        val (server, _) = testServer()
+        application { server.installInto(this) }
+
+        val response = client.get("/v1/models")
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun models_returnsCatalogInstalledAndLoadedState() = testApplication {
+        val llmModel = ModelDescriptor(
+            id = "qwen2.5-3b-instruct-q4_k_m",
+            name = "Qwen 2.5 3B",
+            kind = ModelKind.LLM,
+            providerId = "huggingface",
+            isLocal = true,
+            contextWindow = 32768,
+            sizeBytes = 2_104_932_768L,
+            digest = "abc123"
+        )
+        val embeddingModel = ModelDescriptor(
+            id = "nomic-embed-text-v1.5",
+            name = "Nomic Embed Text",
+            kind = ModelKind.EMBEDDING,
+            providerId = "huggingface",
+            isLocal = true,
+            contextWindow = 2048,
+            sizeBytes = 77_802_880L,
+            digest = "def456"
+        )
+        val runtime = StaticModelRuntime(
+            catalogModels = listOf(llmModel, embeddingModel),
+            installedModels = listOf(llmModel),
+            loadedModels = listOf(llmModel.id)
+        )
+        val (server, tokenManager) = testServer(runtime)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.get("/v1/models") {
+            bearerAuth(token.token)
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"id\":\"qwen2.5-3b-instruct-q4_k_m\""))
+        assertTrue(body.contains("\"installed\":true"))
+        assertTrue(body.contains("\"loaded\":true"))
+        assertTrue(body.contains("\"quantization\":\"q4_k_m\""))
+        assertTrue(body.contains("\"id\":\"nomic-embed-text-v1.5\""))
+        assertTrue(body.contains("\"capabilities\":[\"embeddings\"]"))
+        assertTrue(body.contains("\"installed\":false"))
     }
 
     @Test
@@ -355,4 +415,21 @@ class FailingStreamingModelAdapter(
         deltasBeforeFailure.forEach { emit(ModelStreamEvent.Delta(it)) }
         emit(ModelStreamEvent.Failed(failure))
     }
+}
+
+private class StaticModelRuntime(
+    private val catalogModels: List<ModelDescriptor>,
+    private val installedModels: List<ModelDescriptor>,
+    private val loadedModels: List<String>,
+) : ModelRuntime {
+    override suspend fun catalog(): List<ModelDescriptor> = catalogModels
+
+    override suspend fun installed(): List<ModelDescriptor> = installedModels
+
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        Result.failure(UnsupportedOperationException("not needed for /v1/models tests"))
+
+    override suspend fun unload(modelId: String) = Unit
+
+    override fun loaded(): List<String> = loadedModels
 }

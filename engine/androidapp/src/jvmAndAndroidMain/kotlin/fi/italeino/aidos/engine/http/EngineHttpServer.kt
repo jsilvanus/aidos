@@ -80,6 +80,7 @@ class EngineHttpServer(
         routing {
             get("/health") { call.respond(mapOf("status" to "ok")) }
             authenticate("bearerAuth") {
+                get("/v1/models") { handleModels(call) }
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
@@ -264,6 +265,74 @@ class EngineHttpServer(
             Json.parseToJsonElement(jsonString) as JsonObject
         } catch (e: Exception) {
             JsonObject(emptyMap())
+        }
+    }
+
+    private suspend fun handleModels(call: ApplicationCall) {
+        try {
+            val catalogById = modelRuntime.catalog().associateBy { it.id }
+            val installedById = modelRuntime.installed().associateBy { it.id }
+            val loadedIds = modelRuntime.loaded().toSet()
+            val allModelIds = (catalogById.keys + installedById.keys).sorted()
+
+            val models = allModelIds.map { modelId ->
+                val catalogModel = catalogById[modelId]
+                val installedModel = installedById[modelId]
+                val model = installedModel ?: catalogModel
+                    ?: error("Model $modelId unexpectedly missing from both catalog and installed sets")
+
+                ModelCard(
+                    id = model.id,
+                    owned_by = model.providerId,
+                    kind = model.kind.name.lowercase(),
+                    capabilities = capabilitiesFor(model.kind),
+                    context_window = model.contextWindow,
+                    format = if (model.isLocal) "gguf" else null,
+                    size_bytes = installedModel?.sizeBytes ?: catalogModel?.sizeBytes,
+                    quantization = deriveQuantization(model.id),
+                    installed = installedModel != null,
+                    loaded = loadedIds.contains(model.id),
+                    metadata = buildMap {
+                        model.digest?.let { put("digest", it) }
+                        put("is_local", model.isLocal.toString())
+                        put("provider_id", model.providerId)
+                    },
+                )
+            }
+
+            call.respond(ModelsResponse(data = models))
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ErrorResponse(ErrorDetail(e.message ?: "Failed to list models", "internal_error"))
+            )
+        }
+    }
+
+    private fun capabilitiesFor(kind: ModelKind): List<String> = when (kind) {
+        ModelKind.LLM -> listOf("chat.completions")
+        ModelKind.EMBEDDING -> listOf("embeddings")
+        ModelKind.STT -> listOf("audio.transcriptions")
+        ModelKind.TTS -> listOf("audio.speech")
+        ModelKind.VISION -> listOf("vision")
+        ModelKind.OCR -> listOf("ocr")
+        ModelKind.RERANKER -> listOf("rerank")
+        ModelKind.TRANSLATION -> listOf("translation")
+    }
+
+    private fun deriveQuantization(modelId: String): String? {
+        val lowered = modelId.lowercase()
+        return when {
+            lowered.contains("q2_k") -> "q2_k"
+            lowered.contains("q3_k") -> "q3_k"
+            lowered.contains("q4_k_m") -> "q4_k_m"
+            lowered.contains("q4_k_s") -> "q4_k_s"
+            lowered.contains("q4_0") -> "q4_0"
+            lowered.contains("q5_k_m") -> "q5_k_m"
+            lowered.contains("q5_k_s") -> "q5_k_s"
+            lowered.contains("q6_k") -> "q6_k"
+            lowered.contains("q8_0") -> "q8_0"
+            else -> null
         }
     }
 

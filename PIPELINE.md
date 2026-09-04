@@ -192,8 +192,8 @@ and model capability are explicit and tested.
 
 The Engine's installed files and its model catalog must agree; filenames alone are not authority.
 
-- Implement `/v1/models` or the Engine-equivalent model listing endpoint required by the existing API
-  contract.
+- `/v1/models` now exists in Engine HTTP; extend it to remain stable across catalog/install drift
+  and keep its metadata authoritative under reconciliation/integrity failures.
 - Return stable model IDs, capabilities, format, size, quantization where known, installed state,
   loaded state, and relevant metadata.
 - Reconcile catalog metadata against installed files at startup and after download/delete.
