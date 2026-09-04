@@ -19,7 +19,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aidos.kernel.Turn
-import dev.aidos.engine.inference.InferenceTester
+import fi.italeino.aidos.engine.inference.InferenceTester
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -152,9 +152,7 @@ fun TestChatScreen(
                                 imeAction = ImeAction.Send,
                                 keyboardType = KeyboardType.Text,
                             ),
-                            keyboardActions = KeyboardActions(
-                                onSend = { sendMessage() },
-                            ),
+                            keyboardActions = KeyboardActions(onSend = { sendMessage() }),
                             enabled = !state.isLoading && inferenceTester != null,
                             shape = RoundedCornerShape(8.dp),
                         )
@@ -176,9 +174,7 @@ fun TestChatScreen(
             }
         },
     ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding),
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (state.error != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
