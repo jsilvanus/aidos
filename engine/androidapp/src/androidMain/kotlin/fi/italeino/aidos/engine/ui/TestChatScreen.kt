@@ -56,16 +56,18 @@ fun TestChatScreen(
         )
 
         coroutineScope.launch {
-            val turns = state.messages.dropLast(1).map { message ->
+            // The UI contains a temporary empty assistant bubble. Exclude that bubble and let the
+            // history below provide the turns already sent before this request.
+            val turns = state.messages.dropLast(2).map { message ->
                 when (message.role) {
                     "assistant" -> Turn.Assistant(message.content, emptyList())
                     else -> InferenceTester.userTurn(message.content)
                 }
-            }
+            } + InferenceTester.userTurn(messageText)
 
             val result = inferenceTester.run(
                 modelId = modelId,
-                messages = turns + InferenceTester.userTurn(messageText),
+                messages = turns,
                 maxOutputTokens = 512,
                 onDelta = { delta ->
                     state = state.copy(
@@ -122,7 +124,7 @@ fun TestChatScreen(
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
-                }
+                },
             )
         },
         bottomBar = {
