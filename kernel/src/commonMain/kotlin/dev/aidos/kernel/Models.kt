@@ -36,6 +36,12 @@ interface ModelAdapter {
     val providerRetention: ProviderRetention? get() = null
 }
 
+/** Adapter capability for models that expose native vector embeddings. */
+interface EmbeddingModelAdapter : ModelAdapter {
+    /** Returns the model's native embedding vector without prompt/chat formatting. */
+    suspend fun embed(text: String): Result<FloatArray>
+}
+
 /**
  * One event of a streamed [ModelAdapter.invokeStreaming] response. Named to parallel RFC-0052's
  * `RuntimeEvent.AiResponseDelta` one layer down the stack: this is the adapter-to-router event,
