@@ -25,7 +25,6 @@ import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.modelruntime.GlobalModelRuntime
-import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
@@ -36,6 +35,7 @@ import fi.italeino.aidos.engine.http.AndroidEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
+import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -58,7 +58,6 @@ class EngineService : LifecycleService() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
-
         private var _instance: EngineService? = null
         val instance: EngineService? get() = _instance
     }
@@ -70,23 +69,16 @@ class EngineService : LifecycleService() {
 
     var modelRuntime: GlobalModelRuntime? = null
         private set
-
     var hfClient: HuggingFaceClient? = null
         private set
-
     var catalogManager: ModelCatalogManager? = null
         private set
-
     var modelBrowser: ModelBrowser? = null
         private set
-
-    /** Shared engine download abstraction used by Android model acquisition. */
     var downloadManager: DownloadManager? = null
         private set
-
     private lateinit var httpClient: HttpClient
     private lateinit var effectBroker: EffectBroker
-
     private lateinit var approvalStore: EncryptedAppApprovalStore
     private lateinit var approvalManager: AppApprovalManager
     private var _isRunning = false
@@ -98,7 +90,6 @@ class EngineService : LifecycleService() {
         serviceScope.launch {
             try {
                 tokenManager = TokenManager()
-
                 httpClient = HttpClient(io.ktor.client.engine.android.Android) {
                     install(ContentNegotiation) { json() }
                 }
@@ -108,7 +99,6 @@ class EngineService : LifecycleService() {
                 val client = HuggingFaceClient(broker, hfHandle)
                 hfClient = client
 
-                // All engine model downloads go through the shared DownloadManager.
                 val modelsDir = java.io.File(filesDir, "models")
                 downloadManager = LocalDownloadManager(modelsDir.absolutePath)
 
@@ -135,7 +125,11 @@ class EngineService : LifecycleService() {
                     deviceProfile = deviceProfile
                 )
 
-                val runtime = GlobalModelRuntime(LlamaCppInferenceBackend())
+                // Android uses the native llama.cpp binding directly. The JVM-only backend in
+                // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
+                val runtime = GlobalModelRuntime(
+                    AndroidLlamaCppInferenceBackend(this@EngineService)
+                )
                 modelRuntime = runtime
 
                 httpServer = EngineHttpServer(tokenManager, runtime)
@@ -178,74 +172,42 @@ class EngineService : LifecycleService() {
 
     override fun onDestroy() {
         serviceScope.launch {
-            try {
-                if (isRunning) {
-                    httpServer.stop()
-                    httpClient.close()
-                    modelRuntime?.loaded()?.forEach { modelId -> modelRuntime?.unload(modelId) }
-                    tokenManager.clearTokens()
-                    _isRunning = false
-                }
-            } catch (_: Exception) {
-            } finally {
-                _instance = null
-                serviceScope.cancel()
-            }
+            modelRuntime?.loaded()?.toList()?.forEach { modelRuntime?.unload(it) }
         }
+        httpClient.close()
+        serviceScope.cancel()
+        _instance = null
         super.onDestroy()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    "Aidos Engine",
+                    NotificationManager.IMPORTANCE_LOW,
+                )
+            )
+        }
+    }
+
+    private fun buildNotification(text: String): Notification =
+        NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("Aidos Engine")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .build()
+
+    private fun updateNotification(text: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
-        return if (isRunning) binder.asBinder() else null
-    }
-
-    /**
-     * A client for this service's own `/v1/chat/completions` endpoint, for first-party in-app
-     * callers (the Test Chat screen, RFC-0103 Phase E) rather than the Binder-handshake
-     * (`EngineHandshakeImpl`) path external client apps use. The engine trusts its own process,
-     * so it self-issues a token via [TokenManager] instead of requiring a handshake round trip;
-     * an existing still-valid token (e.g. one already issued to a connected app) is reused rather
-     * than rotated, since [TokenManager] holds only one token at a time and rotating it here would
-     * invalidate that app's session.
-     *
-     * Null when the engine (and therefore its HTTP server) isn't running.
-     */
-    suspend fun createHttpModelClient(): HttpModelClient? {
-        if (!isRunning) return null
-        val port = httpServer.getBoundPort() ?: return null
-        val token = tokenManager.currentValidToken() ?: tokenManager.generateNewToken().token
-        return HttpModelClient(port = port, token = token)
-    }
-
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            NOTIFICATION_CHANNEL_ID,
-            "Aidos Engine",
-            NotificationManager.IMPORTANCE_LOW
-        )
-        channel.description = "Aidos Engine local model inference service"
-        channel.setShowBadge(false)
-        getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-    }
-
-    private fun buildNotification(message: String): Notification {
-        val intent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Aidos Engine")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-    }
-
-    private fun updateNotification(message: String) {
-        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification(message))
+        return binder
     }
 }
