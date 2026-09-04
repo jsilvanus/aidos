@@ -12,8 +12,8 @@ import java.security.MessageDigest
  * Android inference backend. Models live in the engine-private `files/models` directory,
  * the same location used by the download/install workflow.
  *
- * The installer is responsible for verifying the publisher digest before a model becomes
- * available here. The runtime re-hashes the installed artifact on load as a corruption check.
+ * The installer verifies the publisher digest before installation. The backend re-hashes
+ * the installed artifact when the runtime admits it.
  */
 class AndroidLlamaCppInferenceBackend(
     context: Context,
@@ -44,17 +44,17 @@ class AndroidLlamaCppInferenceBackend(
             ?: emptyList()
 
     override suspend fun computeDigest(modelId: String): String =
-        sha256(modelFile(modelId))
+        sha256(resolveModelFile(modelId))
 
     override suspend fun delete(modelId: String) {
         liveAdapters.remove(modelId)?.close()
-        modelFile(modelId).delete()
+        resolveModelFile(modelId).delete()
     }
 
     override suspend fun load(modelId: String): Result<ModelAdapter> {
-        val file = modelFile(modelId)
+        val file = resolveModelFile(modelId)
         if (!file.isFile) return Result.failure(
-            IllegalStateException("Model file not found: ${file.absolutePath}")
+            IllegalStateException("Model file not found for '$modelId' in ${modelsDir.absolutePath}")
         )
         return try {
             val adapter = AndroidLlamaCppAdapter(
@@ -74,7 +74,15 @@ class AndroidLlamaCppInferenceBackend(
         liveAdapters.remove(modelId)?.close()
     }
 
-    private fun modelFile(modelId: String): File = File(modelsDir, "$modelId.gguf")
+    /** Supports both exact ids and the `<model>_<quantization>.gguf` installer naming scheme. */
+    private fun resolveModelFile(modelId: String): File {
+        val exact = File(modelsDir, "$modelId.gguf")
+        if (exact.isFile) return exact
+        val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return modelsDir.listFiles()
+            ?.firstOrNull { it.isFile && it.extension.equals("gguf", true) && it.nameWithoutExtension.startsWith("${safeId}_") }
+            ?: exact
+    }
 
     private fun sha256(file: File): String {
         if (!file.isFile) return ""
