@@ -56,8 +56,9 @@ class AndroidLlamaCppAdapter(
                     is ModelStreamEvent.Delta -> Unit
                 }
             }
-            response?.let(Result.Companion::success)
-                ?: Result.failure(IllegalStateException("Inference ended without a response"))
+            if (response != null) Result.success(response!!) else Result.failure(
+                IllegalStateException("Inference ended without a response")
+            )
         } catch (e: Throwable) {
             Result.failure(e)
         }
