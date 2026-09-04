@@ -3,6 +3,8 @@ package fi.italeino.aidos.engine.inference
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRuntime
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -37,6 +39,7 @@ class EngineShuttingDownException(message: String) : RuntimeException(message)
  * - Bounded admission (`maxConcurrentRequests` + `maxQueuedRequests`)
  * - Per-model generation serialization
  * - Metrics for queue/running/fail/cancel counts
+ * - Explicit cancellation of all admitted work during service shutdown
  */
 class InferenceRequestManager(
     private val modelRuntime: ModelRuntime,
@@ -47,6 +50,7 @@ class InferenceRequestManager(
     private val stateMutex = Mutex()
     private val modelLocks = mutableMapOf<String, Mutex>()
     private val activeByModel = mutableMapOf<String, Int>()
+    private val requestJobs = mutableSetOf<Job>()
 
     private var queueDepth = 0
     private var runningRequests = 0
@@ -57,7 +61,10 @@ class InferenceRequestManager(
     private var shuttingDown = false
 
     suspend fun <T> execute(modelId: String, block: suspend (ModelAdapter) -> T): Result<T> {
-        val admitted = acquireAdmissionSlot()
+        val requestJob = currentCoroutineContext()[Job]
+            ?: return Result.failure(IllegalStateException("Inference request requires a coroutine Job"))
+
+        val admitted = acquireAdmissionSlot(requestJob)
         if (admitted.isFailure) return Result.failure(admitted.exceptionOrNull()!!)
 
         try {
@@ -82,7 +89,7 @@ class InferenceRequestManager(
                 }
             }
         } finally {
-            releaseAdmissionSlot()
+            releaseAdmissionSlot(requestJob)
         }
     }
 
@@ -107,6 +114,19 @@ class InferenceRequestManager(
         return stateMutex.withLock { (activeByModel[modelId] ?: 0) == 0 }
     }
 
+    /**
+     * Stops admitting new work and cancels every currently admitted request.
+     * Cancellation is propagated through the request coroutine to the adapter. The native
+     * adapter is responsible for observing cancellation at its deepest supported boundary.
+     */
+    suspend fun cancelAll() {
+        val jobs = stateMutex.withLock {
+            shuttingDown = true
+            requestJobs.toList()
+        }
+        jobs.forEach { it.cancel() }
+    }
+
     suspend fun shutdownAndDrain(timeout: Duration = 5_000.milliseconds): Boolean {
         stateMutex.withLock { shuttingDown = true }
         val deadline = System.currentTimeMillis() + timeout.inWholeMilliseconds
@@ -118,7 +138,7 @@ class InferenceRequestManager(
         return stateMutex.withLock { queueDepth == 0 && runningRequests == 0 }
     }
 
-    private suspend fun acquireAdmissionSlot(): Result<Unit> {
+    private suspend fun acquireAdmissionSlot(requestJob: Job): Result<Unit> {
         val admitted = stateMutex.withLock {
             if (shuttingDown) {
                 return@withLock Result.failure(
@@ -135,6 +155,7 @@ class InferenceRequestManager(
             }
             queueDepth++
             totalRequests++
+            requestJobs += requestJob
             Result.success(Unit)
         }
         if (admitted.isFailure) return admitted
@@ -151,14 +172,16 @@ class InferenceRequestManager(
             stateMutex.withLock {
                 queueDepth = (queueDepth - 1).coerceAtLeast(0)
                 cancelledRequests++
+                requestJobs.remove(requestJob)
             }
             Result.failure(e)
         }
     }
 
-    private suspend fun releaseAdmissionSlot() {
+    private suspend fun releaseAdmissionSlot(requestJob: Job) {
         stateMutex.withLock {
             runningRequests = (runningRequests - 1).coerceAtLeast(0)
+            requestJobs.remove(requestJob)
         }
         capacity.release()
     }
