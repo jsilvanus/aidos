@@ -15,6 +15,7 @@ import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Turn
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.collect
 import java.io.File
 
 /** Real on-device llama.cpp adapter used by the Android engine. */
@@ -47,15 +48,19 @@ class AndroidLlamaCppAdapter(
 
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         var response: ModelResponse? = null
-        invokeStreaming(request).collect { event ->
-            when (event) {
-                is ModelStreamEvent.Done -> response = event.response
-                is ModelStreamEvent.Failed -> throw event.error
-                is ModelStreamEvent.Delta -> Unit
+        return try {
+            invokeStreaming(request).collect { event ->
+                when (event) {
+                    is ModelStreamEvent.Done -> response = event.response
+                    is ModelStreamEvent.Failed -> throw event.error
+                    is ModelStreamEvent.Delta -> Unit
+                }
             }
+            response?.let(Result.Companion::success)
+                ?: Result.failure(IllegalStateException("Inference ended without a response"))
+        } catch (e: Throwable) {
+            Result.failure(e)
         }
-        return response?.let(Result.Companion::success)
-            ?: Result.failure(IllegalStateException("Inference ended without a response"))
     }
 
     override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
@@ -76,9 +81,6 @@ class AndroidLlamaCppAdapter(
                 .setTopP(0.95f)
                 .setTopK(40)
                 .setStream(true)
-            if (request.stopConditions.isNotEmpty()) {
-                parameters.setStop(request.stopConditions)
-            }
 
             val output = StringBuilder()
             var tokenCount = 0
