@@ -4,7 +4,7 @@ import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.ContentBlock
-import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -24,7 +24,8 @@ class AndroidLlamaCppAdapter(
     private val modelFile: File,
     override val contextWindow: Int,
     private val threads: Int = 4,
-) : ModelAdapter {
+    private val embeddingMode: Boolean = false,
+) : EmbeddingModelAdapter {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
     override val isLocal: Boolean = true
@@ -33,7 +34,7 @@ class AndroidLlamaCppAdapter(
     @Volatile private var closed = false
 
     init {
-        val parameters = ModelParameters()
+        var parameters = ModelParameters()
             .setModel(modelFile.absolutePath)
             .setCtxSize(contextWindow)
             .setThreads(threads)
@@ -41,10 +42,23 @@ class AndroidLlamaCppAdapter(
             .setBatchSize(512)
             .setUbatchSize(512)
             .setGpuLayers(0)
+        if (embeddingMode) parameters = parameters.enableEmbedding()
         model = LlamaModel(parameters)
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun embed(text: String): Result<FloatArray> = try {
+        if (closed) return Result.failure(IllegalStateException("Model $modelId is unloaded"))
+        if (!embeddingMode) return Result.failure(
+            UnsupportedOperationException("Model $modelId is not configured for embeddings")
+        )
+        val vector = model.embed(text)
+        if (vector.isEmpty()) Result.failure(IllegalStateException("Embedding model returned an empty vector"))
+        else Result.success(vector)
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
 
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         var response: ModelResponse? = null
@@ -67,6 +81,10 @@ class AndroidLlamaCppAdapter(
     override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         if (closed) {
             emit(ModelStreamEvent.Failed(IllegalStateException("Model $modelId is unloaded")))
+            return@flow
+        }
+        if (embeddingMode) {
+            emit(ModelStreamEvent.Failed(UnsupportedOperationException("Embedding model cannot perform chat generation")))
             return@flow
         }
         if (request.tools.isNotEmpty()) {
