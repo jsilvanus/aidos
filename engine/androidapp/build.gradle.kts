@@ -53,12 +53,7 @@ kotlin {
                 implementation(project(":downloads"))
                 implementation(project(":models"))
                 implementation(project(":voice"))
-
-                // Java bindings to llama.cpp. Version 4.2.0 includes an Android arm64-v8a
-                // native build; the Android engine uses it directly rather than the JVM-only
-                // :modelruntime LlamaCppAdapter.
                 implementation("de.kherud:llama:4.2.0")
-
                 implementation("androidx.compose.ui:ui:1.7.5")
                 implementation("androidx.compose.material3:material3:1.3.1")
                 implementation("androidx.compose.material:material-icons-extended:1.7.5")
@@ -107,7 +102,10 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
