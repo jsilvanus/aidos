@@ -100,7 +100,7 @@ class AndroidLlamaCppInferenceBackend(
 
     private fun contextWindow(entry: CatalogEntry): Int =
         runCatching {
-            Json.parseToJsonElement(entry.propertiesJson).jsonObject["context_window"]?.jsonPrimitive?.int
+            Json.parseToJsonElement(entry.propertiesJson).jsonObject["context_window"]?.jsonPrimitive?.content?.toIntOrNull()
                 ?: DEFAULT_CONTEXT
         }.getOrDefault(DEFAULT_CONTEXT)
 
