@@ -174,7 +174,14 @@ class EngineService : LifecycleService() {
 
                 // Android uses the native llama.cpp binding directly. The JVM-only backend in
                 // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
-                val runtime = GlobalModelRuntime(AndroidLlamaCppInferenceBackend(this@EngineService))
+                // The persistent catalog is authoritative for model identity, kind and expected
+                // digest; filesDir/models is only the artifact store.
+                val runtime = GlobalModelRuntime(
+                    AndroidLlamaCppInferenceBackend(
+                        context = this@EngineService,
+                        catalogManager = catalog,
+                    )
+                )
                 modelRuntime = runtime
 
                 // A token proves which app it was issued to; whether that app is still approved
