@@ -5,64 +5,69 @@ import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 import dev.aidos.modelruntime.InferenceBackend
+import dev.aidos.models.CatalogEntry
+import dev.aidos.models.ModelCatalogManager
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.security.MessageDigest
 
 /**
- * Android inference backend. Models live in the engine-private `files/models` directory,
- * the same location used by the download/install workflow.
- *
- * The installer verifies the publisher digest before installation. The backend re-hashes
- * the installed artifact when the runtime admits it.
+ * Android inference backend. Model identity and expected digests come from the persistent model
+ * catalog; installed metadata comes from the same catalog database. The filesystem is treated as
+ * an artifact store, not as an authoritative model catalog.
  */
 class AndroidLlamaCppInferenceBackend(
     context: Context,
+    private val catalogManager: ModelCatalogManager,
     private val threads: Int = 4,
 ) : InferenceBackend {
     private val modelsDir = File(context.filesDir, "models").apply { mkdirs() }
     private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
 
-    override suspend fun catalog(): List<ModelDescriptor> = installed()
+    override suspend fun catalog(): List<ModelDescriptor> =
+        catalogManager.listCatalog().getOrElse { throw it }.map { entry ->
+            descriptorFromCatalog(entry)
+        }
 
     override suspend fun installed(): List<ModelDescriptor> =
-        modelsDir.listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile && it.extension.equals("gguf", ignoreCase = true) }
-            ?.map { file ->
-                ModelDescriptor(
-                    id = file.nameWithoutExtension,
-                    name = file.nameWithoutExtension,
-                    kind = ModelKind.LLM,
-                    providerId = "llama.cpp.android",
-                    isLocal = true,
-                    contextWindow = DEFAULT_CONTEXT,
-                    sizeBytes = file.length(),
-                    digest = sha256(file),
-                )
+        catalogManager.listInstalled().getOrElse { throw it }
+            .filter { File(it.path).isFile }
+            .mapNotNull { installed ->
+                val catalog = catalogManager.getCatalog(installed.modelId).getOrElse { throw it }
+                catalog?.let { descriptorFromCatalog(it, installed.sizeBytes, installed.digest) }
             }
-            ?.toList()
-            ?: emptyList()
 
     override suspend fun computeDigest(modelId: String): String =
         sha256(resolveModelFile(modelId))
 
     override suspend fun delete(modelId: String) {
         liveAdapters.remove(modelId)?.close()
-        resolveModelFile(modelId).delete()
+        val file = resolveModelFile(modelId)
+        if (file.isFile) file.delete()
+        catalogManager.uninstall(modelId).getOrThrow()
     }
 
     override suspend fun load(modelId: String): Result<ModelAdapter> {
-        val file = resolveModelFile(modelId)
+        val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
+            ?: return Result.failure(IllegalStateException("Model $modelId is not in the model catalog"))
+        val installed = catalogManager.listInstalled().getOrElse { return Result.failure(it) }
+            .firstOrNull { it.modelId == modelId }
+            ?: return Result.failure(IllegalStateException("Model $modelId is not installed"))
+        val file = File(installed.path)
         if (!file.isFile) return Result.failure(
-            IllegalStateException("Model file not found for '$modelId' in ${modelsDir.absolutePath}")
+            IllegalStateException("Model file not found for '$modelId': ${file.absolutePath}")
         )
         return try {
             val adapter = AndroidLlamaCppAdapter(
                 modelId = modelId,
                 modelFile = file,
-                contextWindow = DEFAULT_CONTEXT,
+                contextWindow = contextWindow(catalog),
                 threads = threads,
+                embeddingMode = catalog.kind == ModelKind.EMBEDDING,
             )
+            liveAdapters[modelId]?.close()
             liveAdapters[modelId] = adapter
             Result.success(adapter)
         } catch (e: Throwable) {
@@ -74,14 +79,36 @@ class AndroidLlamaCppInferenceBackend(
         liveAdapters.remove(modelId)?.close()
     }
 
-    /** Supports both exact ids and the `<model>_<quantization>.gguf` installer naming scheme. */
-    private fun resolveModelFile(modelId: String): File {
-        val exact = File(modelsDir, "$modelId.gguf")
-        if (exact.isFile) return exact
-        val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        return modelsDir.listFiles()
-            ?.firstOrNull { it.isFile && it.extension.equals("gguf", true) && it.nameWithoutExtension.startsWith("${safeId}_") }
-            ?: exact
+    private fun descriptorFromCatalog(
+        entry: CatalogEntry,
+        sizeBytes: Long? = null,
+        installedDigest: String? = null,
+    ): ModelDescriptor {
+        val metadata = runCatching { Json.parseToJsonElement(entry.propertiesJson).jsonObject }.getOrNull()
+        val expectedDigest = metadata?.get("sha256")?.jsonPrimitive?.content
+        return ModelDescriptor(
+            id = entry.id,
+            name = entry.name,
+            kind = entry.kind,
+            providerId = entry.provider,
+            isLocal = true,
+            contextWindow = contextWindow(entry),
+            sizeBytes = sizeBytes,
+            digest = installedDigest ?: expectedDigest,
+        )
+    }
+
+    private fun contextWindow(entry: CatalogEntry): Int =
+        runCatching {
+            Json.parseToJsonElement(entry.propertiesJson).jsonObject["context_window"]?.jsonPrimitive?.int
+                ?: DEFAULT_CONTEXT
+        }.getOrDefault(DEFAULT_CONTEXT)
+
+    /** Uses the persistent installed path; filename scanning is only a legacy fallback. */
+    private suspend fun resolveModelFile(modelId: String): File {
+        val installed = catalogManager.listInstalled().getOrThrow().firstOrNull { it.modelId == modelId }
+        if (installed != null) return File(installed.path)
+        return File(modelsDir, "$modelId.gguf")
     }
 
     private fun sha256(file: File): String {
