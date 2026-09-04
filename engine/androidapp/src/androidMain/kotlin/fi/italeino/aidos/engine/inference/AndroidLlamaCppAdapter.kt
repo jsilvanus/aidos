@@ -14,8 +14,8 @@ import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Turn
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import java.io.File
 
 /** Real on-device llama.cpp adapter used by the Android engine. */
@@ -80,7 +80,6 @@ class AndroidLlamaCppAdapter(
                 .setTemperature(0.7f)
                 .setTopP(0.95f)
                 .setTopK(40)
-                .setStream(true)
 
             val output = StringBuilder()
             var tokenCount = 0
