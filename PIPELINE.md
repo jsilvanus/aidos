@@ -80,7 +80,272 @@ Nothing below is waiting on hardware or on a decision.
   an authority boundary, so it ranks below the two above — but the audit trail is the product's
   accountability claim.
 
-### 2. MCP (RFC-0031) — the SDK migration landed; the wiring did not
+### 2. Android Engine — complete the offline runtime
+
+The Engine is the critical path from the platform-neutral runtime to the product described in the
+Goal. Treat this as one ordered workstream. Do not start higher-level agent features until the
+lower layers below have observable, tested behavior.
+
+#### 2.1 Real Android inference — finish the current inference slice
+
+**Current state:** PR #57 is the in-flight first slice. It introduces an Android-specific llama.cpp
+adapter/backend and an internal direct-inference tester without moving the JVM-only `:modelruntime`
+module onto Android.
+
+Finish and verify it:
+
+- Build the Android app with the native llama.cpp binding and verify native library loading on a
+  real ARM64 device.
+- Load an actual GGUF from the Engine model store; do not use a mock model for the acceptance test.
+- Verify prompt → generated text through the real native backend.
+- Verify incremental native generation reaches `ModelAdapter.invokeStreaming()` as deltas rather
+  than synthesising chunks from a completed response.
+- Keep the internal tester deliberately separate from HTTP Test Chat: it is the lowest-level
+  inference diagnostic and must be usable even when the HTTP stack is the thing under test.
+- Make the tester expose model selection, prompt, generated text, load time, TTFT, generation
+  time, input/output/total tokens, tok/s, stop reason, and failure state.
+- Add an instrumentation smoke test around the smallest practical real GGUF fixture/model. If the
+  fixture is too large for CI, keep the test device-gated and document exactly what is verified.
+- Verify R8/proguard and release packaging; native libraries must survive minification and be loaded
+  from the expected ABI.
+- Verify model-file path resolution against the real downloader/installer rather than assuming a
+  filename convention.
+- Verify that a missing, corrupt, unsupported, or incompatible GGUF produces a useful classified
+  error rather than a generic crash.
+
+**Done when:** a real Android device can select an installed GGUF, run a prompt, and visibly receive
+true incremental output from the native backend; failure and cancellation are observable; the
+Android/native build is actually verified. Do not mark this done from JVM tests alone.
+
+#### 2.2 Inference lifecycle, serialization, cancellation, and resource ownership
+
+After real inference works, make it safe to run continuously in a phone process.
+
+- Define the ownership of every loaded native model/context and make disposal deterministic.
+- Serialize generation per model/context unless the native backend is explicitly proven safe for
+  concurrent generation. Never allow two requests to corrupt a shared native context.
+- Decide and document whether different models may generate concurrently; if yes, bound the number
+  of simultaneously resident/active models.
+- Introduce explicit request states: queued, loading, running, completed, cancelled, failed.
+- Add bounded request queueing. A full/busy Engine must return a defined `503`-style condition rather
+  than hanging callers or spawning unbounded coroutines.
+- Propagate cancellation from UI/HTTP client through Engine → adapter → native generation as far as
+  the binding permits. If native cancellation is unavailable, make the limitation explicit and
+  ensure the native context is not reused unsafely.
+- Ensure unload cannot race with generation. A model may only be disposed after all references and
+  active requests have left it.
+- Add model load deduplication: simultaneous requests for the same unloaded model share one load
+  rather than loading the GGUF twice.
+- Add admission/resource checks before loading: available memory, estimated model/context footprint,
+  configured limits, and clear refusal when the request cannot safely fit.
+- Add LRU or equivalent eviction for loaded models, with active-request protection and deterministic
+  cleanup.
+- Record lifecycle metrics: load count/time, resident models, estimated memory, queue depth,
+  generation duration, cancellation count, failure count.
+- Test concurrency, cancellation, unload races, duplicate loads, queue saturation, and eviction
+  with a fake backend; then repeat the critical cases with the real Android backend where practical.
+
+**Done when:** no request can race model disposal, duplicate-load, or shared-context generation;
+bounded overload produces an explicit failure; cancellation reaches the deepest supported layer; and
+all resource ownership paths have tests.
+
+#### 2.3 True streaming through the complete Engine
+
+The direct tester must become the reference implementation for streaming; HTTP must not re-tokenize
+completed text.
+
+- Make `ModelAdapter.invokeStreaming()` the canonical streaming seam.
+- Wire native llama.cpp token/delta production → adapter → `InferenceBackend` → Engine service → HTTP
+  SSE without buffering the complete response first.
+- Preserve ordering and never emit duplicate or lost deltas.
+- Emit a single terminal event containing usage/token counts and stop reason.
+- Distinguish normal completion, cancellation, model failure, and transport disconnect.
+- Propagate HTTP client disconnect to request cancellation.
+- Ensure backpressure does not create an unbounded in-memory stream buffer.
+- Keep the direct tester and HTTP path on the same lower-level streaming implementation so the tester
+  catches regressions in the transport path rather than becoming a second implementation.
+- Add tests for event ordering, terminal-event uniqueness, cancellation, client disconnect, slow
+  consumers, backend failure, and empty/very-short generations.
+
+**Done when:** an HTTP client receives tokens while generation is still running, with no
+post-hoc tokenisation of a completed response, and disconnect/cancellation releases the native work.
+
+#### 2.4 Real embeddings
+
+The current embedding implementation is not acceptable as the knowledge-index runtime.
+
+- Replace placeholder/zero vectors with actual llama.cpp embedding inference.
+- Define how embedding-capable GGUFs/models are identified and loaded separately from chat models.
+- Expose the actual vector dimension and validate it at the Engine boundary.
+- Ensure embedding inference has the same lifecycle, memory, cancellation, and concurrency rules as
+  generation where applicable.
+- Add deterministic tests for vector length, non-zero output, repeatability within defined tolerance,
+  and incompatible-model errors.
+- Add a small real-device validation against the model used for G3/M22.
+- Keep embedding models from silently consuming the same chat-model slot unless the resource manager
+  explicitly permits it.
+
+**Done when:** the knowledge index can obtain real vectors from the Engine and the vector dimension
+and model capability are explicit and tested.
+
+#### 2.5 Model management and catalog integrity
+
+The Engine's installed files and its model catalog must agree; filenames alone are not authority.
+
+- Implement `/v1/models` or the Engine-equivalent model listing endpoint required by the existing API
+  contract.
+- Return stable model IDs, capabilities, format, size, quantization where known, installed state,
+  loaded state, and relevant metadata.
+- Reconcile catalog metadata against installed files at startup and after download/delete.
+- Verify digest/checksum against authoritative metadata or a trusted sidecar; do not derive the
+  expected digest from the file being verified.
+- Handle partial downloads, renamed files, duplicate artifacts, stale catalog entries, corrupt files,
+  and deleted models.
+- Make model deletion safe with respect to active requests and loaded native contexts.
+- Keep download/install, catalog, runtime loading, and eviction responsibilities separated.
+- Add tests for reconciliation and integrity failures.
+
+**Done when:** `/v1/models` reports the real installed state and the Engine refuses to execute a model
+whose integrity/capability metadata cannot be trusted.
+
+#### 2.6 Android persistence and real `RuntimeClient` wiring
+
+`RealRuntimeClient` has persistence seams, but the Android application still needs to provide the
+Android implementations.
+
+- Add the Android SQLDelight driver/source set required by the existing storage abstraction.
+- Wire an Android `RuntimeClientFactory` equivalent into `MainActivity`/the application service.
+- Use `Context.filesDir` or the chosen Android app-private storage root, not desktop path helpers.
+- Wire `userDriver`, `projectDbFactory`, and the appropriate project persistence dependencies.
+- Do not invent an Android `ProjectLocker` implementation without testing the real-device file-lock
+  semantics; keep that seam deferred if the platform behavior remains unverified.
+- Verify session/run/task persistence across app process death and restart.
+- Verify a real project can be opened, queried, edited, and committed from Android rather than only
+  through the in-memory client.
+- Add instrumentation coverage for persistence and restart behavior.
+
+**Done when:** the Android app's sessions and runs are backed by the real project database and survive
+process restart, with no accidental fallback to the in-memory maps.
+
+#### 2.7 Engine HTTP/API hardening
+
+Once direct inference and streaming are real, harden the service boundary.
+
+- Define consistent status/error mapping: invalid request, missing model, loading, busy, unsupported
+  capability, native failure, cancellation, and internal failure must be distinguishable.
+- Ensure authentication/token checks and Binder-discovered service identity remain enforced for every
+  HTTP path.
+- Ensure no endpoint bypasses the Engine's lifecycle/resource manager.
+- Add request size limits, generation limits, timeout policy, and safe defaults.
+- Ensure error responses never expose filesystem paths, native internals, prompts containing secrets,
+  or stack traces unnecessarily.
+- Add API compatibility tests for chat, streaming, embeddings, model listing, and model management.
+- Add concurrent-client tests and service-restart tests.
+
+**Done when:** every externally reachable inference request crosses the same authority, lifecycle,
+and resource boundaries and has a deterministic API-level outcome.
+
+#### 2.8 STT / multimodal native backends
+
+STT and multimodal support are secondary to a reliable text LLM path, but they must not remain as
+fake implementations hidden behind completed-looking APIs.
+
+- Verify the current STT handler's actual input contract and replace placeholder/image-based audio
+  handling with a real native STT backend where the RFC requires it.
+- Define model capability metadata for text generation, embeddings, speech, vision, and future
+  multimodal models rather than guessing from filenames.
+- Implement only the capabilities actually required by the accepted RFCs; unsupported modalities
+  must return explicit `unsupported` rather than pretending to work.
+- Validate native ABI/loading and memory behavior on the target Android device.
+- Add instrumentation tests for the minimum real STT path before marking it complete.
+
+**Done when:** every advertised Engine modality is either genuinely exercised on Android or explicitly
+reported as unsupported/deferred; no placeholder implementation is presented as production behavior.
+
+#### 2.9 Binder/service lifecycle and security integration
+
+The Engine is a local service with a security boundary, not just a library.
+
+- Verify foreground-service startup, restart, shutdown, and native-runtime cleanup on actual Android.
+- Verify Binder discovery and handshake against a real app process/service.
+- Verify approval/trust state is enforced before model access where required by the existing design.
+- Verify token issuance/refresh/expiry and loopback HTTP authorization end to end.
+- Verify multiple clients cannot cross session/project/model authority boundaries.
+- Verify service restart does not leave stale native handles, locks, or authorizations.
+- Add instrumentation/security tests for unauthorized access, revoked trust, stale tokens, restart,
+  and concurrent clients.
+
+**Done when:** the Engine can be restarted and reconnected without leaking resources or widening
+authority, and the real Android service boundary passes the security suite.
+
+#### 2.10 Engine integration and end-to-end tests
+
+Build the test ladder from cheap deterministic tests to real-device proof.
+
+- Unit tests for lifecycle/state machines using a fake `InferenceBackend`.
+- JVM integration tests for HTTP/API behavior with a deterministic fake backend.
+- Android instrumentation tests for service startup, Binder handshake, model discovery, and direct
+  inference.
+- Real-GGUF smoke test on target ARM64 hardware.
+- Real streaming test that observes multiple deltas before completion.
+- Real cancellation test.
+- Real model-load/unload/reload test.
+- Real memory-pressure/eviction test where safe to perform.
+- Real embeddings test.
+- Real project persistence/restart test.
+- Real API end-to-end test through the service boundary.
+- Capture measurements required by G3/M26: model, quantization, prompt size, output size, load time,
+  TTFT, generation tok/s, peak/estimated memory, device model, Android version, and thermal/battery
+  conditions where relevant.
+
+**Done when:** each Engine claim has a corresponding observable test, and device-dependent claims are
+marked only after device evidence exists.
+
+#### 2.11 Engine UI — diagnostic first, product UI second
+
+The Engine UI should expose enough state to diagnose the runtime without becoming a second runtime.
+
+- Keep the internal inference tester as a diagnostic surface.
+- Add model list/status and loaded/unloaded state.
+- Show loading/busy/queued/error states clearly.
+- Expose cancellation.
+- Show inference metrics useful for diagnosing hardware/model problems.
+- Make service/runtime availability explicit rather than silently falling back to mocks.
+- Add basic project/session state once real `RuntimeClient` persistence is wired.
+- Avoid building polished chat UX until the runtime has passed real-device validation.
+
+**Done when:** a developer can diagnose model availability, inference state, errors, and performance
+from the Android app without attaching a debugger.
+
+#### 2.12 G3/G4 closure
+
+The final Engine work is not complete until the offline product thesis is demonstrated.
+
+- **M21:** real local LLM inference on the target mid-range Android phone.
+- **M22:** knowledge index using real embeddings and real repository data on device.
+- **M26 / G3:** perform and record the defined on-device measurement; do not infer it from CI.
+- **M34:** reproducible Android/F-Droid build and installation validation.
+- **M35 / G4:** complete the human scenario: open a real repository, ask a code question offline,
+  receive a useful answer, edit, review diff, and commit.
+- Record failures as blockers or lessons, not as green status lines.
+
+**Engine gate:** G3/G4 may only be marked complete after the entire chain is exercised on real
+hardware: project persistence → repository/index access → model loading → inference → streaming →
+answer → edit → diff → commit.
+
+### Engine sequencing rule
+
+Use this order unless a concrete dependency proves otherwise:
+
+**2.1 real inference → 2.2 lifecycle/resources → 2.3 true streaming → 2.4 embeddings →
+2.5 model management → 2.6 Android persistence → 2.7 API hardening → 2.8 STT/multimodal →
+2.9 Binder/security integration → 2.10 integration tests → 2.11 UI → 2.12 G3/G4.**
+
+Do not jump to agent orchestration, MCP, or additional product features because an Engine layer is
+awkward. Fix the seam and add the test first. Do not call an Engine feature complete merely because
+its platform-neutral implementation compiles.
+
+### 3. MCP (RFC-0031) — the SDK migration landed; the wiring did not
 
 The client is real and speaks the protocol through the official Kotlin MCP SDK. What remains:
 
@@ -106,7 +371,7 @@ The client is real and speaks the protocol through the official Kotlin MCP SDK. 
   JSON Schema keywords are dropped. RFC-0031's "Protocol layer" amendment records why that is
   tolerable. A passthrough fix should still be filed upstream.
 
-### 3. RFC-0011 driver/worker orchestration — designed, not built
+### 4. RFC-0011 driver/worker orchestration — designed, not built
 
 The design was worked out and is the plan; start from it rather than re-deriving it.
 
@@ -141,7 +406,7 @@ The design was worked out and is the plan; start from it rather than re-deriving
 - **`Permission.WORKER_CREATE`** exists in the kernel and is granted and checked nowhere.
   `WorkerSpawner` must check the driver session holds it before spawning.
 
-### 4. `RealRuntimeClient` is still in-memory — sessions/runs now hydrate; Android isn't wired
+### 5. `RealRuntimeClient` is still in-memory — sessions/runs now hydrate; Android isn't wired
 
 Project persistence and locking are wired through optional injection seams, and `daemon`'s factory
 is the one consumer wired end to end. **2026-08-25:** `sessions.list()`/`get()` now hydrate from the
@@ -156,10 +421,10 @@ old in-memory mock; the fix above only takes effect once something wires those s
 needs an Android `SqlDriver` (`app.cash.sqldelight:android-driver`, not the JVM `sqlite-driver`
 `storage`'s `jvmMain` uses today — `storage` declares `androidTarget()` but has no `androidMain`
 source set yet) and an Android-appropriate path scheme (`Context.filesDir`, not `DesktopPaths`'
-`System.getProperty("user.home")`), i.e. an Android equivalent of `daemon`'s
-`RuntimeClientFactory`. `ProjectLocker` is deliberately left out of that follow-up: its own doc
-comment already flags Android's implementation as unverified/deferred (real-device `FileLock`
-behavior, same status as capability's `SqliteDirHandle`), so don't invent one blind.
+`System.getProperty("user.home")`), i.e. an Android equivalent of `daemon`'s `RuntimeClientFactory`.
+`ProjectLocker` is deliberately left out of that follow-up: its own doc comment already flags
+Android's implementation as unverified/deferred (real-device `FileLock` behavior, same status as
+capability's `SqliteDirHandle`), so don't invent one blind.
 
 **Why this is untracked rather than just built:** neither this sandbox nor CI's `test-agent` job
 (`gradle jvmTest`) can compile `androidMain` — there's no Android SDK in either place today (lesson
@@ -168,13 +433,13 @@ what it imports"). Writing the SqlDriver/factory/`MainActivity` wiring blind, wi
 compile-check it, is the wrong tradeoff until there's a real Android build available to verify
 against — flagged here rather than guessed at.
 
-### 5. A mapping test is owed
+### 6. A mapping test is owed
 
 A test asserting every non-derived kernel field has a schema column. Noted when the kernel was
 written, deferred because there was nothing to map to yet. It is the third leg of the CI that keeps
 design and code together, alongside `schema/check.py` and the module test suites.
 
-### 6. Blocked on real hardware — not on code
+### 7. Blocked on real hardware — not on code
 
 State these as blocked rather than letting a checkmark imply otherwise. G3 once carried a PASSED
 mark that no device had earned.
@@ -240,7 +505,7 @@ The loop, once per milestone:
 - **`kernel/` is contracts only.** No implementations; they go in a sibling module. It is frozen at
   G0. Do not add a parameter to a kernel interface to make a feature work — find another way.
 - **Amend the RFC before departing from it**, in its own commit, not alongside the code. RFC
-  amendments are marked sections inside the RFC, not new files beside it.
+  amendments are marked sections inside the RFC, not new files beside them.
 - **G1 blocks all AI work.** Crash recovery is the one metric with no acceptable degradation: 100%
   of `kill -9` points resume correctly, not "mostly". The `RecoveryClass` defect above is a live
   claim against this rule.
