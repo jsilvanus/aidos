@@ -11,11 +11,13 @@ import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
+import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.testing.*
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.encodeToString
@@ -129,6 +131,24 @@ class EngineHttpServerTest {
         assertTrue(body.contains("\"id\":\"nomic-embed-text-v1.5\""))
         assertTrue(body.contains("\"capabilities\":[\"embeddings\"]"))
         assertTrue(body.contains("\"installed\":false"))
+    }
+
+    @Test
+    fun chatCompletions_invalidGgufReturnsBadRequestWithModelCode() = testApplication {
+        val runtime = FailingLoadRuntime("INVALID_GGUF: test-model")
+        val (server, tokenManager) = testServer(runtime)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(token.token)
+            contentType(ContentType.Application.Json)
+            setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "Hello")))))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"code\":\"invalid_model\""))
     }
 
     @Test
@@ -289,7 +309,39 @@ class EngineHttpServerTest {
             setBody(testJson.encodeToString(TranscriptionRequest(file = "", model = "unknown-model")))
         }
 
-        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun chatCompletions_returnsServiceUnavailableWhenInferenceQueueSaturated() = testApplication {
+        val adapter = BlockingModelAdapter()
+        val runtime = MockModelRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val tokenManager = TokenManager()
+        val server = EngineHttpServer(tokenManager, runtime, manager)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        kotlinx.coroutines.coroutineScope {
+            val first = async {
+                client.post("/v1/chat/completions") {
+                    bearerAuth(token.token)
+                    contentType(ContentType.Application.Json)
+                    setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "first")))))
+                }
+            }
+            kotlinx.coroutines.delay(50)
+
+            val second = client.post("/v1/chat/completions") {
+                bearerAuth(token.token)
+                contentType(ContentType.Application.Json)
+                setBody(testJson.encodeToString(ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage(role = "user", content = "second")))))
+            }
+
+            assertEquals(HttpStatusCode.ServiceUnavailable, second.status)
+            adapter.release()
+            first.await()
+        }
     }
 
     @Test
@@ -414,6 +466,42 @@ class FailingStreamingModelAdapter(
     override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         deltasBeforeFailure.forEach { emit(ModelStreamEvent.Delta(it)) }
         emit(ModelStreamEvent.Failed(failure))
+    }
+}
+
+private class FailingLoadRuntime(private val errorMessage: String) : ModelRuntime {
+    override suspend fun catalog(): List<ModelDescriptor> = emptyList()
+    override suspend fun installed(): List<ModelDescriptor> = emptyList()
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        Result.failure(IllegalStateException(errorMessage))
+    override suspend fun unload(modelId: String) = Unit
+    override fun loaded(): List<String> = emptyList()
+}
+
+private class BlockingModelAdapter : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1.0"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+    private val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        gate.await()
+        return Result.success(
+            ModelResponse(
+                outputs = listOf(TextOutput("unblocked")),
+                stopReason = StopReason.END_TURN,
+                usage = Usage(1, 1, 2),
+                model = ModelRef(id = modelId, version = modelVersion)
+            )
+        )
+    }
+
+    fun release() {
+        gate.complete(Unit)
     }
 }
 

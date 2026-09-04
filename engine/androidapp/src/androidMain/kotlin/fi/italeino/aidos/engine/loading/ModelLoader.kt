@@ -1,8 +1,7 @@
 package fi.italeino.aidos.engine.loading
 
 import dev.aidos.modelruntime.GlobalModelRuntime
-import kotlinx.coroutines.delay
-import kotlin.math.min
+import kotlinx.coroutines.withTimeout
 
 /**
  * Wrapper for GlobalModelRuntime.load() with progress tracking (RFC-0103, Phase E).
@@ -36,40 +35,20 @@ class ModelLoader(
      */
     suspend fun loadModel(
         modelId: String,
+        @Suppress("UNUSED_PARAMETER")
         estimatedSizeMB: Int = 2_400,
         onProgress: (Int) -> Unit = {},
         onError: (String) -> Unit = {}
     ): Result<Unit> {
         return try {
-            // Simulate progress polling (in reality, would use real progress from modelRuntime)
-            // RFC-0103's GlobalModelRuntime.load() returns a Result; this wrapper adds progress tracking
-            val startTime = System.currentTimeMillis()
-            
-            // Emit initial progress
             onProgress(0)
-            
-            // Call the real model runtime
-            val loadResult = modelRuntime.load(modelId)
-            
+            val loadResult = withTimeout(timeoutMs) { modelRuntime.load(modelId) }
             if (loadResult.isFailure) {
                 val error = loadResult.exceptionOrNull()?.message ?: "Unknown error loading model"
                 onError(error)
                 return Result.failure(Exception(error))
             }
-            
-            // Simulate final progress update
-            val elapsedMs = System.currentTimeMillis() - startTime
-            
-            // Cap at 100% if loading was very fast
             onProgress(100)
-            
-            // Verify we didn't exceed timeout
-            if (elapsedMs > timeoutMs) {
-                val timeoutError = "Model loading exceeded ${timeoutMs}ms timeout"
-                onError(timeoutError)
-                return Result.failure(Exception(timeoutError))
-            }
-            
             Result.success(Unit)
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Unknown error during model load"
@@ -91,8 +70,7 @@ class ModelLoader(
     ): Result<Unit> {
         return try {
             onProgress(0)
-            // GlobalModelRuntime.unload() would go here when available
-            // For now, this is a placeholder for the expected API
+            withTimeout(timeoutMs) { modelRuntime.unload(modelId) }
             onProgress(100)
             Result.success(Unit)
         } catch (e: Exception) {
@@ -107,8 +85,6 @@ class ModelLoader(
      * @return true if loaded, false otherwise
      */
     suspend fun isModelLoaded(modelId: String): Boolean {
-        // This would query GlobalModelRuntime's state
-        // Placeholder for expected API
-        return false
+        return modelRuntime.loaded().contains(modelId)
     }
 }
