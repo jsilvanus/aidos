@@ -127,8 +127,12 @@ class InferenceRequestManager(
         jobs.forEach { it.cancel() }
     }
 
+    /**
+     * Prevents new work, cancels admitted requests, and waits for their cleanup to finish.
+     * This is the shutdown path used by the Android service before native model disposal.
+     */
     suspend fun shutdownAndDrain(timeout: Duration = 5_000.milliseconds): Boolean {
-        stateMutex.withLock { shuttingDown = true }
+        cancelAll()
         val deadline = System.currentTimeMillis() + timeout.inWholeMilliseconds
         while (System.currentTimeMillis() < deadline) {
             val drained = stateMutex.withLock { queueDepth == 0 && runningRequests == 0 }
