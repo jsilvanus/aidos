@@ -25,7 +25,6 @@ import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.modelruntime.GlobalModelRuntime
-import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
@@ -36,6 +35,7 @@ import fi.italeino.aidos.engine.http.AndroidEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
+import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -135,7 +135,9 @@ class EngineService : LifecycleService() {
                     deviceProfile = deviceProfile
                 )
 
-                val runtime = GlobalModelRuntime(LlamaCppInferenceBackend())
+                // Android uses the native llama.cpp binding directly. The JVM-only backend in
+                // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
+                val runtime = GlobalModelRuntime(AndroidLlamaCppInferenceBackend(this@EngineService))
                 modelRuntime = runtime
 
                 httpServer = EngineHttpServer(tokenManager, runtime)
