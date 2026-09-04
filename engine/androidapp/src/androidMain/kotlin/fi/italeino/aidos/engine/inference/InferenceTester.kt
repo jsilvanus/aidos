@@ -6,7 +6,7 @@ import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.Turn
 import dev.aidos.modelruntime.GlobalModelRuntime
-import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.flow.collect
 import kotlin.time.TimeSource
 
 /**
