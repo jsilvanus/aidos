@@ -42,19 +42,9 @@ interface EmbeddingModelAdapter : ModelAdapter {
     suspend fun embed(text: String): Result<FloatArray>
 }
 
-/**
- * One event of a streamed [ModelAdapter.invokeStreaming] response. Named to parallel RFC-0052's
- * `RuntimeEvent.AiResponseDelta` one layer down the stack: this is the adapter-to-router event,
- * not the router-to-frontend event RFC-0052 already defines from it.
- */
 sealed interface ModelStreamEvent {
-    /** A partial increment of assistant text as it is produced. Zero or more per stream. */
     data class Delta(val text: String) : ModelStreamEvent
-
-    /** Terminal: the complete response this stream produced, once generation finished. */
     data class Done(val response: ModelResponse) : ModelStreamEvent
-
-    /** Terminal: generation failed partway through (or before producing any output at all). */
     data class Failed(val error: Throwable) : ModelStreamEvent
 }
 
@@ -77,7 +67,6 @@ data class ModelRequest(
     val stopConditions: List<String> = emptyList(),
 )
 
-/** Generalized RFC-0022 response. Outputs remain ordered and ModelOutput is intentionally open. */
 data class ModelResponse(
     val outputs: List<ModelOutput>,
     val stopReason: StopReason?,
@@ -130,14 +119,7 @@ sealed interface RoutingDecision {
     data object ForegroundRequired : RoutingDecision
 }
 
-interface ModelRuntime {
-    suspend fun catalog(): List<ModelDescriptor>
-    suspend fun installed(): List<ModelDescriptor>
-    suspend fun load(modelId: String): Result<ModelAdapter>
-    suspend fun unload(modelId: String)
-    fun loaded(): List<String>
-}
-
+/** Authoritative runtime description of one model known to the Engine. */
 data class ModelDescriptor(
     val id: String,
     val name: String,
@@ -147,6 +129,12 @@ data class ModelDescriptor(
     val contextWindow: Int,
     val sizeBytes: Long?,
     val digest: String?,
+    /** Artifact format, e.g. `gguf`. Null when not known. */
+    val format: String? = null,
+    /** Quantization declared by trusted model metadata, not inferred from a filename. */
+    val quantization: String? = null,
+    /** Additional authoritative catalog metadata exposed by the model backend. */
+    val metadata: Map<String, String> = emptyMap(),
 )
 
 @Serializable
