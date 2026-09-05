@@ -12,9 +12,6 @@ kotlin {
             implementation(project(":kernel"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-            // D35: the driver only, not SQLDelight's .sq schema codegen. schema/ stays the one
-            // canonical DDL (RFC-0040); this is the KMP SqlDriver interface gitsema-kotlin also
-            // uses, so both libraries share one SQLite build per process on Android.
             implementation("app.cash.sqldelight:runtime:2.0.2")
         }
 
@@ -23,16 +20,10 @@ kotlin {
         }
 
         val jvmMain by getting {
-            // schema/ is read directly from its one canonical location (RFC-0040) rather than
-            // copied into this module, so there is exactly one file a change to the DDL touches.
             resources.srcDir(rootProject.projectDir.resolve("../schema"))
             resources.include("*.sql")
             dependencies {
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
-                // sqlite-driver depends on this at runtime only; SQLiteConfig (used to bake WAL /
-                // synchronous / foreign_keys / busy_timeout into every connection the driver
-                // opens, since PRAGMA after the fact only reaches one connection) needs it at
-                // compile time too.
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
             }
         }
@@ -40,6 +31,12 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit"))
+            }
+        }
+
+        val androidMain by getting {
+            dependencies {
+                implementation("app.cash.sqldelight:android-driver:2.0.2")
             }
         }
     }
@@ -56,6 +53,10 @@ android {
     defaultConfig {
         minSdk = 26
     }
+
+    // The canonical DDL remains in the repository-level schema/ directory. Package those files
+    // as Android assets so AndroidStorage can feed the same MigrationRunner as the JVM target.
+    sourceSets["main"].assets.srcDir(rootProject.projectDir.resolve("../schema"))
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21

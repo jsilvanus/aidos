@@ -18,14 +18,6 @@ interface ModelAdapter {
     fun supportsNativeToolCalls(): Boolean
     suspend fun invoke(request: ModelRequest): Result<ModelResponse>
 
-    /**
-     * Token-by-token variant of [invoke] (RFC-0021, "Streaming"). The default falls back to
-     * [invoke] and emits its result as a single terminal event — correct for any adapter whose
-     * backend has no partial output to offer. An adapter backed by a token-emitting inference
-     * engine (e.g. llama.cpp) overrides this to yield real incremental [ModelStreamEvent.Delta]s
-     * as they're produced, rather than a caller having to wait for [invoke] to return and then
-     * chop the finished text into fake chunks.
-     */
     suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         invoke(request).fold(
             onSuccess = { emit(ModelStreamEvent.Done(it)) },
@@ -36,19 +28,20 @@ interface ModelAdapter {
     val providerRetention: ProviderRetention? get() = null
 }
 
-/**
- * One event of a streamed [ModelAdapter.invokeStreaming] response. Named to parallel RFC-0052's
- * `RuntimeEvent.AiResponseDelta` one layer down the stack: this is the adapter-to-router event,
- * not the router-to-frontend event RFC-0052 already defines from it.
- */
+/** Adapter capability for interrupting the currently running native inference. */
+interface CancellableModelAdapter : ModelAdapter {
+    /** Interrupt the native inference operation currently owned by this adapter, if any. */
+    fun cancelCurrentInference()
+}
+
+/** Adapter capability for models that expose native vector embeddings. */
+interface EmbeddingModelAdapter : ModelAdapter {
+    suspend fun embed(text: String): Result<FloatArray>
+}
+
 sealed interface ModelStreamEvent {
-    /** A partial increment of assistant text as it is produced. Zero or more per stream. */
     data class Delta(val text: String) : ModelStreamEvent
-
-    /** Terminal: the complete response this stream produced, once generation finished. */
     data class Done(val response: ModelResponse) : ModelStreamEvent
-
-    /** Terminal: generation failed partway through (or before producing any output at all). */
     data class Failed(val error: Throwable) : ModelStreamEvent
 }
 
@@ -71,7 +64,6 @@ data class ModelRequest(
     val stopConditions: List<String> = emptyList(),
 )
 
-/** Generalized RFC-0022 response. Outputs remain ordered and ModelOutput is intentionally open. */
 data class ModelResponse(
     val outputs: List<ModelOutput>,
     val stopReason: StopReason?,
@@ -124,14 +116,6 @@ sealed interface RoutingDecision {
     data object ForegroundRequired : RoutingDecision
 }
 
-interface ModelRuntime {
-    suspend fun catalog(): List<ModelDescriptor>
-    suspend fun installed(): List<ModelDescriptor>
-    suspend fun load(modelId: String): Result<ModelAdapter>
-    suspend fun unload(modelId: String)
-    fun loaded(): List<String>
-}
-
 data class ModelDescriptor(
     val id: String,
     val name: String,
@@ -141,6 +125,9 @@ data class ModelDescriptor(
     val contextWindow: Int,
     val sizeBytes: Long?,
     val digest: String?,
+    val format: String? = null,
+    val quantization: String? = null,
+    val metadata: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -182,3 +169,12 @@ data class ScheduledJob(
     val missedOccurrences: Int = 0,
     val createdAt: Instant,
 )
+
+interface ModelRuntime {
+    suspend fun catalog(): List<ModelDescriptor>
+    suspend fun installed(): List<ModelDescriptor>
+    suspend fun load(modelId: String): Result<ModelAdapter>
+    suspend fun unload(modelId: String)
+    fun loaded(): List<String>
+    suspend fun delete(modelId: String)
+}

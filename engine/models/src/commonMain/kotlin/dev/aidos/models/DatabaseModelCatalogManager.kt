@@ -3,18 +3,16 @@ package dev.aidos.models
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.kernel.ModelKind
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
 
 /**
  * Database-backed implementation of ModelCatalogManager (RFC-0022).
  *
- * Manages model_catalog and installed_models tables in storage using SqlDelight's SqlDriver.
- * Lives in commonMain (not jvmMain, where it lived before being deleted in 7d2c9ea without a
- * replacement -- restored here since EngineService references it and the app cannot build
- * without it) so both Aidos Engine's Android app and any JVM host can use it. `java.time.Instant`
- * is safe in commonMain here because this module's targets are jvm()+androidTarget() only, both
- * of which have it (see dev.aidos.api.ProjectLocker's doc comment for the same reasoning about
- * java.io.File).
+ * The catalog is authoritative: an installed row may only reference a known catalog entry, and
+ * when the catalog pins a SHA-256 digest the installed artifact must carry that same digest.
  */
 class DatabaseModelCatalogManager(
     private val userDriver: SqlDriver,
@@ -61,9 +59,7 @@ class DatabaseModelCatalogManager(
                 QueryResult.Value(results)
             },
             parameters = 0,
-        ) {
-            // No parameters
-        }.value
+        ) { }.value
     }
 
     override suspend fun getCatalog(modelId: String): Result<CatalogEntry?> = runCatching {
@@ -83,14 +79,10 @@ class DatabaseModelCatalogManager(
                             discoveredAt = c.getString(6)!!,
                         )
                     )
-                } else {
-                    QueryResult.Value(null)
-                }
+                } else QueryResult.Value(null)
             },
             parameters = 1,
-        ) {
-            bindString(0, modelId)
-        }.value
+        ) { bindString(0, modelId) }.value
     }
 
     override suspend fun listInstalled(): Result<List<InstalledModel>> = runCatching {
@@ -120,9 +112,7 @@ class DatabaseModelCatalogManager(
                 QueryResult.Value(results)
             },
             parameters = 0,
-        ) {
-            // No parameters
-        }.value
+        ) { }.value
     }
 
     override suspend fun markInstalled(
@@ -132,6 +122,17 @@ class DatabaseModelCatalogManager(
         sizeBytes: Long,
         quantization: String?,
     ): Result<Unit> = runCatching {
+        val catalog = getCatalog(modelId).getOrThrow()
+            ?: throw IllegalArgumentException("Cannot install unknown model '$modelId'")
+        val expectedDigest = runCatching {
+            Json.parseToJsonElement(catalog.propertiesJson).jsonObject["sha256"]?.jsonPrimitive?.content
+        }.getOrNull()
+        if (expectedDigest != null && !expectedDigest.equals(digest, ignoreCase = true)) {
+            throw IllegalArgumentException(
+                "Catalog digest mismatch for '$modelId': expected $expectedDigest, got $digest"
+            )
+        }
+
         val now = Instant.now().toString()
         userDriver.execute(
             identifier = null,
@@ -156,9 +157,7 @@ class DatabaseModelCatalogManager(
             identifier = null,
             sql = "DELETE FROM installed_models WHERE model_id = ?",
             parameters = 1,
-        ) {
-            bindString(0, modelId)
-        }
+        ) { bindString(0, modelId) }
     }
 
     override suspend fun updateInstalledMetadata(
@@ -166,53 +165,36 @@ class DatabaseModelCatalogManager(
         userLabel: String?,
         propertiesJson: String?,
     ): Result<Unit> = runCatching {
-        // Build dynamic UPDATE statement based on what's being updated
         when {
-            userLabel != null && propertiesJson != null -> {
-                // Update both fields
-                userDriver.execute(
-                    identifier = null,
-                    sql = "UPDATE installed_models SET user_label = ?, properties_json = ? WHERE model_id = ?",
-                    parameters = 3,
-                ) {
-                    bindString(0, userLabel)
-                    bindString(1, propertiesJson)
-                    bindString(2, modelId)
-                }
+            userLabel != null && propertiesJson != null -> userDriver.execute(
+                identifier = null,
+                sql = "UPDATE installed_models SET user_label = ?, properties_json = ? WHERE model_id = ?",
+                parameters = 3,
+            ) {
+                bindString(0, userLabel)
+                bindString(1, propertiesJson)
+                bindString(2, modelId)
             }
-            userLabel != null -> {
-                // Update only user_label
-                userDriver.execute(
-                    identifier = null,
-                    sql = "UPDATE installed_models SET user_label = ? WHERE model_id = ?",
-                    parameters = 2,
-                ) {
-                    bindString(0, userLabel)
-                    bindString(1, modelId)
-                }
+            userLabel != null -> userDriver.execute(
+                identifier = null,
+                sql = "UPDATE installed_models SET user_label = ? WHERE model_id = ?",
+                parameters = 2,
+            ) {
+                bindString(0, userLabel)
+                bindString(1, modelId)
             }
-            propertiesJson != null -> {
-                // Update only properties_json
-                userDriver.execute(
-                    identifier = null,
-                    sql = "UPDATE installed_models SET properties_json = ? WHERE model_id = ?",
-                    parameters = 2,
-                ) {
-                    bindString(0, propertiesJson)
-                    bindString(1, modelId)
-                }
+            propertiesJson != null -> userDriver.execute(
+                identifier = null,
+                sql = "UPDATE installed_models SET properties_json = ? WHERE model_id = ?",
+                parameters = 2,
+            ) {
+                bindString(0, propertiesJson)
+                bindString(1, modelId)
             }
-            // else: nothing to update, just return success
         }
     }
 
     companion object {
-        /**
-         * Creates model_catalog and installed_models if they don't exist yet. No migration
-         * runner exists for this module (unlike agent/storage's MigrationRunner) -- this is the
-         * schema's one and only version, called from the SqlDriver's SqlSchema.create() at first
-         * open.
-         */
         fun createTables(driver: SqlDriver) {
             driver.execute(
                 identifier = null,

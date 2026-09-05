@@ -1,10 +1,12 @@
 package fi.italeino.aidos.engine.inference
 
 import de.kherud.llama.InferenceParameters
+import de.kherud.llama.LlamaIterator
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ContentBlock
-import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -24,16 +26,19 @@ class AndroidLlamaCppAdapter(
     private val modelFile: File,
     override val contextWindow: Int,
     private val threads: Int = 4,
-) : ModelAdapter {
+    private val embeddingMode: Boolean = false,
+) : CancellableModelAdapter, EmbeddingModelAdapter {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
     override val isLocal: Boolean = true
 
     private val model: LlamaModel
+    private val inferenceLock = Any()
+    @Volatile private var activeIterator: LlamaIterator? = null
     @Volatile private var closed = false
 
     init {
-        val parameters = ModelParameters()
+        var parameters = ModelParameters()
             .setModel(modelFile.absolutePath)
             .setCtxSize(contextWindow)
             .setThreads(threads)
@@ -41,10 +46,23 @@ class AndroidLlamaCppAdapter(
             .setBatchSize(512)
             .setUbatchSize(512)
             .setGpuLayers(0)
+        if (embeddingMode) parameters = parameters.enableEmbedding()
         model = LlamaModel(parameters)
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun embed(text: String): Result<FloatArray> = try {
+        if (closed) return Result.failure(IllegalStateException("Model $modelId is unloaded"))
+        if (!embeddingMode) return Result.failure(
+            UnsupportedOperationException("Model $modelId is not configured for embeddings")
+        )
+        val vector = model.embed(text)
+        if (vector.isEmpty()) Result.failure(IllegalStateException("Embedding model returned an empty vector"))
+        else Result.success(vector)
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
 
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         var response: ModelResponse? = null
@@ -69,6 +87,10 @@ class AndroidLlamaCppAdapter(
             emit(ModelStreamEvent.Failed(IllegalStateException("Model $modelId is unloaded")))
             return@flow
         }
+        if (embeddingMode) {
+            emit(ModelStreamEvent.Failed(UnsupportedOperationException("Embedding model cannot perform chat generation")))
+            return@flow
+        }
         if (request.tools.isNotEmpty()) {
             emit(ModelStreamEvent.Failed(UnsupportedOperationException("Android llama.cpp tool calling is not enabled yet")))
             return@flow
@@ -84,11 +106,20 @@ class AndroidLlamaCppAdapter(
 
             val output = StringBuilder()
             var tokenCount = 0
-            for (token in model.generate(parameters)) {
-                if (tokenCount++ >= request.maxOutputTokens) break
-                output.append(token.text)
-                emit(ModelStreamEvent.Delta(token.text))
-                if (request.stopConditions.any(output::contains)) break
+            val iterator = model.generate(parameters).iterator()
+            synchronized(inferenceLock) { activeIterator = iterator }
+            try {
+                while (iterator.hasNext()) {
+                    if (tokenCount++ >= request.maxOutputTokens) break
+                    val token = iterator.next()
+                    output.append(token.text)
+                    emit(ModelStreamEvent.Delta(token.text))
+                    if (request.stopConditions.any(output::contains)) break
+                }
+            } finally {
+                synchronized(inferenceLock) {
+                    if (activeIterator === iterator) activeIterator = null
+                }
             }
 
             val text = output.toString()
@@ -111,9 +142,16 @@ class AndroidLlamaCppAdapter(
         }
     }
 
+    override fun cancelCurrentInference() {
+        synchronized(inferenceLock) {
+            activeIterator?.cancel()
+        }
+    }
+
     fun close() {
         if (closed) return
         closed = true
+        cancelCurrentInference()
         model.close()
     }
 

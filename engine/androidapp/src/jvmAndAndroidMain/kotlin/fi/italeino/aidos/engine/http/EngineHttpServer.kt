@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.http
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
 import fi.italeino.aidos.engine.inference.EngineBusyException
+import fi.italeino.aidos.engine.inference.EngineModelBusyException
 import fi.italeino.aidos.engine.inference.EngineShuttingDownException
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import io.ktor.http.*
@@ -22,9 +23,6 @@ import kotlinx.serialization.json.JsonObject
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * Ktor HTTP server for Aidos Engine local inference (RFC-0103).
- */
 class EngineHttpServer(
     private val tokenManager: TokenManager,
     private val modelRuntime: ModelRuntime,
@@ -52,12 +50,14 @@ class EngineHttpServer(
     suspend fun waitUntilModelIdle(modelId: String, timeoutMs: Long = 5_000L): Boolean =
         inferenceManager.waitUntilModelIdle(modelId = modelId, timeout = timeoutMs.milliseconds)
 
-    /**
-     * Installs content negotiation, bearer auth, and routing onto [application] — factored out
-     * of [start] so tests can mount the real handlers via Ktor's `testApplication` instead of
-     * duplicating routing/auth setup per test (as the pre-S4 test suite did, which meant it never
-     * actually exercised this class's own code).
-     */
+    /** Interrupt active inference, wait for it to stop, then unload the model while keeping it installed. */
+    suspend fun closeModel(modelId: String): Result<Unit> =
+        inferenceManager.closeModel(modelId)
+
+    /** Close (interrupt + unload) the model before removing its installed artifact. */
+    suspend fun deleteModel(modelId: String): Result<Unit> =
+        inferenceManager.deleteModel(modelId)
+
     internal fun installInto(application: Application) {
         with(application) {
             setupContentNegotiation()
@@ -211,13 +211,6 @@ class EngineHttpServer(
         }
     }
 
-    /**
-     * Streams real per-token deltas from [ModelAdapter.invokeStreaming] as SSE frames (RFC-0021
-     * "Streaming"; Dictator plan S4) — unlike the previous implementation, which called the
-     * non-streaming [ModelAdapter.invoke], waited for the complete response, and only then chopped
-     * it into fake chunks. Time-to-first-token now reflects real generation, not full-response
-     * latency.
-     */
     private suspend fun streamChatCompletions(
         call: ApplicationCall,
         adapter: ModelAdapter,
@@ -253,11 +246,6 @@ class EngineHttpServer(
                         writeStringUtf8("data: ${Json.encodeToString(finalChunk)}\n\n")
                     }
                     is ModelStreamEvent.Failed -> {
-                        // Headers and a 200 status are already committed by the time streaming can
-                        // fail mid-generation, so there is no clean HTTP error to fall back to —
-                        // send the error as its own SSE frame instead of silently truncating the
-                        // stream, then still terminate with [DONE] below so a client's SSE parser
-                        // doesn't hang waiting for a terminator that never comes.
                         writeStringUtf8(
                             "data: ${Json.encodeToString(ErrorResponse(ErrorDetail(event.error.message ?: "Inference failed", "inference_error")))}\n\n"
                         )
@@ -296,12 +284,13 @@ class EngineHttpServer(
                     kind = model.kind.name.lowercase(),
                     capabilities = capabilitiesFor(model.kind),
                     context_window = model.contextWindow,
-                    format = if (model.isLocal) "gguf" else null,
+                    format = model.format,
                     size_bytes = installedModel?.sizeBytes ?: catalogModel?.sizeBytes,
-                    quantization = deriveQuantization(model.id),
+                    quantization = model.quantization,
                     installed = installedModel != null,
                     loaded = loadedIds.contains(model.id),
                     metadata = buildMap {
+                        putAll(model.metadata)
                         model.digest?.let { put("digest", it) }
                         put("is_local", model.isLocal.toString())
                         put("provider_id", model.providerId)
@@ -329,43 +318,58 @@ class EngineHttpServer(
         ModelKind.TRANSLATION -> listOf("translation")
     }
 
-    private fun deriveQuantization(modelId: String): String? {
-        val lowered = modelId.lowercase()
-        return when {
-            lowered.contains("q2_k") -> "q2_k"
-            lowered.contains("q3_k") -> "q3_k"
-            lowered.contains("q4_k_m") -> "q4_k_m"
-            lowered.contains("q4_k_s") -> "q4_k_s"
-            lowered.contains("q4_0") -> "q4_0"
-            lowered.contains("q5_k_m") -> "q5_k_m"
-            lowered.contains("q5_k_s") -> "q5_k_s"
-            lowered.contains("q6_k") -> "q6_k"
-            lowered.contains("q8_0") -> "q8_0"
-            else -> null
-        }
-    }
-
     private suspend fun handleEmbeddings(call: ApplicationCall) {
         try {
             val request = call.receive<EmbeddingsRequest>()
+            if (request.input.isEmpty()) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail("input must contain at least one string", "invalid_request_error", param = "input"))
+                )
+                return
+            }
+            if (request.encoding_format != null && request.encoding_format != "float") {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail("only float embeddings are supported", "invalid_request_error", param = "encoding_format"))
+                )
+                return
+            }
+
             val embeddingsResult = inferenceManager.execute(request.model) { adapter ->
+                val embeddingAdapter = adapter as? EmbeddingModelAdapter
+                    ?: throw UnsupportedOperationException("Model ${request.model} does not support embeddings")
+
                 request.input.mapIndexed { index, text ->
-                    val modelRequest = ModelRequest(
-                        messages = listOf(Turn.User(listOf(ContentBlock.Text(text)), TrustLevel.TRUSTED)),
-                        tools = emptyList(),
-                        toolChoice = ToolChoice.None,
-                        maxOutputTokens = 0,
-                        stopConditions = emptyList()
-                    )
-                    adapter.invoke(modelRequest).getOrThrow()
-                    Embedding(embedding = listOf(0.0f), index = index)
+                    val vector = embeddingAdapter.embed(text).getOrThrow()
+                    if (vector.isEmpty()) {
+                        throw IllegalStateException("Embedding model returned an empty vector")
+                    }
+                    Embedding(embedding = vector.toList(), index = index)
                 }
             }
             if (embeddingsResult.isFailure) {
                 respondClassifiedError(call, embeddingsResult.exceptionOrNull())
                 return
             }
-            call.respond(EmbeddingsResponse(data = embeddingsResult.getOrThrow(), model = request.model, usage = TokenUsage(0, 0, 0)))
+
+            val embeddings = embeddingsResult.getOrThrow()
+            val dimension = embeddings.firstOrNull()?.embedding?.size ?: 0
+            if (dimension == 0 || embeddings.any { it.embedding.size != dimension }) {
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(ErrorDetail("Embedding model returned inconsistent vector dimensions", "embedding_error"))
+                )
+                return
+            }
+
+            call.respond(
+                EmbeddingsResponse(
+                    data = embeddings,
+                    model = request.model,
+                    usage = TokenUsage(0, 0, 0),
+                )
+            )
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
@@ -411,15 +415,19 @@ class EngineHttpServer(
                 ErrorDetail("Engine is busy; retry later", "engine_busy", code = "queue_saturated")
             error is EngineShuttingDownException -> HttpStatusCode.ServiceUnavailable to
                 ErrorDetail("Engine is shutting down", "engine_stopping", code = "shutdown")
+            error is EngineModelBusyException -> HttpStatusCode.Conflict to
+                ErrorDetail("Model is busy; wait for inference to finish", "model_busy", code = "model_busy")
             message.contains("MODEL_NOT_INSTALLED") || message.contains("not installed", ignoreCase = true) ->
                 HttpStatusCode.NotFound to ErrorDetail("Model is not installed", "model_error", code = "model_not_installed")
+            message.contains("MODEL_INTEGRITY_MISSING") ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail("Model integrity metadata is missing", "model_error", code = "model_integrity_missing")
+            message.contains("MODEL_INTEGRITY_MISMATCH") ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail("Model integrity verification failed", "model_error", code = "model_integrity_mismatch")
             message.contains("INVALID_GGUF") || message.contains("unsupported", ignoreCase = true) ->
                 HttpStatusCode.BadRequest to ErrorDetail("Model file is invalid or unsupported", "model_error", code = "invalid_model")
             message.contains("INCOMPATIBLE_GGUF") || message.contains("incompatible", ignoreCase = true) ->
                 HttpStatusCode.UnprocessableEntity to ErrorDetail("Model is incompatible with current runtime", "model_error", code = "incompatible_model")
-            message.contains("MODEL_LOAD_FAILED") ->
-                HttpStatusCode.InternalServerError to ErrorDetail("Model failed to load", "model_error", code = "model_load_failed")
-            else -> HttpStatusCode.InternalServerError to ErrorDetail("Inference failed", "inference_error")
+            else -> HttpStatusCode.InternalServerError to ErrorDetail(message, "inference_error")
         }
     }
 }
