@@ -141,6 +141,30 @@ class InferenceRequestManagerTest {
         assertEquals(0, metrics.queueDepth)
     }
 
+    @Test
+    fun shutdownAndDrain_cancelsRunningRequestAndRecordsCancellation() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val runtime = FakeRuntime(CancellationAwareAdapter(started))
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+
+        coroutineScope {
+            val request = async {
+                manager.execute("test-model") { adapter ->
+                    adapter.invoke(dummyRequest()).getOrThrow()
+                }
+            }
+            started.await()
+
+            assertTrue(manager.shutdownAndDrain(timeout = 500.milliseconds))
+            assertTrue(request.await().isFailure)
+        }
+
+        val metrics = manager.snapshotMetrics()
+        assertEquals(1, metrics.totalRequests)
+        assertEquals(1, metrics.cancelledRequests)
+        assertEquals(0, metrics.runningRequests)
+    }
+
     private fun dummyRequest() = ModelRequest(
         messages = emptyList(),
         tools = emptyList(),
@@ -215,6 +239,21 @@ private class StepBoundaryAdapter(private val stepDone: CompletableDeferred<Unit
                 model = ModelRef(modelId, modelVersion),
             )
         )
+    }
+}
+
+private class CancellationAwareAdapter(private val started: CompletableDeferred<Unit>) : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        started.complete(Unit)
+        kotlinx.coroutines.awaitCancellation()
     }
 }
 
