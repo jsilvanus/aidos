@@ -240,7 +240,8 @@ class EngineService : LifecycleService() {
      */
     suspend fun openModel(modelId: String): Result<Unit> {
         if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
-        return httpServer.openModel(modelId)
+        val runtime = modelRuntime ?: return Result.failure(IllegalStateException("Model runtime is not initialized"))
+        return runtime.load(modelId).map { Unit }
     }
 
     /**
