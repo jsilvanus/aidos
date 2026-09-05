@@ -22,9 +22,6 @@ import kotlinx.serialization.json.JsonObject
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * Ktor HTTP server for Aidos Engine local inference (RFC-0103).
- */
 class EngineHttpServer(
     private val tokenManager: TokenManager,
     private val modelRuntime: ModelRuntime,
@@ -52,12 +49,6 @@ class EngineHttpServer(
     suspend fun waitUntilModelIdle(modelId: String, timeoutMs: Long = 5_000L): Boolean =
         inferenceManager.waitUntilModelIdle(modelId = modelId, timeout = timeoutMs.milliseconds)
 
-    /**
-     * Installs content negotiation, bearer auth, and routing onto [application] — factored out
-     * of [start] so tests can mount the real handlers via Ktor's `testApplication` instead of
-     * duplicating routing/auth setup per test (as the pre-S4 test suite did, which meant it never
-     * actually exercised this class's own code).
-     */
     internal fun installInto(application: Application) {
         with(application) {
             setupContentNegotiation()
@@ -211,13 +202,6 @@ class EngineHttpServer(
         }
     }
 
-    /**
-     * Streams real per-token deltas from [ModelAdapter.invokeStreaming] as SSE frames (RFC-0021
-     * "Streaming"; Dictator plan S4) — unlike the previous implementation, which called the
-     * non-streaming [ModelAdapter.invoke], waited for the complete response, and only then chopped
-     * it into fake chunks. Time-to-first-token now reflects real generation, not full-response
-     * latency.
-     */
     private suspend fun streamChatCompletions(
         call: ApplicationCall,
         adapter: ModelAdapter,
@@ -291,12 +275,13 @@ class EngineHttpServer(
                     kind = model.kind.name.lowercase(),
                     capabilities = capabilitiesFor(model.kind),
                     context_window = model.contextWindow,
-                    format = if (model.isLocal) "gguf" else null,
+                    format = model.format,
                     size_bytes = installedModel?.sizeBytes ?: catalogModel?.sizeBytes,
-                    quantization = deriveQuantization(model.id),
+                    quantization = model.quantization,
                     installed = installedModel != null,
                     loaded = loadedIds.contains(model.id),
                     metadata = buildMap {
+                        putAll(model.metadata)
                         model.digest?.let { put("digest", it) }
                         put("is_local", model.isLocal.toString())
                         put("provider_id", model.providerId)
@@ -322,22 +307,6 @@ class EngineHttpServer(
         ModelKind.OCR -> listOf("ocr")
         ModelKind.RERANKER -> listOf("rerank")
         ModelKind.TRANSLATION -> listOf("translation")
-    }
-
-    private fun deriveQuantization(modelId: String): String? {
-        val lowered = modelId.lowercase()
-        return when {
-            lowered.contains("q2_k") -> "q2_k"
-            lowered.contains("q3_k") -> "q3_k"
-            lowered.contains("q4_k_m") -> "q4_k_m"
-            lowered.contains("q4_k_s") -> "q4_k_s"
-            lowered.contains("q4_0") -> "q4_0"
-            lowered.contains("q5_k_m") -> "q5_k_m"
-            lowered.contains("q5_k_s") -> "q5_k_s"
-            lowered.contains("q6_k") -> "q6_k"
-            lowered.contains("q8_0") -> "q8_0"
-            else -> null
-        }
     }
 
     private suspend fun handleEmbeddings(call: ApplicationCall) {
@@ -439,6 +408,10 @@ class EngineHttpServer(
                 ErrorDetail("Engine is shutting down", "engine_stopping", code = "shutdown")
             message.contains("MODEL_NOT_INSTALLED") || message.contains("not installed", ignoreCase = true) ->
                 HttpStatusCode.NotFound to ErrorDetail("Model is not installed", "model_error", code = "model_not_installed")
+            message.contains("MODEL_INTEGRITY_MISSING") ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail("Model integrity metadata is missing", "model_error", code = "model_integrity_missing")
+            message.contains("MODEL_INTEGRITY_MISMATCH") ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail("Model integrity verification failed", "model_error", code = "model_integrity_mismatch")
             message.contains("INVALID_GGUF") || message.contains("unsupported", ignoreCase = true) ->
                 HttpStatusCode.BadRequest to ErrorDetail("Model file is invalid or unsupported", "model_error", code = "invalid_model")
             message.contains("INCOMPATIBLE_GGUF") || message.contains("incompatible", ignoreCase = true) ->
