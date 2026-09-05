@@ -3,16 +3,11 @@ package fi.italeino.aidos.engine.http
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
-import dev.aidos.kernel.ModelRequest
-import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelRuntime
-import dev.aidos.kernel.ModelStreamEvent
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.testing.*
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
