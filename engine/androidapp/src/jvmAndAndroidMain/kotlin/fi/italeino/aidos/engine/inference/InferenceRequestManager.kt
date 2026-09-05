@@ -28,7 +28,7 @@ class EngineBusyException(message: String) : RuntimeException(message)
 class EngineShuttingDownException(message: String) : RuntimeException(message)
 class EngineModelBusyException(message: String) : RuntimeException(message)
 
-/** Coordinates bounded inference admission with safe model close/delete lifecycle operations. */
+/** Coordinates bounded inference admission with safe model open/close/delete lifecycle operations. */
 class InferenceRequestManager(
     private val modelRuntime: ModelRuntime,
     private val maxConcurrentRequests: Int = 1,
@@ -79,6 +79,25 @@ class InferenceRequestManager(
             }
         } finally {
             releaseAdmissionSlot(modelId, requestJob)
+        }
+    }
+
+    /** Force-load a model into memory without performing inference. */
+    suspend fun openModel(modelId: String): Result<Unit> {
+        val allowed = stateMutex.withLock {
+            when {
+                shuttingDown -> Result.failure<Unit>(EngineShuttingDownException("Engine is shutting down"))
+                closingModels.contains(modelId) || deletingModels.contains(modelId) ->
+                    Result.failure<Unit>(EngineModelBusyException("Model $modelId is being closed or deleted"))
+                else -> Result.success(Unit)
+            }
+        }
+        if (allowed.isFailure) return allowed
+
+        return try {
+            modelRuntime.load(modelId).map { Unit }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
