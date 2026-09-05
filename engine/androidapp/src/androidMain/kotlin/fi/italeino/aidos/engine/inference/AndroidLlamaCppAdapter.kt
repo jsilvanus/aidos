@@ -1,8 +1,10 @@
 package fi.italeino.aidos.engine.inference
 
 import de.kherud.llama.InferenceParameters
+import de.kherud.llama.LlamaIterator
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelRef
@@ -26,12 +28,14 @@ class AndroidLlamaCppAdapter(
     override val contextWindow: Int,
     private val threads: Int = 4,
     private val embeddingMode: Boolean = false,
-) : EmbeddingModelAdapter {
+) : CancellableModelAdapter, EmbeddingModelAdapter {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
     override val isLocal: Boolean = true
 
     private val model: LlamaModel
+    private val inferenceLock = Any()
+    @Volatile private var activeIterator: LlamaIterator? = null
     @Volatile private var closed = false
 
     init {
@@ -107,11 +111,20 @@ class AndroidLlamaCppAdapter(
             // `generate` is lazy: emitting as the iterator advances keeps the UI and the
             // loopback SSE endpoint genuinely token-streaming rather than buffering a native
             // completion first. `maxOutputTokens` remains the authoritative output bound.
-            for (token in model.generate(parameters)) {
-                if (tokenCount++ >= request.maxOutputTokens) break
-                output.append(token.text)
-                emit(ModelStreamEvent.Delta(token.text))
-                if (request.stopConditions.any(output::contains)) break
+            val iterator = model.generate(parameters).iterator()
+            synchronized(inferenceLock) { activeIterator = iterator }
+            try {
+                while (iterator.hasNext()) {
+                    if (tokenCount++ >= request.maxOutputTokens) break
+                    val token = iterator.next()
+                    output.append(token.text)
+                    emit(ModelStreamEvent.Delta(token.text))
+                    if (request.stopConditions.any(output::contains)) break
+                }
+            } finally {
+                synchronized(inferenceLock) {
+                    if (activeIterator === iterator) activeIterator = null
+                }
             }
 
             val text = output.toString()
@@ -139,9 +152,16 @@ class AndroidLlamaCppAdapter(
         }
     }
 
+    override fun cancelCurrentInference() {
+        synchronized(inferenceLock) {
+            activeIterator?.cancel()
+        }
+    }
+
     fun close() {
         if (closed) return
         closed = true
+        cancelCurrentInference()
         model.close()
     }
 
