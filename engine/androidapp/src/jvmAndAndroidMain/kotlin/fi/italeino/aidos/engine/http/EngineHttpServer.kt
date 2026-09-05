@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.http
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
 import fi.italeino.aidos.engine.inference.EngineBusyException
+import fi.italeino.aidos.engine.inference.EngineModelBusyException
 import fi.italeino.aidos.engine.inference.EngineShuttingDownException
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import io.ktor.http.*
@@ -48,6 +49,9 @@ class EngineHttpServer(
 
     suspend fun waitUntilModelIdle(modelId: String, timeoutMs: Long = 5_000L): Boolean =
         inferenceManager.waitUntilModelIdle(modelId = modelId, timeout = timeoutMs.milliseconds)
+
+    suspend fun deleteModel(modelId: String): Result<Unit> =
+        inferenceManager.deleteModel(modelId)
 
     internal fun installInto(application: Application) {
         with(application) {
@@ -406,6 +410,8 @@ class EngineHttpServer(
                 ErrorDetail("Engine is busy; retry later", "engine_busy", code = "queue_saturated")
             error is EngineShuttingDownException -> HttpStatusCode.ServiceUnavailable to
                 ErrorDetail("Engine is shutting down", "engine_stopping", code = "shutdown")
+            error is EngineModelBusyException -> HttpStatusCode.Conflict to
+                ErrorDetail("Model is busy; wait for inference to finish", "model_busy", code = "model_busy")
             message.contains("MODEL_NOT_INSTALLED") || message.contains("not installed", ignoreCase = true) ->
                 HttpStatusCode.NotFound to ErrorDetail("Model is not installed", "model_error", code = "model_not_installed")
             message.contains("MODEL_INTEGRITY_MISSING") ->
