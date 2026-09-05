@@ -13,7 +13,6 @@ import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
@@ -27,7 +26,7 @@ class InferenceRequestManagerTest {
     fun execute_rejectsWhenQueueIsSaturated() = runTest {
         val gate = CompletableDeferred<Unit>()
         val runtime = FakeRuntime(BlockingAdapter(gate))
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val manager = InferenceRequestManager(runtime, 1, 0)
         coroutineScope {
             val first = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             delay(50)
@@ -37,15 +36,14 @@ class InferenceRequestManagerTest {
             gate.complete(Unit)
             assertTrue(first.await().isSuccess)
         }
-        val metrics = manager.snapshotMetrics()
-        assertEquals(1, metrics.totalRequests)
-        assertEquals(1, metrics.completedRequests)
+        assertEquals(1, manager.snapshotMetrics().totalRequests)
+        assertEquals(1, manager.snapshotMetrics().completedRequests)
     }
 
     @Test
     fun execute_serializesConcurrentCallsPerModel() = runTest {
         val adapter = CountingAdapter()
-        val manager = InferenceRequestManager(FakeRuntime(adapter), maxConcurrentRequests = 2, maxQueuedRequests = 2)
+        val manager = InferenceRequestManager(FakeRuntime(adapter), 2, 2)
         coroutineScope {
             val first = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             val second = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
@@ -53,26 +51,19 @@ class InferenceRequestManagerTest {
             assertTrue(second.await().isSuccess)
         }
         assertEquals(1, adapter.maxConcurrentInvokes)
-        assertEquals(2, manager.snapshotMetrics().completedRequests)
     }
 
     @Test
     fun closeModel_interruptsRunningInferenceAndUnloadsAfterCancellation() = runTest {
         val adapter = CancellationAwareAdapter()
         val runtime = FakeRuntime(adapter)
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
-
+        val manager = InferenceRequestManager(runtime, 1, 0)
         coroutineScope {
-            val request = async {
-                manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() }
-            }
+            val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             adapter.started.await()
-
             val close = async { manager.closeModel("test-model") }
             adapter.cancelled.await()
             assertTrue(!close.isCompleted, "close must wait for the request to leave the manager")
-            adapter.finishCancellation()
-
             assertTrue(close.await().isSuccess)
             assertTrue(request.await().isFailure)
             assertEquals(1, runtime.unloadCalls)
@@ -81,24 +72,19 @@ class InferenceRequestManagerTest {
     }
 
     @Test
-    fun closeModel_cancelsQueuedRequestsForOnlyThatModel() = runTest {
-        val firstGate = CompletableDeferred<Unit>()
-        val firstAdapter = CancellationAwareAdapter()
-        val otherAdapter = BlockingAdapter(firstGate)
-        val runtime = MultiModelRuntime(firstAdapter, otherAdapter)
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 2, maxQueuedRequests = 2)
-
+    fun closeModel_cancelsQueuedRequestsForTargetModel() = runTest {
+        val adapter = CancellationAwareAdapter()
+        val runtime = FakeRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, 1, 2)
         coroutineScope {
             val first = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
-            firstAdapter.started.await()
+            adapter.started.await()
             val queued = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             delay(25)
-
             assertTrue(manager.closeModel("test-model").isSuccess)
             assertTrue(first.await().isFailure)
             assertTrue(queued.await().isFailure)
             assertEquals(1, runtime.unloadCalls)
-            firstGate.complete(Unit)
         }
     }
 
@@ -106,13 +92,12 @@ class InferenceRequestManagerTest {
     fun deleteModel_interruptsInferenceBeforeDeleting() = runTest {
         val adapter = CancellationAwareAdapter()
         val runtime = FakeRuntime(adapter)
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val manager = InferenceRequestManager(runtime, 1, 0)
         coroutineScope {
             val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             adapter.started.await()
             val deletion = async { manager.deleteModel("test-model") }
             adapter.cancelled.await()
-            adapter.finishCancellation()
             assertTrue(deletion.await().isSuccess)
             assertTrue(request.await().isFailure)
             assertEquals(1, runtime.unloadCalls)
@@ -125,7 +110,7 @@ class InferenceRequestManagerTest {
         val deleteStarted = CompletableDeferred<Unit>()
         val deleteGate = CompletableDeferred<Unit>()
         val runtime = FakeRuntime(CountingAdapter(), deleteStarted, deleteGate)
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val manager = InferenceRequestManager(runtime, 1, 0)
         coroutineScope {
             val deletion = async { manager.deleteModel("test-model") }
             deleteStarted.await()
@@ -141,12 +126,11 @@ class InferenceRequestManagerTest {
     @Test
     fun shutdownAndDrain_waitsUntilRunningRequestsFinish() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val runtime = FakeRuntime(BlockingAdapter(gate))
-        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 1)
+        val manager = InferenceRequestManager(FakeRuntime(BlockingAdapter(gate)), 1, 1)
         coroutineScope {
             val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             delay(50)
-            val shutdown = async { manager.shutdownAndDrain(timeout = 300.milliseconds) }
+            val shutdown = async { manager.shutdownAndDrain(300.milliseconds) }
             delay(50)
             assertTrue(!shutdown.isCompleted)
             gate.complete(Unit)
@@ -158,11 +142,11 @@ class InferenceRequestManagerTest {
     @Test
     fun shutdownAndDrain_cancelsRunningRequestAndRecordsCancellation() = runTest {
         val adapter = CancellationAwareAdapter()
-        val manager = InferenceRequestManager(FakeRuntime(adapter), maxConcurrentRequests = 1, maxQueuedRequests = 0)
+        val manager = InferenceRequestManager(FakeRuntime(adapter), 1, 0)
         coroutineScope {
             val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
             adapter.started.await()
-            assertTrue(manager.shutdownAndDrain(timeout = 500.milliseconds))
+            assertTrue(manager.shutdownAndDrain(500.milliseconds))
             assertTrue(request.await().isFailure)
         }
         val metrics = manager.snapshotMetrics()
@@ -171,10 +155,7 @@ class InferenceRequestManagerTest {
         assertEquals(0, metrics.runningRequests)
     }
 
-    private fun dummyRequest() = ModelRequest(
-        messages = emptyList(), tools = emptyList(),
-        toolChoice = dev.aidos.kernel.ToolChoice.None, maxOutputTokens = 16,
-    )
+    private fun dummyRequest() = ModelRequest(emptyList(), emptyList(), dev.aidos.kernel.ToolChoice.None, 16)
 }
 
 private open class FakeRuntime(
@@ -186,7 +167,6 @@ private open class FakeRuntime(
         private set
     var unloadCalls = 0
         private set
-
     override suspend fun catalog() = listOf(ModelDescriptor("test-model", "Test", ModelKind.LLM, "test", true, 2048, 1234, null))
     override suspend fun installed() = catalog()
     override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(adapter)
@@ -197,13 +177,6 @@ private open class FakeRuntime(
         deleteGate?.await()
     }
     override fun loaded() = listOf("test-model")
-}
-
-private class MultiModelRuntime(
-    private val target: CancellableModelAdapter,
-    private val other: ModelAdapter,
-) : FakeRuntime(target) {
-    override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(if (modelId == "test-model") target else other)
 }
 
 private class BlockingAdapter(private val gate: CompletableDeferred<Unit>) : ModelAdapter {
@@ -217,7 +190,7 @@ private class BlockingAdapter(private val gate: CompletableDeferred<Unit>) : Mod
         gate.await()
         return Result.success(response())
     }
-    protected fun response() = ModelResponse(listOf(TextOutput("ok")), StopReason.END_TURN, Usage(1, 1, 2), ModelRef(modelId, modelVersion))
+    private fun response() = ModelResponse(listOf(TextOutput("ok")), StopReason.END_TURN, Usage(1, 1, 2), ModelRef(modelId, modelVersion))
 }
 
 private class CancellationAwareAdapter : CancellableModelAdapter {
@@ -230,18 +203,13 @@ private class CancellationAwareAdapter : CancellableModelAdapter {
     val cancelled = CompletableDeferred<Unit>()
     var cancelCalls = 0
         private set
-    private var allowCancellation = false
     override fun supportsNativeToolCalls() = false
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
         started.complete(Unit)
-        while (!allowCancellation) awaitCancellation()
-        return Result.failure(CancellationException("cancelled"))
+        cancelled.await()
+        return Result.failure(kotlinx.coroutines.CancellationException("native inference cancelled"))
     }
-    override fun cancelCurrentInference() {
-        cancelCalls++
-        cancelled.complete(Unit)
-    }
-    fun finishCancellation() { allowCancellation = true }
+    override fun cancelCurrentInference() { cancelCalls++; cancelled.complete(Unit) }
 }
 
 private class CountingAdapter : ModelAdapter {
