@@ -59,7 +59,20 @@ class AndroidLlamaCppInferenceBackend(
         if (!file.isFile) return Result.failure(
             IllegalStateException("Model file not found for '$modelId': ${file.absolutePath}")
         )
+
         return try {
+            if (installed.digest.isBlank()) {
+                return Result.failure(IllegalStateException("MODEL_INTEGRITY_MISSING: no installed digest for '$modelId'"))
+            }
+            val actualDigest = sha256(file)
+            if (!actualDigest.equals(installed.digest, ignoreCase = true)) {
+                return Result.failure(
+                    IllegalStateException(
+                        "MODEL_INTEGRITY_MISMATCH: installed digest for '$modelId' does not match the model file"
+                    )
+                )
+            }
+
             val adapter = AndroidLlamaCppAdapter(
                 modelId = modelId,
                 modelFile = file,
