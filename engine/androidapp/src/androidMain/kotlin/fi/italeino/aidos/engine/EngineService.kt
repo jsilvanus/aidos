@@ -235,9 +235,18 @@ class EngineService : LifecycleService() {
     }
 
     /**
-     * Deletes a model through the Engine inference admission gate. Deletion is rejected while
-     * any inference request for the model is admitted, preventing weights from being removed
-     * while a request can still hold the adapter.
+     * Interrupt active inference, cancel queued requests for the model, wait for all admitted
+     * work to stop, then unload the model. The installed model artifact remains available for
+     * the next inference request.
+     */
+    suspend fun closeModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        return httpServer.closeModel(modelId)
+    }
+
+    /**
+     * Closes (interrupts + unloads) a model through the Engine admission gate before deleting its
+     * installed artifact.
      */
     suspend fun deleteModel(modelId: String): Result<Unit> {
         if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
