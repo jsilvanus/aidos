@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.ui
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -25,21 +27,11 @@ fun ProviderDetailScreen(
     providerId: String,
     onBackClick: () -> Unit
 ) {
-    // Sample data
-    var state by remember {
+    val context = LocalContext.current
+    var state by remember(providerId) {
         mutableStateOf(
             ProviderDetailState(
-                provider = ProviderDetail(
-                    id = providerId,
-                    name = providerId.replaceFirstChar { it.uppercase() },
-                    status = ProviderConfigStatus.ENABLED,
-                    apiKeyValid = true,
-                    isEnabled = true,
-                    configuredModels = listOf(
-                        ConfiguredRemoteModel("gpt-4o", "GPT-4o", true),
-                        ConfiguredRemoteModel("gpt-3.5-turbo", "GPT-3.5 Turbo", true)
-                    )
-                )
+                provider = loadProviderDetail(context, providerId)
             )
         )
     }
@@ -81,6 +73,7 @@ fun ProviderDetailScreen(
                                     isEnabled = enabled,
                                     status = if (enabled) ProviderConfigStatus.ENABLED else ProviderConfigStatus.CONFIGURED_DISABLED
                                 )
+                                persistProviderDetail(context, providerId, updatedProvider)
                                 state = state.copy(provider = updatedProvider)
                             }
                         )
@@ -148,6 +141,7 @@ fun ProviderDetailScreen(
                                             isEnabled = true,
                                             status = ProviderConfigStatus.ENABLED,
                                         )
+                                        persistProviderDetail(context, providerId, updatedProvider)
                                         state = state.copy(
                                             provider = updatedProvider,
                                             showApiKeyField = false,
@@ -195,11 +189,11 @@ fun ProviderDetailScreen(
                             displayName = "Custom Model $nextIndex",
                             isEnabled = true,
                         )
-                        state = state.copy(
-                            provider = provider.copy(
-                                configuredModels = provider.configuredModels + nextModel,
-                            )
+                        val updatedProvider = provider.copy(
+                            configuredModels = provider.configuredModels + nextModel,
                         )
+                        persistProviderDetail(context, providerId, updatedProvider)
+                        state = state.copy(provider = updatedProvider)
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -208,4 +202,60 @@ fun ProviderDetailScreen(
             }
         }
     }
+}
+
+private fun loadProviderDetail(context: Context, providerId: String): ProviderDetail {
+    val prefs = context.getSharedPreferences("aidos_engine_provider_state", Context.MODE_PRIVATE)
+    val base = ProviderDetail(
+        id = providerId,
+        name = providerId.replaceFirstChar { it.uppercase() },
+        status = ProviderConfigStatus.ENABLED,
+        apiKeyValid = true,
+        isEnabled = true,
+        configuredModels = listOf(
+            ConfiguredRemoteModel("gpt-4o", "GPT-4o", true),
+            ConfiguredRemoteModel("gpt-3.5-turbo", "GPT-3.5 Turbo", true),
+        ),
+    )
+    val enabled = prefs.getBoolean("${providerId}:enabled", base.isEnabled)
+    val apiKeyValid = prefs.getBoolean("${providerId}:api_key_valid", base.apiKeyValid)
+    val storedModels = prefs.getString("${providerId}:models", null)
+        ?.takeIf { it.isNotBlank() }
+        ?.split(";")
+        ?.mapNotNull { row ->
+            val parts = row.split("|")
+            if (parts.size >= 3) {
+                ConfiguredRemoteModel(
+                    modelId = parts[0],
+                    displayName = parts[1],
+                    isEnabled = parts[2].toBooleanStrictOrNull() == true,
+                )
+            } else null
+        }
+        ?: base.configuredModels
+
+    return base.copy(
+        isEnabled = enabled,
+        apiKeyValid = apiKeyValid,
+        status = when {
+            enabled -> ProviderConfigStatus.ENABLED
+            apiKeyValid -> ProviderConfigStatus.CONFIGURED_DISABLED
+            else -> ProviderConfigStatus.NOT_CONFIGURED
+        },
+        configuredModels = storedModels,
+    )
+}
+
+private fun persistProviderDetail(context: Context, providerId: String, provider: ProviderDetail) {
+    val prefs = context.getSharedPreferences("aidos_engine_provider_state", Context.MODE_PRIVATE)
+    prefs.edit()
+        .putBoolean("${providerId}:enabled", provider.isEnabled)
+        .putBoolean("${providerId}:api_key_valid", provider.apiKeyValid)
+        .putString(
+            "${providerId}:models",
+            provider.configuredModels.joinToString(";") { model ->
+                listOf(model.modelId, model.displayName, model.isEnabled.toString()).joinToString("|")
+            },
+        )
+        .apply()
 }
