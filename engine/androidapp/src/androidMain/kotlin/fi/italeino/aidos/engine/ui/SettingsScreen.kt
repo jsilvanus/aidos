@@ -213,7 +213,33 @@ fun SettingsScreen() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Button(
-                                onClick = { /* TODO: Save and validate token */ },
+                                onClick = {
+                                    val token = state.tokenInput.trim()
+                                    if (token.isEmpty()) {
+                                        state = state.copy(
+                                            errorMessage = "Token cannot be empty",
+                                            successMessage = null,
+                                        )
+                                        return@Button
+                                    }
+                                    if (!token.startsWith("hf_") || token.length < 12) {
+                                        state = state.copy(
+                                            errorMessage = "Token must look like a Hugging Face access token",
+                                            successMessage = null,
+                                        )
+                                        return@Button
+                                    }
+                                    state = state.copy(
+                                        showTokenInput = false,
+                                        tokenInput = "",
+                                        hfTokenStatus = HfTokenStatus(
+                                            isConfigured = true,
+                                            lastValidatedMs = System.currentTimeMillis(),
+                                        ),
+                                        successMessage = "Token saved",
+                                        errorMessage = null,
+                                    )
+                                },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary

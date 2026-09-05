@@ -76,7 +76,13 @@ fun ProviderDetailScreen(
                         Text("Enabled", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
                         Switch(
                             checked = provider.isEnabled,
-                            onCheckedChange = { /* TODO */ }
+                            onCheckedChange = { enabled ->
+                                val updatedProvider = provider.copy(
+                                    isEnabled = enabled,
+                                    status = if (enabled) ProviderConfigStatus.ENABLED else ProviderConfigStatus.CONFIGURED_DISABLED
+                                )
+                                state = state.copy(provider = updatedProvider)
+                            }
                         )
                     }
 
@@ -128,6 +134,39 @@ fun ProviderDetailScreen(
                                     }
                                 )
                             }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val sanitizedKey = state.apiKeyInput.trim()
+                                        if (sanitizedKey.isEmpty()) return@Button
+                                        val updatedProvider = provider.copy(
+                                            apiKeyValid = true,
+                                            isEnabled = true,
+                                            status = ProviderConfigStatus.ENABLED,
+                                        )
+                                        state = state.copy(
+                                            provider = updatedProvider,
+                                            showApiKeyField = false,
+                                            apiKeyInput = "",
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Save")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        state = state.copy(showApiKeyField = false, apiKeyInput = "")
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Cancel")
+                                }
+                            }
                         }
                     }
                 }
@@ -149,7 +188,19 @@ fun ProviderDetailScreen(
                 }
                 
                 TextButton(
-                    onClick = { /* TODO */ },
+                    onClick = {
+                        val nextIndex = provider.configuredModels.size + 1
+                        val nextModel = ConfiguredRemoteModel(
+                            modelId = "custom-model-$nextIndex",
+                            displayName = "Custom Model $nextIndex",
+                            isEnabled = true,
+                        )
+                        state = state.copy(
+                            provider = provider.copy(
+                                configuredModels = provider.configuredModels + nextModel,
+                            )
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("+ Add Model")
