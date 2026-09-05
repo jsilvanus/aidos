@@ -11,8 +11,6 @@ kotlin {
     androidTarget()
 
     sourceSets {
-        // M28/M31 platform-neutral logic lives in commonMain so that when androidTarget()
-        // is wired (needs AGP from dl.google.com), no file moves are required.
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":api"))
@@ -31,10 +29,6 @@ kotlin {
                 implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
-                // jvmMain has no Compose UI of its own, but the Compose Compiler Gradle plugin
-                // (kotlin.plugin.compose) runs its version check against every compilation in
-                // this module, androidTarget included — it fails hard without the runtime on
-                // the classpath even here. Unused at runtime, only satisfies that check.
                 implementation("androidx.compose.runtime:runtime:1.6.0")
             }
         }
@@ -50,14 +44,14 @@ kotlin {
             }
         }
 
-        // androidMain sourceSet — uncomment when androidTarget() is wired.
         val androidMain by getting {
             dependencies {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
+                implementation(project(":storage"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-                
+
                 // Compose and Material Design 3
                 implementation("androidx.compose.ui:ui:1.6.0")
                 implementation("androidx.compose.material3:material3:1.1.0")
@@ -65,19 +59,16 @@ kotlin {
                 implementation("androidx.activity:activity-compose:1.8.0")
                 implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
                 implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.1")
-                
+
                 // Navigation
                 implementation("androidx.navigation:navigation-compose:2.7.0")
-                
+
                 // Android core
                 implementation("androidx.core:core-ktx:1.10.1")
                 implementation("androidx.appcompat:appcompat:1.6.1")
                 implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
-                // AidosService : LifecycleService (RFC-0050) — the foreground service hosting
-                // RuntimeServiceHost.
                 implementation("androidx.lifecycle:lifecycle-service:2.6.1")
-                
-                // For scoped storage and file access
+
                 implementation("androidx.documentfile:documentfile:1.0.1")
             }
         }
@@ -93,11 +84,10 @@ sqldelight {
     }
 }
 
-// android { } — uncomment when androidTarget() is wired.
 android {
     namespace = "fi.italeino.aidos"
     compileSdk = 34
-    
+
     defaultConfig {
         applicationId = "fi.italeino.aidos"
         minSdk = 26
@@ -105,17 +95,12 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
-    
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    // A release build type may only reference a signingConfig that is actually
-    // signing-ready (AGP's packageRelease requires storeFile once one is attached) - so the
-    // keystore's presence gates both populating the config below and attaching it to the
-    // release build type. Absent (e.g. no KEYSTORE_BASE64 secret in CI), the release build
-    // proceeds unsigned, matching the workflow's own documented fallback.
     val releaseKeystorePath = System.getenv("KEYSTORE_FILE")
         ?: System.getenv("HOME")?.let { "$it/.android/aidos-keystore.jks" }
     val hasReleaseKeystore = releaseKeystorePath != null && File(releaseKeystorePath).exists()
