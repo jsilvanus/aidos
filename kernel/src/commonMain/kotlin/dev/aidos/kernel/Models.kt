@@ -18,14 +18,6 @@ interface ModelAdapter {
     fun supportsNativeToolCalls(): Boolean
     suspend fun invoke(request: ModelRequest): Result<ModelResponse>
 
-    /**
-     * Token-by-token variant of [invoke] (RFC-0021, "Streaming"). The default falls back to
-     * [invoke] and emits its result as a single terminal event — correct for any adapter whose
-     * backend has no partial output to offer. An adapter backed by a token-emitting inference
-     * engine (e.g. llama.cpp) overrides this to yield real incremental [ModelStreamEvent.Delta]s
-     * as they're produced, rather than a caller having to wait for [invoke] to return and then
-     * chop the finished text into fake chunks.
-     */
     suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         invoke(request).fold(
             onSuccess = { emit(ModelStreamEvent.Done(it)) },
@@ -36,9 +28,14 @@ interface ModelAdapter {
     val providerRetention: ProviderRetention? get() = null
 }
 
+/** Adapter capability for interrupting the currently running native inference. */
+interface CancellableModelAdapter : ModelAdapter {
+    /** Interrupt the native inference operation currently owned by this adapter, if any. */
+    fun cancelCurrentInference()
+}
+
 /** Adapter capability for models that expose native vector embeddings. */
 interface EmbeddingModelAdapter : ModelAdapter {
-    /** Returns the model's native embedding vector without prompt/chat formatting. */
     suspend fun embed(text: String): Result<FloatArray>
 }
 
@@ -119,7 +116,6 @@ sealed interface RoutingDecision {
     data object ForegroundRequired : RoutingDecision
 }
 
-/** Authoritative runtime description of one model known to the Engine. */
 data class ModelDescriptor(
     val id: String,
     val name: String,
@@ -129,11 +125,8 @@ data class ModelDescriptor(
     val contextWindow: Int,
     val sizeBytes: Long?,
     val digest: String?,
-    /** Artifact format, e.g. `gguf`. Null when not known. */
     val format: String? = null,
-    /** Quantization declared by trusted model metadata, not inferred from a filename. */
     val quantization: String? = null,
-    /** Additional authoritative catalog metadata exposed by the model backend. */
     val metadata: Map<String, String> = emptyMap(),
 )
 
@@ -176,3 +169,12 @@ data class ScheduledJob(
     val missedOccurrences: Int = 0,
     val createdAt: Instant,
 )
+
+interface ModelRuntime {
+    suspend fun catalog(): List<ModelDescriptor>
+    suspend fun installed(): List<ModelDescriptor>
+    suspend fun load(modelId: String): Result<ModelAdapter>
+    suspend fun unload(modelId: String)
+    fun loaded(): List<String>
+    suspend fun delete(modelId: String)
+}
