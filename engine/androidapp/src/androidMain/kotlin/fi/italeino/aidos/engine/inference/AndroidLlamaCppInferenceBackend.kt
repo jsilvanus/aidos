@@ -26,8 +26,10 @@ class AndroidLlamaCppInferenceBackend(
     private val modelsDir = File(context.filesDir, "models").apply { mkdirs() }
     private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
 
-    override suspend fun catalog(): List<ModelDescriptor> =
-        catalogManager.listCatalog().getOrElse { throw it }.map { entry -> descriptorFromCatalog(entry) }
+    override suspend fun catalog(): List<ModelDescriptor> {
+        reconcileInstalledState().getOrThrow()
+        return catalogManager.listCatalog().getOrElse { throw it }.map { entry -> descriptorFromCatalog(entry) }
+    }
 
     override suspend fun installed(): List<ModelDescriptor> =
         catalogManager.listInstalled().getOrElse { throw it }
