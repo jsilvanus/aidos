@@ -15,8 +15,6 @@ import java.io.File
  * Project locking stays unset until Android file-lock semantics have an instrumentation test.
  */
 object AndroidRuntimeClientFactory {
-    private const val RUNTIME_VERSION = "0.1.0-alpha"
-
     @Volatile
     private var instance: RealRuntimeClient? = null
 
@@ -29,13 +27,13 @@ object AndroidRuntimeClientFactory {
 
     private fun create(context: Context): RealRuntimeClient {
         val nowIso = { Clock.System.now().toString() }
-        val userDb = AndroidAidosStorage.openUser(context, nowIso)
+        val userDriver = AndroidAidosStorage.openUser(context, nowIso)
         val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
 
         return RealRuntimeClient().apply {
-            userDriver = userDb.driver
+            this.userDriver = userDriver
             projectDbFactory = { projectRoot ->
-                AndroidAidosStorage.openProject(context, projectRoot, nowIso).driver
+                AndroidAidosStorage.openProject(context, projectRoot, nowIso)
             }
             runtimeManagedProjectsRoot = projectsRoot.absolutePath
         }
