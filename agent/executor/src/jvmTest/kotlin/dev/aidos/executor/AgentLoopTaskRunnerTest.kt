@@ -2,20 +2,24 @@ package dev.aidos.executor
 
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.AvailabilityTier
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
+import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.EventId
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.ProviderRetention
+import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.RetentionPolicy
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
@@ -27,6 +31,7 @@ import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Tool
+import dev.aidos.kernel.ToolAvailability
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
