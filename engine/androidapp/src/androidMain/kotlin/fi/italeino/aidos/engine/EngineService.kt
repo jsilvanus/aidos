@@ -235,6 +235,15 @@ class EngineService : LifecycleService() {
     }
 
     /**
+     * Force-load a model into memory without performing inference. The model remains loaded until
+     * explicitly closed, deleted, or the engine shuts down.
+     */
+    suspend fun openModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        return httpServer.openModel(modelId)
+    }
+
+    /**
      * Interrupt active inference, cancel queued requests for the model, wait for all admitted
      * work to stop, then unload the model. The installed model artifact remains available for
      * the next inference request.
