@@ -234,6 +234,16 @@ class EngineService : LifecycleService() {
         return HttpModelClient(port = port, token = token)
     }
 
+    /**
+     * Deletes a model through the Engine inference admission gate. Deletion is rejected while
+     * any inference request for the model is admitted, preventing weights from being removed
+     * while a request can still hold the adapter.
+     */
+    suspend fun deleteModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        return httpServer.deleteModel(modelId)
+    }
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL_ID,
