@@ -27,9 +27,7 @@ class AndroidLlamaCppInferenceBackend(
     private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
 
     override suspend fun catalog(): List<ModelDescriptor> =
-        catalogManager.listCatalog().getOrElse { throw it }.map { entry ->
-            descriptorFromCatalog(entry)
-        }
+        catalogManager.listCatalog().getOrElse { throw it }.map { entry -> descriptorFromCatalog(entry) }
 
     override suspend fun installed(): List<ModelDescriptor> =
         catalogManager.listInstalled().getOrElse { throw it }
@@ -39,8 +37,30 @@ class AndroidLlamaCppInferenceBackend(
                 catalog?.let { descriptorFromCatalog(it, installed.sizeBytes, installed.digest) }
             }
 
-    override suspend fun computeDigest(modelId: String): String =
-        sha256(resolveModelFile(modelId))
+    /**
+     * Reconciles persistent installed state with the artifact store and catalog authority.
+     * Orphan files are intentionally ignored: they have no trusted model identity and cannot
+     * become executable merely by existing in filesDir/models.
+     */
+    suspend fun reconcileInstalledState(): Result<Unit> = runCatching {
+        val catalogEntries = catalogManager.listCatalog().getOrThrow().associateBy { it.id }
+        val installedEntries = catalogManager.listInstalled().getOrThrow()
+        for (installed in installedEntries) {
+            val catalog = catalogEntries[installed.modelId]
+            val file = File(installed.path)
+            val expectedDigest = catalog?.let(::expectedDigest)
+            val valid = catalog != null &&
+                file.isFile &&
+                installed.digest.isNotBlank() &&
+                (expectedDigest == null || expectedDigest.equals(installed.digest, ignoreCase = true))
+            if (!valid) {
+                liveAdapters.remove(installed.modelId)?.close()
+                catalogManager.uninstall(installed.modelId).getOrThrow()
+            }
+        }
+    }
+
+    override suspend fun computeDigest(modelId: String): String = sha256(resolveModelFile(modelId))
 
     override suspend fun delete(modelId: String) {
         liveAdapters.remove(modelId)?.close()
@@ -64,12 +84,16 @@ class AndroidLlamaCppInferenceBackend(
             if (installed.digest.isBlank()) {
                 return Result.failure(IllegalStateException("MODEL_INTEGRITY_MISSING: no installed digest for '$modelId'"))
             }
+            val expectedDigest = expectedDigest(catalog)
+            if (expectedDigest != null && !expectedDigest.equals(installed.digest, ignoreCase = true)) {
+                return Result.failure(
+                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed metadata for '$modelId' does not match catalog")
+                )
+            }
             val actualDigest = sha256(file)
             if (!actualDigest.equals(installed.digest, ignoreCase = true)) {
                 return Result.failure(
-                    IllegalStateException(
-                        "MODEL_INTEGRITY_MISMATCH: installed digest for '$modelId' does not match the model file"
-                    )
+                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed digest for '$modelId' does not match the model file")
                 )
             }
 
@@ -119,6 +143,11 @@ class AndroidLlamaCppInferenceBackend(
             metadata = extraMetadata,
         )
     }
+
+    private fun expectedDigest(entry: CatalogEntry): String? =
+        runCatching {
+            Json.parseToJsonElement(entry.propertiesJson).jsonObject["sha256"]?.jsonPrimitive?.content
+        }.getOrNull()?.takeIf { it.isNotBlank() }
 
     private fun contextWindow(entry: CatalogEntry): Int =
         runCatching {
