@@ -395,7 +395,7 @@ class AgentLoopTaskRunner(
         writeAttempt(
             task = task,
             projectId = run.projectId,
-            recoveryClass = "PURE",
+            recoveryClass = RecoveryClass.PURE.name,
             modelProvider = adapter.providerId,
             modelVersion = adapter.modelVersion,
             tokensInput = response.usage?.inputTokens,
@@ -525,6 +525,12 @@ class AgentLoopTaskRunner(
         return finishToolCall(task, callRow, run, result)
     }
 
+    private fun descriptorRecoveryClass(run: RunContext, toolName: String): RecoveryClass {
+        val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+            .firstOrNull { it.name == toolName }
+        return descriptor?.recoveryClass ?: RecoveryClass.UNSAFE
+    }
+
     /**
      * The common tail of a tool call, real or synthetic: persist taint, write the outcome and
      * attempt, and fan in to the next `MODEL_CALL` once every sibling is terminal. Shared by
@@ -574,10 +580,11 @@ class AgentLoopTaskRunner(
         }
 
         updateToolCallOutcome(callRow.callId, outcomeStr)
+        val recoveryClass = descriptorRecoveryClass(run, callRow.toolName)
         writeAttempt(
             task = task,
             projectId = run.projectId,
-            recoveryClass = "IDEMPOTENT",
+            recoveryClass = recoveryClass.name,
             modelProvider = null,
             modelVersion = null,
             tokensInput = null,

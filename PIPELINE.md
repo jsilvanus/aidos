@@ -80,6 +80,26 @@ Nothing below is waiting on hardware or on a decision.
   an authority boundary, so it ranks below the two above — but the audit trail is the product's
   accountability claim.
 
+### Immediate next five items (selected from the backlog)
+
+These are the next five items to execute from the live backlog, in order. The first item is already
+under active work on this branch; the next four are the highest-value follow-ons without waiting on
+hardware or product decisions.
+
+1. **Fix `AgentLoopTaskRunner` recovery metadata** — persist each tool's actual `RecoveryClass`
+   instead of hardcoded literals, and keep the model-call path at `PURE` only where it is truly a
+   non-effectful call.
+2. **Enforce RFC-0042 networking and egress controls** — add a centralized policy gate for outbound
+   URLs, loopback/private ranges, and explicit allowlists before any `HttpTool`-style call can leave
+   the process.
+3. **Fix RFC-0046 actor attribution** — stop hardcoding `actorKind = "SESSION"` and
+   `device_id = "runtime"`; emit the real actor identity and device identity in every audit row.
+4. **Finish the Android inference slice** — prove a real GGUF loads on a device, prompt execution
+   reaches native llama.cpp, and the direct tester exposes the required load/generation metrics.
+5. **Harden the inference lifecycle and resource ownership** — finish bounded admission, model/load
+   deduplication, cancellation propagation, deterministic disposal, and concurrency protection for the
+   active engine runtime.
+
 ### 2. Android Engine — complete the offline runtime
 
 The Engine is the critical path from the platform-neutral runtime to the product described in the
