@@ -184,6 +184,10 @@ class EngineService : LifecycleService() {
                 )
                 modelRuntime = runtime
 
+                // Reconcile stale installed rows before exposing the Engine to clients: orphan
+                // files are non-executable and rows without a trustworthy artifact are removed.
+                runtime.catalog()
+
                 // A token proves which app it was issued to; whether that app is still approved
                 // is asked of the store on every request, so revoking in Connected Apps cuts a
                 // live session immediately (RFC-0103, "Trust model").
