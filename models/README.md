@@ -6,6 +6,15 @@ Tiny, hand-built model repos used as smoke-test fixtures.
 |---|---|---|---|
 | [`rot13-onnx/`](rot13-onnx/) | ONNX (opset 13, IR 8) | 258 KB | ROT13 as a one-hot projection through a permutation matrix |
 | [`rot13-gguf/`](rot13-gguf/) | GGUF v3, all F32 | 2.3 MB | ROT13 as a real 1-block llama transformer with hand-built weights |
+| [`echo-onnx/`](echo-onnx/) | ONNX (opset 13, IR 8) | 258 KB | Byte identity as a one-hot projection through an identity matrix |
+| [`echo-gguf/`](echo-gguf/) | GGUF v3, all F32 | 2.3 MB | Byte identity as a real 1-block llama transformer with hand-built weights |
+
+The `echo-*` fixtures are the same construction as `rot13-*`, with the LM
+head / permutation matrix set to the identity instead of ROT13's. Where ROT13
+is an involution that alternates under free-running generation, echo is a
+fixed point that repeats the same byte forever — a simpler property to assert
+on, and useful as an even more minimal smoke test than ROT13 when a test only
+needs to confirm "the runtime returns what I put in."
 
 ## Why ROT13
 
@@ -52,6 +61,8 @@ Both exit non-zero on any mismatch, so either is usable as a CI step:
 ```bash
 python3 rot13-onnx/verify.py
 python3 rot13-gguf/verify.py
+python3 echo-onnx/verify.py
+python3 echo-gguf/verify.py
 ```
 
 `rot13-onnx/verify.py` needs `onnxruntime` and `numpy`. `rot13-gguf/verify.py`
