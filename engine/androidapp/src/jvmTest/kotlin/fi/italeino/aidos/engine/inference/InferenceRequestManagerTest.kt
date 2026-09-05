@@ -54,6 +54,19 @@ class InferenceRequestManagerTest {
     }
 
     @Test
+    fun openModel_forceLoadsWithoutInference() = runTest {
+        val adapter = CountingAdapter()
+        val runtime = FakeRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, 1, 0)
+
+        val result = manager.openModel("test-model")
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, runtime.loadCalls)
+        assertEquals(0, adapter.invokeCalls)
+    }
+
+    @Test
     fun closeModel_interruptsRunningInferenceAndUnloadsAfterCancellation() = runTest {
         val adapter = CancellationAwareAdapter()
         val runtime = FakeRuntime(adapter)
@@ -167,9 +180,14 @@ private open class FakeRuntime(
         private set
     var unloadCalls = 0
         private set
+    var loadCalls = 0
+        private set
     override suspend fun catalog() = listOf(ModelDescriptor("test-model", "Test", ModelKind.LLM, "test", true, 2048, 1234, null))
     override suspend fun installed() = catalog()
-    override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(adapter)
+    override suspend fun load(modelId: String): Result<ModelAdapter> {
+        loadCalls++
+        return Result.success(adapter)
+    }
     override suspend fun unload(modelId: String) { unloadCalls++ }
     override suspend fun delete(modelId: String) {
         deleteCalls++
@@ -221,8 +239,11 @@ private class CountingAdapter : ModelAdapter {
     private var activeInvokes = 0
     var maxConcurrentInvokes = 0
         private set
+    var invokeCalls = 0
+        private set
     override fun supportsNativeToolCalls() = false
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        invokeCalls++
         activeInvokes++
         maxConcurrentInvokes = maxOf(maxConcurrentInvokes, activeInvokes)
         delay(50)
