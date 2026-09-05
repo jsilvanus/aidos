@@ -110,13 +110,13 @@ class ModelsViewModel : ViewModel() {
     }
 
     fun deleteModel(modelId: String) {
-        val runtime = EngineService.instance?.modelRuntime ?: return
+        val service = EngineService.instance ?: return
         viewModelScope.launch {
             try {
-                runtime.delete(modelId)
-                refresh() // Refresh list after deletion
+                service.deleteModel(modelId).getOrThrow()
+                refresh()
             } catch (e: Exception) {
-                // Handle error
+                _errorMessage.value = "Delete failed: ${e.message ?: "Model may be busy"}"
             }
         }
     }
