@@ -32,6 +32,7 @@ data class InferenceLifecycleMetrics(
 
 class EngineBusyException(message: String) : RuntimeException(message)
 class EngineShuttingDownException(message: String) : RuntimeException(message)
+class EngineModelBusyException(message: String) : RuntimeException(message)
 
 /**
  * Serializes model inference and keeps request lifecycle state explicit.
@@ -40,6 +41,7 @@ class EngineShuttingDownException(message: String) : RuntimeException(message)
  * - Per-model generation serialization
  * - Metrics for queue/running/fail/cancel counts
  * - Explicit cancellation of all admitted work during service shutdown
+ * - Model deletion is rejected while any request for that model is admitted
  */
 class InferenceRequestManager(
     private val modelRuntime: ModelRuntime,
@@ -50,6 +52,8 @@ class InferenceRequestManager(
     private val stateMutex = Mutex()
     private val modelLocks = mutableMapOf<String, Mutex>()
     private val activeByModel = mutableMapOf<String, Int>()
+    private val admittedByModel = mutableMapOf<String, Int>()
+    private val deletingModels = mutableSetOf<String>()
     private val requestJobs = mutableSetOf<Job>()
 
     private var queueDepth = 0
@@ -64,7 +68,7 @@ class InferenceRequestManager(
         val requestJob = currentCoroutineContext()[Job]
             ?: return Result.failure(IllegalStateException("Inference request requires a coroutine Job"))
 
-        val admitted = acquireAdmissionSlot(requestJob)
+        val admitted = acquireAdmissionSlot(modelId, requestJob)
         if (admitted.isFailure) return Result.failure(admitted.exceptionOrNull()!!)
 
         try {
@@ -89,7 +93,48 @@ class InferenceRequestManager(
                 }
             }
         } finally {
-            releaseAdmissionSlot(requestJob)
+            releaseAdmissionSlot(modelId, requestJob)
+        }
+    }
+
+    /**
+     * Deletes a model only when no request for that model is admitted.
+     *
+     * The model is marked as deleting under the same mutex used for admission, so there is no
+     * check-then-delete race: a new inference cannot be admitted after the deletion check passes.
+     * Existing queued or running requests cause deletion to fail rather than being interrupted.
+     */
+    suspend fun deleteModel(modelId: String): Result<Unit> {
+        val canDelete = stateMutex.withLock {
+            if (shuttingDown) {
+                return@withLock Result.failure(
+                    EngineShuttingDownException("Engine is shutting down")
+                )
+            }
+            val admitted = admittedByModel[modelId] ?: 0
+            if (admitted > 0) {
+                return@withLock Result.failure(
+                    EngineModelBusyException(
+                        "Model $modelId is busy ($admitted inference request(s) admitted)"
+                    )
+                )
+            }
+            if (!deletingModels.add(modelId)) {
+                return@withLock Result.failure(
+                    EngineModelBusyException("Model $modelId is already being deleted")
+                )
+            }
+            Result.success(Unit)
+        }
+        if (canDelete.isFailure) return canDelete
+
+        return try {
+            modelRuntime.delete(modelId)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        } finally {
+            stateMutex.withLock { deletingModels.remove(modelId) }
         }
     }
 
@@ -142,11 +187,16 @@ class InferenceRequestManager(
         return stateMutex.withLock { queueDepth == 0 && runningRequests == 0 }
     }
 
-    private suspend fun acquireAdmissionSlot(requestJob: Job): Result<Unit> {
+    private suspend fun acquireAdmissionSlot(modelId: String, requestJob: Job): Result<Unit> {
         val admitted = stateMutex.withLock {
             if (shuttingDown) {
                 return@withLock Result.failure(
                     EngineShuttingDownException("Engine is shutting down")
+                )
+            }
+            if (deletingModels.contains(modelId)) {
+                return@withLock Result.failure(
+                    EngineModelBusyException("Model $modelId is being deleted")
                 )
             }
             val inSystem = queueDepth + runningRequests
@@ -159,6 +209,7 @@ class InferenceRequestManager(
             }
             queueDepth++
             totalRequests++
+            admittedByModel[modelId] = (admittedByModel[modelId] ?: 0) + 1
             requestJobs += requestJob
             Result.success(Unit)
         }
@@ -175,6 +226,7 @@ class InferenceRequestManager(
         } catch (e: CancellationException) {
             stateMutex.withLock {
                 queueDepth = (queueDepth - 1).coerceAtLeast(0)
+                decrementAdmitted(modelId)
                 cancelledRequests++
                 requestJobs.remove(requestJob)
             }
@@ -182,12 +234,18 @@ class InferenceRequestManager(
         }
     }
 
-    private suspend fun releaseAdmissionSlot(requestJob: Job) {
+    private suspend fun releaseAdmissionSlot(modelId: String, requestJob: Job) {
         stateMutex.withLock {
             runningRequests = (runningRequests - 1).coerceAtLeast(0)
+            decrementAdmitted(modelId)
             requestJobs.remove(requestJob)
         }
         capacity.release()
+    }
+
+    private fun decrementAdmitted(modelId: String) {
+        val next = ((admittedByModel[modelId] ?: 0) - 1).coerceAtLeast(0)
+        if (next == 0) admittedByModel.remove(modelId) else admittedByModel[modelId] = next
     }
 
     private suspend fun markActive(modelId: String, delta: Int) {
