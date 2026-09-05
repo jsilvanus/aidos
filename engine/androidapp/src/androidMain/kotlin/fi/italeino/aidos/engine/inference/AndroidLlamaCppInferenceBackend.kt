@@ -57,7 +57,7 @@ class AndroidLlamaCppInferenceBackend(
             ?: return Result.failure(IllegalStateException("Model $modelId is not installed"))
         val file = File(installed.path)
         if (!file.isFile) return Result.failure(
-            IllegalStateException("Model file not found for '$modelId': ${file.absolutePath}")
+            IllegalStateException("MODEL_NOT_INSTALLED: model file not found for '$modelId': ${file.absolutePath}")
         )
 
         return try {
@@ -99,6 +99,12 @@ class AndroidLlamaCppInferenceBackend(
     ): ModelDescriptor {
         val metadata = runCatching { Json.parseToJsonElement(entry.propertiesJson).jsonObject }.getOrNull()
         val expectedDigest = metadata?.get("sha256")?.jsonPrimitive?.content
+        val format = metadata?.get("format")?.jsonPrimitive?.content
+        val quantization = metadata?.get("quantization")?.jsonPrimitive?.content
+        val extraMetadata = metadata?.entries
+            ?.filter { it.value is kotlinx.serialization.json.JsonPrimitive }
+            ?.associate { it.key to it.value.jsonPrimitive.content }
+            ?: emptyMap()
         return ModelDescriptor(
             id = entry.id,
             name = entry.name,
@@ -108,6 +114,9 @@ class AndroidLlamaCppInferenceBackend(
             contextWindow = contextWindow(entry),
             sizeBytes = sizeBytes,
             digest = installedDigest ?: expectedDigest,
+            format = format,
+            quantization = quantization,
+            metadata = extraMetadata,
         )
     }
 
