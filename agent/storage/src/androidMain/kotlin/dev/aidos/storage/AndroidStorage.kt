@@ -18,10 +18,10 @@ import java.io.File
 object AndroidAidosStorage {
     private const val RUNTIME_VERSION = "0.1.0-alpha"
 
-    fun openUser(context: Context, nowIso: () -> String): OpenDatabase =
+    fun openUser(context: Context, nowIso: () -> String): SqlDriver =
         open(context, DatabaseKind.USER, File(context.filesDir, "user.db"), nowIso)
 
-    fun openProject(context: Context, projectRoot: String, nowIso: () -> String): OpenDatabase =
+    fun openProject(context: Context, projectRoot: String, nowIso: () -> String): SqlDriver =
         open(context, DatabaseKind.PROJECT, File(projectRoot, ".aidos/state.db"), nowIso)
 
     private fun open(
@@ -29,7 +29,7 @@ object AndroidAidosStorage {
         kind: DatabaseKind,
         path: File,
         nowIso: () -> String,
-    ): OpenDatabase {
+    ): SqlDriver {
         path.parentFile?.mkdirs()
         val driver = AndroidSqliteDriver(
             schema = RawSchema(kind.currentVersion),
@@ -37,8 +37,8 @@ object AndroidAidosStorage {
             name = path.absolutePath,
         )
         val schemaSql = context.assets.open(kind.schemaResource).bufferedReader().use { it.readText() }
-        val result = MigrationRunner.open(driver, kind, schemaSql, RUNTIME_VERSION, nowIso)
-        return OpenDatabase(driver, result)
+        MigrationRunner.open(driver, kind, schemaSql, RUNTIME_VERSION, nowIso)
+        return driver
     }
 
     /** SQLDelight lifecycle hook is intentionally empty; MigrationRunner owns the real DDL. */
