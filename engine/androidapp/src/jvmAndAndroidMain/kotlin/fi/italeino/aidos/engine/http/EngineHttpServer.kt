@@ -253,11 +253,6 @@ class EngineHttpServer(
                         writeStringUtf8("data: ${Json.encodeToString(finalChunk)}\n\n")
                     }
                     is ModelStreamEvent.Failed -> {
-                        // Headers and a 200 status are already committed by the time streaming can
-                        // fail mid-generation, so there is no clean HTTP error to fall back to —
-                        // send the error as its own SSE frame instead of silently truncating the
-                        // stream, then still terminate with [DONE] below so a client's SSE parser
-                        // doesn't hang waiting for a terminator that never comes.
                         writeStringUtf8(
                             "data: ${Json.encodeToString(ErrorResponse(ErrorDetail(event.error.message ?: "Inference failed", "inference_error")))}\n\n"
                         )
@@ -348,24 +343,55 @@ class EngineHttpServer(
     private suspend fun handleEmbeddings(call: ApplicationCall) {
         try {
             val request = call.receive<EmbeddingsRequest>()
+            if (request.input.isEmpty()) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail("input must contain at least one string", "invalid_request_error", param = "input"))
+                )
+                return
+            }
+            if (request.encoding_format != null && request.encoding_format != "float") {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail("only float embeddings are supported", "invalid_request_error", param = "encoding_format"))
+                )
+                return
+            }
+
             val embeddingsResult = inferenceManager.execute(request.model) { adapter ->
+                val embeddingAdapter = adapter as? EmbeddingModelAdapter
+                    ?: throw UnsupportedOperationException("Model ${request.model} does not support embeddings")
+
                 request.input.mapIndexed { index, text ->
-                    val modelRequest = ModelRequest(
-                        messages = listOf(Turn.User(listOf(ContentBlock.Text(text)), TrustLevel.TRUSTED)),
-                        tools = emptyList(),
-                        toolChoice = ToolChoice.None,
-                        maxOutputTokens = 0,
-                        stopConditions = emptyList()
-                    )
-                    adapter.invoke(modelRequest).getOrThrow()
-                    Embedding(embedding = listOf(0.0f), index = index)
+                    val vector = embeddingAdapter.embed(text).getOrThrow()
+                    if (vector.isEmpty()) {
+                        throw IllegalStateException("Embedding model returned an empty vector")
+                    }
+                    Embedding(embedding = vector.toList(), index = index)
                 }
             }
             if (embeddingsResult.isFailure) {
                 respondClassifiedError(call, embeddingsResult.exceptionOrNull())
                 return
             }
-            call.respond(EmbeddingsResponse(data = embeddingsResult.getOrThrow(), model = request.model, usage = TokenUsage(0, 0, 0)))
+
+            val embeddings = embeddingsResult.getOrThrow()
+            val dimension = embeddings.firstOrNull()?.embedding?.size ?: 0
+            if (dimension == 0 || embeddings.any { it.embedding.size != dimension }) {
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(ErrorDetail("Embedding model returned inconsistent vector dimensions", "embedding_error"))
+                )
+                return
+            }
+
+            call.respond(
+                EmbeddingsResponse(
+                    data = embeddings,
+                    model = request.model,
+                    usage = TokenUsage(0, 0, 0),
+                )
+            )
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
