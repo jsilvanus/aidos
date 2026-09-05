@@ -50,6 +50,11 @@ class EngineHttpServer(
     suspend fun waitUntilModelIdle(modelId: String, timeoutMs: Long = 5_000L): Boolean =
         inferenceManager.waitUntilModelIdle(modelId = modelId, timeout = timeoutMs.milliseconds)
 
+    /** Interrupt active inference, wait for it to stop, then unload the model while keeping it installed. */
+    suspend fun closeModel(modelId: String): Result<Unit> =
+        inferenceManager.closeModel(modelId)
+
+    /** Close (interrupt + unload) the model before removing its installed artifact. */
     suspend fun deleteModel(modelId: String): Result<Unit> =
         inferenceManager.deleteModel(modelId)
 
@@ -422,9 +427,7 @@ class EngineHttpServer(
                 HttpStatusCode.BadRequest to ErrorDetail("Model file is invalid or unsupported", "model_error", code = "invalid_model")
             message.contains("INCOMPATIBLE_GGUF") || message.contains("incompatible", ignoreCase = true) ->
                 HttpStatusCode.UnprocessableEntity to ErrorDetail("Model is incompatible with current runtime", "model_error", code = "incompatible_model")
-            message.contains("MODEL_LOAD_FAILED") ->
-                HttpStatusCode.InternalServerError to ErrorDetail("Model failed to load", "model_error", code = "model_load_failed")
-            else -> HttpStatusCode.InternalServerError to ErrorDetail("Inference failed", "inference_error")
+            else -> HttpStatusCode.InternalServerError to ErrorDetail(message, "inference_error")
         }
     }
 }
