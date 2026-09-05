@@ -78,6 +78,53 @@ class InferenceRequestManagerTest {
     }
 
     @Test
+    fun deleteModel_rejectsWhileInferenceIsAdmitted() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val runtime = FakeRuntime(BlockingAdapter(gate))
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+
+        coroutineScope {
+            val request = async {
+                manager.execute("test-model") { adapter ->
+                    adapter.invoke(dummyRequest()).getOrThrow()
+                }
+            }
+            delay(50)
+
+            val deletion = manager.deleteModel("test-model")
+            assertTrue(deletion.isFailure)
+            assertTrue(deletion.exceptionOrNull() is EngineModelBusyException)
+            assertEquals(0, runtime.deleteCalls)
+
+            gate.complete(Unit)
+            assertTrue(request.await().isSuccess)
+        }
+    }
+
+    @Test
+    fun deleteModel_blocksNewInferenceUntilDeletionFinishes() = runTest {
+        val deleteStarted = CompletableDeferred<Unit>()
+        val deleteGate = CompletableDeferred<Unit>()
+        val runtime = FakeRuntime(CountingAdapter(), deleteStarted, deleteGate)
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+
+        coroutineScope {
+            val deletion = async { manager.deleteModel("test-model") }
+            deleteStarted.await()
+
+            val inference = manager.execute("test-model") { adapter ->
+                adapter.invoke(dummyRequest()).getOrThrow()
+            }
+            assertTrue(inference.isFailure)
+            assertTrue(inference.exceptionOrNull() is EngineModelBusyException)
+
+            deleteGate.complete(Unit)
+            assertTrue(deletion.await().isSuccess)
+            assertEquals(1, runtime.deleteCalls)
+        }
+    }
+
+    @Test
     fun shutdownAndDrain_waitsUntilRunningRequestsFinish() = runTest {
         val gate = CompletableDeferred<Unit>()
         val runtime = FakeRuntime(BlockingAdapter(gate))
@@ -132,7 +179,14 @@ class InferenceRequestManagerTest {
     )
 }
 
-private class FakeRuntime(private val adapter: ModelAdapter) : ModelRuntime {
+private class FakeRuntime(
+    private val adapter: ModelAdapter,
+    private val deleteStarted: CompletableDeferred<Unit>? = null,
+    private val deleteGate: CompletableDeferred<Unit>? = null,
+) : ModelRuntime {
+    var deleteCalls: Int = 0
+        private set
+
     override suspend fun catalog(): List<ModelDescriptor> = listOf(
         ModelDescriptor(
             id = "test-model",
@@ -151,6 +205,12 @@ private class FakeRuntime(private val adapter: ModelAdapter) : ModelRuntime {
     override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(adapter)
 
     override suspend fun unload(modelId: String) = Unit
+
+    override suspend fun delete(modelId: String) {
+        deleteCalls++
+        deleteStarted?.complete(Unit)
+        deleteGate?.await()
+    }
 
     override fun loaded(): List<String> = listOf("test-model")
 }
