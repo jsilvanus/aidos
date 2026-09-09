@@ -2,7 +2,6 @@ package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -110,7 +109,9 @@ fun ModelDetailScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
-                    enabled = true,
+                    enabled = !state.isDownloading &&
+                        modelLoadingState.status != ModelLoadingStatus.LOADING &&
+                        modelLoadingState.status != ModelLoadingStatus.UNLOADING,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
                     )
@@ -137,6 +138,57 @@ fun ModelDetailScreen(
                         if (engineState == EngineService.EngineState.STARTING) "Engine starting…" else "Test Chat",
                         color = Color.White
                     )
+                }
+
+                if (modelLoadingState.status == ModelLoadingStatus.LOADING ||
+                    modelLoadingState.status == ModelLoadingStatus.UNLOADING
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
+                                val progress = (modelLoadingState.loadProgress / 100f).coerceIn(0f, 1f)
+                                CircularProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            } else {
+                                CircularProgressIndicator(modifier = Modifier.size(40.dp))
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    if (modelLoadingState.status == ModelLoadingStatus.LOADING)
+                                        "Loading model…"
+                                    else
+                                        "Unloading model…",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
+                                    Text(
+                                        "${modelLoadingState.loadProgress}%",
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { progress },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Button(
