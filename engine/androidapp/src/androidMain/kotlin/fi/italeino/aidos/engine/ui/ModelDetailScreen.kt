@@ -105,7 +105,12 @@ fun ModelDetailScreen(
                 )
 
                 Button(
-                    onClick = { viewModel.startDownload() },
+                    onClick = {
+                        if (state.downloadError != null) {
+                            viewModel.clearDownloadError()
+                        }
+                        viewModel.startDownload()
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
@@ -117,7 +122,9 @@ fun ModelDetailScreen(
                     )
                 ) {
                     Text(
-                        if (state.isDownloading) "Downloading (${state.downloadProgress}%)..." else "Download Model",
+                        if (state.downloadError != null) "Retry Download"
+                        else if (state.isDownloading) "Downloading (${state.downloadProgress}%)..."
+                        else "Download Model",
                         color = Color.White
                     )
                 }
@@ -157,6 +164,46 @@ fun ModelDetailScreen(
                                     progress = { downloadProgress },
                                     modifier = Modifier.fillMaxWidth()
                                 )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedButton(
+                                    onClick = { viewModel.cancelDownload() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Cancel download")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!state.isDownloading && state.downloadError != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Download failed",
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                state.downloadError!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.clearDownloadError()
+                                    viewModel.startDownload()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Retry download")
                             }
                         }
                     }
