@@ -83,18 +83,8 @@ fun ModelDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    model.description,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Text(
-                    "Size: ${model.sizeMB} MB",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-
+                Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Size: ${model.sizeMB} MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 ContextFitTable(model.contextFitTable)
 
                 LicenseAcceptanceCard(
@@ -107,9 +97,7 @@ fun ModelDetailScreen(
                 if (state.isInstalled) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
@@ -128,21 +116,15 @@ fun ModelDetailScreen(
 
                 Button(
                     onClick = {
-                        if (state.downloadError != null) {
-                            viewModel.clearDownloadError()
-                        }
+                        if (state.downloadError != null) viewModel.clearDownloadError()
                         viewModel.startDownload()
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     enabled = !state.isInstalled &&
                         !state.isDownloading &&
                         modelLoadingState.status != ModelLoadingStatus.LOADING &&
                         modelLoadingState.status != ModelLoadingStatus.UNLOADING,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Text(
                         if (state.downloadError != null) "Retry Download"
@@ -157,42 +139,21 @@ fun ModelDetailScreen(
                     val downloadProgress = (state.downloadProgress / 100f).coerceIn(0f, 1f)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            CircularProgressIndicator(
-                                progress = { downloadProgress },
-                                modifier = Modifier.size(40.dp)
-                            )
-
+                            CircularProgressIndicator(progress = { downloadProgress }, modifier = Modifier.size(40.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Downloading model…",
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    "${state.downloadProgress}%",
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Text("Downloading model…", fontWeight = FontWeight.SemiBold)
+                                Text("${state.downloadProgress}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(modifier = Modifier.height(6.dp))
-                                LinearProgressIndicator(
-                                    progress = { downloadProgress },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                LinearProgressIndicator(progress = { downloadProgress }, modifier = Modifier.fillMaxWidth())
                                 Spacer(modifier = Modifier.height(10.dp))
-                                OutlinedButton(
-                                    onClick = { viewModel.cancelDownload() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
+                                OutlinedButton(onClick = { viewModel.cancelDownload() }, modifier = Modifier.fillMaxWidth()) {
                                     Text("Cancel download")
                                 }
                             }
@@ -203,22 +164,12 @@ fun ModelDetailScreen(
                 if (!state.isDownloading && state.downloadError != null) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                "Download failed",
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
+                            Text("Download failed", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                state.downloadError!!,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                fontSize = 13.sp
-                            )
+                            Text(state.downloadError!!, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp)
                             Spacer(modifier = Modifier.height(10.dp))
                             OutlinedButton(
                                 onClick = {
@@ -226,24 +177,16 @@ fun ModelDetailScreen(
                                     viewModel.startDownload()
                                 },
                                 modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Retry download")
-                            }
+                            ) { Text("Retry download") }
                         }
                     }
                 }
 
                 Button(
-                    onClick = {
-                        onTestChatClick?.invoke(model.id, model.name)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    onClick = { onTestChatClick?.invoke(model.id, model.name) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     enabled = engineState == EngineService.EngineState.READY && state.isInstalled,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                 ) {
                     Text(
                         when {
@@ -260,46 +203,28 @@ fun ModelDetailScreen(
                 ) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
                                 val progress = (modelLoadingState.loadProgress / 100f).coerceIn(0f, 1f)
-                                CircularProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier.size(40.dp)
-                                )
+                                CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(40.dp))
                             } else {
                                 CircularProgressIndicator(modifier = Modifier.size(40.dp))
                             }
-
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    if (modelLoadingState.status == ModelLoadingStatus.LOADING)
-                                        "Loading model…"
-                                    else
-                                        "Unloading model…",
+                                    if (modelLoadingState.status == ModelLoadingStatus.LOADING) "Loading model…" else "Unloading model…",
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
-                                    Text(
-                                        "${modelLoadingState.loadProgress}%",
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Text("${modelLoadingState.loadProgress}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    LinearProgressIndicator(
-                                        progress = { progress },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                                 }
                             }
                         }
@@ -328,14 +253,12 @@ fun ModelDetailScreen(
                                 }.onSuccess {
                                     modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
                                 }.onFailure { error ->
-                                    modelLoadingState = modelLoadingState.copy(
-                                        status = ModelLoadingStatus.ERROR,
-                                        error = error.message
-                                    )
+                                    modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.ERROR, error = error.message)
                                 }
                             }
                         } else {
-                            if (!state.isInstalled) {
+                            val installedPath = state.installedPath
+                            if (!state.isInstalled || installedPath.isNullOrBlank()) {
                                 viewModel.refreshInstalledState(modelId)
                                 modelLoadingState = modelLoadingState.copy(
                                     status = ModelLoadingStatus.ERROR,
@@ -351,15 +274,13 @@ fun ModelDetailScreen(
                             coroutineScope.launch {
                                 modelLoader.loadModel(
                                     modelId = modelId,
+                                    artifactPath = installedPath,
                                     estimatedSizeMB = state.model?.sizeMB ?: 2_400,
                                     onProgress = { progress ->
                                         modelLoadingState = modelLoadingState.copy(loadProgress = progress)
                                     },
                                     onError = { error ->
-                                        modelLoadingState = modelLoadingState.copy(
-                                            status = ModelLoadingStatus.ERROR,
-                                            error = error
-                                        )
+                                        modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.ERROR, error = error)
                                     }
                                 ).onSuccess {
                                     modelLoadingState = modelLoadingState.copy(
@@ -375,9 +296,7 @@ fun ModelDetailScreen(
                             }
                         }
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     enabled = engineState == EngineService.EngineState.READY &&
                         state.isInstalled &&
                         !state.isDownloading &&
@@ -403,11 +322,7 @@ fun ModelDetailScreen(
                 }
 
                 if (modelLoadingState.status == ModelLoadingStatus.ERROR && modelLoadingState.error != null) {
-                    Text(
-                        modelLoadingState.error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.sp
-                    )
+                    Text(modelLoadingState.error!!, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
             }
         }
