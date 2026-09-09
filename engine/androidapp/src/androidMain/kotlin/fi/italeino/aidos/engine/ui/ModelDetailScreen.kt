@@ -17,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.aidos.modelruntime.GlobalModelRuntime
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.loading.ModelLoader
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -50,6 +51,28 @@ fun ModelDetailScreen(
     val coroutineScope = rememberCoroutineScope()
     val modelLoader = remember(globalModelRuntime) {
         globalModelRuntime?.let { ModelLoader(it) }
+    }
+
+    // The runtime is authoritative for whether the model is actually resident in memory.
+    // Reconcile the local UI state whenever the runtime/model changes and while the screen is
+    // visible, so recreation or another runtime client cannot leave a stale LOADED state.
+    LaunchedEffect(modelId, modelLoader, engineState) {
+        if (modelLoader == null || engineState != EngineService.EngineState.READY) {
+            modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            val loaded = modelLoader.isModelLoaded(modelId)
+            val current = modelLoadingState.status
+            if (current != ModelLoadingStatus.LOADING && current != ModelLoadingStatus.UNLOADING) {
+                modelLoadingState = modelLoadingState.copy(
+                    status = if (loaded) ModelLoadingStatus.LOADED else ModelLoadingStatus.NOT_LOADED,
+                    error = if (loaded) null else modelLoadingState.error,
+                )
+            }
+            delay(500)
+        }
     }
 
     Scaffold(
