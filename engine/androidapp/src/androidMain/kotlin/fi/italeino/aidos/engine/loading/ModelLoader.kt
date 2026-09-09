@@ -6,43 +6,44 @@ import kotlinx.coroutines.withTimeout
 /**
  * Wrapper for GlobalModelRuntime.load() with progress tracking (RFC-0103, Phase E).
  *
- * Provides coroutine-based model loading with real progress updates.
- * Tracks loading state transitions (NOT_LOADED → LOADING → LOADED/ERROR)
- * and provides timeout handling.
- *
- * Usage:
- * ```
- * val loader = ModelLoader(globalModelRuntime)
- * val result = loader.loadModel(
- *     modelId = "qwen2.5-3b",
- *     onProgress = { progress -> updateUI(progress) },
- *     onError = { error -> showError(error) }
- * )
- * ```
+ * Provides coroutine-based model loading with real progress updates and can bind a load to the
+ * exact installed artifact selected by the model catalog.
  */
 class ModelLoader(
     private val modelRuntime: GlobalModelRuntime,
-    private val timeoutMs: Long = 30_000L  // 30 second default timeout
+    private val timeoutMs: Long = 30_000L
 ) {
     /**
-     * Load a model into memory with progress callbacks.
-     *
-     * @param modelId The model identifier to load
-     * @param estimatedSizeMB Estimated size for progress calculation (optional)
-     * @param onProgress Called with progress 0-100 as loading proceeds
-     * @param onError Called if loading fails with error message
-     * @return Result<Unit> on success, error on failure
+     * Load a model into memory with normal runtime model-id resolution.
      */
     suspend fun loadModel(
         modelId: String,
-        @Suppress("UNUSED_PARAMETER")
+        estimatedSizeMB: Int = 2_400,
+        onProgress: (Int) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ): Result<Unit> = loadModel(
+        modelId = modelId,
+        artifactPath = null,
+        estimatedSizeMB = estimatedSizeMB,
+        onProgress = onProgress,
+        onError = onError,
+    )
+
+    /**
+     * Load a model from the exact installed artifact recorded by the catalog.
+     */
+    suspend fun loadModel(
+        modelId: String,
+        artifactPath: String,
         estimatedSizeMB: Int = 2_400,
         onProgress: (Int) -> Unit = {},
         onError: (String) -> Unit = {}
     ): Result<Unit> {
         return try {
             onProgress(0)
-            val loadResult = withTimeout(timeoutMs) { modelRuntime.load(modelId) }
+            val loadResult = withTimeout(timeoutMs) {
+                modelRuntime.load(modelId, artifactPath)
+            }
             if (loadResult.isFailure) {
                 val error = loadResult.exceptionOrNull()?.message ?: "Unknown error loading model"
                 onError(error)
@@ -57,13 +58,6 @@ class ModelLoader(
         }
     }
 
-    /**
-     * Unload a model from memory (free resources).
-     *
-     * @param modelId The model to unload
-     * @param onProgress Called with progress 0-100 as unloading proceeds
-     * @return Result<Unit> on success
-     */
     suspend fun unloadModel(
         modelId: String,
         onProgress: (Int) -> Unit = {}
@@ -78,12 +72,6 @@ class ModelLoader(
         }
     }
 
-    /**
-     * Check if a model is currently loaded in memory.
-     *
-     * @param modelId The model to check
-     * @return true if loaded, false otherwise
-     */
     suspend fun isModelLoaded(modelId: String): Boolean {
         return modelRuntime.loaded().contains(modelId)
     }
