@@ -108,7 +108,8 @@ class ModelDetailViewModel : ViewModel() {
             } catch (e: CancellationException) {
                 _state.value = _state.value.copy(
                     isDownloading = false,
-                    downloadError = "Download cancelled.",
+                    downloadProgress = 0,
+                    downloadError = null,
                 )
                 throw e
             } catch (e: Exception) {
