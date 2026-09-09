@@ -7,12 +7,12 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.EngineService
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import java.io.File
 
 /** ViewModel for Model Detail and Download (RFC-0103 Phase E). */
@@ -24,13 +24,43 @@ class ModelDetailViewModel : ViewModel() {
     fun loadModelDetail(modelId: String) {
         val browser = EngineService.instance?.modelBrowser ?: return
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true)
+            _state.value = _state.value.copy(isLoading = true, error = null)
             try {
                 val detail = browser.getModelDetail(modelId).getOrThrow()
-                _state.value = _state.value.copy(model = detail.toUiModel(), isLoading = false)
+                _state.value = _state.value.copy(
+                    model = detail.toUiModel(),
+                    isLoading = false,
+                )
+                refreshInstalledState(modelId)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message, isLoading = false)
             }
+        }
+    }
+
+    /**
+     * Reconcile the UI's installed state against the persistent catalog and filesystem.
+     *
+     * The catalog is authoritative for which artifact belongs to a model, but a catalog row
+     * alone is not enough: the artifact must still exist and have the recorded size. This makes
+     * the UI recover correctly after app restarts, manual file deletion, or interrupted installs.
+     */
+    fun refreshInstalledState(modelId: String) {
+        val catalog = EngineService.instance?.catalogManager ?: return
+        viewModelScope.launch {
+            val installed = catalog.listInstalled()
+                .getOrNull()
+                ?.firstOrNull { it.modelId == modelId }
+            val file = installed?.path?.let(::File)
+            val valid = installed != null && file != null && file.isFile &&
+                file.length() == installed.sizeBytes && installed.sizeBytes > 0L
+
+            _state.value = _state.value.copy(
+                isInstalled = valid,
+                installedPath = if (valid) installed?.path else null,
+                installedSizeBytes = if (valid) installed?.sizeBytes else null,
+                installedDigest = if (valid) installed?.digest else null,
+            )
         }
     }
 
@@ -105,6 +135,7 @@ class ModelDetailViewModel : ViewModel() {
                 }
                 result.exceptionOrNull()?.let { throw it }
                 _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
+                refreshInstalledState(model.id)
             } catch (e: CancellationException) {
                 _state.value = _state.value.copy(
                     isDownloading = false,
@@ -117,6 +148,7 @@ class ModelDetailViewModel : ViewModel() {
                     isDownloading = false,
                     downloadError = "Download failed: ${e.message ?: "Unknown error"}",
                 )
+                refreshInstalledState(model.id)
             } finally {
                 downloadJob = null
             }
