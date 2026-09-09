@@ -104,6 +104,28 @@ fun ModelDetailScreen(
                     onAcceptedChange = { accepted -> viewModel.toggleLicenseAccepted(accepted) }
                 )
 
+                if (state.isInstalled) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Model downloaded",
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                state.installedPath ?: "Installed artifact is available.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+
                 Button(
                     onClick = {
                         if (state.downloadError != null) {
@@ -114,7 +136,8 @@ fun ModelDetailScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
-                    enabled = !state.isDownloading &&
+                    enabled = !state.isInstalled &&
+                        !state.isDownloading &&
                         modelLoadingState.status != ModelLoadingStatus.LOADING &&
                         modelLoadingState.status != ModelLoadingStatus.UNLOADING,
                     colors = ButtonDefaults.buttonColors(
@@ -124,6 +147,7 @@ fun ModelDetailScreen(
                     Text(
                         if (state.downloadError != null) "Retry Download"
                         else if (state.isDownloading) "Downloading (${state.downloadProgress}%)..."
+                        else if (state.isInstalled) "Model Downloaded"
                         else "Download Model",
                         color = Color.White
                     )
@@ -216,13 +240,17 @@ fun ModelDetailScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
-                    enabled = engineState == EngineService.EngineState.READY,
+                    enabled = engineState == EngineService.EngineState.READY && state.isInstalled,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.secondary
                     )
                 ) {
                     Text(
-                        if (engineState == EngineService.EngineState.STARTING) "Engine starting…" else "Test Chat",
+                        when {
+                            engineState == EngineService.EngineState.STARTING -> "Engine starting…"
+                            !state.isInstalled -> "Download model to test"
+                            else -> "Test Chat"
+                        },
                         color = Color.White
                     )
                 }
@@ -307,6 +335,14 @@ fun ModelDetailScreen(
                                 }
                             }
                         } else {
+                            if (!state.isInstalled) {
+                                viewModel.refreshInstalledState(modelId)
+                                modelLoadingState = modelLoadingState.copy(
+                                    status = ModelLoadingStatus.ERROR,
+                                    error = "Model artifact is not installed. Download it before loading."
+                                )
+                                return@Button
+                            }
                             modelLoadingState = modelLoadingState.copy(
                                 status = ModelLoadingStatus.LOADING,
                                 loadProgress = 0,
@@ -343,6 +379,7 @@ fun ModelDetailScreen(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     enabled = engineState == EngineService.EngineState.READY &&
+                        state.isInstalled &&
                         !state.isDownloading &&
                         modelLoadingState.status != ModelLoadingStatus.LOADING &&
                         modelLoadingState.status != ModelLoadingStatus.UNLOADING,
