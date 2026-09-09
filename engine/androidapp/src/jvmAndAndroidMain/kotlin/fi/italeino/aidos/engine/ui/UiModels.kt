@@ -17,7 +17,7 @@ data class ResidentModel(
     val displayName: String,
     val quantization: String,
     val loadedAgoMs: Long,
-    val connectedApp: String? = null, // e.g. "Aidos Agent"
+    val connectedApp: String? = null,
 )
 
 data class MemoryBudget(
@@ -126,6 +126,10 @@ data class ModelDetail(
 data class ModelDetailState(
     val model: ModelDetail? = null,
     val licenseAccepted: Boolean = false,
+    val isInstalled: Boolean = false,
+    val installedPath: String? = null,
+    val installedSizeBytes: Long? = null,
+    val installedDigest: String? = null,
     val isDownloading: Boolean = false,
     val downloadProgress: Int = 0,
     val downloadError: String? = null,
@@ -211,7 +215,6 @@ data class ConnectedAppsState(
 // ============================================================================
 // Settings Screen Models
 // ============================================================================
-
 data class HfTokenStatus(
     val isConfigured: Boolean,
     val lastValidatedMs: Long? = null,
