@@ -7,6 +7,8 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.EngineService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,7 @@ import java.io.File
 class ModelDetailViewModel : ViewModel() {
     private val _state = MutableStateFlow(ModelDetailState())
     val state: StateFlow<ModelDetailState> = _state.asStateFlow()
+    private var downloadJob: Job? = null
 
     fun loadModelDetail(modelId: String) {
         val browser = EngineService.instance?.modelBrowser ?: return
@@ -33,6 +36,8 @@ class ModelDetailViewModel : ViewModel() {
 
     /** Install the selected Hugging Face GGUF through the engine's shared workflow. */
     fun startDownload() {
+        if (downloadJob?.isActive == true) return
+
         val model = _state.value.model ?: return
         val service = EngineService.instance ?: return
         val browser = service.modelBrowser ?: return
@@ -40,8 +45,13 @@ class ModelDetailViewModel : ViewModel() {
         val downloader = service.downloadManager ?: return
         val catalog = service.catalogManager ?: return
 
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isDownloading = true, downloadProgress = 0, error = null)
+        downloadJob = viewModelScope.launch {
+            _state.value = _state.value.copy(
+                isDownloading = true,
+                downloadProgress = 0,
+                downloadError = null,
+                error = null,
+            )
             try {
                 val detail = browser.getModelDetail(model.id).getOrThrow()
                 val remote = hf.getModel(model.id).getOrThrow()
@@ -86,16 +96,38 @@ class ModelDetailViewModel : ViewModel() {
                             _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
                         }
                         is dev.aidos.models.InstallerEvent.InstallationFailed -> {
-                            _state.value = _state.value.copy(isDownloading = false, error = event.reason)
+                            _state.value = _state.value.copy(
+                                isDownloading = false,
+                                downloadError = event.reason,
+                            )
                         }
                     }
                 }
                 result.exceptionOrNull()?.let { throw it }
                 _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(
+                    isDownloading = false,
+                    downloadError = "Download cancelled.",
+                )
+                throw e
             } catch (e: Exception) {
-                _state.value = _state.value.copy(isDownloading = false, error = "Download failed: ${e.message}")
+                _state.value = _state.value.copy(
+                    isDownloading = false,
+                    downloadError = "Download failed: ${e.message ?: "Unknown error"}",
+                )
+            } finally {
+                downloadJob = null
             }
         }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+    }
+
+    fun clearDownloadError() {
+        _state.value = _state.value.copy(downloadError = null)
     }
 
     fun toggleLicenseAccepted(accepted: Boolean) {
