@@ -1,6 +1,8 @@
 package fi.italeino.aidos.engine.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -23,6 +25,9 @@ import fi.italeino.aidos.engine.ui.TestChatScreen
 fun EngineNavHost(
     navController: NavHostController,
 ) {
+    val engineState by EngineService.state.collectAsState()
+    val modelRuntime = EngineService.instance?.modelRuntime
+
     NavHost(
         navController = navController,
         startDestination = EngineRoute.Home.route,
@@ -45,7 +50,8 @@ fun EngineNavHost(
                 onTestChatClick = { id, name ->
                     navController.navigate(EngineRoute.TestChat(id, name).createRoute(id, name))
                 },
-                globalModelRuntime = EngineService.instance?.modelRuntime,
+                globalModelRuntime = modelRuntime,
+                engineState = engineState,
             )
         }
 
@@ -54,12 +60,11 @@ fun EngineNavHost(
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
             val modelName = backStackEntry.arguments?.getString("name") ?: return@composable
-            val runtime = EngineService.instance?.modelRuntime
             TestChatScreen(
                 modelId = modelId,
                 modelName = modelName,
                 onBackClick = { navController.popBackStack() },
-                inferenceTester = runtime?.let(::InferenceTester),
+                inferenceTester = modelRuntime?.let(::InferenceTester),
             )
         }
 
