@@ -53,17 +53,17 @@ data class StatusPaneState(
 // ============================================================================
 
 enum class ModelFitVerdict {
-    RUNS_WELL,        // Plenty of headroom
-    RUNS_TIGHT,       // Fits but tight on memory/compute
-    EXCEEDS_CONTEXT,  // Context window doesn't fit
-    WILL_NOT_FIT,     // Not enough memory
+    RUNS_WELL,
+    RUNS_TIGHT,
+    EXCEEDS_CONTEXT,
+    WILL_NOT_FIT,
 }
 
 data class CookbookModel(
     val id: String,
     val name: String,
-    val kind: String,           // "LLM" or "Embedding"
-    val quantization: String,   // "Q4_K_M"
+    val kind: String,
+    val quantization: String,
     val sizeMB: Int,
     val contextLength: Int,
     val fitVerdict: ModelFitVerdict,
@@ -84,16 +84,16 @@ data class CookbookPaneState(
 // ============================================================================
 
 enum class ProviderConfigStatus {
-    NOT_CONFIGURED,      // No API key
-    CONFIGURED_DISABLED, // Has key but disabled
-    ENABLED,            // Has key and enabled
+    NOT_CONFIGURED,
+    CONFIGURED_DISABLED,
+    ENABLED,
 }
 
 data class RemoteProvider(
     val id: String,
     val name: String,
     val status: ProviderConfigStatus,
-    val lastCheckedMs: Long? = null, // When validity was last verified
+    val lastCheckedMs: Long? = null,
 )
 
 data class ProvidersPaneState(
@@ -128,6 +128,7 @@ data class ModelDetailState(
     val licenseAccepted: Boolean = false,
     val isDownloading: Boolean = false,
     val downloadProgress: Int = 0,
+    val downloadError: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
 )
@@ -169,7 +170,7 @@ data class InstalledModel(
     val name: String,
     val sizeMB: Int,
     val lastUsedMs: Long? = null,
-    val isWastedSpace: Boolean = false, // Never run + won't fit
+    val isWastedSpace: Boolean = false,
     val isEnabled: Boolean = true,
 )
 
@@ -228,10 +229,9 @@ data class SettingsState(
 // ============================================================================
 // Test Chat Screen Models (Phase E)
 // ============================================================================
-
 data class UiChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
-    val role: String,  // "user" or "assistant"
+    val role: String,
     val content: String,
     val tokensUsed: Int? = null,
     val generationTimeMs: Long? = null,
@@ -253,19 +253,18 @@ data class TestChatState(
 // ============================================================================
 
 enum class ModelLoadingStatus {
-    NOT_LOADED,      // Model not in memory
-    LOADING,         // Currently loading
-    LOADED,          // Loaded and ready
-    ERROR,           // Load failed
-    UNLOADING,       // Currently unloading
+    NOT_LOADED,
+    LOADING,
+    LOADED,
+    ERROR,
+    UNLOADING,
 }
 
 data class ModelLoadingState(
     val modelId: String = "",
     val status: ModelLoadingStatus = ModelLoadingStatus.NOT_LOADED,
-    val loadProgress: Int = 0,  // 0-100
+    val loadProgress: Int = 0,
     val estimatedMemoryMB: Int = 0,
     val error: String? = null,
     val loadTimeMs: Long? = null,
 )
-
