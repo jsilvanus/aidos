@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aidos.kernel.Turn
 import fi.italeino.aidos.engine.inference.InferenceTester
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,7 +43,20 @@ fun TestChatScreen(
     }
 
     var currentInput by remember { mutableStateOf("") }
+    var generationJob by remember(modelId) { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    fun stopGeneration() {
+        generationJob?.cancel()
+        generationJob = null
+        state = state.copy(isLoading = false)
+    }
+
+    DisposableEffect(modelId) {
+        onDispose {
+            generationJob?.cancel()
+        }
+    }
 
     fun sendMessage() {
         if (currentInput.isBlank() || state.isLoading || inferenceTester == null) return
@@ -55,55 +71,64 @@ fun TestChatScreen(
             error = null,
         )
 
-        coroutineScope.launch {
-            // The UI contains a temporary empty assistant bubble. Exclude that bubble and let the
-            // history below provide the turns already sent before this request.
-            val turns = state.messages.dropLast(2).map { message ->
-                when (message.role) {
-                    "assistant" -> Turn.Assistant(message.content, emptyList())
-                    else -> InferenceTester.userTurn(message.content)
-                }
-            } + InferenceTester.userTurn(messageText)
+        generationJob = coroutineScope.launch {
+            try {
+                // The UI contains a temporary empty assistant bubble. Exclude that bubble and let
+                // the history below provide the turns already sent before this request.
+                val turns = state.messages.dropLast(2).map { message ->
+                    when (message.role) {
+                        "assistant" -> Turn.Assistant(message.content, emptyList())
+                        else -> InferenceTester.userTurn(message.content)
+                    }
+                } + InferenceTester.userTurn(messageText)
 
-            val result = inferenceTester.run(
-                modelId = modelId,
-                messages = turns,
-                maxOutputTokens = 512,
-                onDelta = { delta ->
-                    state = state.copy(
-                        messages = state.messages.mapIndexed { index, message ->
-                            if (index == state.messages.lastIndex && message.role == "assistant") {
-                                message.copy(content = message.content + delta)
-                            } else message
-                        }
-                    )
-                },
-            )
+                val result = inferenceTester.run(
+                    modelId = modelId,
+                    messages = turns,
+                    maxOutputTokens = 512,
+                    onDelta = { delta ->
+                        state = state.copy(
+                            messages = state.messages.mapIndexed { index, message ->
+                                if (index == state.messages.lastIndex && message.role == "assistant") {
+                                    message.copy(content = message.content + delta)
+                                } else message
+                            }
+                        )
+                    },
+                )
 
-            result.fold(
-                onSuccess = { metrics ->
-                    state = state.copy(
-                        messages = state.messages.mapIndexed { index, message ->
-                            if (index == state.messages.lastIndex) {
-                                message.copy(
-                                    content = metrics.text,
-                                    tokensUsed = metrics.outputTokens,
-                                    generationTimeMs = metrics.generationMillis,
-                                )
-                            } else message
-                        },
-                        isLoading = false,
-                        totalTokensUsed = state.totalTokensUsed + metrics.outputTokens,
-                        averageTokensPerSecond = metrics.tokensPerSecond?.toFloat() ?: 0f,
-                    )
-                },
-                onFailure = { error ->
-                    state = state.copy(
-                        isLoading = false,
-                        error = error.message ?: "Inference failed",
-                    )
-                },
-            )
+                result.fold(
+                    onSuccess = { metrics ->
+                        state = state.copy(
+                            messages = state.messages.mapIndexed { index, message ->
+                                if (index == state.messages.lastIndex) {
+                                    message.copy(
+                                        content = metrics.text,
+                                        tokensUsed = metrics.outputTokens,
+                                        generationTimeMs = metrics.generationMillis,
+                                    )
+                                } else message
+                            },
+                            isLoading = false,
+                            totalTokensUsed = state.totalTokensUsed + metrics.outputTokens,
+                            averageTokensPerSecond = metrics.tokensPerSecond?.toFloat() ?: 0f,
+                        )
+                    },
+                    onFailure = { error ->
+                        state = state.copy(
+                            isLoading = false,
+                            error = error.message ?: "Inference failed",
+                        )
+                    },
+                )
+            } catch (e: CancellationException) {
+                // A stop is an expected user action. Keep whatever tokens have already streamed
+                // into the assistant bubble and do not turn cancellation into an error.
+                state = state.copy(isLoading = false)
+                throw e
+            } finally {
+                generationJob = null
+            }
         }
     }
 
@@ -159,14 +184,14 @@ fun TestChatScreen(
                             shape = RoundedCornerShape(8.dp),
                         )
                         IconButton(
-                            onClick = { sendMessage() },
-                            enabled = currentInput.isNotBlank() && !state.isLoading && inferenceTester != null,
+                            onClick = {
+                                if (state.isLoading) stopGeneration() else sendMessage()
+                            },
+                            enabled = inferenceTester != null &&
+                                (state.isLoading || currentInput.isNotBlank()),
                         ) {
                             if (state.isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                )
+                                Icon(Icons.Default.Stop, contentDescription = "Stop generation")
                             } else {
                                 Icon(Icons.Default.Send, contentDescription = "Send")
                             }
