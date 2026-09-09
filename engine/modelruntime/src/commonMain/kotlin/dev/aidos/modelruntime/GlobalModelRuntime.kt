@@ -14,8 +14,8 @@ import kotlinx.coroutines.sync.withLock
  * - Loading is **globally serialized** through a single admission queue — only one load
  *   operation runs at a time. This is not a performance decision: one loaded 7B model can
  *   saturate a phone; multiple concurrent loads are impossible, not just unwise.
- * - Digest is verified before a model is returned. A mismatch means the weights are
- *   corrupt or substituted; the correct response is deletion, not quarantine.
+ * - Digest is verified before a model is returned. A mismatch means the weights are corrupt
+ *   or substituted; the correct response is deletion, not quarantine.
  * - Unload is explicit. The runtime never evicts weights to make room (RFC-0022, user
  *   chooses, no automatic deletion).
  *
@@ -25,18 +25,10 @@ import kotlinx.coroutines.sync.withLock
  */
 class GlobalModelRuntime(
     private val backend: InferenceBackend,
-    // Injectable for tests; real callers get the wall clock. Only tracks *when this process
-    // loaded the model*, not anything about the weights themselves (RFC-0103 Phase E's Engine
-    // Status screen needs "loaded Nm ago", which is otherwise unknowable -- InferenceBackend has
-    // no notion of load time at all).
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
 ) : ModelRuntime {
 
-    // Single global lock — no per-model lock, because loading saturates RAM (RFC-0022).
     private val admissionQueue = Mutex()
-    // Immutable snapshot: written only inside admissionQueue, read without the lock.
-    // @Volatile guarantees the latest snapshot is visible to any thread, including the
-    // non-suspending `loaded()`/`loadedAtMillis()` accessors, which cannot acquire the mutex.
     @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
 
     private data class LoadedModel(val adapter: ModelAdapter, val loadedAtMillis: Long)
@@ -45,17 +37,21 @@ class GlobalModelRuntime(
 
     override suspend fun installed(): List<ModelDescriptor> = backend.installed()
 
+    /** Loads a model using the backend's normal model-id resolution. */
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        load(modelId, artifactPath = null)
+
     /**
-     * Loads a model, serialized through the global admission queue.
+     * Loads a model from the exact installed artifact selected by the caller.
      *
-     * Verifies the digest before returning; deletes the weights if they don't match.
+     * The path is an integrity/identity boundary: the Android UI has already reconciled the
+     * persistent installed-model record with the file on disk, so the backend must load that
+     * artifact rather than selecting another file merely because it shares the same model id.
      */
-    override suspend fun load(modelId: String): Result<ModelAdapter> {
-        // Fast path: already loaded (checked before entering the queue).
+    suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
         loadedModels[modelId]?.let { return Result.success(it.adapter) }
 
         return admissionQueue.withLock {
-            // Re-check inside the lock — another load may have completed while we waited.
             loadedModels[modelId]?.let { return@withLock Result.success(it.adapter) }
 
             backend.installed().find { it.id == modelId }
@@ -63,17 +59,9 @@ class GlobalModelRuntime(
                     IllegalStateException("Model $modelId is not installed")
                 )
 
-            // Verify digest before loading into memory (RFC-0022, M20).
-            //
-            // The expected digest comes from the catalog -- the known-good value pinned ahead of
-            // any download -- never from installed()'s own descriptor. installed() computes its
-            // digest from the file currently on disk, so comparing against it would only ever
-            // re-hash the same bytes twice: a same-call race detector, not a corruption/
-            // substitution check. Comparing against the catalog's independently-sourced value is
-            // what actually lets a mismatch mean something (see DigestMismatchException).
             val catalogDigest = backend.catalog().find { it.id == modelId }?.digest
             if (catalogDigest != null) {
-                val actualDigest = backend.computeDigest(modelId)
+                val actualDigest = backend.computeDigest(modelId, artifactPath)
                 if (actualDigest != catalogDigest) {
                     backend.delete(modelId)
                     return@withLock Result.failure(
@@ -86,7 +74,7 @@ class GlobalModelRuntime(
                 }
             }
 
-            val adapter = backend.load(modelId).getOrElse { err ->
+            val adapter = backend.load(modelId, artifactPath).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
             loadedModels = loadedModels + (modelId to LoadedModel(adapter, nowMillis()))
@@ -101,19 +89,10 @@ class GlobalModelRuntime(
         }
     }
 
-    /**
-     * When [modelId] was loaded, as epoch millis -- null if it isn't currently resident.
-     * RFC-0103 Phase E's Engine Status screen uses this for "loaded Nm ago" instead of a
-     * fabricated placeholder.
-     */
     fun loadedAtMillis(modelId: String): Long? = loadedModels[modelId]?.loadedAtMillis
 
-    /**
-     * Physically deletes model weights from disk (RFC-0022).
-     */
     suspend fun delete(modelId: String) {
         admissionQueue.withLock {
-            // Unload first if it's resident
             if (loadedModels.containsKey(modelId)) {
                 loadedModels = loadedModels - modelId
                 backend.unload(modelId)
@@ -129,23 +108,22 @@ class GlobalModelRuntime(
 
 /**
  * The inference backend that [GlobalModelRuntime] delegates real work to.
- *
- * The MVP backend (M21) uses llama.cpp via JNI/JNA with GGUF weights. This interface
- * exists so [GlobalModelRuntime] can be tested without a real inference binary.
  */
 interface InferenceBackend {
     suspend fun catalog(): List<ModelDescriptor>
     suspend fun installed(): List<ModelDescriptor>
     suspend fun computeDigest(modelId: String): String
+    suspend fun computeDigest(modelId: String, artifactPath: String?): String =
+        computeDigest(modelId)
     suspend fun delete(modelId: String)
     suspend fun load(modelId: String): Result<ModelAdapter>
+    suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
+        load(modelId)
     suspend fun unload(modelId: String)
 }
 
 /**
  * Thrown when a weight file's digest does not match its catalog entry.
- *
- * The runtime deletes the file and throws; there is no quarantine path (RFC-0022).
  */
 class DigestMismatchException(
     val modelId: String,
