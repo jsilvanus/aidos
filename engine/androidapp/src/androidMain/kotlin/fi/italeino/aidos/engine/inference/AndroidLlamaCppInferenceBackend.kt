@@ -46,13 +46,19 @@ class AndroidLlamaCppInferenceBackend(
     override suspend fun computeDigest(modelId: String): String =
         sha256(resolveModelFile(modelId))
 
+    override suspend fun computeDigest(modelId: String, artifactPath: String?): String =
+        sha256(resolveArtifact(modelId, artifactPath))
+
     override suspend fun delete(modelId: String) {
         liveAdapters.remove(modelId)?.close()
         resolveModelFile(modelId).delete()
     }
 
-    override suspend fun load(modelId: String): Result<ModelAdapter> {
-        val file = resolveModelFile(modelId)
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        load(modelId, artifactPath = null)
+
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+        val file = resolveArtifact(modelId, artifactPath)
         if (!file.isFile) return Result.failure(
             IllegalStateException("Model file not found for '$modelId' in ${modelsDir.absolutePath}")
         )
@@ -72,6 +78,24 @@ class AndroidLlamaCppInferenceBackend(
 
     override suspend fun unload(modelId: String) {
         liveAdapters.remove(modelId)?.close()
+    }
+
+    /**
+     * Resolve the exact caller-selected artifact when supplied. Paths are restricted to the
+     * engine's model directory so a catalog record cannot make the runtime open an arbitrary
+     * filesystem location.
+     */
+    private fun resolveArtifact(modelId: String, artifactPath: String?): File {
+        if (artifactPath != null) {
+            val candidate = File(artifactPath).canonicalFile
+            val root = modelsDir.canonicalFile
+            val relative = candidate.toPath().normalize()
+            if (!relative.startsWith(root.toPath())) {
+                throw IllegalArgumentException("Model artifact path is outside the engine model directory")
+            }
+            return candidate
+        }
+        return resolveModelFile(modelId)
     }
 
     /** Supports both exact ids and the `<model>_<quantization>.gguf` installer naming scheme. */
