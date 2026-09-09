@@ -13,6 +13,7 @@ import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.Turn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
@@ -59,6 +60,8 @@ class AndroidLlamaCppAdapter(
             if (response != null) Result.success(response!!) else Result.failure(
                 IllegalStateException("Inference ended without a response")
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Result.failure(e)
         }
@@ -106,6 +109,11 @@ class AndroidLlamaCppAdapter(
                     model = ModelRef(modelId, modelVersion),
                 )
             ))
+        } catch (e: CancellationException) {
+            // Flow cancellation is the stop-generation signal. Do not convert it into a terminal
+            // failure event: the caller owns the generation Job and expects cancellation to stop
+            // the stream without replacing it with an error bubble.
+            throw e
         } catch (e: Throwable) {
             emit(ModelStreamEvent.Failed(e))
         }
