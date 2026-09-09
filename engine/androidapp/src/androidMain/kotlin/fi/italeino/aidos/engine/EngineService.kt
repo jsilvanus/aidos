@@ -45,6 +45,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -55,12 +58,21 @@ import kotlinx.coroutines.launch
  */
 class EngineService : LifecycleService() {
 
+    enum class EngineState {
+        STARTING,
+        READY,
+        FAILED,
+    }
+
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
 
         private var _instance: EngineService? = null
         val instance: EngineService? get() = _instance
+
+        private val _state = MutableStateFlow(EngineState.STARTING)
+        val state: StateFlow<EngineState> = _state.asStateFlow()
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -95,6 +107,7 @@ class EngineService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         _instance = this
+        _state.value = EngineState.STARTING
         serviceScope.launch {
             try {
                 tokenManager = TokenManager()
@@ -151,9 +164,11 @@ class EngineService : LifecycleService() {
                 binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
 
                 _isRunning = true
+                _state.value = EngineState.READY
                 updateNotification("Engine running on port $boundPort")
             } catch (_: Exception) {
                 _isRunning = false
+                _state.value = EngineState.FAILED
                 updateNotification("Engine failed: Unable to start HTTP server or model runtime")
             }
         }
@@ -194,6 +209,7 @@ class EngineService : LifecycleService() {
                 }
             } catch (_: Exception) {
             } finally {
+                _state.value = EngineState.STARTING
                 _instance = null
                 serviceScope.cancel()
             }
