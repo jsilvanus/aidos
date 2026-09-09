@@ -6,6 +6,7 @@ import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.Turn
 import dev.aidos.modelruntime.GlobalModelRuntime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlin.time.TimeSource
 
@@ -88,6 +89,10 @@ class InferenceTester(
                         ?.let { it * 1000.0 / generationMillis },
                 )
             )
+        } catch (e: CancellationException) {
+            // Cancellation is control flow, not an inference failure. Let the caller's Job
+            // cancellation reach the streaming adapter/native generation loop.
+            throw e
         } catch (e: Exception) {
             kotlin.Result.failure(e)
         }
