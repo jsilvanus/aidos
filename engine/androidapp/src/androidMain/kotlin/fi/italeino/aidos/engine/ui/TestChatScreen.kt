@@ -25,6 +25,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
+enum class TestChatGenerationStatus {
+    IDLE,
+    GENERATING,
+    STOPPED,
+    COMPLETE,
+    ERROR,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TestChatScreen(
@@ -41,12 +49,15 @@ fun TestChatScreen(
             )
         )
     }
+    var generationStatus by remember(modelId) { mutableStateOf(TestChatGenerationStatus.IDLE) }
 
     var currentInput by remember { mutableStateOf("") }
     var generationJob by remember(modelId) { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
     fun stopGeneration() {
+        if (generationStatus != TestChatGenerationStatus.GENERATING) return
+        generationStatus = TestChatGenerationStatus.STOPPED
         generationJob?.cancel()
         generationJob = null
         state = state.copy(isLoading = false)
@@ -59,7 +70,7 @@ fun TestChatScreen(
     }
 
     fun sendMessage() {
-        if (currentInput.isBlank() || state.isLoading || inferenceTester == null) return
+        if (currentInput.isBlank() || generationStatus == TestChatGenerationStatus.GENERATING || inferenceTester == null) return
 
         val messageText = currentInput.trim()
         currentInput = ""
@@ -70,6 +81,7 @@ fun TestChatScreen(
             isLoading = true,
             error = null,
         )
+        generationStatus = TestChatGenerationStatus.GENERATING
 
         generationJob = coroutineScope.launch {
             try {
@@ -99,6 +111,7 @@ fun TestChatScreen(
 
                 result.fold(
                     onSuccess = { metrics ->
+                        generationStatus = TestChatGenerationStatus.COMPLETE
                         state = state.copy(
                             messages = state.messages.mapIndexed { index, message ->
                                 if (index == state.messages.lastIndex) {
@@ -115,6 +128,7 @@ fun TestChatScreen(
                         )
                     },
                     onFailure = { error ->
+                        generationStatus = TestChatGenerationStatus.ERROR
                         state = state.copy(
                             isLoading = false,
                             error = error.message ?: "Inference failed",
@@ -124,8 +138,17 @@ fun TestChatScreen(
             } catch (e: CancellationException) {
                 // A stop is an expected user action. Keep whatever tokens have already streamed
                 // into the assistant bubble and do not turn cancellation into an error.
+                if (generationStatus == TestChatGenerationStatus.GENERATING) {
+                    generationStatus = TestChatGenerationStatus.STOPPED
+                }
                 state = state.copy(isLoading = false)
                 throw e
+            } catch (e: Exception) {
+                generationStatus = TestChatGenerationStatus.ERROR
+                state = state.copy(
+                    isLoading = false,
+                    error = e.message ?: "Inference failed",
+                )
             } finally {
                 generationJob = null
             }
@@ -180,17 +203,17 @@ fun TestChatScreen(
                                 keyboardType = KeyboardType.Text,
                             ),
                             keyboardActions = KeyboardActions(onSend = { sendMessage() }),
-                            enabled = !state.isLoading && inferenceTester != null,
+                            enabled = generationStatus != TestChatGenerationStatus.GENERATING && inferenceTester != null,
                             shape = RoundedCornerShape(8.dp),
                         )
                         IconButton(
                             onClick = {
-                                if (state.isLoading) stopGeneration() else sendMessage()
+                                if (generationStatus == TestChatGenerationStatus.GENERATING) stopGeneration() else sendMessage()
                             },
                             enabled = inferenceTester != null &&
-                                (state.isLoading || currentInput.isNotBlank()),
+                                (generationStatus == TestChatGenerationStatus.GENERATING || currentInput.isNotBlank()),
                         ) {
-                            if (state.isLoading) {
+                            if (generationStatus == TestChatGenerationStatus.GENERATING) {
                                 Icon(Icons.Default.Stop, contentDescription = "Stop generation")
                             } else {
                                 Icon(Icons.Default.Send, contentDescription = "Send")
