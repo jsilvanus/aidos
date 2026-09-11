@@ -34,7 +34,7 @@ class LlamaCppAdapter(
     threads: Int = 4,
 ) : ModelAdapter {
     override val providerId = "llama.cpp"
-    override val modelVersion = "local-gguf"
+    override val modelVersion = "java-llama.cpp-4.2.0"
     override val contextWindow = contextSize
     override val isLocal = true
 
@@ -51,16 +51,16 @@ class LlamaCppAdapter(
         threads: Int,
     ): LlamaModel {
         val params = ModelParameters()
-            .setNCtx(contextSize)
-            .setNThreads(threads)
-            .setNGpuLayers(0)
-            .setNBbatch(512)
-            .setLogitsAll(false)
-            .setUseMmap(true)
-            .setUseMLock(false)
+            .setModel(modelPath.absolutePath)
+            .setCtxSize(contextSize)
+            .setThreads(threads)
+            .setThreadsBatch(threads)
+            .setBatchSize(512)
+            .setUbatchSize(512)
+            .setGpuLayers(0)
 
         return try {
-            LlamaModel(modelPath.absolutePath, params)
+            LlamaModel(params)
         } catch (e: Exception) {
             throw IllegalStateException("Failed to load model $modelId from ${modelPath.absolutePath}", e)
         }
@@ -113,7 +113,12 @@ class LlamaCppAdapter(
             }
 
             val output = StringBuilder()
-            val tokens = model.generate(prompt, InferenceParameters()).iterator()
+            val parameters = InferenceParameters(prompt)
+                .setNPredict(request.maxOutputTokens)
+                .setTemperature(0.7f)
+                .setTopP(0.95f)
+                .setTopK(40)
+            val tokens = model.generate(parameters).iterator()
             var tokenCount = 0
 
             while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {

@@ -95,9 +95,14 @@ class GgufRot13FixtureTest {
     fun `llama_cpp binding loads the fixture and predicts ROT13`() {
         val model = try {
             LlamaModel(
-                requireFixture().absolutePath,
-                ModelParameters().setNCtx(512).setNThreads(2).setNGpuLayers(0)
-                    .setLogitsAll(false).setUseMmap(true).setUseMLock(false),
+                ModelParameters()
+                    .setModel(requireFixture().absolutePath)
+                    .setCtxSize(512)
+                    .setThreads(2)
+                    .setThreadsBatch(2)
+                    .setBatchSize(512)
+                    .setUbatchSize(512)
+                    .setGpuLayers(0),
             )
         } catch (e: UnsatisfiedLinkError) {
             // No native binary for this platform; nothing to assert about inference.
@@ -114,7 +119,7 @@ class GgufRot13FixtureTest {
 
             // Greedy-equivalent: the winning logit leads by 16, so the fixture is
             // effectively deterministic even under the binding's default sampling.
-            val first = it.generate("Hello", InferenceParameters()).first()
+            val first = it.generate(InferenceParameters("Hello").setNPredict(1)).first()
             assertEquals("b", first.text, "expected rot13('o') = 'b'")
         }
     }

@@ -28,20 +28,10 @@ kotlin {
                 // is `de.kherud:llama`, versioned from 1.0.0, with no `0.3.2` release ever
                 // published) -- `LlamaCppAdapter.kt` was written against a fictional API shape
                 // (wrong package, wrong method names) that happened to resemble a real one.
-                // `2.3.5` is the closest real version to what the adapter already assumed: same
-                // `LlamaModel(String, ModelParameters)` constructor shape, same setter names for
-                // everything except two the real 2.3.x API spells differently (`setNBbatch`, a
-                // real typo in the library itself, not this build's; `setUseMLock`).
-                //
-                // So this pin records what made fictional code compile with the fewest edits --
-                // it is not a compatibility finding. 2.3.5 is the last 2.x and bundles a Feb-2024
-                // llama.cpp; 4.2.0 (Jun 2025) is current, and 3.x/4.x moved to a different API
-                // (`ModelParameters` builder, `requestCompletion`) that nothing here has been
-                // evaluated against. Anything depending on newer llama.cpp -- current quant
-                // formats, newer architectures, the post-Apr-2024 `tokenizer.ggml.pre` handling
-                // -- needs that upgrade first. `models/rot13-gguf` loads on both vintages, so it
-                // is a usable canary when someone attempts the bump.
-                implementation("de.kherud:llama:2.3.5")
+                // Keep JVM and Android on the same current llama.cpp binding. This gives desktop
+                // inference the same GGUF compatibility and request-oriented streaming API as
+                // the Android engine, rather than freezing desktop on the older 2.x native core.
+                implementation("de.kherud:llama:4.2.0")
             }
         }
 

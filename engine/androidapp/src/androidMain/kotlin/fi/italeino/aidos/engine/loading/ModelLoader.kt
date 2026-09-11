@@ -21,7 +21,7 @@ class ModelLoader(
         estimatedSizeMB: Int = 2_400,
         onProgress: (Int) -> Unit = {},
         onError: (String) -> Unit = {}
-    ): Result<Unit> = loadModel(
+    ): Result<Unit> = loadInternal(
         modelId = modelId,
         artifactPath = null,
         estimatedSizeMB = estimatedSizeMB,
@@ -38,6 +38,25 @@ class ModelLoader(
         estimatedSizeMB: Int = 2_400,
         onProgress: (Int) -> Unit = {},
         onError: (String) -> Unit = {}
+    ): Result<Unit> = loadInternal(
+        modelId = modelId,
+        artifactPath = artifactPath,
+        estimatedSizeMB = estimatedSizeMB,
+        onProgress = onProgress,
+        onError = onError,
+    )
+
+    /**
+     * Shared implementation for normal id resolution and an exact catalog-selected artifact.
+     * Keeping the nullable path private avoids exposing a nullable path to UI callers while
+     * allowing the normal overload to call [GlobalModelRuntime.load] correctly.
+     */
+    private suspend fun loadInternal(
+        modelId: String,
+        artifactPath: String?,
+        estimatedSizeMB: Int,
+        onProgress: (Int) -> Unit,
+        onError: (String) -> Unit,
     ): Result<Unit> {
         return try {
             onProgress(0)
