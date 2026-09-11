@@ -84,9 +84,11 @@ class AndroidLlamaCppAdapter(
                 .setTemperature(0.7f)
                 .setTopP(0.95f)
                 .setTopK(40)
-
             val output = StringBuilder()
             var tokenCount = 0
+            // `generate` is lazy: emitting as the iterator advances keeps the UI and the
+            // loopback SSE endpoint genuinely token-streaming rather than buffering a native
+            // completion first. `maxOutputTokens` remains the authoritative output bound.
             for (token in model.generate(parameters)) {
                 if (tokenCount++ >= request.maxOutputTokens) break
                 output.append(token.text)

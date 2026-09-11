@@ -53,6 +53,9 @@ kotlin {
                 implementation(project(":downloads"))
                 implementation(project(":models"))
                 implementation(project(":voice"))
+                // Android uses the current binding. It brings the Android native artifacts and
+                // the request-oriented API used by AndroidLlamaCppAdapter; :modelruntime keeps
+                // its older JVM-only binding isolated in its own source set.
                 implementation("de.kherud:llama:4.2.0")
                 implementation("androidx.compose.ui:ui:1.7.5")
                 implementation("androidx.compose.material3:material3:1.3.1")
