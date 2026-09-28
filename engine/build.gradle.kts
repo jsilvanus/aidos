@@ -2,6 +2,9 @@ plugins {
     kotlin("multiplatform") version "2.4.10" apply false
     kotlin("plugin.serialization") version "2.4.10" apply false
     kotlin("plugin.compose") version "2.4.10" apply false
+    // Compose Multiplatform desktop runtime + packaging for :desktopapp. Pinned to the same 1.7.3
+    // as :engineui's libraries (see engineui/build.gradle.kts for why 1.7.3).
+    id("org.jetbrains.compose") version "1.7.3" apply false
     // ---------------------------------------------------------------------------
     // com.android.library (AGP 8.5.x) is declared here for submodule use.
     // Requires the Google Maven repository (dl.google.com) to be reachable.
