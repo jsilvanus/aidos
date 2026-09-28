@@ -112,8 +112,28 @@ class LlamaCppInferenceBackend : InferenceBackend {
     private val liveAdapters = mutableMapOf<String, LlamaCppAdapter>()
 
     /** Load a model into memory. */
-    override suspend fun load(modelId: String): Result<ModelAdapter> {
-        val file = modelFile(modelId)
+    override suspend fun load(modelId: String): Result<ModelAdapter> = load(modelId, artifactPath = null)
+
+    /**
+     * Load a model, from the exact catalog-selected artifact when [artifactPath] is given.
+     *
+     * Catalog installs name files after the Hugging Face repo and quantization, not `<id>.gguf`,
+     * so without this the JVM host could never load them (the Android backend already honours the
+     * path). As there, the path must lie inside [modelsDir], so a catalog record cannot make the
+     * runtime open an arbitrary file.
+     */
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+        val file = if (artifactPath == null) {
+            modelFile(modelId)
+        } else {
+            val candidate = File(artifactPath).canonicalFile
+            if (!candidate.toPath().startsWith(modelsDir.canonicalFile.toPath())) {
+                return Result.failure(
+                    IllegalArgumentException("MODEL_PATH_OUTSIDE_MODELS_DIR: $artifactPath")
+                )
+            }
+            candidate
+        }
         if (!file.exists()) {
             return Result.failure(
                 IllegalStateException("MODEL_NOT_INSTALLED: $modelId")

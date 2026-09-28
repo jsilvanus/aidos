@@ -113,4 +113,30 @@ class LlamaCppInferenceBackendTest {
         val digest2 = backend.computeDigest(modelId)
         assertEquals(digest1, digest2, "Digest should be consistent")
     }
+
+    @Test
+    fun `load rejects an artifact path outside the models directory`() = runTest {
+        val backend = LlamaCppInferenceBackend()
+        val outside = kotlin.io.path.createTempFile(suffix = ".gguf").toFile()
+        try {
+            val result = backend.load("outside-model", outside.absolutePath)
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            assertTrue(message.startsWith("MODEL_PATH_OUTSIDE_MODELS_DIR"), "Unexpected result: $message")
+        } finally {
+            outside.delete()
+        }
+    }
+
+    @Test
+    fun `load uses the catalog artifact path instead of the model id`() = runTest {
+        val backend = LlamaCppInferenceBackend()
+        val modelsDir = java.io.File(
+            System.getProperty("aidos.models.dir") ?: java.io.File(System.getProperty("user.home"), ".aidos/models").absolutePath
+        )
+        // A catalog-style name that `<id>.gguf` resolution would never find; it doesn't exist, so
+        // the failure must name the artifact lookup, not the path guard.
+        val missing = java.io.File(modelsDir, "org_repo_Q4_K_M-does-not-exist.gguf")
+        val message = backend.load("org/repo", missing.absolutePath).exceptionOrNull()?.message.orEmpty()
+        assertEquals("MODEL_NOT_INSTALLED: org/repo", message)
+    }
 }
