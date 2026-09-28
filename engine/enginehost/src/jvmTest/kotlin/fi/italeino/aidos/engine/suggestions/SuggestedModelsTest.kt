@@ -3,7 +3,6 @@ package fi.italeino.aidos.engine.suggestions
 import fi.italeino.aidos.engine.ui.formatSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SuggestedModelsTest {
@@ -18,8 +17,9 @@ class SuggestedModelsTest {
     @Test
     fun onlyGgufIsMarkedRunnable() {
         // The Android Engine has a llama.cpp backend and no ONNX runtime.
-        assertTrue(SuggestedModels.all.single { it.format == "gguf" }.runnable)
-        assertFalse(SuggestedModels.all.single { it.format == "onnx" }.runnable)
+        // Runnable exactly when the format is GGUF, however many of each format are suggested.
+        assertTrue(SuggestedModels.all.any { it.format == "gguf" })
+        SuggestedModels.all.forEach { assertEquals(it.format == "gguf", it.runnable, it.id) }
     }
 
     @Test
