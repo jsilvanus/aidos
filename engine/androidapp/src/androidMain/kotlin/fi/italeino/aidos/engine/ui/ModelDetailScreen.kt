@@ -2,7 +2,6 @@ package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -16,7 +15,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.aidos.modelruntime.GlobalModelRuntime
+import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.loading.ModelLoader
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -29,10 +30,11 @@ fun ModelDetailScreen(
     onBackClick: () -> Unit,
     onTestChatClick: ((modelId: String, modelName: String) -> Unit)? = null,
     globalModelRuntime: GlobalModelRuntime? = null,
+    engineState: EngineService.EngineState = EngineService.EngineState.STARTING,
     viewModel: ModelDetailViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    
+
     LaunchedEffect(modelId) {
         viewModel.loadModelDetail(modelId)
     }
@@ -47,7 +49,31 @@ fun ModelDetailScreen(
         )
     }
     val coroutineScope = rememberCoroutineScope()
-    val modelLoader = remember { globalModelRuntime?.let { ModelLoader(it) } }
+    val modelLoader = remember(globalModelRuntime) {
+        globalModelRuntime?.let { ModelLoader(it) }
+    }
+
+    // The runtime is authoritative for whether the model is actually resident in memory.
+    // Reconcile the local UI state whenever the runtime/model changes and while the screen is
+    // visible, so recreation or another runtime client cannot leave a stale LOADED state.
+    LaunchedEffect(modelId, modelLoader, engineState) {
+        if (modelLoader == null || engineState != EngineService.EngineState.READY) {
+            modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            val loaded = modelLoader.isModelLoaded(modelId)
+            val current = modelLoadingState.status
+            if (current != ModelLoadingStatus.LOADING && current != ModelLoadingStatus.UNLOADING) {
+                modelLoadingState = modelLoadingState.copy(
+                    status = if (loaded) ModelLoadingStatus.LOADED else ModelLoadingStatus.NOT_LOADED,
+                    error = if (loaded) null else modelLoadingState.error,
+                )
+            }
+            delay(500)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -80,18 +106,8 @@ fun ModelDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    model.description,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Text(
-                    "Size: ${model.sizeMB} MB",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-
+                Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Size: ${model.sizeMB} MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 ContextFitTable(model.contextFitTable)
 
                 LicenseAcceptanceCard(
@@ -101,106 +117,214 @@ fun ModelDetailScreen(
                     onAcceptedChange = { accepted -> viewModel.toggleLicenseAccepted(accepted) }
                 )
 
-                Button(
-                    onClick = { viewModel.startDownload() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    enabled = true, // Temporarily bypass license for demo
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text(
-                        if (state.isDownloading) "Downloading (${state.downloadProgress}%)..." else "Download Model",
-                        color = Color.White
-                    )
+                if (state.isInstalled) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Model downloaded",
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                state.installedPath ?: "Installed artifact is available.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
                 }
 
-                // Phase E: Test Chat button
                 Button(
                     onClick = {
-                        onTestChatClick?.invoke(model.id, model.name)
+                        if (state.downloadError != null) viewModel.clearDownloadError()
+                        viewModel.startDownload()
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    enabled = !state.isInstalled &&
+                        !state.isDownloading &&
+                        modelLoadingState.status != ModelLoadingStatus.LOADING &&
+                        modelLoadingState.status != ModelLoadingStatus.UNLOADING,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Text(
-                        "Test Chat",
+                        if (state.downloadError != null) "Retry Download"
+                        else if (state.isDownloading) "Downloading (${state.downloadProgress}%)..."
+                        else if (state.isInstalled) "Model Downloaded"
+                        else "Download Model",
                         color = Color.White
                     )
                 }
 
-                // Phase E: Load to Memory button
+                if (state.isDownloading) {
+                    val downloadProgress = (state.downloadProgress / 100f).coerceIn(0f, 1f)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            CircularProgressIndicator(progress = { downloadProgress }, modifier = Modifier.size(40.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Downloading model…", fontWeight = FontWeight.SemiBold)
+                                Text("${state.downloadProgress}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LinearProgressIndicator(progress = { downloadProgress }, modifier = Modifier.fillMaxWidth())
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedButton(onClick = { viewModel.cancelDownload() }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Cancel download")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!state.isDownloading && state.downloadError != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Download failed", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(state.downloadError!!, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.clearDownloadError()
+                                    viewModel.startDownload()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Retry download") }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = { onTestChatClick?.invoke(model.id, model.name) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    enabled = engineState == EngineService.EngineState.READY && state.isInstalled,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Text(
+                        when {
+                            engineState == EngineService.EngineState.STARTING -> "Engine starting…"
+                            !state.isInstalled -> "Download model to test"
+                            else -> "Test Chat"
+                        },
+                        color = Color.White
+                    )
+                }
+
+                if (modelLoadingState.status == ModelLoadingStatus.LOADING ||
+                    modelLoadingState.status == ModelLoadingStatus.UNLOADING
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
+                                val progress = (modelLoadingState.loadProgress / 100f).coerceIn(0f, 1f)
+                                CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(40.dp))
+                            } else {
+                                CircularProgressIndicator(modifier = Modifier.size(40.dp))
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    if (modelLoadingState.status == ModelLoadingStatus.LOADING) "Loading model…" else "Unloading model…",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
+                                    Text("${modelLoadingState.loadProgress}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Button(
                     onClick = {
+                        if (modelLoader == null) {
+                            modelLoadingState = modelLoadingState.copy(
+                                status = ModelLoadingStatus.ERROR,
+                                error = when (engineState) {
+                                    EngineService.EngineState.STARTING -> "Engine is still starting. Try again in a moment."
+                                    EngineService.EngineState.FAILED -> "Engine failed to start. Check the Engine notification for details."
+                                    EngineService.EngineState.READY -> "Engine runtime is unavailable. Restart the Engine."
+                                }
+                            )
+                            return@Button
+                        }
+
                         if (modelLoadingState.status == ModelLoadingStatus.LOADED) {
-                            // Unload from memory
                             modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.UNLOADING)
                             coroutineScope.launch {
-                                if (modelLoader != null) {
-                                    modelLoader.unloadModel(modelId) { progress ->
-                                        modelLoadingState = modelLoadingState.copy(loadProgress = progress)
-                                    }.onSuccess {
-                                        modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
-                                    }.onFailure { error ->
-                                        modelLoadingState = modelLoadingState.copy(
-                                            status = ModelLoadingStatus.ERROR,
-                                            error = error.message
-                                        )
-                                    }
+                                modelLoader.unloadModel(modelId) { progress ->
+                                    modelLoadingState = modelLoadingState.copy(loadProgress = progress)
+                                }.onSuccess {
+                                    modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
+                                }.onFailure { error ->
+                                    modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.ERROR, error = error.message)
                                 }
                             }
                         } else {
-                            // Load to memory
+                            val installedPath = state.installedPath
+                            if (!state.isInstalled || installedPath.isNullOrBlank()) {
+                                viewModel.refreshInstalledState(modelId)
+                                modelLoadingState = modelLoadingState.copy(
+                                    status = ModelLoadingStatus.ERROR,
+                                    error = "Model artifact is not installed. Download it before loading."
+                                )
+                                return@Button
+                            }
                             modelLoadingState = modelLoadingState.copy(
                                 status = ModelLoadingStatus.LOADING,
                                 loadProgress = 0,
                                 error = null
                             )
                             coroutineScope.launch {
-                                if (modelLoader != null) {
-                                    modelLoader.loadModel(
-                                        modelId = modelId,
-                                        estimatedSizeMB = state.model?.sizeMB ?: 2_400,
-                                        onProgress = { progress ->
-                                            modelLoadingState = modelLoadingState.copy(loadProgress = progress)
-                                        },
-                                        onError = { error ->
-                                            modelLoadingState = modelLoadingState.copy(
-                                                status = ModelLoadingStatus.ERROR,
-                                                error = error
-                                            )
-                                        }
-                                    ).onSuccess {
-                                        modelLoadingState = modelLoadingState.copy(
-                                            status = ModelLoadingStatus.LOADED,
-                                            loadTimeMs = System.currentTimeMillis()
-                                        )
-                                    }.onFailure { error ->
-                                        modelLoadingState = modelLoadingState.copy(
-                                            status = ModelLoadingStatus.ERROR,
-                                            error = error.message ?: "Unknown error"
-                                        )
+                                modelLoader.loadModel(
+                                    modelId = modelId,
+                                    artifactPath = installedPath,
+                                    estimatedSizeMB = state.model?.sizeMB ?: 2_400,
+                                    onProgress = { progress ->
+                                        modelLoadingState = modelLoadingState.copy(loadProgress = progress)
+                                    },
+                                    onError = { error ->
+                                        modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.ERROR, error = error)
                                     }
-                                } else {
-                                    // Fallback: no model runtime, just simulate
+                                ).onSuccess {
                                     modelLoadingState = modelLoadingState.copy(
                                         status = ModelLoadingStatus.LOADED,
                                         loadTimeMs = System.currentTimeMillis()
+                                    )
+                                }.onFailure { error ->
+                                    modelLoadingState = modelLoadingState.copy(
+                                        status = ModelLoadingStatus.ERROR,
+                                        error = error.message ?: "Unknown error"
                                     )
                                 }
                             }
                         }
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    enabled = !state.isDownloading && modelLoadingState.status != ModelLoadingStatus.LOADING && modelLoadingState.status != ModelLoadingStatus.UNLOADING,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    enabled = engineState == EngineService.EngineState.READY &&
+                        state.isInstalled &&
+                        !state.isDownloading &&
+                        modelLoadingState.status != ModelLoadingStatus.LOADING &&
+                        modelLoadingState.status != ModelLoadingStatus.UNLOADING,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (modelLoadingState.status == ModelLoadingStatus.LOADED)
                             MaterialTheme.colorScheme.tertiary
@@ -214,10 +338,14 @@ fun ModelDetailScreen(
                             ModelLoadingStatus.LOADING -> "Loading (${modelLoadingState.loadProgress}%)"
                             ModelLoadingStatus.LOADED -> "Unload from Memory"
                             ModelLoadingStatus.ERROR -> "Retry Load"
-                            ModelLoadingStatus.UNLOADING -> "Unloading..."
+                            ModelLoadingStatus.UNLOADING -> "Unloading…"
                         },
                         color = Color.White
                     )
+                }
+
+                if (modelLoadingState.status == ModelLoadingStatus.ERROR && modelLoadingState.error != null) {
+                    Text(modelLoadingState.error!!, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
             }
         }

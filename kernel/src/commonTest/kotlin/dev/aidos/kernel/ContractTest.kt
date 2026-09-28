@@ -1,8 +1,11 @@
 package dev.aidos.kernel
 
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
@@ -181,5 +184,48 @@ class ContractTest {
             ApprovalTier.EYES_ONLY,
             tier(EffectKind.Mutate(MutationScope.IN_PROJECT), newGrant = true),
         )
+    }
+
+    // --- ModelAdapter.invokeStreaming default degrades to invoke() (RFC-0021, "Streaming") ----
+
+    private class FixedResultAdapter(private val result: Result<ModelResponse>) : ModelAdapter {
+        override val providerId = "test"
+        override val modelId = "test-model"
+        override val modelVersion = "1.0"
+        override val contextWindow = 2048
+        override val isLocal = true
+        override fun supportsNativeToolCalls() = false
+        override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = result
+    }
+
+    private fun modelRequest() = ModelRequest(
+        messages = emptyList(),
+        tools = emptyList(),
+        toolChoice = ToolChoice.None,
+        maxOutputTokens = 1,
+    )
+
+    @Test
+    fun `an adapter that does not override invokeStreaming emits one Done event from invoke`() = runTest {
+        val response = ModelResponse(outputs = emptyList(), stopReason = StopReason.END_TURN, usage = null, model = null)
+        val adapter = FixedResultAdapter(Result.success(response))
+
+        val events = adapter.invokeStreaming(modelRequest()).toList()
+
+        assertEquals(1, events.size)
+        val done = assertIs<ModelStreamEvent.Done>(events.single())
+        assertEquals(response, done.response)
+    }
+
+    @Test
+    fun `an adapter that does not override invokeStreaming emits Failed when invoke fails`() = runTest {
+        val error = IllegalStateException("boom")
+        val adapter = FixedResultAdapter(Result.failure(error))
+
+        val events = adapter.invokeStreaming(modelRequest()).toList()
+
+        assertEquals(1, events.size)
+        val failed = assertIs<ModelStreamEvent.Failed>(events.single())
+        assertEquals(error, failed.error)
     }
 }

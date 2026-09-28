@@ -17,8 +17,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -412,18 +414,31 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
  */
 @Composable
 private fun ProvidersPane(onProviderSelected: (providerId: String) -> Unit) {
-    val state = remember {
+    val context = LocalContext.current
+    val state = remember(context) {
+        val prefs = context.getSharedPreferences("aidos_engine_provider_state", Context.MODE_PRIVATE)
+        val defaults = listOf(
+            RemoteProvider(
+                "openai",
+                "OpenAI",
+                ProviderConfigStatus.ENABLED,
+                System.currentTimeMillis() - 3_600_000
+            ),
+            RemoteProvider("anthropic", "Anthropic (Claude)", ProviderConfigStatus.NOT_CONFIGURED),
+            RemoteProvider("together", "Together AI", ProviderConfigStatus.CONFIGURED_DISABLED),
+        )
         ProvidersPaneState(
-            providers = listOf(
-                RemoteProvider(
-                    "openai",
-                    "OpenAI",
-                    ProviderConfigStatus.ENABLED,
-                    System.currentTimeMillis() - 3_600_000
-                ),
-                RemoteProvider("anthropic", "Anthropic (Claude)", ProviderConfigStatus.NOT_CONFIGURED),
-                RemoteProvider("together", "Together AI", ProviderConfigStatus.CONFIGURED_DISABLED),
-            )
+            providers = defaults.map { provider ->
+                val enabled = prefs.getBoolean("${provider.id}:enabled", provider.status == ProviderConfigStatus.ENABLED)
+                val apiKeyValid = prefs.getBoolean("${provider.id}:api_key_valid", provider.status != ProviderConfigStatus.NOT_CONFIGURED)
+                provider.copy(
+                    status = when {
+                        enabled -> ProviderConfigStatus.ENABLED
+                        apiKeyValid -> ProviderConfigStatus.CONFIGURED_DISABLED
+                        else -> ProviderConfigStatus.NOT_CONFIGURED
+                    },
+                )
+            }
         )
     }
 

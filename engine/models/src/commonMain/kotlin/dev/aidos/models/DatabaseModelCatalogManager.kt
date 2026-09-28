@@ -8,43 +8,17 @@ import java.time.Instant
 /**
  * Database-backed implementation of ModelCatalogManager (RFC-0022).
  *
- * Manages model_catalog and installed_models tables in storage using SqlDelight SqlDriver.
+ * Manages model_catalog and installed_models tables in storage using SqlDelight's SqlDriver.
+ * Lives in commonMain (not jvmMain, where it lived before being deleted in 7d2c9ea without a
+ * replacement -- restored here since EngineService references it and the app cannot build
+ * without it) so both Aidos Engine's Android app and any JVM host can use it. `java.time.Instant`
+ * is safe in commonMain here because this module's targets are jvm()+androidTarget() only, both
+ * of which have it (see dev.aidos.api.ProjectLocker's doc comment for the same reasoning about
+ * java.io.File).
  */
 class DatabaseModelCatalogManager(
     private val userDriver: SqlDriver,
 ) : ModelCatalogManager {
-
-    init {
-        createTables()
-    }
-
-    private fun createTables() {
-        userDriver.execute(null, """
-            CREATE TABLE IF NOT EXISTS model_catalog (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                remote_url TEXT,
-                properties_json TEXT NOT NULL,
-                discovered_at TEXT NOT NULL
-            )
-        """.trimIndent(), 0)
-
-        userDriver.execute(null, """
-            CREATE TABLE IF NOT EXISTS installed_models (
-                model_id TEXT PRIMARY KEY,
-                digest TEXT NOT NULL,
-                path TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                quantization TEXT,
-                installed_at TEXT NOT NULL,
-                last_loaded_at TEXT,
-                user_label TEXT,
-                properties_json TEXT NOT NULL
-            )
-        """.trimIndent(), 0)
-    }
 
     override suspend fun addToCatalog(model: CatalogEntry): Result<Unit> = runCatching {
         userDriver.execute(
@@ -162,7 +136,7 @@ class DatabaseModelCatalogManager(
         userDriver.execute(
             identifier = null,
             sql = """
-                INSERT OR REPLACE INTO installed_models 
+                INSERT OR REPLACE INTO installed_models
                 (model_id, digest, path, size_bytes, quantization, installed_at, properties_json)
                 VALUES (?, ?, ?, ?, ?, ?, '{}')
             """.trimIndent(),
@@ -229,6 +203,49 @@ class DatabaseModelCatalogManager(
                 }
             }
             // else: nothing to update, just return success
+        }
+    }
+
+    companion object {
+        /**
+         * Creates model_catalog and installed_models if they don't exist yet. No migration
+         * runner exists for this module (unlike agent/storage's MigrationRunner) -- this is the
+         * schema's one and only version, called from the SqlDriver's SqlSchema.create() at first
+         * open.
+         */
+        fun createTables(driver: SqlDriver) {
+            driver.execute(
+                identifier = null,
+                sql = """
+                    CREATE TABLE IF NOT EXISTS model_catalog (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        remote_url TEXT,
+                        properties_json TEXT NOT NULL DEFAULT '{}',
+                        discovered_at TEXT NOT NULL
+                    )
+                """.trimIndent(),
+                parameters = 0,
+            )
+            driver.execute(
+                identifier = null,
+                sql = """
+                    CREATE TABLE IF NOT EXISTS installed_models (
+                        model_id TEXT PRIMARY KEY,
+                        digest TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        size_bytes INTEGER NOT NULL,
+                        quantization TEXT,
+                        installed_at TEXT NOT NULL,
+                        last_loaded_at TEXT,
+                        user_label TEXT,
+                        properties_json TEXT NOT NULL DEFAULT '{}'
+                    )
+                """.trimIndent(),
+                parameters = 0,
+            )
         }
     }
 }

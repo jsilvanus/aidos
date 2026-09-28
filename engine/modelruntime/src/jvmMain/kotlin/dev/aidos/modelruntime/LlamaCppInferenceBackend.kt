@@ -116,19 +116,22 @@ class LlamaCppInferenceBackend : InferenceBackend {
         val file = modelFile(modelId)
         if (!file.exists()) {
             return Result.failure(
-                IllegalStateException("Model file not found: $modelId at ${file.absolutePath}")
+                IllegalStateException("MODEL_NOT_INSTALLED: $modelId")
             )
         }
 
         val metadata = GgufLoader.loadMetadata(file)
-            ?: return Result.failure(IllegalStateException("Invalid GGUF format: $modelId"))
+            ?: return Result.failure(IllegalStateException("INVALID_GGUF: $modelId"))
 
         return try {
             val adapter = LlamaCppAdapter(modelId, file, metadata)
             liveAdapters[modelId] = adapter
             Result.success(adapter)
+        } catch (e: UnsatisfiedLinkError) {
+            Result.failure(IllegalStateException("INCOMPATIBLE_GGUF: Native backend unavailable for $modelId", e))
         } catch (e: Exception) {
-            Result.failure(e)
+            val detail = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName ?: "unknown"
+            Result.failure(IllegalStateException("MODEL_LOAD_FAILED: $modelId: $detail", e))
         }
     }
 

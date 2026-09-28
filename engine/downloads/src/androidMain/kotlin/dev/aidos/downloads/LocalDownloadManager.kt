@@ -1,5 +1,6 @@
 package dev.aidos.downloads
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.io.File
@@ -27,13 +28,15 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
             if (resumeBytes > 0) connection.setRequestProperty("Range", "bytes=$resumeBytes-")
             connection.connect()
             val response = connection.responseCode
-            if (response !in 200..299 && response != HttpURLConnection.HTTP_PARTIAL) throw IllegalStateException("HTTP $response from $url")
+            if (response !in 200..299 && response != HttpURLConnection.HTTP_PARTIAL) {
+                throw IllegalStateException("HTTP $response from $url")
+            }
             val resumed = resumeBytes > 0 && response == HttpURLConnection.HTTP_PARTIAL
             val offset = if (resumed) resumeBytes else 0L
             if (!resumed && target.exists()) target.delete()
             val contentLength = connection.contentLengthLong.takeIf { it >= 0 }
             val totalBytes = if (resumed && contentLength != null) offset + contentLength else contentLength
-            partialFile.writeText("$url\n$offset\n${totalBytes ?: -1}")
+            partialFile.writeText("$url\n${totalBytes ?: -1}")
             emit(DownloadEvent.Started(totalBytes, offset))
             RandomAccessFile(target, "rw").use { file ->
                 file.seek(offset)
@@ -51,28 +54,45 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
             }
             val actualDigest = sha256(target)
             if (expectedDigest != null && !actualDigest.equals(expectedDigest, ignoreCase = true)) {
-                target.delete(); partialFile.delete()
+                target.delete()
+                partialFile.delete()
                 emit(DownloadEvent.DigestMismatch(expectedDigest, actualDigest))
                 return@flow
             }
             partialFile.delete()
             emit(DownloadEvent.Completed(target.absolutePath, actualDigest, target.length()))
+        } catch (e: CancellationException) {
+            // Cancellation is intentional: preserve the target + marker so a later download can resume.
+            throw e
         } catch (e: Exception) {
             emit(DownloadEvent.Failed(e.message ?: e::class.simpleName.orEmpty(), true))
-        } finally { connection?.disconnect() }
+        } finally {
+            connection?.disconnect()
+        }
     }
+
     override suspend fun canResume(destination: String, url: String): Boolean {
-        val target = File(destination); val partial = File("$destination.partial")
+        val target = File(destination)
+        val partial = File("$destination.partial")
         if (!target.exists() || target.length() == 0L || !partial.exists()) return false
         val lines = partial.readLines()
-        return lines.firstOrNull() == url && target.length() == lines.getOrNull(1)?.toLongOrNull()
+        return lines.firstOrNull() == url
     }
-    override suspend fun delete(destination: String) { File(destination).delete(); File("$destination.partial").delete() }
+
+    override suspend fun delete(destination: String) {
+        File(destination).delete()
+        File("$destination.partial").delete()
+    }
+
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) { val read = input.read(buffer); if (read < 0) break; digest.update(buffer, 0, read) }
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }

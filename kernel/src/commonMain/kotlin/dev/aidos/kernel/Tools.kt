@@ -87,6 +87,19 @@ sealed interface ContentBlock {
             other is Image && other.mimeType == mimeType && other.data.contentEquals(data)
         override fun hashCode(): Int = 31 * mimeType.hashCode() + data.contentHashCode()
     }
+    /**
+     * Audio input for an STT request (RFC-0103, Dictator plan S3) — split out from [Image]
+     * rather than reusing it with an audio-flavored [mimeType] (e.g. "audio/wav"): a caller
+     * sending audio should not have to lie about the block's kind to be understood, and a
+     * renderer that doesn't handle audio should fail to compile, not silently render nothing
+     * (which reusing [Image] would risk once a renderer starts branching on mime type instead of
+     * block type).
+     */
+    data class Audio(val mimeType: String, val data: ByteArray) : ContentBlock {
+        override fun equals(other: Any?): Boolean =
+            other is Audio && other.mimeType == mimeType && other.data.contentEquals(data)
+        override fun hashCode(): Int = 31 * mimeType.hashCode() + data.contentHashCode()
+    }
     /** A reference, not bulk content — the same rule the event bus follows (RFC-0004). */
     data class ResourceRef(val nodeId: ContentNodeId, val sizeBytes: Long) : ContentBlock
 }

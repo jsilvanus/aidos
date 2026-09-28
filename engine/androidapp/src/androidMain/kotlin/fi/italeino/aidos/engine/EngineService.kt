@@ -25,7 +25,6 @@ import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.modelruntime.GlobalModelRuntime
-import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
@@ -34,7 +33,9 @@ import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.AndroidEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
+import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
+import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -44,6 +45,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -54,12 +58,21 @@ import kotlinx.coroutines.launch
  */
 class EngineService : LifecycleService() {
 
+    enum class EngineState {
+        STARTING,
+        READY,
+        FAILED,
+    }
+
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
 
         private var _instance: EngineService? = null
         val instance: EngineService? get() = _instance
+
+        private val _state = MutableStateFlow(EngineState.STARTING)
+        val state: StateFlow<EngineState> = _state.asStateFlow()
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -94,6 +107,7 @@ class EngineService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         _instance = this
+        _state.value = EngineState.STARTING
         serviceScope.launch {
             try {
                 tokenManager = TokenManager()
@@ -114,7 +128,10 @@ class EngineService : LifecycleService() {
                 val databaseDriver = AndroidSqliteDriver(
                     schema = object : SqlSchema<QueryResult.Value<Unit>> {
                         override val version: Long = 1
-                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                            DatabaseModelCatalogManager.createTables(driver)
+                            return QueryResult.Value(Unit)
+                        }
                         override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
                     },
                     context = this@EngineService,
@@ -131,7 +148,9 @@ class EngineService : LifecycleService() {
                     deviceProfile = deviceProfile
                 )
 
-                val runtime = GlobalModelRuntime(LlamaCppInferenceBackend())
+                // Android uses the native llama.cpp binding directly. The JVM-only backend in
+                // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
+                val runtime = GlobalModelRuntime(AndroidLlamaCppInferenceBackend(this@EngineService))
                 modelRuntime = runtime
 
                 httpServer = EngineHttpServer(tokenManager, runtime)
@@ -145,9 +164,11 @@ class EngineService : LifecycleService() {
                 binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
 
                 _isRunning = true
+                _state.value = EngineState.READY
                 updateNotification("Engine running on port $boundPort")
             } catch (_: Exception) {
                 _isRunning = false
+                _state.value = EngineState.FAILED
                 updateNotification("Engine failed: Unable to start HTTP server or model runtime")
             }
         }
@@ -178,12 +199,17 @@ class EngineService : LifecycleService() {
                 if (isRunning) {
                     httpServer.stop()
                     httpClient.close()
-                    modelRuntime?.loaded()?.forEach { modelId -> modelRuntime?.unload(modelId) }
+                    httpServer.shutdownInference()
+                    modelRuntime?.loaded()?.forEach { modelId ->
+                        httpServer.waitUntilModelIdle(modelId)
+                        modelRuntime?.unload(modelId)
+                    }
                     tokenManager.clearTokens()
                     _isRunning = false
                 }
             } catch (_: Exception) {
             } finally {
+                _state.value = EngineState.STARTING
                 _instance = null
                 serviceScope.cancel()
             }
@@ -194,6 +220,24 @@ class EngineService : LifecycleService() {
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
         return if (isRunning) binder.asBinder() else null
+    }
+
+    /**
+     * A client for this service's own `/v1/chat/completions` endpoint, for first-party in-app
+     * callers (the Test Chat screen, RFC-0103 Phase E) rather than the Binder-handshake
+     * (`EngineHandshakeImpl`) path external client apps use. The engine trusts its own process,
+     * so it self-issues a token via [TokenManager] instead of requiring a handshake round trip;
+     * an existing still-valid token (e.g. one already issued to a connected app) is reused rather
+     * than rotated, since [TokenManager] holds only one token at a time and rotating it here would
+     * invalidate that app's session.
+     *
+     * Null when the engine (and therefore its HTTP server) isn't running.
+     */
+    suspend fun createHttpModelClient(): HttpModelClient? {
+        if (!isRunning) return null
+        val port = httpServer.getBoundPort() ?: return null
+        val token = tokenManager.currentValidToken() ?: tokenManager.generateNewToken().token
+        return HttpModelClient(port = port, token = token)
     }
 
     private fun createNotificationChannel() {

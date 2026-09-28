@@ -139,4 +139,49 @@ class RealRuntimeClientSessionTest {
         assertIs<RunResult.Error>(result)
         assertEquals("session.not_found", result.code)
     }
+
+    @Test
+    fun `list hydrates sessions a previous instance persisted`() = runTest {
+        val first = persistentClient()
+        val project = first.projects.create(projectRequest("proj-session-d"))
+        assertIs<ProjectResult.Success>(project)
+        val session = first.sessions.create(CreateSessionRequest(project.project.id, "driver-session"))
+        assertIs<SessionResult.Success>(session)
+        first.projects.close(project.project.id)
+
+        val second = persistentClient()
+        val opened = second.projects.open(project.project.id)
+        assertIs<ProjectResult.Success>(opened)
+
+        val listed = second.sessions.list(project.project.id)
+        assertEquals(1, listed.size)
+        assertEquals(session.session.id, listed.first().id)
+        assertEquals("driver-session", listed.first().name)
+    }
+
+    @Test
+    fun `send without a RunExecutor still persists a real run visible to get`() = runTest {
+        val client = persistentClient()
+        val project = client.projects.create(projectRequest("proj-session-e"))
+        assertIs<ProjectResult.Success>(project)
+        val session = client.sessions.create(CreateSessionRequest(project.project.id, "s"))
+        assertIs<SessionResult.Success>(session)
+
+        val result = client.sessions.send(session.session.id, UserMessage(content = "hello"))
+        assertIs<RunResult.Accepted>(result)
+
+        val detail = client.sessions.get(session.session.id)
+        assertEquals(1, detail?.recentRuns?.size)
+        assertEquals(result.runId, detail?.recentRuns?.first()?.id)
+        assertEquals("PENDING", detail?.recentRuns?.first()?.state)
+        assertEquals(1, detail?.summary?.runCount)
+
+        // Durable, not just cached: a fresh instance sharing storage sees it too.
+        client.projects.close(project.project.id)
+        val second = persistentClient()
+        val reopened = second.projects.open(project.project.id)
+        assertIs<ProjectResult.Success>(reopened)
+        val listedFromSecond = second.sessions.list(project.project.id)
+        assertEquals(1, listedFromSecond.first().runCount)
+    }
 }

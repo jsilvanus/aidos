@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import android.content.Context
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -54,12 +56,14 @@ import androidx.compose.ui.unit.sp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen() {
+    val context = LocalContext.current
+    val prefs = remember(context) { context.getSharedPreferences("aidos_engine_ui_state", Context.MODE_PRIVATE) }
     var state by remember {
         mutableStateOf(
             SettingsState(
                 hfTokenStatus = HfTokenStatus(
-                    isConfigured = true,
-                    lastValidatedMs = System.currentTimeMillis() - 7200_000 // 2 hours ago
+                    isConfigured = !prefs.getString("hf_token", null).isNullOrBlank(),
+                    lastValidatedMs = prefs.getLong("hf_token_validated_ms", 0L).takeIf { it > 0 }
                 )
             )
         )
@@ -158,6 +162,7 @@ fun SettingsScreen() {
                             if (state.hfTokenStatus.isConfigured) {
                                 TextButton(
                                     onClick = {
+                                        prefs.edit().remove("hf_token").remove("hf_token_validated_ms").apply()
                                         state = state.copy(
                                             hfTokenStatus = HfTokenStatus(false),
                                             successMessage = "Token cleared"
@@ -213,7 +218,38 @@ fun SettingsScreen() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Button(
-                                onClick = { /* TODO: Save and validate token */ },
+                                onClick = {
+                                    val token = state.tokenInput.trim()
+                                    if (token.isEmpty()) {
+                                        state = state.copy(
+                                            errorMessage = "Token cannot be empty",
+                                            successMessage = null,
+                                        )
+                                        return@Button
+                                    }
+                                    if (!token.startsWith("hf_") || token.length < 12) {
+                                        state = state.copy(
+                                            errorMessage = "Token must look like a Hugging Face access token",
+                                            successMessage = null,
+                                        )
+                                        return@Button
+                                    }
+                                    prefs.edit()
+                                        .putString("hf_token", token)
+                                        .putLong("hf_token_validated_ms", System.currentTimeMillis())
+                                        .apply()
+
+                                    state = state.copy(
+                                        showTokenInput = false,
+                                        tokenInput = "",
+                                        hfTokenStatus = HfTokenStatus(
+                                            isConfigured = true,
+                                            lastValidatedMs = System.currentTimeMillis(),
+                                        ),
+                                        successMessage = "Token saved",
+                                        errorMessage = null,
+                                    )
+                                },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary
