@@ -367,6 +367,157 @@ AIDIN should not imply cloud infrastructure. The normal local mode is:
 with no required central cloud service.
 
 
+
+## Data locality and privacy
+
+AIDIN is one execution domain available to Aidos Engine; it is not the only one.
+
+An Aidos Engine may choose among:
+
+    Aidos Engine
+        |
+        +-- Local execution
+        +-- AIDIN
+        +-- Remote provider AI
+
+AIDIN therefore must not assume that all inference is local or that remote provider AI is inherently forbidden. Instead, execution and data policies determine which execution domains are eligible.
+
+### Data policy
+
+A request may carry a data-locality policy such as:
+
+- **LOCAL_ONLY** — request-derived data must remain on the endpoint node.
+- **TRUSTED_NODES** — request-derived data may be sent only to explicitly authorized nodes.
+- **TRUSTED_CLUSTER** — request-derived data may be sent to nodes in an authorized AIDIN cluster.
+
+A configured remote provider may also be an explicitly authorized execution domain. Provider authorization and provider-specific data handling are outside the AIDIN node protocol, but Aidos Engine must include them when deciding whether a remote provider is eligible.
+
+Data policy applies not only to the original prompt or input, but also to request-derived intermediate state such as activations, hidden states, KV cache, and generated results.
+
+Transfer and persistence are separate concerns. A request may permit temporary transfer to an eligible node while prohibiting persistent storage there.
+
+### Data classification
+
+Applications or higher-level policy may classify data independently of AIDIN's transport and execution mechanisms. Possible generic classifications include:
+
+    PUBLIC
+    INTERNAL
+    SENSITIVE
+    RESTRICTED
+
+AIDIN should not attempt to determine the legal or organizational meaning of these classifications. The classification is an input to policy evaluation.
+
+### Planner constraint
+
+The execution planner must apply security, privacy, execution, authorization, and resource policies before optimizing a topology.
+
+A topology that violates a request's data policy is not an inferior plan; it is an invalid plan.
+
+Policies therefore constrain the eligible execution domain and nodes from the beginning of planning.
+
+## Model identity, availability, and distribution
+
+AIDIN distributes computation; it does not necessarily need to distribute model files.
+
+A model should have a logical identity independent of where its weights are currently available.
+
+A model description may include:
+
+- model family and identity
+- version
+- architecture
+- variant
+- format
+- quantization
+- supported operations/capabilities
+- context or other relevant execution requirements
+
+### Model availability
+
+Different nodes may have different model availability:
+
+    Phone A  -> model X available
+    Phone B  -> model X unavailable
+    Laptop   -> model X available
+
+AIDIN should be able to construct a plan from the nodes that already have compatible model material.
+
+Model availability is therefore a node capability/resource, not part of the model's logical identity.
+
+### Model variants and compatibility
+
+Nodes may have different compatible representations of a model:
+
+    Model X
+      +-- Q4
+      +-- Q8
+      +-- FP16
+
+AIDIN should represent enough information to determine whether a particular model variant is compatible with a requested execution plan.
+
+Having the same model family name is not sufficient to establish compatibility.
+
+### Optional model distribution
+
+If required model material is missing, AIDIN may eventually support:
+
+- downloading or obtaining model material
+- caching
+- transferring model material between trusted nodes
+- distributing only required partitions
+- reusing existing model caches
+
+Model distribution is optional. An implementation may initially require models to be preinstalled on participating nodes.
+
+Model transfer should be treated as a planning cost. A node with excellent compute may still be a poor choice if model transfer is prohibitively expensive.
+
+### Model policy
+
+Model use may have generic policy constraints independent of enterprise ownership.
+
+Possible permissions include:
+
+- **may_execute**
+- **may_cache**
+- **may_transfer**
+- **may_persist**
+
+Open models may permit all of these, while a user or application may impose stricter restrictions. Proprietary or otherwise restricted models are a possible use case, but do not define the AIDIN architecture.
+
+Possessing model material on a node does not by itself establish permission to use, transfer, or redistribute it.
+
+### Model placement
+
+AIDIN should eventually support both replicated and partitioned model placement.
+
+Replicated:
+
+    Node A -> full model
+    Node B -> full model
+    Node C -> full model
+
+Partitioned:
+
+    Node A -> layers 0..10
+    Node B -> layers 11..21
+    Node C -> layers 22..31
+
+The first is simpler and may be appropriate when model material fits on each node. The second can reduce memory requirements but requires explicit model partitioning and compatible execution semantics.
+
+AIDIN should not require either placement strategy universally.
+
+### Model and execution domains
+
+Model availability and model placement interact with the broader Aidos Engine execution model:
+
+    Aidos Engine
+        |
+        +-- local model
+        +-- AIDIN-distributed model
+        +-- remote provider model
+
+A request may use whichever execution domain satisfies its model, data, resource, and execution policies.
+
 ## Endpoint delegation
 
 An AIDIN node may expose a stable local endpoint to applications while delegating execution to an AIDIN cluster.
