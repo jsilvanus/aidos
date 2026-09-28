@@ -366,6 +366,130 @@ AIDIN should not imply cloud infrastructure. The normal local mode is:
 
 with no required central cloud service.
 
+
+## Endpoint delegation
+
+An AIDIN node may expose a stable local endpoint to applications while delegating execution to an AIDIN cluster.
+
+The endpoint is the stable interface; it does not imply that inference must execute locally.
+
+Conceptually:
+
+    Application
+        |
+        v
+    node endpoint
+        |
+        +-- local Engine
+        |
+        +-- AIDIN cluster
+
+The local endpoint and cluster endpoint may be hosted by the same node, or the local endpoint may delegate to another coordinator.
+
+This allows an application such as an IDE to keep a stable endpoint such as a user's phone while execution changes between local inference and a workplace or home cluster.
+
+Endpoint identity must remain independent of the physical network address.
+
+## Execution policy
+
+Execution location should be controllable through explicit policy.
+
+Initial policy modes:
+
+- **LOCAL_ONLY** — inference must execute on this node. No inference delegation is permitted.
+- **PREFER_LOCAL** — execute locally when practical; delegation is permitted when local execution is unsuitable.
+- **CLUSTER_ALLOWED** — the planner may choose local or trusted-cluster execution.
+- **CLUSTER_REQUIRED** — execution must be delegated to an appropriate AIDIN cluster.
+
+Policy may eventually exist at several scopes:
+
+- Aidos/global policy
+- application policy
+- session policy
+- request policy
+
+More restrictive policy should be able to override broader delegation permissions.
+
+A security-sensitive application can therefore force LOCAL_ONLY even when the device is participating in an AIDIN cluster.
+
+Execution policy is also a data-boundary policy: delegated inference may require prompts, model inputs, intermediate state, or other request data to cross the node boundary.
+
+## Trust, authorization, and revocation
+
+Cluster membership must be based on explicit trust rather than network proximity alone.
+
+A discovered node is not automatically an authorized execution node.
+
+AIDIN should distinguish:
+
+- discovery
+- authentication
+- authorization
+- capability advertisement
+- active participation
+
+Trust should be revocable. Removing a node from a cluster must prevent it from receiving new work and, where practical, invalidate its ability to participate in future sessions.
+
+Model access should be separable from access to files, tools, credentials, or other device capabilities. A node authorized to contribute inference compute should not thereby gain access to unrelated local resources.
+
+## Resource contribution policy
+
+A node should be able to limit what resources it contributes to AIDIN.
+
+Possible constraints include:
+
+- maximum CPU/GPU/NPU utilization
+- maximum memory
+- minimum battery level
+- charging-only participation
+- thermal limits
+- time or location/context restrictions
+- whether background participation is allowed
+
+The scheduler must treat these as hard policy constraints rather than merely optimization hints.
+
+This is especially relevant for workplace clusters: a company-issued phone may contribute compute during work while preserving explicit limits on battery, thermal load, and user experience.
+
+## Personal and workplace clusters
+
+A node may leave one trusted cluster and join another as its context changes.
+
+For example:
+
+    WORK
+      office cluster
+        +-- phone
+        +-- colleague phones
+        +-- office laptop
+
+    HOME
+      personal cluster
+        +-- same phone
+        +-- personal laptop
+        +-- home desktop
+
+The node's stable identity does not change merely because cluster membership changes.
+
+Work and personal clusters must remain separate trust domains. Participation in a workplace cluster must not implicitly grant the workplace access to the node's personal cluster, personal sessions, or unrelated local resources.
+
+A workplace cluster may therefore be intentionally ephemeral: available compute grows as workers arrive and shrinks as they leave.
+
+## Audit and observability
+
+Distributed inference should provide enough metadata to understand where work was executed without unnecessarily logging sensitive inference content.
+
+Useful audit information may include:
+
+- session and plan identifiers
+- participating node IDs
+- plan changes
+- node joins/leaves
+- authorization and revocation events
+- resource-policy decisions
+- execution failures and recovery events
+
+Prompt contents, generated content, and intermediate tensors should not be logged merely for observability.
+
 ## Design goals
 
 1. Transparent endpoint switching.
