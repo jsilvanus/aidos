@@ -16,8 +16,7 @@ plugins {
  * transport and no Binder, so app approvals are exercised through a simulated handshake.
  */
 kotlin {
-    // :kernel is compiled for JVM 21, so the app that loads it at runtime must run on 21.
-    jvmToolchain(21)
+    jvmToolchain(17)
 }
 
 dependencies {
@@ -43,10 +42,10 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "fi.italeino.aidos.engine.desktop.MainKt"
-        // Compose's run/package tasks default to JAVA_HOME's JDK, not the toolchain; the classes
-        // (and :kernel) are JVM 21 bytecode, so launch with the toolchain's JDK instead.
+        // Compose's run/package tasks default to JAVA_HOME's JDK, not the toolchain; launch with
+        // the toolchain's JDK so the app runs on the version it was compiled for.
         javaHome = javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(21))
+            languageVersion.set(JavaLanguageVersion.of(17))
         }.get().metadata.installationPath.asFile.absolutePath
         nativeDistributions {
             targetFormats(TargetFormat.Msi)

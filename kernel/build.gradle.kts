@@ -6,7 +6,10 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(21)
+    // 17, the lowest toolchain among its consumers (engine/ moved to 17 in 4cfa892). At 21 the JVM
+    // jar was class-file 65, which the engine's JDK 17 tests could not load
+    // (UnsupportedClassVersionError); 21-toolchain consumers read 17 bytecode fine.
+    jvmToolchain(17)
     jvm()
     androidTarget {
         // Required for the Android target to get a Maven publication at all — see
