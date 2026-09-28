@@ -92,16 +92,18 @@ class ModelDetailViewModel : ViewModel() {
                         ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
                     }
 
+                    val inferredKind = dev.aidos.huggingface.HuggingFaceClient.Companion.inferModelKind(hfModel.tags, hfModel.pipeline)
                     val uiDetail = ModelDetail(
                         id = hfModel.modelId,
                         name = hfModel.displayName ?: hfModel.modelId,
                         description = hfModel.description ?: "",
                         providerName = "huggingface",
+                        kind = dev.aidos.kernel.ModelKind.valueOf(inferredKind.name),
                         licenseName = hfModel.license,
                         modelUrl = "https://huggingface.co/${hfModel.modelId}",
                         sizeMB = ((modelSize ?: 0L) / (1024L * 1024L)).toInt(),
                         contextFitTable = fitRows,
-                        isRunnable = hfModel.quantizations.isNotEmpty(),
+                        isRunnable = hfModel.quantizations.isNotEmpty() || hfModel.artifacts.any { it.format == dev.aidos.huggingface.ModelFormat.GGUF },
                     )
 
                     _state.value = _state.value.copy(model = uiDetail, isLoading = false)
@@ -250,6 +252,44 @@ class ModelDetailViewModel : ViewModel() {
         downloadJob?.cancel()
     }
 
+    fun setEmbeddingInput(value: String) {
+        _state.value = _state.value.copy(embeddingInput = value)
+    }
+
+    fun testEmbeddings() {
+        val model = _state.value.model ?: return
+        val input = _state.value.embeddingInput.trim()
+        if (input.isBlank()) {
+            _state.value = _state.value.copy(embeddingError = "Enter text to embed.")
+            return
+        }
+        if (model.kind != dev.aidos.kernel.ModelKind.EMBEDDING) return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isEmbeddingTesting = true, embeddingError = null, embeddingVector = emptyList())
+            try {
+                val service = EngineService.instance ?: throw IllegalStateException("Engine is not running")
+                val client = service.createHttpModelClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
+                val response = try {
+                    withContext(Dispatchers.IO) { client.embeddings(model.id, listOf(input)) }
+                } finally {
+                    client.close()
+                }
+                val vector = response.data.firstOrNull()?.embedding.orEmpty()
+                if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
+                _state.value = _state.value.copy(isEmbeddingTesting = false, embeddingVector = vector, embeddingError = null)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isEmbeddingTesting = false)
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isEmbeddingTesting = false,
+                    embeddingError = "Embedding test failed: ${e.message ?: "unknown error"}",
+                )
+            }
+        }
+    }
+
     /** Delete the installed model artifact and remove catalog entry if present. */
     fun deleteInstalledModel(modelId: String) {
         // If a download is active, cancel it first.
@@ -326,6 +366,7 @@ class ModelDetailViewModel : ViewModel() {
             name = name,
             description = "${kind.name} · ${format.uppercase()} · from $provider",
             providerName = provider,
+            kind = kind,
             licenseName = license,
             modelUrl = remoteUrl?.takeIf { it.startsWith("https://huggingface.co/") && !it.contains("/resolve/") }
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,

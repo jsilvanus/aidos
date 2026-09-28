@@ -88,6 +88,34 @@ class HttpModelClient(
     }
 
     /**
+     * Send an embeddings request to the Engine.
+     */
+    suspend fun embeddings(modelId: String, input: List<String>): EmbeddingsResponse {
+        val request = EmbeddingsRequest(model = modelId, input = input)
+        val response = httpClient.post("$baseUrl/v1/embeddings") {
+            contentType(ContentType.Application.Json)
+            bearerAuth(token)
+            setBody(json.encodeToString(request))
+        }
+
+        return when {
+            response.status == HttpStatusCode.NotFound -> {
+                throw Exception("Model not found: $modelId")
+            }
+            response.status == HttpStatusCode.Unauthorized -> {
+                throw Exception("Unauthorized: Invalid or expired token")
+            }
+            response.status.isSuccess() -> {
+                response.body<EmbeddingsResponse>()
+            }
+            else -> {
+                val errorBody = response.bodyAsText()
+                throw Exception("HTTP ${response.status}: $errorBody")
+            }
+        }
+    }
+
+    /**
      * Check if the Engine is responding and accessible.
      *
      * @return true if health check passes

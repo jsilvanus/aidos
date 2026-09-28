@@ -67,6 +67,13 @@ private data class InstallProgress(val percent: Int = 0, val error: String? = nu
  */
 class ModelsViewModel(application: Application) : AndroidViewModel(application) {
 
+    private data class SearchParams(
+        val query: String,
+        val kind: ModelKind?,
+        val minContext: Int?,
+        val maxSizeMb: Int?,
+    )
+
     private val suggestionPrefs = SuggestionPreferences.get(application)
 
     private val _localModels = MutableStateFlow<List<CookbookModel>>(emptyList())
@@ -105,7 +112,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var searchJob: Job? = null
-    private var lastSearch: Triple<String, ModelKind?, Int?> = Triple("", null, null)
+    private var lastSearch = SearchParams(query = "", kind = null, minContext = null, maxSizeMb = null)
 
     init {
         viewModelScope.launch {
@@ -140,13 +147,13 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null) {
-        val search = Triple(query, kind, minContext)
+    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null, maxSizeMb: Int? = null) {
+        val search = SearchParams(query = query, kind = kind, minContext = minContext, maxSizeMb = maxSizeMb)
         lastSearch = search
         runSearch(search, debounce = query.isNotEmpty())
     }
 
-    private fun runSearch(search: Triple<String, ModelKind?, Int?>, debounce: Boolean) {
+    private fun runSearch(search: SearchParams, debounce: Boolean) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(500)
@@ -182,14 +189,19 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
             _isSearching.value = true
             try {
-                val (query, kind, minContext) = search
+                val (query, kind, minContext, maxSizeMb) = search
                 // Hub search plus one metadata fetch per result, and JSON parsing: keep it off
                 // the main thread.
                 val results = withContext(Dispatchers.IO) {
                     browser.searchRemote(query.ifBlank { null }, kind, minContext).getOrThrow()
                 }
+                val maxBytes = maxSizeMb?.toLong()?.times(1024L * 1024L)
+                val filtered = if (maxBytes == null) results else results.filter { model ->
+                    val size = model.sizeBytes
+                    size != null && size > 0 && size <= maxBytes
+                }
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
-                _cookbookModels.value = results.map { it.toUiModel() }.distinctBy { it.id }
+                _cookbookModels.value = filtered.map { it.toUiModel() }.distinctBy { it.id }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

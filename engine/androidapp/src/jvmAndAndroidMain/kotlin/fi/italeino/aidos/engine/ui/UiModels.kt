@@ -1,5 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
+import dev.aidos.kernel.ModelKind
+
 /**
  * UI data models for Aidos Engine screens (RFC-0103, Phase D).
  *
@@ -91,6 +93,8 @@ data class ModelDetail(
     val name: String,
     val description: String = "",
     val providerName: String,
+    /** Model kind (LLM, EMBEDDING, etc.) */
+    val kind: ModelKind = ModelKind.LLM,
     /** License id declared on the Hub (e.g. "apache-2.0"), or null when none is declared. */
     val licenseName: String? = null,
     val modelUrl: String? = null,
@@ -108,6 +112,10 @@ data class ModelDetailState(
     val isDownloading: Boolean = false,
     val downloadProgress: Int = 0,
     val downloadError: String? = null,
+    val embeddingInput: String = "",
+    val embeddingVector: List<Float> = emptyList(),
+    val isEmbeddingTesting: Boolean = false,
+    val embeddingError: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
 )

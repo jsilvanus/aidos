@@ -1,6 +1,5 @@
 package fi.italeino.aidos.engine
 
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -43,8 +42,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { isGranted: Boolean ->
         if (isGranted) {
-            // Permission granted, restart service to show notification if it's already running
-            startEngineService()
+            // No-op: Engine starts only from explicit user action on Home.
         }
     }
 
@@ -68,9 +66,6 @@ class MainActivity : ComponentActivity() {
                 requestPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-
-        // Start the Engine foreground service
-        startEngineService()
 
         setContent {
             AidosEngineTheme {
@@ -127,12 +122,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startEngineService() {
-        val engineIntent = Intent(this, EngineService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(engineIntent)
-        } else {
-            startService(engineIntent)
-        }
-    }
 }

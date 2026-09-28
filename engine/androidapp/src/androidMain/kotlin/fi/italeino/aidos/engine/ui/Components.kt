@@ -165,7 +165,7 @@ fun ResidentModelCard(
                         text = model.displayName,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = model.quantization,
@@ -229,7 +229,7 @@ fun CookbookModelCard(
                         text = model.name,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = "${model.quantization} • ${model.kind} • ${formatSize(model.sizeBytes)}",
@@ -329,12 +329,12 @@ fun ContextFitTable(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        Text(
-            text = "Fit by Context Length",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(bottom = 8.dp)
+            Text(
+                text = "Fit by Context Length",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
         )
         
         rows.forEach { row ->
@@ -376,6 +376,7 @@ fun ContextFitTable(
 fun LicenseInfoCard(
     licenseName: String?,
     modelUrl: String?,
+    onReviewTerms: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     OutlinedCard(
@@ -392,7 +393,7 @@ fun LicenseInfoCard(
                 text = "License: ${licenseName ?: "not declared"}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = if (modelUrl != null) "Review the terms on the model card: $modelUrl"
@@ -401,6 +402,11 @@ fun LicenseInfoCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
+            if (modelUrl != null && onReviewTerms != null) {
+                TextButton(onClick = onReviewTerms, modifier = Modifier.padding(top = 6.dp)) {
+                    Text("Review terms")
+                }
+            }
         }
     }
 }

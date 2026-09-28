@@ -258,14 +258,16 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
     var selectedKind by remember { mutableStateOf<ModelKind?>(null) }
     var isCodingOnly by remember { mutableStateOf(false) }
     var minContext by remember { mutableStateOf<Int?>(null) }
+    var sizeFilterMb by remember { mutableStateOf<Int?>(null) }
+    var showSizeDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(searchQuery, selectedKind, isCodingOnly, minContext) {
+    LaunchedEffect(searchQuery, selectedKind, isCodingOnly, minContext, sizeFilterMb) {
         val effectiveQuery = if (isCodingOnly) {
             if (searchQuery.isBlank()) "code" else "$searchQuery code"
         } else {
             searchQuery
         }
-        viewModel.searchRemote(effectiveQuery, selectedKind, minContext)
+        viewModel.searchRemote(effectiveQuery, selectedKind, minContext, sizeFilterMb)
     }
 
     LazyColumn(
@@ -316,6 +318,36 @@ private fun CookbookPane(onModelSelected: (modelId: String) -> Unit, viewModel: 
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 item {
+                    FilterChip(
+                        label = { Text("Size", fontSize = 10.sp) },
+                        onClick = { showSizeDialog = true },
+                        selected = sizeFilterMb != null
+                    )
+                    if (showSizeDialog) {
+                        var sliderValueState = remember { mutableStateOf((sizeFilterMb ?: 100).toFloat()) }
+                        AlertDialog(
+                            onDismissRequest = { showSizeDialog = false },
+                            title = { Text("Filter by size (MB)") },
+                            text = {
+                                Column {
+                                    Slider(
+                                        value = sliderValueState.value,
+                                        onValueChange = { sliderValueState.value = it },
+                                        valueRange = 1f..20000f,
+                                        steps = 100
+                                    )
+                                    Text("Max size: ${sliderValueState.value.toInt()} MB", fontSize = 12.sp)
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    sizeFilterMb = sliderValueState.value.toInt()
+                                    showSizeDialog = false
+                                }) { Text("Apply") }
+                            },
+                            dismissButton = { TextButton(onClick = { showSizeDialog = false }) { Text("Cancel") } }
+                        )
+                    }
                     Icon(
                         Icons.Default.FilterList,
                         contentDescription = null,
