@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import dev.aidos.kernel.ModelKind
+import fi.italeino.aidos.engine.suggestions.SuggestedModel
 
 /**
  * UI data models for Aidos Engine screens (RFC-0103, Phase D).
@@ -77,6 +78,15 @@ private fun oneDecimal(value: Double): String {
     val tenths = kotlin.math.round(value * 10).toLong()
     return if (tenths % 10 == 0L) "${tenths / 10}" else "${tenths / 10}.${tenths % 10}"
 }
+
+/** A suggested model plus its live install state, for the Models screen. */
+data class SuggestionUi(
+    val model: SuggestedModel,
+    val isInstalled: Boolean,
+    val isInstalling: Boolean,
+    val progressPercent: Int,
+    val error: String?,
+)
 
 // ============================================================================
 // Model Detail Screen Models

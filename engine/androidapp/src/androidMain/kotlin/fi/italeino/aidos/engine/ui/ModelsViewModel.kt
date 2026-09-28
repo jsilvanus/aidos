@@ -48,15 +48,6 @@ import app.cash.sqldelight.db.AfterVersion
 import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.models.DatabaseModelCatalogManager
 
-/** A suggested model plus its live install state, for the Models screen. */
-data class SuggestionUi(
-    val model: SuggestedModel,
-    val isInstalled: Boolean,
-    val isInstalling: Boolean,
-    val progressPercent: Int,
-    val error: String?,
-)
-
 private data class InstallProgress(val percent: Int = 0, val error: String? = null, val active: Boolean = true)
 
 /**

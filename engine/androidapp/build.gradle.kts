@@ -15,6 +15,7 @@ kotlin {
                 // Host-agnostic engine pieces (HTTP server, tokens, approvals, UI models) shared
                 // with the desktop debug app.
                 implementation(project(":enginehost"))
+                implementation(project(":engineui"))
                 implementation(project(":modelruntime"))
                 implementation(project(":cookbook"))
                 implementation(project(":huggingface"))
