@@ -6,47 +6,16 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(21)
-    jvm()
+    jvmToolchain(17)
     androidTarget()
 
-    applyDefaultHierarchyTemplate()
-
     sourceSets {
-        val jvmAndAndroidMain by creating {
-            dependsOn(commonMain.get())
-            dependencies {
-                implementation(project(":kernel"))
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-                implementation("io.ktor:ktor-server-core:3.5.2")
-                implementation("io.ktor:ktor-server-cio:3.5.2")
-                implementation("io.ktor:ktor-server-content-negotiation:3.5.2")
-                implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
-                implementation("io.ktor:ktor-server-auth:3.5.2")
-                implementation("commons-codec:commons-codec:1.16.0")
-            }
-        }
-
-        androidMain.get().dependsOn(jvmAndAndroidMain)
-        jvmMain.get().dependsOn(jvmAndAndroidMain)
-
-        val jvmMain by getting {
-            dependencies {
-                implementation("androidx.compose.runtime:runtime:1.7.5")
-            }
-        }
-
-        val jvmTest by getting {
-            dependencies {
-                implementation(kotlin("test-junit"))
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-                implementation("io.ktor:ktor-server-test-host:3.5.2")
-            }
-        }
-
         val androidMain by getting {
             dependencies {
+                // Host-agnostic engine pieces (HTTP server, tokens, approvals, UI models) shared
+                // with the desktop debug app.
+                implementation(project(":enginehost"))
+                implementation(project(":engineui"))
                 implementation(project(":modelruntime"))
                 implementation(project(":cookbook"))
                 implementation(project(":huggingface"))
@@ -75,6 +44,7 @@ kotlin {
                 implementation("io.ktor:ktor-client-android:3.5.2")
                 implementation("io.ktor:ktor-client-serialization:3.5.2")
                 implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
             }
         }
     }
@@ -93,8 +63,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildFeatures {

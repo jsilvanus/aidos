@@ -8,6 +8,21 @@ import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.EngineService
 import kotlinx.coroutines.CancellationException
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
+import fi.italeino.aidos.engine.http.KtorEffectBroker
+import dev.aidos.kernel.BasicResourceHandle
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.huggingface.HuggingFaceClient
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlSchema
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import app.cash.sqldelight.db.AfterVersion
+import dev.aidos.models.DatabaseModelCatalogManager
+import dev.aidos.cookbook.CookbookEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -28,24 +43,71 @@ class ModelDetailViewModel : ViewModel() {
 
     fun loadModelDetail(modelId: String) {
         val service = EngineService.instance
-        val browser = service?.modelBrowser
-        if (browser == null) {
-            _state.value = _state.value.copy(error = "The Engine is not running. Start it from Home first.")
-            return
-        }
+
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
             try {
-                val detail = withContext(Dispatchers.IO) { browser.getModelDetail(modelId).getOrThrow() }
-                // The Hub's `license:` tag is the only license source the Engine has; a failed
-                // lookup (offline, private repo) shows "not declared" rather than a guess.
-                val license = if (detail.provider == "huggingface") {
-                    withContext(Dispatchers.IO) { service?.hfClient?.getModel(modelId)?.getOrNull()?.license }
-                } else null
-                _state.value = _state.value.copy(
-                    model = detail.toUiModel(license),
-                    isLoading = false,
-                )
+                // Use Engine's ModelBrowser when available; otherwise construct a local one
+                if (service != null && service.modelBrowser != null) {
+                    val detail = withContext(Dispatchers.IO) { service.modelBrowser!!.getModelDetail(modelId).getOrThrow() }
+                    val license = if (detail.provider == "huggingface") {
+                        withContext(Dispatchers.IO) { service.hfClient?.getModel(modelId)?.getOrNull()?.license }
+                    } else null
+                    _state.value = _state.value.copy(model = detail.toUiModel(license), isLoading = false)
+                } else {
+                    // Fallback: call Hugging Face directly and build a UI ModelDetail from the HF metadata
+                    val localHttp = HttpClient(Android) { install(ContentNegotiation) { json() } }
+                    val localBroker = KtorEffectBroker(localHttp)
+                    val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
+                    val localHf = HuggingFaceClient(localBroker, hfHandle)
+
+                    val hfModel = withContext(Dispatchers.IO) { localHf.getModel(modelId).getOrThrow() }
+                    val device = dev.aidos.cookbook.DeviceProfile(
+                        totalRamBytes = 8_000_000_000,
+                        availableRamBytes = 4_000_000_000,
+                        storageFreeBytes = 10_000_000_000,
+                        cpuCoreCount = 8,
+                        hasAccelerator = false,
+                    )
+                    val cookbook = CookbookEngine()
+                    val modelSize = hfModel.modelSize
+                    val contextWindow = hfModel.contextLength ?: 4096
+
+                    val descriptor = ModelDescriptor(
+                        hfModel.modelId,
+                        hfModel.displayName ?: hfModel.modelId,
+                        dev.aidos.kernel.ModelKind.LLM,
+                        "huggingface",
+                        false,
+                        contextWindow,
+                        modelSize,
+                        null,
+                    )
+
+                    val contexts = listOf(4096, 8192, 16384, 32768)
+                    val fitRows = contexts.map { ctx ->
+                        val verdict = cookbook.verdict(descriptor, device, ctx)
+                        val req = dev.aidos.cookbook.ModelRequirements(modelSize ?: 0L, ctx, 0, "GGUF")
+                        val mem = cookbook.computeResidentMemory(req, device, ctx)
+                        ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
+                    }
+
+                    val inferredKind = dev.aidos.huggingface.HuggingFaceClient.Companion.inferModelKind(hfModel.tags, hfModel.pipeline)
+                    val uiDetail = ModelDetail(
+                        id = hfModel.modelId,
+                        name = hfModel.displayName ?: hfModel.modelId,
+                        description = hfModel.description ?: "",
+                        providerName = "huggingface",
+                        kind = dev.aidos.kernel.ModelKind.valueOf(inferredKind.name),
+                        licenseName = hfModel.license,
+                        modelUrl = "https://huggingface.co/${hfModel.modelId}",
+                        sizeMB = ((modelSize ?: 0L) / (1024L * 1024L)).toInt(),
+                        contextFitTable = fitRows,
+                        isRunnable = hfModel.quantizations.isNotEmpty() || hfModel.artifacts.any { it.format == dev.aidos.huggingface.ModelFormat.GGUF },
+                    )
+
+                    _state.value = _state.value.copy(model = uiDetail, isLoading = false)
+                }
                 refreshInstalledState(modelId)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message, isLoading = false)
@@ -100,29 +162,45 @@ class ModelDetailViewModel : ViewModel() {
             try {
                 val detail = browser.getModelDetail(model.id).getOrThrow()
                 val remote = hf.getModel(model.id).getOrThrow()
-                val quantization = remote.quantizations
-                    .find { it.name.contains("Q4_K_M", ignoreCase = true) }
-                    ?: remote.quantizations.firstOrNull { it.sizeBytes > 0 }
-                    ?: throw IllegalStateException("No GGUF quantization available for ${model.id}")
+
+                // Prefer known GGUF quantizations (Q4_K_M), but fall back to any available artifact
+                val chosenArtifact = when {
+                    remote.quantizations.isNotEmpty() -> {
+                        // Prefer Q4_K_M when present
+                        val q = remote.quantizations.find { it.name.contains("Q4_K_M", ignoreCase = true) }
+                            ?: remote.quantizations.first()
+                        // Build a pseudo-ModelArtifact-equivalent for installer compatibility
+                        Triple(q.name, q.downloadUrl, q.sha256Digest)
+                    }
+                    remote.artifacts.isNotEmpty() -> {
+                        val art = remote.artifacts.first { it.sizeBytes > 0L }
+                        Triple(art.filename, art.downloadUrl, art.sha256Digest)
+                    }
+                    else -> throw IllegalStateException("No downloadable artifact available for ${model.id}")
+                }
 
                 val modelsDir = File(service.filesDir, "models")
                 modelsDir.mkdirs()
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val artifactName = "${safeModelId}_${quantization.name}.gguf"
+                val (artifactBaseName, downloadUrl, expectedDigest) = chosenArtifact
+                val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
                 val destination = File(modelsDir, artifactName).absolutePath
                 val installer = DefaultModelInstallerWorkflow(downloader, catalog)
+
+                val format = if (artifactName.lowercase().endsWith(".gguf")) "gguf" else artifactName.substringAfterLast('.', "bin").lowercase()
+                val backend = if (format == "gguf") "llama.cpp" else "unknown"
 
                 val result = installer.install(
                     ModelDownloadRequest(
                         modelId = model.id,
                         artifactName = artifactName,
-                        downloadUrl = quantization.downloadUrl,
-                        expectedDigest = quantization.sha256Digest,
+                        downloadUrl = downloadUrl,
+                        expectedDigest = expectedDigest,
                         destination = destination,
                         kind = detail.kind,
-                        format = "gguf",
-                        backend = "llama.cpp",
-                        quantization = quantization.name,
+                        format = format,
+                        backend = backend,
+                        quantization = if (format == "gguf") artifactBaseName else null,
                     )
                 ) { event ->
                     when (event) {
@@ -174,6 +252,79 @@ class ModelDetailViewModel : ViewModel() {
         downloadJob?.cancel()
     }
 
+    fun setEmbeddingInput(value: String) {
+        _state.value = _state.value.copy(embeddingInput = value)
+    }
+
+    fun testEmbeddings() {
+        val model = _state.value.model ?: return
+        val input = _state.value.embeddingInput.trim()
+        if (input.isBlank()) {
+            _state.value = _state.value.copy(embeddingError = "Enter text to embed.")
+            return
+        }
+        if (model.kind != dev.aidos.kernel.ModelKind.EMBEDDING) return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isEmbeddingTesting = true, embeddingError = null, embeddingVector = emptyList())
+            try {
+                val service = EngineService.instance ?: throw IllegalStateException("Engine is not running")
+                val client = service.createHttpModelClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
+                val response = try {
+                    withContext(Dispatchers.IO) { client.embeddings(model.id, listOf(input)) }
+                } finally {
+                    client.close()
+                }
+                val vector = response.data.firstOrNull()?.embedding.orEmpty()
+                if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
+                _state.value = _state.value.copy(isEmbeddingTesting = false, embeddingVector = vector, embeddingError = null)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isEmbeddingTesting = false)
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isEmbeddingTesting = false,
+                    embeddingError = "Embedding test failed: ${e.message ?: "unknown error"}",
+                )
+            }
+        }
+    }
+
+    /** Delete the installed model artifact and remove catalog entry if present. */
+    fun deleteInstalledModel(modelId: String) {
+        // If a download is active, cancel it first.
+        downloadJob?.cancel()
+
+        viewModelScope.launch {
+            val service = EngineService.instance
+            val installedPath = _state.value.installedPath
+            try {
+                // Remove DB record when catalog manager is available
+                service?.catalogManager?.uninstall(modelId)
+
+                // Delete file on disk if present
+                if (!installedPath.isNullOrBlank()) {
+                    try {
+                        val f = File(installedPath)
+                        if (f.exists()) f.delete()
+                    } catch (_: Exception) {
+                        // best-effort
+                    }
+                }
+
+                // Refresh installed state
+                _state.value = _state.value.copy(
+                    isInstalled = false,
+                    installedPath = null,
+                    installedSizeBytes = null,
+                    installedDigest = null,
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = "Failed to delete model: ${e.message}")
+            }
+        }
+    }
+
     fun clearDownloadError() {
         _state.value = _state.value.copy(downloadError = null)
     }
@@ -215,6 +366,7 @@ class ModelDetailViewModel : ViewModel() {
             name = name,
             description = "${kind.name} · ${format.uppercase()} · from $provider",
             providerName = provider,
+            kind = kind,
             licenseName = license,
             modelUrl = remoteUrl?.takeIf { it.startsWith("https://huggingface.co/") && !it.contains("/resolve/") }
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,

@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import android.app.Application
+import fi.italeino.aidos.engine.EngineState
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.aidos.cookbook.CookbookVerdict
@@ -17,6 +18,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
+import fi.italeino.aidos.engine.http.KtorEffectBroker
+import dev.aidos.kernel.BasicResourceHandle
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.huggingface.HuggingFaceClient
+import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.models.ModelBrowser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,15 +40,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
-
-/** A suggested model plus its live install state, for the Models screen. */
-data class SuggestionUi(
-    val model: SuggestedModel,
-    val isInstalled: Boolean,
-    val isInstalling: Boolean,
-    val progressPercent: Int,
-    val error: String?,
-)
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlSchema
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import app.cash.sqldelight.db.AfterVersion
+import dev.aidos.downloads.LocalDownloadManager
+import dev.aidos.models.DatabaseModelCatalogManager
 
 private data class InstallProgress(val percent: Int = 0, val error: String? = null, val active: Boolean = true)
 
@@ -49,6 +58,13 @@ private data class InstallProgress(val percent: Int = 0, val error: String? = nu
  * browser once at construction and showing an empty screen forever.
  */
 class ModelsViewModel(application: Application) : AndroidViewModel(application) {
+
+    private data class SearchParams(
+        val query: String,
+        val kind: ModelKind?,
+        val minContext: Int?,
+        val maxSizeMb: Int?,
+    )
 
     private val suggestionPrefs = SuggestionPreferences.get(application)
 
@@ -67,7 +83,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    val engineState: StateFlow<EngineService.EngineState> = EngineService.state
+    val engineState: StateFlow<EngineState> = EngineService.state
 
     private val installedIds = MutableStateFlow<Set<String>>(emptySet())
     private val installs = MutableStateFlow<Map<String, InstallProgress>>(emptyMap())
@@ -88,12 +104,12 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var searchJob: Job? = null
-    private var lastSearch: Triple<String, ModelKind?, Int?> = Triple("", null, null)
+    private var lastSearch = SearchParams(query = "", kind = null, minContext = null, maxSizeMb = null)
 
     init {
         viewModelScope.launch {
             EngineService.state.collect { state ->
-                if (state == EngineService.EngineState.READY) {
+                if (state == EngineState.READY) {
                     refresh()
                     runSearch(lastSearch, debounce = false)
                 }
@@ -123,28 +139,61 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null) {
-        val search = Triple(query, kind, minContext)
+    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null, maxSizeMb: Int? = null) {
+        val search = SearchParams(query = query, kind = kind, minContext = minContext, maxSizeMb = maxSizeMb)
         lastSearch = search
         runSearch(search, debounce = query.isNotEmpty())
     }
 
-    private fun runSearch(search: Triple<String, ModelKind?, Int?>, debounce: Boolean) {
+    private fun runSearch(search: SearchParams, debounce: Boolean) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(500)
-            val browser = EngineService.instance?.modelBrowser ?: return@launch
+            val browser = EngineService.instance?.modelBrowser ?: run {
+                // Build a local ModelBrowser that uses a direct HTTP client path to Hugging Face
+                val localHttp = HttpClient(Android) {
+                    install(ContentNegotiation) { json() }
+                }
+                val localBroker = KtorEffectBroker(localHttp)
+                val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
+                val localHfClient = HuggingFaceClient(localBroker, hfHandle)
+                val dbDriver = AndroidSqliteDriver(
+                    schema = object : SqlSchema<QueryResult.Value<Unit>> {
+                        override val version: Long = 1
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                            DatabaseModelCatalogManager.createTables(driver)
+                            return QueryResult.Value(Unit)
+                        }
+
+                        override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                    },
+                    context = getApplication(),
+                    name = "aidos_local_search.db",
+                )
+                val localCatalog = DatabaseModelCatalogManager(dbDriver)
+                ModelBrowser(
+                    catalogManager = localCatalog,
+                    hfClient = localHfClient,
+                    cookbookEngine = CookbookEngine(),
+                    deviceProfile = DeviceProfileProvider(getApplication()).getProfile(),
+                )
+            }
 
             _isSearching.value = true
             try {
-                val (query, kind, minContext) = search
+                val (query, kind, minContext, maxSizeMb) = search
                 // Hub search plus one metadata fetch per result, and JSON parsing: keep it off
                 // the main thread.
                 val results = withContext(Dispatchers.IO) {
                     browser.searchRemote(query.ifBlank { null }, kind, minContext).getOrThrow()
                 }
+                val maxBytes = maxSizeMb?.toLong()?.times(1024L * 1024L)
+                val filtered = if (maxBytes == null) results else results.filter { model ->
+                    val size = model.sizeBytes
+                    size != null && size > 0 && size <= maxBytes
+                }
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
-                _cookbookModels.value = results.map { it.toUiModel() }.distinctBy { it.id }
+                _cookbookModels.value = filtered.map { it.toUiModel() }.distinctBy { it.id }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -163,17 +212,37 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     fun installSuggestion(id: String) {
         val model = SuggestedModels.all.firstOrNull { it.id == id } ?: return
         if (installs.value[id]?.active == true) return
+        // Use Engine's shared managers when available; otherwise create local equivalents so
+        // users can download models without starting the Engine service.
         val service = EngineService.instance
-        val downloader = service?.downloadManager
-        val catalog = service?.catalogManager
-        if (service == null || downloader == null || catalog == null) {
-            _errorMessage.value = "The Engine is not running. Start it from Home first."
-            return
+        val (downloader, catalog, filesDir) = if (service != null && service.downloadManager != null && service.catalogManager != null) {
+            Triple(service.downloadManager!!, service.catalogManager!!, service.filesDir)
+        } else {
+            // Create local download manager and a lightweight database-backed catalog using
+            // the same SQLDelight schema the Engine uses. Use the Application context for
+            // the AndroidSqliteDriver so the DB lives in the app data area.
+            val modelsDir = File(getApplication<Application>().filesDir, "models")
+            val localDownloader = LocalDownloadManager(modelsDir.absolutePath)
+            val databaseDriver = AndroidSqliteDriver(
+                schema = object : SqlSchema<QueryResult.Value<Unit>> {
+                    override val version: Long = 1
+                    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                        DatabaseModelCatalogManager.createTables(driver)
+                        return QueryResult.Value(Unit)
+                    }
+
+                    override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                },
+                context = getApplication(),
+                name = "aidos_engine.db",
+            )
+            val localCatalog = DatabaseModelCatalogManager(databaseDriver)
+            Triple(localDownloader, localCatalog, getApplication<Application>().filesDir)
         }
 
         viewModelScope.launch {
             setInstall(id, InstallProgress())
-            val destination = File(File(service.filesDir, "models").apply { mkdirs() }, SuggestedModels.artifactName(model))
+            val destination = File(File(filesDir, "models").apply { mkdirs() }, SuggestedModels.artifactName(model))
             val result = DefaultModelInstallerWorkflow(downloader, catalog).install(
                 ModelDownloadRequest(
                     modelId = model.id,

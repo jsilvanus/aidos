@@ -1,4 +1,24 @@
-.idea/
+.idea/*
+!.idea/misc.xml
+!.idea/gradle.xml
+!.idea/compiler.xml
+!.idea/vcs.xml
+!.idea/AndroidProjectSystem.xml
+!.idea/runConfigurations/
+!.idea/runConfigurations/*.xml
+!.idea/artifacts/
+!.idea/artifacts/*.xml
+!.idea/codeStyles/
+!.idea/codeStyles/*.xml
+!.idea/deviceManager.xml
+!.idea/deploymentTargetSelector.xml
+!.idea/planningMode.xml
+!.idea/migrations.xml
+
+# Ignore build outputs and local properties
+build/
+.gradle/
+local.properties
 
 # Ignore OS files
 Thumbs.db

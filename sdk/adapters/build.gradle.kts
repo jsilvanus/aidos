@@ -5,7 +5,7 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(17)
 
     androidTarget {
         // Required for the Android target to get a Maven publication at all (Dictator plan S3) —
