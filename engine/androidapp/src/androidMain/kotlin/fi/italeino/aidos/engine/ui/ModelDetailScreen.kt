@@ -136,6 +136,36 @@ fun ModelDetailScreen(
                     }
                 }
 
+                // Delete button for installed model
+                if (state.isInstalled) {
+                    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+                    if (showDeleteConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirm = false },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    viewModel.deleteInstalledModel(model.id)
+                                    showDeleteConfirm = false
+                                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                            },
+                            title = { Text("Delete model") },
+                            text = { Text("Are you sure you want to permanently delete this model and its downloaded artifacts? This cannot be undone.") }
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Delete model")
+                    }
+                }
+
                 Button(
                     onClick = {
                         if (state.downloadError != null) viewModel.clearDownloadError()

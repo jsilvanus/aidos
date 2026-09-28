@@ -17,6 +17,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
+import fi.italeino.aidos.engine.http.AndroidEffectBroker
+import dev.aidos.kernel.BasicResourceHandle
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.huggingface.HuggingFaceClient
+import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.models.ModelBrowser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -140,7 +150,35 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(500)
-            val browser = EngineService.instance?.modelBrowser ?: return@launch
+            val browser = EngineService.instance?.modelBrowser ?: run {
+                // Build a local ModelBrowser that uses a direct HTTP client path to Hugging Face
+                val localHttp = HttpClient(Android) {
+                    install(ContentNegotiation) { json() }
+                }
+                val localBroker = AndroidEffectBroker(localHttp)
+                val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
+                val localHfClient = HuggingFaceClient(localBroker, hfHandle)
+                val dbDriver = AndroidSqliteDriver(
+                    schema = object : SqlSchema<QueryResult.Value<Unit>> {
+                        override val version: Long = 1
+                        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                            DatabaseModelCatalogManager.createTables(driver)
+                            return QueryResult.Value(Unit)
+                        }
+
+                        override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                    },
+                    context = getApplication(),
+                    name = "aidos_local_search.db",
+                )
+                val localCatalog = DatabaseModelCatalogManager(dbDriver)
+                ModelBrowser(
+                    catalogManager = localCatalog,
+                    hfClient = localHfClient,
+                    cookbookEngine = CookbookEngine(),
+                    deviceProfile = DeviceProfileProvider(getApplication()).getProfile(),
+                )
+            }
 
             _isSearching.value = true
             try {
