@@ -253,9 +253,9 @@ fun CookbookModelCard(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (model.tokensPerSecond != null) {
+                    model.tokensPerSecond?.let { tokensPerSecond ->
                         Text(
-                            text = "~${model.tokensPerSecond.toInt()} t/s",
+                            text = "~${tokensPerSecond.toInt()} t/s",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace
@@ -544,9 +544,9 @@ fun DownloadProgressCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (download.etaSeconds != null) {
+                    download.etaSeconds?.let { etaSeconds ->
                         Text(
-                            text = "ETA ${download.etaSeconds / 60}m",
+                            text = "ETA ${etaSeconds / 60}m",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

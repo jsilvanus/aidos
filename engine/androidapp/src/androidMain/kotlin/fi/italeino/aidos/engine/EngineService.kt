@@ -32,7 +32,7 @@ import fi.italeino.aidos.engine.approval.AppApprovalManager
 import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
-import fi.italeino.aidos.engine.http.AndroidEffectBroker
+import fi.italeino.aidos.engine.http.KtorEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
@@ -58,12 +58,6 @@ import kotlinx.coroutines.launch
  * lifecycle. Model acquisition uses the shared engine DownloadManager abstraction.
  */
 class EngineService : LifecycleService() {
-
-    enum class EngineState {
-        STARTING,
-        READY,
-        FAILED,
-    }
 
     companion object {
         private const val NOTIFICATION_ID = 1
@@ -118,7 +112,7 @@ class EngineService : LifecycleService() {
                 httpClient = HttpClient(io.ktor.client.engine.android.Android) {
                     install(ContentNegotiation) { json() }
                 }
-                val broker = AndroidEffectBroker(httpClient)
+                val broker = KtorEffectBroker(httpClient)
                 effectBroker = broker
                 val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
                 val client = HuggingFaceClient(broker, hfHandle)

@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import fi.italeino.aidos.engine.EngineState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -88,7 +89,7 @@ fun ModelsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (engineState != EngineService.EngineState.READY) {
+            if (engineState != EngineState.READY) {
                 EngineNotReadyBanner(engineState)
             }
             HorizontalPager(
@@ -110,7 +111,7 @@ fun ModelsScreen(
 }
 
 @Composable
-private fun EngineNotReadyBanner(state: EngineService.EngineState) {
+private fun EngineNotReadyBanner(state: EngineState) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier
@@ -120,7 +121,7 @@ private fun EngineNotReadyBanner(state: EngineService.EngineState) {
     ) {
         Text(
             when (state) {
-                EngineService.EngineState.FAILED -> "The Engine failed to start, so models can't be listed. Restart it from Home."
+                EngineState.FAILED -> "The Engine failed to start, so models can't be listed. Restart it from Home."
                 else -> "The Engine is starting or turned off. Models appear once it is running — you can start it from Home."
             },
             fontSize = 12.sp,

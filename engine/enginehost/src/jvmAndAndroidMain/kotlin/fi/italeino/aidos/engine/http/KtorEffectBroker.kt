@@ -16,17 +16,17 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonElement
 
 /**
- * Android implementation of EffectBroker (RFC-0030).
+ * Ktor-backed EffectBroker (RFC-0030), shared by the Android and desktop Engine hosts; each host
+ * passes an [HttpClient] built on its own client engine.
  *
  * Handles tool calls that reach out to the network or system APIs.
  * Currently implements http:get for Hugging Face discovery.
  */
-class AndroidEffectBroker(private val httpClient: HttpClient) : EffectBroker {
+class KtorEffectBroker(private val httpClient: HttpClient) : EffectBroker {
     
     override fun register(tool: Tool) {
         // Not used in MVP

@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import android.content.Intent
+import fi.italeino.aidos.engine.EngineState
 import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -34,7 +35,7 @@ fun ModelDetailScreen(
     onBackClick: () -> Unit,
     onTestChatClick: ((modelId: String, modelName: String) -> Unit)? = null,
     globalModelRuntime: GlobalModelRuntime? = null,
-    engineState: EngineService.EngineState = EngineService.EngineState.STARTING,
+    engineState: EngineState = EngineState.STARTING,
     viewModel: ModelDetailViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -58,7 +59,7 @@ fun ModelDetailScreen(
     }
 
     LaunchedEffect(modelId, modelLoader, engineState) {
-        if (modelLoader == null || engineState != EngineService.EngineState.READY) {
+        if (modelLoader == null || engineState != EngineState.READY) {
             modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.NOT_LOADED)
             return@LaunchedEffect
         }
@@ -302,12 +303,12 @@ fun ModelDetailScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
-                            enabled = engineState == EngineService.EngineState.READY && state.isInstalled && model.isRunnable,
+                            enabled = engineState == EngineState.READY && state.isInstalled && model.isRunnable,
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
                             Text(
                                 when {
-                                    engineState == EngineService.EngineState.STARTING -> "Engine starting..."
+                                    engineState == EngineState.STARTING -> "Engine starting..."
                                     !state.isInstalled -> "Download model to test"
                                     !model.isRunnable -> "No runtime for this format yet"
                                     else -> "Test Chat"
@@ -358,9 +359,9 @@ fun ModelDetailScreen(
                                 modelLoadingState = modelLoadingState.copy(
                                     status = ModelLoadingStatus.ERROR,
                                     error = when (engineState) {
-                                        EngineService.EngineState.STARTING -> "Engine is still starting. Try again in a moment."
-                                        EngineService.EngineState.FAILED -> "Engine failed to start. Check the Engine notification for details."
-                                        EngineService.EngineState.READY -> "Engine runtime is unavailable. Restart the Engine."
+                                        EngineState.STARTING -> "Engine is still starting. Try again in a moment."
+                                        EngineState.FAILED -> "Engine failed to start. Check the Engine notification for details."
+                                        EngineState.READY -> "Engine runtime is unavailable. Restart the Engine."
                                     }
                                 )
                                 return@Button
@@ -420,7 +421,7 @@ fun ModelDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
-                        enabled = engineState == EngineService.EngineState.READY &&
+                        enabled = engineState == EngineState.READY &&
                             state.isInstalled &&
                             model.isRunnable &&
                             !state.isDownloading &&

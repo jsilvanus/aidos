@@ -12,7 +12,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
-import fi.italeino.aidos.engine.http.AndroidEffectBroker
+import fi.italeino.aidos.engine.http.KtorEffectBroker
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.huggingface.HuggingFaceClient
@@ -57,7 +57,7 @@ class ModelDetailViewModel : ViewModel() {
                 } else {
                     // Fallback: call Hugging Face directly and build a UI ModelDetail from the HF metadata
                     val localHttp = HttpClient(Android) { install(ContentNegotiation) { json() } }
-                    val localBroker = AndroidEffectBroker(localHttp)
+                    val localBroker = KtorEffectBroker(localHttp)
                     val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
                     val localHf = HuggingFaceClient(localBroker, hfHandle)
 

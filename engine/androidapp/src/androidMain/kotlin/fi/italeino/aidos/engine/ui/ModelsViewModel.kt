@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import android.app.Application
+import fi.italeino.aidos.engine.EngineState
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.aidos.cookbook.CookbookVerdict
@@ -21,7 +22,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
-import fi.italeino.aidos.engine.http.AndroidEffectBroker
+import fi.italeino.aidos.engine.http.KtorEffectBroker
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.huggingface.HuggingFaceClient
@@ -91,7 +92,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    val engineState: StateFlow<EngineService.EngineState> = EngineService.state
+    val engineState: StateFlow<EngineState> = EngineService.state
 
     private val installedIds = MutableStateFlow<Set<String>>(emptySet())
     private val installs = MutableStateFlow<Map<String, InstallProgress>>(emptyMap())
@@ -117,7 +118,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             EngineService.state.collect { state ->
-                if (state == EngineService.EngineState.READY) {
+                if (state == EngineState.READY) {
                     refresh()
                     runSearch(lastSearch, debounce = false)
                 }
@@ -162,7 +163,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 val localHttp = HttpClient(Android) {
                     install(ContentNegotiation) { json() }
                 }
-                val localBroker = AndroidEffectBroker(localHttp)
+                val localBroker = KtorEffectBroker(localHttp)
                 val hfHandle = BasicResourceHandle(CapabilityId("huggingface"))
                 val localHfClient = HuggingFaceClient(localBroker, hfHandle)
                 val dbDriver = AndroidSqliteDriver(
