@@ -29,7 +29,7 @@ fun ProviderDetailScreen(
 ) {
     val context = LocalContext.current
     var state by remember(providerId) {
-        mutableStateOf(
+        mutableStateOf<ProviderDetailState>(
             ProviderDetailState(
                 provider = loadProviderDetail(context, providerId)
             )
@@ -259,3 +259,30 @@ private fun persistProviderDetail(context: Context, providerId: String, provider
         )
         .apply()
 }
+
+enum class ProviderConfigStatus {
+    ENABLED,
+    CONFIGURED_DISABLED,
+    NOT_CONFIGURED
+}
+
+data class ConfiguredRemoteModel(
+    val modelId: String,
+    val displayName: String,
+    val isEnabled: Boolean = true
+)
+
+data class ProviderDetail(
+    val id: String,
+    val name: String,
+    val status: ProviderConfigStatus,
+    val apiKeyValid: Boolean,
+    val isEnabled: Boolean,
+    val configuredModels: List<ConfiguredRemoteModel>
+)
+
+data class ProviderDetailState(
+    val provider: ProviderDetail?,
+    val showApiKeyField: Boolean = false,
+    val apiKeyInput: String = ""
+)

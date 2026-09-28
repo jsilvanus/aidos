@@ -11,3 +11,11 @@ plugins {
     id("com.android.library") version "8.5.2" apply false
     id("com.android.application") version "8.5.2" apply false
 }
+
+subprojects {
+    pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
+        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
+            jvmToolchain(21)
+        }
+    }
+}

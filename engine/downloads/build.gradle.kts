@@ -7,7 +7,7 @@ plugins {
 
 kotlin {
     jvm {
-        compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
+        compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
     }
     androidTarget()
 
@@ -36,5 +36,10 @@ android {
 
     defaultConfig {
         minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
