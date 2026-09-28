@@ -4,11 +4,13 @@ import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -167,13 +169,15 @@ class InferenceRequestManager(
         return try {
             updateState(InferenceRequestState.QUEUED)
             capacity.acquire()
-            stateMutex.withLock {
+            // Once the permit is held, this must not be cancelled: the catch below would
+            // then undo the queue slot but never release the permit.
+            withBookkeepingLock {
                 queueDepth--
                 runningRequests++
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
-            stateMutex.withLock {
+            withBookkeepingLock {
                 queueDepth = (queueDepth - 1).coerceAtLeast(0)
                 cancelledRequests++
                 requestJobs.remove(requestJob)
@@ -183,7 +187,7 @@ class InferenceRequestManager(
     }
 
     private suspend fun releaseAdmissionSlot(requestJob: Job) {
-        stateMutex.withLock {
+        withBookkeepingLock {
             runningRequests = (runningRequests - 1).coerceAtLeast(0)
             requestJobs.remove(requestJob)
         }
@@ -191,7 +195,7 @@ class InferenceRequestManager(
     }
 
     private suspend fun markActive(modelId: String, delta: Int) {
-        stateMutex.withLock {
+        withBookkeepingLock {
             val current = activeByModel[modelId] ?: 0
             val next = (current + delta).coerceAtLeast(0)
             if (next == 0) activeByModel.remove(modelId) else activeByModel[modelId] = next
@@ -199,7 +203,7 @@ class InferenceRequestManager(
     }
 
     private suspend fun updateState(state: InferenceRequestState) {
-        stateMutex.withLock {
+        withBookkeepingLock {
             when (state) {
                 InferenceRequestState.COMPLETED -> completedRequests++
                 InferenceRequestState.CANCELLED -> cancelledRequests++
@@ -208,4 +212,11 @@ class InferenceRequestManager(
             }
         }
     }
+
+    // Bookkeeping runs from catch/finally blocks of requests that cancelAll() has just
+    // cancelled. Mutex.lock is cancellable, so under contention a plain withLock would throw
+    // there and skip the counter update -- leaving runningRequests > 0 and making
+    // shutdownAndDrain time out. NonCancellable guarantees the release always happens.
+    private suspend fun <T> withBookkeepingLock(action: () -> T): T =
+        withContext(NonCancellable) { stateMutex.withLock(action = action) }
 }

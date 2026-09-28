@@ -10,13 +10,19 @@ import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -78,7 +84,7 @@ class InferenceRequestManagerTest {
     }
 
     @Test
-    fun shutdownAndDrain_waitsUntilRunningRequestsFinish() = runTest {
+    fun shutdownAndDrain_cancelsRunningRequestAndReleasesItsSlot() = runTest {
         val gate = CompletableDeferred<Unit>()
         val runtime = FakeRuntime(BlockingAdapter(gate))
         val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 1)
@@ -91,13 +97,48 @@ class InferenceRequestManagerTest {
             }
             delay(50)
 
+            // The gate never opens: shutdown must cancel the request rather than wait for it.
+            assertTrue(manager.shutdownAndDrain(timeout = 300.milliseconds))
+            assertFailsWith<CancellationException> { request.await() }
+        }
+
+        val metrics = manager.snapshotMetrics()
+        assertEquals(0, metrics.runningRequests)
+        assertEquals(0, metrics.queueDepth)
+        assertEquals(1, metrics.cancelledRequests)
+        assertEquals(0, metrics.completedRequests)
+        assertTrue(manager.waitUntilModelIdle("test-model"))
+        val rejected = manager.execute("test-model") { "unreachable" }
+        assertTrue(rejected.exceptionOrNull() is EngineShuttingDownException)
+    }
+
+    @Test
+    fun shutdownAndDrain_waitsForAdapterThatStopsOnlyAtStepBoundary() = runTest {
+        // Models a native adapter that observes cancellation only between generation steps
+        // (see InferenceRequestManager.cancelAll): the step in flight has to finish first.
+        val stepDone = CompletableDeferred<Unit>()
+        val runtime = FakeRuntime(StepBoundaryAdapter(stepDone))
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 1)
+
+        coroutineScope {
+            val request = async {
+                manager.execute("test-model") { adapter ->
+                    adapter.invoke(dummyRequest()).getOrThrow()
+                }
+            }
+            delay(50)
+
             val shutdown = async { manager.shutdownAndDrain(timeout = 300.milliseconds) }
             delay(50)
-            assertTrue(!shutdown.isCompleted, "shutdown should wait while request is still running")
-            gate.complete(Unit)
+            assertTrue(!shutdown.isCompleted, "shutdown should wait while the in-flight step runs")
+            stepDone.complete(Unit)
             assertTrue(shutdown.await())
-            request.await()
+            assertFailsWith<CancellationException> { request.await() }
         }
+
+        val metrics = manager.snapshotMetrics()
+        assertEquals(0, metrics.runningRequests)
+        assertEquals(0, metrics.queueDepth)
     }
 
     private fun dummyRequest() = ModelRequest(
@@ -151,6 +192,30 @@ private class BlockingAdapter(private val gate: CompletableDeferred<Unit>) : Mod
         usage = Usage(1, 1, 2),
         model = ModelRef(modelId, modelVersion),
     )
+}
+
+private class StepBoundaryAdapter(private val stepDone: CompletableDeferred<Unit>) : ModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        // The current step cannot be interrupted; cancellation is seen at the next boundary.
+        withContext(NonCancellable) { stepDone.await() }
+        currentCoroutineContext().ensureActive()
+        return Result.success(
+            ModelResponse(
+                outputs = listOf(TextOutput("ok")),
+                stopReason = StopReason.END_TURN,
+                usage = Usage(1, 1, 2),
+                model = ModelRef(modelId, modelVersion),
+            )
+        )
+    }
 }
 
 private class CountingAdapter : ModelAdapter {
