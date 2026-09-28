@@ -641,6 +641,363 @@ Useful audit information may include:
 
 Prompt contents, generated content, and intermediate tensors should not be logged merely for observability.
 
+
+## Further design considerations
+
+The following areas should be considered during implementation. They are deliberately expressed as design constraints and interfaces rather than as a complete protocol specification.
+
+### Capability negotiation
+
+Nodes should advertise capabilities in a structured, versioned form.
+
+Relevant capabilities may include:
+
+- supported execution backends
+- supported model architectures and variants
+- accelerator types and usable memory
+- maximum practical context or tensor sizes
+- supported distributed-execution modes
+- supported transport protocols
+- streaming capabilities
+- optional operations such as speech recognition, embeddings, vision, or reranking
+- protocol and Engine compatibility
+
+Capability advertisement should distinguish **what a node can theoretically support** from **what it can currently contribute**.
+
+For example, a phone may support a model in principle but currently have insufficient memory or be thermally constrained.
+
+Capability negotiation should therefore combine relatively stable capabilities with dynamic resource state.
+
+### Multi-session scheduling
+
+An AIDIN cluster may serve multiple sessions at the same time.
+
+Scheduling should consider:
+
+- active sessions
+- node availability
+- memory and accelerator capacity
+- latency requirements
+- communication cost
+- session priority where explicitly configured
+- resource contribution policies
+- model placement
+- fairness and starvation avoidance
+
+A session should not assume exclusive ownership of a node unless its execution policy explicitly requires it.
+
+Scheduling must remain subordinate to execution, data, authorization, and resource policies.
+
+### Streaming and interactive inference
+
+AIDIN should support streaming results where the underlying backend supports them.
+
+Streaming is important for:
+
+- chat generation
+- speech recognition
+- interactive agents
+- token-by-token generation
+- low-latency UI applications
+
+The protocol should distinguish:
+
+- request accepted
+- execution started
+- partial result
+- final result
+- failure
+- cancellation
+
+Transport-level streaming should not expose backend-specific details unnecessarily.
+
+### Cancellation and interruption
+
+Cancellation must be a first-class operation.
+
+A request may be cancelled by:
+
+- the endpoint
+- the originating application
+- a session owner
+- an execution policy
+- a node becoming unavailable
+
+Cancellation should propagate through the execution plan so that downstream nodes stop unnecessary work.
+
+Nodes should support cooperative cancellation and cleanup of temporary request state.
+
+AIDIN should also distinguish cancellation from failure. A cancelled request is not necessarily an execution error.
+
+### Energy and resource-aware planning
+
+AIDIN nodes may be battery-powered, thermally constrained, or otherwise resource-limited.
+
+Dynamic resource state may include:
+
+- battery level
+- charging state
+- thermal state
+- CPU/GPU/NPU availability
+- memory pressure
+- current load
+- user-configured resource limits
+
+Nodes should be able to express contribution preferences such as:
+
+- do not contribute while on battery
+- contribute only above a battery threshold
+- prefer charging nodes
+- limit sustained compute
+- allow only low-power workloads
+
+These are resource policies, not assumptions about a particular device class.
+
+AIDIN should avoid treating a temporarily available resource as permanently reliable.
+
+### Secrets and tool execution
+
+Inference data and execution authority should be kept separate.
+
+A node participating in inference should not automatically gain access to:
+
+- API keys
+- credentials
+- filesystem resources
+- application secrets
+- external tools
+- privileged operations
+
+Tool execution should occur only where explicitly authorized.
+
+AIDIN should support the possibility that inference is distributed while secrets and privileged tool execution remain local to the endpoint or another explicitly trusted execution node.
+
+This is particularly important for agentic workloads, where model execution and action execution have different security boundaries.
+
+### Version compatibility
+
+AIDIN has multiple potentially incompatible version dimensions:
+
+- AIDIN protocol
+- Aidos Engine
+- execution-plan format
+- model/runtime interface
+- transport protocol
+- backend/runtime version
+
+Compatibility should be negotiated rather than inferred solely from node identity.
+
+Nodes should advertise supported protocol versions and relevant feature capabilities.
+
+A plan should record the compatibility assumptions under which it was created. If those assumptions cease to hold, the session should be re-planned or terminated safely.
+
+Backward compatibility should be preferred where practical, but an incompatible node must not be admitted merely because it can communicate at the transport layer.
+
+### Observability without surveillance
+
+AIDIN needs enough observability to diagnose distributed execution without turning the cluster into a mechanism for unnecessary monitoring of users or devices.
+
+Useful operational information includes:
+
+- session and plan identifiers
+- execution timings
+- node availability
+- resource usage relevant to scheduling
+- transport failures
+- plan changes
+- recovery events
+- cancellation and completion state
+
+Telemetry should be minimized to what is needed for operation and debugging.
+
+Inference content, prompts, generated text, and sensitive intermediate state should not be logged by default.
+
+When persistent telemetry is enabled, retention and access should be explicit policy decisions.
+
+### Security model
+
+AIDIN should treat participating nodes as authenticated principals rather than trusting network location.
+
+Security should cover:
+
+- node identity
+- pairing and authentication
+- authorization to join a cluster
+- authorization to execute work
+- authorization to receive model material
+- authorization to receive request-derived data
+- secure transport
+- revocation
+- session isolation
+- protection against stale or replayed control messages
+
+Network proximity must not itself imply trust.
+
+A node leaving a cluster should lose its active authorization according to the cluster's revocation policy.
+
+### Execution isolation
+
+Distributed execution should not implicitly grant one node access to another node's unrelated local state.
+
+AIDIN should define request/session boundaries around:
+
+- request data
+- temporary execution state
+- model material
+- generated results
+- credentials or tools, where explicitly authorized
+
+Nodes should expose only the state required for their assigned execution role.
+
+### Discovery and trust separation
+
+Discovery and trust should remain separate concepts.
+
+A node may be discoverable without being trusted.
+
+For example:
+
+    discovered -> authenticated -> authorized -> eligible
+
+AIDIN should not interpret discovery advertisements as authorization to send inference data or model material.
+
+### Plan lifecycle
+
+Execution plans should have an explicit lifecycle:
+
+    proposed
+       |
+       v
+    validated
+       |
+       v
+    activated
+       |
+       +----> revised
+       |
+       v
+    completed / cancelled / failed
+
+A plan revision should produce a new plan version or execution generation.
+
+Nodes should reject commands referring to stale plan generations where the protocol requires strict ordering.
+
+### Failure domains and recovery
+
+Planning should consider correlated failures, not only individual node failures.
+
+Examples include:
+
+- several devices sharing the same Wi-Fi access point
+- nodes depending on the same physical host
+- a common power source
+- a common network path
+
+Where resilience matters, the planner should avoid placing all critical execution state in the same failure domain when practical.
+
+Recovery policy should be explicit. Possible strategies include:
+
+- restart
+- restart from a checkpoint
+- re-plan remaining work
+- fail the session
+
+AIDIN should not promise transparent recovery where the underlying execution model cannot preserve the required state.
+
+### Checkpointing and state movement
+
+Checkpointing should be adaptive rather than mandatory at every execution boundary.
+
+The planner may consider:
+
+- checkpoint size
+- recomputation cost
+- network bandwidth
+- expected node stability
+- latency sensitivity
+- recovery requirements
+
+Small control state can be replicated more readily than large model weights, KV caches, or activations.
+
+State should move only when required by the current execution plan and recovery policy.
+
+### Resource contribution and ownership
+
+AIDIN should make resource contribution explicit.
+
+A node owner may define whether the node can contribute:
+
+- always
+- only while charging
+- only while idle
+- only to selected clusters
+- only to selected applications
+- only for selected resource types
+
+Contribution policy is separate from cluster membership.
+
+Being a member of a cluster does not automatically mean that all resources are available for inference.
+
+### Personal and workplace clusters
+
+AIDIN should support both personal and shared/workplace clusters without making either the architectural default.
+
+A phone may participate in a personal cluster at home and a different authorized cluster elsewhere.
+
+Trust domains should remain separate:
+
+    Personal cluster
+        |
+        +-- personal devices
+
+    Other cluster
+        |
+        +-- separately authorized devices
+
+A device changing clusters must not accidentally carry authorization or session state from one trust domain into another.
+
+A workplace or shared cluster is therefore one possible deployment of the general trust, resource, and policy mechanisms rather than a special architecture.
+
+### Testing and simulation
+
+AIDIN should eventually have a deterministic simulation/test layer for distributed behavior.
+
+Tests should cover:
+
+- node join/leave
+- coordinator changes
+- delayed and reordered messages
+- network partitions
+- node failure
+- plan revision
+- cancellation
+- resource changes
+- incompatible capabilities
+- stale commands
+- unauthorized nodes
+- recovery from checkpoints
+
+Distributed behavior should be testable without requiring a collection of physical devices for every scenario.
+
+### Keep the protocol smaller than the implementation
+
+AIDIN should avoid encoding every possible backend optimization into the core protocol.
+
+The core protocol should primarily define:
+
+- identity
+- discovery/pairing
+- capabilities
+- membership
+- sessions
+- plans
+- execution lifecycle
+- data/policy constraints
+- state transfer
+- health and recovery
+
+Backend-specific optimizations should remain behind the Engine/runtime abstraction where possible.
+
 ## Design goals
 
 1. Transparent endpoint switching.
