@@ -224,6 +224,7 @@ fun ModelDetailScreen(
                 if (modelLoadingState.status == ModelLoadingStatus.LOADING ||
                     modelLoadingState.status == ModelLoadingStatus.UNLOADING
                 ) {
+                    val progress = (modelLoadingState.loadProgress / 100f).coerceIn(0f, 1f)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -234,7 +235,6 @@ fun ModelDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             if (modelLoadingState.status == ModelLoadingStatus.LOADING) {
-                                val progress = (modelLoadingState.loadProgress / 100f).coerceIn(0f, 1f)
                                 CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(40.dp))
                             } else {
                                 CircularProgressIndicator(modifier = Modifier.size(40.dp))
