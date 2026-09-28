@@ -29,6 +29,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlSchema
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import app.cash.sqldelight.db.AfterVersion
+import dev.aidos.downloads.LocalDownloadManager
+import dev.aidos.models.DatabaseModelCatalogManager
 
 /** A suggested model plus its live install state, for the Models screen. */
 data class SuggestionUi(
@@ -163,17 +170,37 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     fun installSuggestion(id: String) {
         val model = SuggestedModels.all.firstOrNull { it.id == id } ?: return
         if (installs.value[id]?.active == true) return
+        // Use Engine's shared managers when available; otherwise create local equivalents so
+        // users can download models without starting the Engine service.
         val service = EngineService.instance
-        val downloader = service?.downloadManager
-        val catalog = service?.catalogManager
-        if (service == null || downloader == null || catalog == null) {
-            _errorMessage.value = "The Engine is not running. Start it from Home first."
-            return
+        val (downloader, catalog, filesDir) = if (service != null && service.downloadManager != null && service.catalogManager != null) {
+            Triple(service.downloadManager!!, service.catalogManager!!, service.filesDir)
+        } else {
+            // Create local download manager and a lightweight database-backed catalog using
+            // the same SQLDelight schema the Engine uses. Use the Application context for
+            // the AndroidSqliteDriver so the DB lives in the app data area.
+            val modelsDir = File(getApplication<Application>().filesDir, "models")
+            val localDownloader = LocalDownloadManager(modelsDir.absolutePath)
+            val databaseDriver = AndroidSqliteDriver(
+                schema = object : SqlSchema<QueryResult.Value<Unit>> {
+                    override val version: Long = 1
+                    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+                        DatabaseModelCatalogManager.createTables(driver)
+                        return QueryResult.Value(Unit)
+                    }
+
+                    override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> = QueryResult.Value(Unit)
+                },
+                context = getApplication(),
+                name = "aidos_engine.db",
+            )
+            val localCatalog = DatabaseModelCatalogManager(databaseDriver)
+            Triple(localDownloader, localCatalog, getApplication<Application>().filesDir)
         }
 
         viewModelScope.launch {
             setInstall(id, InstallProgress())
-            val destination = File(File(service.filesDir, "models").apply { mkdirs() }, SuggestedModels.artifactName(model))
+            val destination = File(File(filesDir, "models").apply { mkdirs() }, SuggestedModels.artifactName(model))
             val result = DefaultModelInstallerWorkflow(downloader, catalog).install(
                 ModelDownloadRequest(
                     modelId = model.id,

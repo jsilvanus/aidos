@@ -11,8 +11,8 @@ class SuggestedModelsTest {
     @Test
     fun suggestionsPointAtJsilvanusEchoArtifacts() {
         val urls = SuggestedModels.all.associate { it.id to it.downloadUrl }
-        assertEquals("https://huggingface.co/jsilvanus/echo-gguf/resolve/main/echo.gguf", urls["jsilvanus/echo-gguf"])
-        assertEquals("https://huggingface.co/jsilvanus/echo-onnx/resolve/main/echo.onnx", urls["jsilvanus/echo-onnx"])
+        assertEquals("https://huggingface.co/jsilvanus/aidos-echo-gguf/resolve/main/echo.gguf", urls["jsilvanus/aidos-echo-gguf"])
+        assertEquals("https://huggingface.co/jsilvanus/aidos-rot13-gguf/resolve/main/rot13.gguf", urls["jsilvanus/aidos-rot13-gguf"])
     }
 
     @Test
@@ -24,15 +24,15 @@ class SuggestedModelsTest {
 
     @Test
     fun dismissedSuggestionsAreHiddenAndRestoreShowsAll() {
-        val visible = SuggestedModels.visible(setOf("jsilvanus/echo-onnx"))
-        assertEquals(listOf("jsilvanus/echo-gguf"), visible.map { it.id })
+        val visible = SuggestedModels.visible(setOf("jsilvanus/aidos-rot13-gguf"))
+        assertEquals(listOf("jsilvanus/aidos-echo-gguf"), visible.map { it.id })
         assertEquals(SuggestedModels.all, SuggestedModels.visible(emptySet()))
     }
 
     @Test
     fun artifactNameIsFilesystemSafeAndDistinctPerRepo() {
         val names = SuggestedModels.all.map(SuggestedModels::artifactName)
-        assertEquals(listOf("jsilvanus_echo-gguf_echo.gguf", "jsilvanus_echo-onnx_echo.onnx"), names)
+        assertEquals(listOf("jsilvanus_aidos-echo-gguf_echo.gguf", "jsilvanus_aidos-rot13-gguf_rot13.gguf"), names)
     }
 
     @Test

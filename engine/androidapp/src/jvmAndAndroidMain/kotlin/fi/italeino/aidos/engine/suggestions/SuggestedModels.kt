@@ -31,11 +31,11 @@ object SuggestedModels {
      */
     val all: List<SuggestedModel> = listOf(
         SuggestedModel(
-            id = "jsilvanus/echo-gguf",
+            id = "jsilvanus/aidos-echo-gguf",
             name = "Echo (GGUF)",
             description = "2.3 MB llama-architecture smoke-test model that repeats its input byte for byte. " +
                 "Runs on llama.cpp.",
-            repoId = "jsilvanus/echo-gguf",
+            repoId = "jsilvanus/aidos-echo-gguf",
             filename = "echo.gguf",
             format = "gguf",
             backend = "llama.cpp",
@@ -43,16 +43,15 @@ object SuggestedModels {
             runnable = true,
         ),
         SuggestedModel(
-            id = "jsilvanus/echo-onnx",
-            name = "Echo (ONNX)",
-            description = "258 KB ONNX identity model. Installs, but this Engine build has no ONNX " +
-                "runtime yet, so it cannot be loaded.",
-            repoId = "jsilvanus/echo-onnx",
-            filename = "echo.onnx",
-            format = "onnx",
-            backend = "onnx-runtime",
-            approxSizeBytes = 264_192,
-            runnable = false,
+            id = "jsilvanus/aidos-rot13-gguf",
+            name = "ROT13 (GGUF)",
+            description = "2.3 MB GGUF ROT13 smoke-test model. Installs and can be run with llama.cpp.",
+            repoId = "jsilvanus/aidos-rot13-gguf",
+            filename = "rot13.gguf",
+            format = "gguf",
+            backend = "llama.cpp",
+            approxSizeBytes = 2_367_680,
+            runnable = true,
         ),
     )
 
