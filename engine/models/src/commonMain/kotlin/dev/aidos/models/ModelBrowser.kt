@@ -53,10 +53,13 @@ class ModelBrowser(
                     providerId = catalogEntry.provider,
                     isLocal = true,
                     contextWindow = defaultContextWindow,
-                    sizeBytes = extractSizeBytes(catalogEntry),
+                    // The installer records the on-disk size in installed_models, not in the
+                    // catalog properties; without the fallback an installed model reads as 0 MB
+                    // and gets a WILL_NOT_FIT verdict.
+                    sizeBytes = extractSizeBytes(catalogEntry) ?: installedModel?.sizeBytes,
                     digest = extractDigest(catalogEntry),
                 )
-                
+
                 val verdict = cookbookEngine.verdict(descriptor, deviceProfile, defaultContextWindow)
 
                 BrowsableModel(
@@ -184,7 +187,7 @@ class ModelBrowser(
                 providerId = catalogEntry.provider,
                 isLocal = true,
                 contextWindow = defaultContextWindow,
-                sizeBytes = extractSizeBytes(catalogEntry),
+                sizeBytes = extractSizeBytes(catalogEntry) ?: installedModel?.sizeBytes,
                 digest = extractDigest(catalogEntry),
             )
             

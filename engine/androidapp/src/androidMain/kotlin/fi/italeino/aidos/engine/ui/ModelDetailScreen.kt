@@ -35,7 +35,8 @@ fun ModelDetailScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    LaunchedEffect(modelId) {
+    // Re-run when the Engine becomes READY: its browser does not exist before then.
+    LaunchedEffect(modelId, engineState) {
         viewModel.loadModelDetail(modelId)
     }
 
@@ -44,7 +45,6 @@ fun ModelDetailScreen(
             ModelLoadingState(
                 modelId = modelId,
                 status = ModelLoadingStatus.NOT_LOADED,
-                estimatedMemoryMB = 2_400
             )
         )
     }
@@ -107,15 +107,14 @@ fun ModelDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Size: ${model.sizeMB} MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Size: ${formatSize(state.installedSizeBytes ?: model.sizeMB.toLong() * 1024 * 1024)}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
                 ContextFitTable(model.contextFitTable)
 
-                LicenseAcceptanceCard(
-                    licenseName = model.licenseName,
-                    licenseText = model.licenseText,
-                    accepted = state.licenseAccepted,
-                    onAcceptedChange = { accepted -> viewModel.toggleLicenseAccepted(accepted) }
-                )
+                LicenseInfoCard(licenseName = model.licenseName, modelUrl = model.modelUrl)
 
                 if (state.isInstalled) {
                     Card(
@@ -208,13 +207,14 @@ fun ModelDetailScreen(
                 Button(
                     onClick = { onTestChatClick?.invoke(model.id, model.name) },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    enabled = engineState == EngineService.EngineState.READY && state.isInstalled,
+                    enabled = engineState == EngineService.EngineState.READY && state.isInstalled && model.isRunnable,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                 ) {
                     Text(
                         when {
                             engineState == EngineService.EngineState.STARTING -> "Engine starting…"
                             !state.isInstalled -> "Download model to test"
+                            !model.isRunnable -> "No runtime for this format yet"
                             else -> "Test Chat"
                         },
                         color = Color.White
@@ -322,6 +322,7 @@ fun ModelDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     enabled = engineState == EngineService.EngineState.READY &&
                         state.isInstalled &&
+                        model.isRunnable &&
                         !state.isDownloading &&
                         modelLoadingState.status != ModelLoadingStatus.LOADING &&
                         modelLoadingState.status != ModelLoadingStatus.UNLOADING,

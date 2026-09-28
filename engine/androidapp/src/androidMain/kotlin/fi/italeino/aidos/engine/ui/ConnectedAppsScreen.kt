@@ -6,53 +6,33 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import fi.italeino.aidos.engine.approval.AppApprovalRecord
+import fi.italeino.aidos.engine.approval.AppApprovalStatus
 
 /**
  * Connected Apps screen (RFC-0103, Phase D).
  *
- * Displays apps currently connected to Aidos Engine and those pending approval.
+ * Lists every app that has attempted the Engine handshake, grouped by the user's decision, with
+ * the actions that decision allows. Data comes from the persisted AppApprovalStore.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectedAppsScreen() {
-    val state = remember {
-        mutableStateOf(
-            ConnectedAppsState(
-                connectedApps = listOf(
-                    ConnectedApp(
-                        packageName = "fi.italeino.aidos",
-                        displayName = "Aidos Agent",
-                        lastActiveMs = System.currentTimeMillis() - 5_000,
-                        requestMetrics = RequestMetrics(chatCompletions = 47, embeddings = 12),
-                    ),
-                    ConnectedApp(
-                        packageName = "com.example.testapp",
-                        displayName = "Test App",
-                        lastActiveMs = System.currentTimeMillis() - 60_000,
-                        requestMetrics = RequestMetrics(chatCompletions = 5),
-                    ),
-                )
-            )
-        )
-    }
-    
-    val pendingApps = remember {
-        mutableStateListOf(
-            ConnectedApp(
-                packageName = "com.unknown.app",
-                displayName = "New Assistant",
-                lastActiveMs = System.currentTimeMillis(),
-                requestMetrics = RequestMetrics(),
-            )
-        )
-    }
+fun ConnectedAppsScreen(viewModel: ConnectedAppsViewModel = viewModel()) {
+    val approvals by viewModel.approvals.collectAsState()
+    val isEngineRunning by viewModel.isEngineRunning.collectAsState()
+
+    LaunchedEffect(Unit) { viewModel.refresh() }
+
+    val pending = approvals.filter { it.status == AppApprovalStatus.PENDING }
+    val approved = approvals.filter { it.status == AppApprovalStatus.APPROVED }
+    val denied = approvals.filter { it.status == AppApprovalStatus.DENIED }
 
     Scaffold(
         topBar = {
@@ -66,44 +46,56 @@ fun ConnectedAppsScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (pendingApps.isNotEmpty()) {
-                item {
-                    Text(
-                        "Approval Pending",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFEAB308), // Amber
-                    )
-                }
-                items(pendingApps) { app ->
-                    PendingAppCard(
-                        app = app,
-                        onApprove = { pendingApps.remove(app) },
-                        onDeny = { pendingApps.remove(app) },
-                    )
+            if (!isEngineRunning) {
+                item { EmptyNote("The Engine is not running. Start it from Home to manage app access.") }
+                return@LazyColumn
+            }
+
+            if (pending.isNotEmpty()) {
+                item { SectionTitle("Approval Pending", Color(0xFFEAB308)) }
+                items(pending, key = { it.packageName }) { app ->
+                    AppCard(app) {
+                        Button(
+                            onClick = { viewModel.approveApp(app.packageName) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E)),
+                        ) { Text("Approve", fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = { viewModel.denyApp(app.packageName) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Deny", fontSize = 12.sp, color = Color(0xFFEF4444)) }
+                    }
                 }
             }
 
-            item {
-                Text(
-                    "Connected",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            if (state.value.connectedApps.isEmpty()) {
+            item { SectionTitle("Approved", MaterialTheme.colorScheme.primary) }
+            if (approved.isEmpty()) {
                 item {
-                    Text(
-                        "No apps currently connected",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    EmptyNote(
+                        if (approvals.isEmpty()) "No app has asked to use the Engine yet."
+                        else "No approved apps."
                     )
                 }
             } else {
-                items(state.value.connectedApps) { app ->
-                    ConnectedAppCard(app)
+                items(approved, key = { it.packageName }) { app ->
+                    AppCard(app) {
+                        OutlinedButton(
+                            onClick = { viewModel.revokeApproval(app.packageName) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Revoke access", fontSize = 12.sp) }
+                    }
+                }
+            }
+
+            if (denied.isNotEmpty()) {
+                item { SectionTitle("Denied", Color(0xFFEF4444)) }
+                items(denied, key = { it.packageName }) { app ->
+                    AppCard(app) {
+                        OutlinedButton(
+                            onClick = { viewModel.undoDenyApp(app.packageName) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Undo denial", fontSize = 12.sp) }
+                    }
                 }
             }
         }
@@ -111,11 +103,17 @@ fun ConnectedAppsScreen() {
 }
 
 @Composable
-private fun PendingAppCard(
-    app: ConnectedApp,
-    onApprove: () -> Unit,
-    onDeny: () -> Unit,
-) {
+private fun SectionTitle(text: String, color: Color) {
+    Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color)
+}
+
+@Composable
+private fun EmptyNote(text: String) {
+    Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun AppCard(app: AppApprovalRecord, actions: @Composable RowScope.() -> Unit) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -131,123 +129,27 @@ private fun PendingAppCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
             )
-            
+            Text(
+                "Last handshake ${formatIsoAgo(app.lastSeenAt)} · ${app.attemptCount} handshake" +
+                    (if (app.attemptCount == 1) "" else "s") +
+                    " · first seen ${formatIsoAgo(app.firstSeenAt)}",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onApprove,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E)),
-                ) {
-                    Text("Approve", fontSize = 12.sp)
-                }
-                OutlinedButton(
-                    onClick = onDeny,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Deny", fontSize = 12.sp, color = Color(0xFFEF4444))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConnectedAppCard(app: ConnectedApp) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(app.displayName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        app.packageName,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
-                Text(
-                    formatLastActive(app.lastActiveMs),
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Divider(
-                modifier = Modifier.padding(vertical = 8.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-
-            Text(
-                "Usage Breakdown",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                UsageRow("Chat Completions", app.requestMetrics.chatCompletions, "qwen-3b")
-                if (app.requestMetrics.embeddings > 0) {
-                    UsageRow("Embeddings", app.requestMetrics.embeddings, "nomic-embed")
-                }
-            }
-
-            Text(
-                "Last Activity",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-            )
-            Text(
-                "Completed chat request at ${formatTimestamp(app.lastActiveMs)}",
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                content = actions,
             )
         }
     }
 }
 
-@Composable
-private fun UsageRow(label: String, count: Int, model: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "$count calls ($model)",
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-private fun formatLastActive(lastActiveMs: Long): String {
-    val elapsedMs = System.currentTimeMillis() - lastActiveMs
-    return when {
-        elapsedMs < 1000 -> "just now"
-        elapsedMs < 60_000 -> "${elapsedMs / 1000}s ago"
-        elapsedMs < 3600_000 -> "${elapsedMs / 60_000}m ago"
-        else -> "${elapsedMs / 3600_000}h ago"
-    }
-}
-
-private fun formatTimestamp(ms: Long): String {
-    val date = java.util.Date(ms)
-    val sdf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-    return sdf.format(date)
+private fun formatIsoAgo(iso: String): String = try {
+    formatElapsed(System.currentTimeMillis() - java.time.Instant.parse(iso).toEpochMilli())
+} catch (_: Exception) {
+    "unknown"
 }

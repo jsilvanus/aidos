@@ -112,7 +112,7 @@ fun MemoryBudgetIndicator(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Memory: ${budget.usedMB} MB / ${budget.totalMB} MB",
+                "Device RAM: ${budget.usedMB} MB / ${budget.totalMB} MB",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -174,16 +174,23 @@ fun ResidentModelCard(
                     )
                 }
             }
-            if (model.connectedApp != null) {
-                Text(
-                    text = "Loaded 2m ago • ${model.connectedApp}",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
+            Text(
+                text = "Loaded ${formatElapsed(model.loadedAgoMs)}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
     }
+}
+
+/** "just now", "42s ago", "5m ago", "3h ago", "2d ago" for an elapsed duration. */
+fun formatElapsed(elapsedMs: Long): String = when {
+    elapsedMs < 1_000 -> "just now"
+    elapsedMs < 60_000 -> "${elapsedMs / 1_000}s ago"
+    elapsedMs < 3_600_000 -> "${elapsedMs / 60_000}m ago"
+    elapsedMs < 86_400_000 -> "${elapsedMs / 3_600_000}h ago"
+    else -> "${elapsedMs / 86_400_000}d ago"
 }
 
 // ============================================================================
@@ -225,11 +232,18 @@ fun CookbookModelCard(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "${model.quantization} • ${model.kind} • ${model.sizeMB} MB",
+                        text = "${model.quantization} • ${model.kind} • ${formatSize(model.sizeBytes)}",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace
                     )
+                    if (!model.isRunnable) {
+                        Text(
+                            text = "No runtime for this format in this Engine build",
+                            fontSize = 10.sp,
+                            color = Color(0xFFF97316)
+                        )
+                    }
                 }
                 FitVerdictChip(model.fitVerdict)
             }
@@ -256,59 +270,6 @@ fun CookbookModelCard(
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Provider Status Row
-// ============================================================================
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ProviderStatusRow(
-    provider: RemoteProvider,
-    onTap: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        shape = RoundedCornerShape(8.dp),
-        onClick = onTap
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = provider.name,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                val statusLabel = when (provider.status) {
-                    ProviderConfigStatus.NOT_CONFIGURED -> "not configured"
-                    ProviderConfigStatus.CONFIGURED_DISABLED -> "configured · disabled"
-                    ProviderConfigStatus.ENABLED -> "enabled"
-                }
-                Text(
-                    text = statusLabel,
-                    fontSize = 11.sp,
-                    color = when (provider.status) {
-                        ProviderConfigStatus.ENABLED -> Color(0xFF22C55E)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
             }
         }
     }
@@ -404,15 +365,17 @@ fun ContextFitTable(
 }
 
 // ============================================================================
-// License Acceptance Card
+// License Card
 // ============================================================================
 
+/**
+ * Shows the license the model's Hub repo declares. The Engine does not have the license text,
+ * so it points at the model card rather than inventing a default.
+ */
 @Composable
-fun LicenseAcceptanceCard(
-    licenseName: String,
-    licenseText: String,
-    accepted: Boolean,
-    onAcceptedChange: (Boolean) -> Unit,
+fun LicenseInfoCard(
+    licenseName: String?,
+    modelUrl: String?,
     modifier: Modifier = Modifier,
 ) {
     OutlinedCard(
@@ -426,69 +389,18 @@ fun LicenseAcceptanceCard(
             modifier = Modifier.padding(12.dp)
         ) {
             Text(
-                text = "License: $licenseName",
+                text = "License: ${licenseName ?: "not declared"}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
             )
-            
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 200.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(6.dp)
-                    )
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline,
-                        RoundedCornerShape(6.dp)
-                    )
-                    .padding(8.dp)
-                    .padding(vertical = 6.dp)
-            ) {
-                Text(
-                    text = licenseText.take(500) + if (licenseText.length > 500) "..." else "",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.verticalScroll(rememberScrollState())
-                )
-            }
-            
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val checkboxSize = 20.dp
-                Box(
-                    modifier = Modifier
-                        .size(checkboxSize)
-                        .background(
-                            if (accepted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(4.dp)
-                        )
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                        .clickable { onAcceptedChange(!accepted) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (accepted) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-                Text(
-                    text = "I accept this license",
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-            }
+            Text(
+                text = if (modelUrl != null) "Review the terms on the model card: $modelUrl"
+                else "Review the model's terms before use.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

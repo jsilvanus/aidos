@@ -2,61 +2,77 @@ package fi.italeino.aidos.engine.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.approval.AppApprovalRecord
 import fi.italeino.aidos.engine.approval.AppApprovalStore
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
  * ViewModel for ConnectedAppsScreen (RFC-0103).
  *
- * Manages approval list display and user actions (Approve/Deny/Revoke/Undo).
- * Integrates with AppApprovalStore to persist decisions.
+ * Shows the persisted approval decisions (AppApprovalStore) and applies the user's
+ * Approve/Deny/Revoke/Undo actions to them. The store lives in EngineService, so the list is
+ * empty -- with [isEngineRunning] false -- until the Engine has started.
  */
-class ConnectedAppsViewModel(
-    private val approvalStore: AppApprovalStore
-) : ViewModel() {
-    
-    /**
-     * Flow of all known apps with their approval status, updated in real-time.
-     * Ordered by most recently active first.
-     */
-    val approvals: Flow<List<AppApprovalRecord>> = approvalStore.watchApprovals()
-    
-    /**
-     * User tapped Approve button on a pending app.
-     */
+class ConnectedAppsViewModel : ViewModel() {
+
+    private val _approvals = MutableStateFlow<List<AppApprovalRecord>>(emptyList())
+    /** All known apps, most recently active first. */
+    val approvals: StateFlow<List<AppApprovalRecord>> = _approvals.asStateFlow()
+
+    private val _isEngineRunning = MutableStateFlow(false)
+    val isEngineRunning: StateFlow<Boolean> = _isEngineRunning.asStateFlow()
+
+    private var watchedStore: AppApprovalStore? = null
+    private var watchJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            EngineService.state.collect { refresh() }
+        }
+    }
+
+    fun refresh() {
+        val store = EngineService.instance?.approvalStore
+        _isEngineRunning.value = store != null
+        if (store == null) {
+            _approvals.value = emptyList()
+            return
+        }
+        viewModelScope.launch { _approvals.value = store.listAllApprovals() }
+        if (store !== watchedStore) {
+            watchedStore = store
+            watchJob?.cancel()
+            // A handshake from another app updates the store while this screen is open.
+            watchJob = viewModelScope.launch { store.watchApprovals().collect { _approvals.value = it } }
+        }
+    }
+
     fun approveApp(packageName: String) {
-        viewModelScope.launch {
-            approvalStore.approveApp(packageName)
-        }
+        act { store -> store.approveApp(packageName) }
     }
-    
-    /**
-     * User tapped Deny button on a pending app.
-     */
+
     fun denyApp(packageName: String) {
-        viewModelScope.launch {
-            approvalStore.denyApp(packageName)
-        }
+        act { store -> store.denyApp(packageName) }
     }
-    
-    /**
-     * User tapped Revoke Access button on an approved app.
-     */
+
     fun revokeApproval(packageName: String) {
-        viewModelScope.launch {
-            approvalStore.revokeApproval(packageName)
-        }
+        act { store -> store.revokeApproval(packageName) }
     }
-    
-    /**
-     * User tapped Undo Denial button on a denied app.
-     */
+
     fun undoDenyApp(packageName: String) {
+        act { store -> store.undoDenyApp(packageName) }
+    }
+
+    private fun act(action: suspend (AppApprovalStore) -> Unit) {
+        val store = EngineService.instance?.approvalStore ?: return
         viewModelScope.launch {
-            approvalStore.undoDenyApp(packageName)
+            action(store)
+            _approvals.value = store.listAllApprovals()
         }
     }
 }

@@ -29,6 +29,7 @@ import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.approval.AppApprovalManager
+import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.AndroidEffectBroker
@@ -99,7 +100,9 @@ class EngineService : LifecycleService() {
     private lateinit var httpClient: HttpClient
     private lateinit var effectBroker: EffectBroker
 
-    private lateinit var approvalStore: EncryptedAppApprovalStore
+    /** Persisted per-app approval decisions; the Home and Connected Apps screens read this. */
+    var approvalStore: AppApprovalStore? = null
+        private set
     private lateinit var approvalManager: AppApprovalManager
     private var _isRunning = false
     val isRunning: Boolean get() = _isRunning
@@ -158,9 +161,10 @@ class EngineService : LifecycleService() {
                 val boundPort = httpServer.getBoundPort()
                     ?: throw IllegalStateException("HTTP server failed to bind")
 
-                approvalStore = EncryptedAppApprovalStore(this@EngineService)
+                val approvals = EncryptedAppApprovalStore(this@EngineService)
+                approvalStore = approvals
                 val notificationManager = AppNotificationManager(this@EngineService)
-                approvalManager = AppApprovalManager(this@EngineService, approvalStore, notificationManager)
+                approvalManager = AppApprovalManager(this@EngineService, approvals, notificationManager)
                 binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
 
                 _isRunning = true

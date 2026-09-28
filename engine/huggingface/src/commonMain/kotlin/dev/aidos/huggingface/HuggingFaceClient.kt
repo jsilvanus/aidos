@@ -31,6 +31,8 @@ data class HuggingFaceModel(
     val artifacts: List<ModelArtifact> = emptyList(),
     /** GGUF artifacts retained as quantizations for compatibility with the Android UI. */
     val quantizations: List<Quantization> = emptyList(),
+    /** License id from the repo's `license:` tag (e.g. "apache-2.0"); null when undeclared. */
+    val license: String? = null,
 )
 
 data class Quantization(
@@ -52,16 +54,19 @@ class HuggingFaceClient(
     private val apiBaseUrl: String = "https://huggingface.co/api/models",
 ) {
     suspend fun search(query: String? = null, filter: String? = null, sort: String = "trendingScore", limit: Int = 20): Result<HuggingFaceSearchResult> = try {
-        val params = mutableListOf("sort=$sort", "limit=$limit", "full=true", "config=true")
-        if (!query.isNullOrBlank()) params.add("search=$query")
-        if (filter != null) params.add("filter=$filter")
+        val params = mutableListOf("sort=${encodeQueryValue(sort)}", "limit=$limit", "full=true", "config=true")
+        if (!query.isNullOrBlank()) params.add("search=${encodeQueryValue(query.trim())}")
+        // The Hub ANDs repeated `filter` parameters; a single comma-joined value is not a tag list.
+        filter?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.forEach {
+            params.add("filter=${encodeQueryValue(it)}")
+        }
         val result = broker.invoke(
             subjectId = "",
             call = ToolCall(callId = "", toolName = "http:get", arguments = buildJsonObject { put("url", "$apiBaseUrl?${params.joinToString("&")}") }, capabilityId = capabilityId),
             runTaint = TrustLevel.UNTRUSTED,
         )
         if (result.outcome != ToolOutcome.Ok) return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
-        val jsonPart = result.content.filterIsInstance<ContentBlock.Text>().firstOrNull()?.text?.substringAfter("\n\n")?.trim() ?: ""
+        val jsonPart = responseBody(result.content).getOrElse { return Result.failure(it) }
         if (jsonPart.isEmpty() || jsonPart == "[]") return Result.success(HuggingFaceSearchResult(0, emptyList()))
         when (val jsonElement = Json.parseToJsonElement(jsonPart)) {
             is JsonArray -> {
@@ -87,7 +92,7 @@ class HuggingFaceClient(
             runTaint = TrustLevel.UNTRUSTED,
         )
         if (result.outcome != ToolOutcome.Ok) return Result.failure(Exception("HTTP request failed: ${result.outcome}"))
-        val jsonPart = result.content.filterIsInstance<ContentBlock.Text>().firstOrNull()?.text?.substringAfter("\n\n")?.trim() ?: ""
+        val jsonPart = responseBody(result.content).getOrElse { return Result.failure(it) }
         if (jsonPart.isEmpty()) return Result.success(HuggingFaceModel(modelId, "unknown", modelId))
         Result.success(parseModel(Json.parseToJsonElement(jsonPart).jsonObject) ?: HuggingFaceModel(modelId, "unknown", modelId))
     } catch (e: Exception) {
@@ -101,7 +106,37 @@ class HuggingFaceClient(
 
     fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind = Companion.inferModelKind(tags, pipeline)
 
+    /**
+     * The broker returns "HTTP <status>\n\n<body>". A non-2xx body is an error document (rate
+     * limit, bad filter, gated repo), not an empty result, so it must not be parsed as models.
+     */
+    private fun responseBody(content: List<ContentBlock>): Result<String> {
+        val text = content.filterIsInstance<ContentBlock.Text>().firstOrNull()?.text.orEmpty()
+        val status = text.substringBefore('\n').removePrefix("HTTP ").trim().toIntOrNull()
+        if (status != null && status !in 200..299) {
+            val detail = text.substringAfter("\n\n", "").trim().take(200)
+            return Result.failure(Exception("Hugging Face returned HTTP $status${if (detail.isNotEmpty()) ": $detail" else ""}"))
+        }
+        return Result.success(text.substringAfter("\n\n").trim())
+    }
+
     companion object {
+        /** Percent-encodes a query value (RFC 3986 unreserved characters pass through). */
+        internal fun encodeQueryValue(value: String): String = buildString {
+            for (byte in value.encodeToByteArray()) {
+                val c = byte.toInt() and 0xFF
+                val ch = c.toChar()
+                if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                    append(ch)
+                } else {
+                    append('%')
+                    append("0123456789ABCDEF"[c shr 4])
+                    append("0123456789ABCDEF"[c and 0x0F])
+                }
+            }
+        }
+
+
         fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind {
             val tagString = tags.joinToString(" ").lowercase()
             val pipelineStr = pipeline?.lowercase() ?: ""
@@ -136,7 +171,8 @@ class HuggingFaceClient(
         val quantizations = artifacts.filter { it.format == ModelFormat.GGUF }.map {
             Quantization(it.filename.removeSuffix(".gguf"), it.sizeBytes, it.downloadUrl, it.sha256Digest)
         }
-        HuggingFaceModel(modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength, artifacts, quantizations)
+        val license = tags.firstOrNull { it.startsWith("license:") }?.removePrefix("license:")
+        HuggingFaceModel(modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength, artifacts, quantizations, license)
     } catch (_: Exception) {
         null
     }

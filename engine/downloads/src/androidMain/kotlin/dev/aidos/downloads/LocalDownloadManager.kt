@@ -1,8 +1,10 @@
 package dev.aidos.downloads
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
@@ -43,13 +45,19 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var downloaded = offset
+                    var lastReported = offset
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
                         file.write(buffer, 0, read)
                         downloaded += read
-                        emit(DownloadEvent.Progress(downloaded, totalBytes))
+                        // One event per 8 KiB buffer is ~250k UI updates for a 2 GB model.
+                        if (downloaded - lastReported >= PROGRESS_STEP_BYTES) {
+                            emit(DownloadEvent.Progress(downloaded, totalBytes))
+                            lastReported = downloaded
+                        }
                     }
+                    emit(DownloadEvent.Progress(downloaded, totalBytes))
                 }
             }
             val actualDigest = sha256(target)
@@ -70,6 +78,9 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
             connection?.disconnect()
         }
     }
+        // Blocking socket and file I/O: without this, collecting from a UI coroutine runs it on
+        // the main thread, where Android throws NetworkOnMainThreadException.
+        .flowOn(Dispatchers.IO)
 
     override suspend fun canResume(destination: String, url: String): Boolean {
         val target = File(destination)
@@ -95,5 +106,9 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private companion object {
+        const val PROGRESS_STEP_BYTES = 256L * 1024
     }
 }

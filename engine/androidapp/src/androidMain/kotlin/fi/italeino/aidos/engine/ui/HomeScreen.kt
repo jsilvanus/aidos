@@ -39,26 +39,22 @@ private fun StatusPane(viewModel: StatusViewModel) {
     val context = LocalContext.current
     val isEngineRunning by viewModel.isEngineRunning.collectAsState()
     val residentModels by viewModel.residentModels.collectAsState()
-    
-    // Refresh state when entering screen
+    val memory by viewModel.memory.collectAsState()
+    val approvedApps by viewModel.approvedApps.collectAsState()
+    val pendingAppCount by viewModel.pendingAppCount.collectAsState()
+
+    // Refresh while the screen is visible: RAM and resident models change without UI events.
     LaunchedEffect(Unit) {
-        viewModel.refresh()
+        while (true) {
+            viewModel.refresh()
+            delay(2_000.milliseconds)
+        }
     }
-    
+
     // Engine Control long press logic
     var isPressing by remember { mutableStateOf(value = false) }
     var pressProgress by remember { mutableFloatStateOf(value = 0f) }
     val coroutineScope = rememberCoroutineScope()
-
-    // Sample data (memory/apps still mocked for now)
-    val state = remember {
-        StatusPaneState(
-            memoryBudget = MemoryBudget(usedMB = 2400, totalMB = 4096),
-            connectedApps = listOf(
-                ConnectedAppStatus(appName = "Aidos Agent", packageName = "fi.italeino.aidos"),
-            ),
-        )
-    }
 
     LazyColumn(
         modifier = Modifier
@@ -211,23 +207,35 @@ private fun StatusPane(viewModel: StatusViewModel) {
         }
 
         item {
-            MemoryBudgetIndicator(state.memoryBudget, modifier = Modifier.padding(vertical = 4.dp))
+            MemoryBudgetIndicator(memory, modifier = Modifier.padding(vertical = 4.dp))
         }
 
         item {
             Column {
                 Text(
-                    "Connected Apps",
+                    "Approved Apps",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(top = 8.dp)
                 )
                 Text(
-                    state.connectedApps.joinToString(", ") { it.appName },
+                    when {
+                        !isEngineRunning -> "Start the Engine to see connected apps"
+                        approvedApps.isEmpty() -> "No apps approved yet"
+                        else -> approvedApps.joinToString(", ")
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+                if (pendingAppCount > 0) {
+                    Text(
+                        "$pendingAppCount waiting for approval — see Apps",
+                        fontSize = 12.sp,
+                        color = Color(0xFFEAB308),
+                        modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                    )
+                }
             }
         }
     }

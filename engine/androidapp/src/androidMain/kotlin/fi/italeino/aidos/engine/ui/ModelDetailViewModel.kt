@@ -8,8 +8,13 @@ import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.EngineService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,13 +27,23 @@ class ModelDetailViewModel : ViewModel() {
     private var downloadJob: Job? = null
 
     fun loadModelDetail(modelId: String) {
-        val browser = EngineService.instance?.modelBrowser ?: return
+        val service = EngineService.instance
+        val browser = service?.modelBrowser
+        if (browser == null) {
+            _state.value = _state.value.copy(error = "The Engine is not running. Start it from Home first.")
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
             try {
-                val detail = browser.getModelDetail(modelId).getOrThrow()
+                val detail = withContext(Dispatchers.IO) { browser.getModelDetail(modelId).getOrThrow() }
+                // The Hub's `license:` tag is the only license source the Engine has; a failed
+                // lookup (offline, private repo) shows "not declared" rather than a guess.
+                val license = if (detail.provider == "huggingface") {
+                    withContext(Dispatchers.IO) { service?.hfClient?.getModel(modelId)?.getOrNull()?.license }
+                } else null
                 _state.value = _state.value.copy(
-                    model = detail.toUiModel(),
+                    model = detail.toUiModel(license),
                     isLoading = false,
                 )
                 refreshInstalledState(modelId)
@@ -163,11 +178,7 @@ class ModelDetailViewModel : ViewModel() {
         _state.value = _state.value.copy(downloadError = null)
     }
 
-    fun toggleLicenseAccepted(accepted: Boolean) {
-        _state.value = _state.value.copy(licenseAccepted = accepted)
-    }
-
-    private fun dev.aidos.models.ModelDetail.toUiModel(): ModelDetail {
+    private fun dev.aidos.models.ModelDetail.toUiModel(license: String?): ModelDetail {
         val instance = EngineService.instance
         val device = if (instance != null) DeviceProfileProvider(instance).getProfile() else dev.aidos.cookbook.DeviceProfile(
             totalRamBytes = 8_000_000_000,
@@ -194,13 +205,22 @@ class ModelDetailViewModel : ViewModel() {
             val mem = cookbook.computeResidentMemory(req, device, ctx)
             ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
         }
+        val format = try {
+            Json.parseToJsonElement(catalogEntry.propertiesJson).jsonObject["format"]?.jsonPrimitive?.content
+        } catch (_: Exception) {
+            null
+        } ?: "gguf"
         return ModelDetail(
             id = id,
             name = name,
-            description = "Hugging Face model $id",
+            description = "${kind.name} · ${format.uppercase()} · from $provider",
             providerName = provider,
+            licenseName = license,
+            modelUrl = remoteUrl?.takeIf { it.startsWith("https://huggingface.co/") && !it.contains("/resolve/") }
+                ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
+            isRunnable = format == "gguf",
         )
     }
 

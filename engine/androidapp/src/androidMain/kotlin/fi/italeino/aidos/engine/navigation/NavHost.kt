@@ -11,10 +11,8 @@ import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.inference.InferenceTester
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.HomeScreen
-import fi.italeino.aidos.engine.ui.ModelConfigScreen
 import fi.italeino.aidos.engine.ui.ModelDetailScreen
 import fi.italeino.aidos.engine.ui.ModelsScreen
-import fi.italeino.aidos.engine.ui.ProviderDetailScreen
 import fi.italeino.aidos.engine.ui.SettingsScreen
 import fi.italeino.aidos.engine.ui.TestChatScreen
 
@@ -68,34 +66,11 @@ fun EngineNavHost(
             )
         }
 
-        composable(
-            route = "provider_detail?id={id}",
-        ) { backStackEntry ->
-            val providerId = backStackEntry.arguments?.getString("id") ?: return@composable
-            ProviderDetailScreen(providerId = providerId, onBackClick = { navController.popBackStack() })
-        }
-
         composable(EngineRoute.Models.route) {
             ModelsScreen(
                 onModelSelected = { modelId ->
                     navController.navigate(EngineRoute.ModelDetail(modelId).createRoute(modelId))
                 },
-                onProviderSelected = { providerId ->
-                    navController.navigate(EngineRoute.ProviderDetail(providerId).createRoute(providerId))
-                },
-                onModelConfigClick = { modelId ->
-                    navController.navigate(EngineRoute.ModelConfig(modelId).createRoute(modelId))
-                },
-            )
-        }
-
-        composable(
-            route = "model_config?id={id}",
-        ) { backStackEntry ->
-            val modelId = backStackEntry.arguments?.getString("id") ?: return@composable
-            ModelConfigScreen(
-                modelId = modelId,
-                onBackClick = { navController.popBackStack() },
             )
         }
 

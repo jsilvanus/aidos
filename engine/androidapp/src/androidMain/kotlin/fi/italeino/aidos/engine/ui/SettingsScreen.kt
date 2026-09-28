@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,11 +43,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import fi.italeino.aidos.engine.suggestions.SuggestionPreferences
 
 /**
  * Settings screen (RFC-0103, Phase D).
  *
- * Intentionally minimal: Hugging Face token entry/status/clear only.
+ * Intentionally minimal: Hugging Face token entry/status/clear, and restoring removed model
+ * suggestions.
  * No account, no sync, no per-app trust configuration (trust model is signature-only
  * and not user-configurable).
  *
@@ -58,6 +61,8 @@ import androidx.compose.ui.unit.sp
 fun SettingsScreen() {
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("aidos_engine_ui_state", Context.MODE_PRIVATE) }
+    val suggestionPrefs = remember(context) { SuggestionPreferences.get(context) }
+    val dismissedSuggestions by suggestionPrefs.dismissed.collectAsState()
     var state by remember {
         mutableStateOf(
             SettingsState(
@@ -276,11 +281,35 @@ fun SettingsScreen() {
             }
 
             Text(
-                "Learn more about Hugging Face tokens",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(top = 8.dp)
+                "Suggested Models",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 16.dp)
             )
+
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        if (dismissedSuggestions.isEmpty()) "All suggestions are shown on the Models screen."
+                        else "${dismissedSuggestions.size} removed suggestion" +
+                            (if (dismissedSuggestions.size == 1) "" else "s") + " hidden from the Models screen.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = { suggestionPrefs.restoreAll() },
+                        enabled = dismissedSuggestions.isNotEmpty(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Text("Restore suggestions")
+                    }
+                }
+            }
         }
     }
 }
