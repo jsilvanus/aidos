@@ -1,75 +1,65 @@
 package fi.italeino.aidos.engine.binder
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
 import fi.italeino.aidos.engine.HandshakeResult
 import fi.italeino.aidos.engine.approval.AppApprovalManager
-import fi.italeino.aidos.engine.approval.ApprovalDecision
+import fi.italeino.aidos.engine.handshake.HandshakeCore
+import fi.italeino.aidos.engine.handshake.HandshakeWire
 import fi.italeino.aidos.engine.http.Capabilities
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.ModelInfo
 import fi.italeino.aidos.engine.http.TokenManager
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /**
  * Implementation of the Aidos Engine handshake Binder interface (RFC-0103).
  *
- * Called by client apps after the OS verifies their signature matches Aidos Engine's.
- * Returns the ephemeral HTTP port, bearer token, and capability list (if APPROVED),
- * or a deep-link intent to ConnectedAppsScreen (if PENDING_APPROVAL).
+ * Only the Android-specific parts live here: resolving the caller from the Binder UID and
+ * attaching the deep-link `PendingIntent`. The decision itself (unknown → PENDING + notify,
+ * approved → per-app token, denied, revoked) is [HandshakeCore], which is unit-tested on the JVM.
  *
  * This is the one Binder surface Engine exposes. All other traffic goes via HTTP.
  */
 class EngineHandshakeImpl(
     private val context: Context,
-    private val tokenManager: TokenManager,
-    private val httpServer: EngineHttpServer,
+    tokenManager: TokenManager,
+    httpServer: EngineHttpServer,
     private val approvalManager: AppApprovalManager,
     private val modelRuntime: dev.aidos.modelruntime.GlobalModelRuntime
 ) : fi.italeino.aidos.engine.IEngineHandshake.Stub() {
 
+    private val core = HandshakeCore(
+        store = approvalManager.store,
+        tokenManager = tokenManager,
+        boundPort = { httpServer.getBoundPort() },
+        capabilities = { buildCapabilities() },
+        resolveDisplayName = approvalManager::displayNameOf,
+        onFirstRequest = approvalManager::notifyFirstRequest
+    )
+
     override fun performHandshake(): Bundle {
-        // Get the caller's package name
-        val callerUid = Binder.getCallingUid()
-        val callerPackageName = getPackageNameForUid(callerUid)
+        val callerPackageName = getPackageNameForUid(Binder.getCallingUid())
 
-        if (callerPackageName == null) {
-            return HandshakeResult(status = "DENIED").toBundle()
-        }
+        // runBlocking is necessary because Binder calls are synchronous but the core is suspend.
+        val reply = runBlocking { core.handshake(callerPackageName) }
 
-        // Check approval status. runBlocking is necessary because Binder calls
-        // are synchronous but approvalManager uses coroutines.
-        val approval = runBlocking {
-            approvalManager.checkApproval(callerPackageName)
-        }
-
-        val result = when (approval) {
-            is ApprovalDecision.Approved -> buildApprovedResult()
-            is ApprovalDecision.Denied -> HandshakeResult(status = "DENIED")
-            is ApprovalDecision.PendingApproval -> HandshakeResult(
-                status = "PENDING_APPROVAL",
-                deepLinkPendingIntent = approval.deepLinkIntent
-            )
-        }
-        return result.toBundle()
+        return HandshakeResult(
+            status = reply.status,
+            port = reply.port,
+            token = reply.token,
+            apiVersion = reply.apiVersion,
+            capabilitiesJson = reply.capabilitiesJson,
+            deepLinkPendingIntent =
+                if (reply.status == HandshakeWire.STATUS_PENDING_APPROVAL) approvalManager.deepLinkIntent() else null
+        ).toBundle()
     }
-    
-    private fun buildApprovedResult(): HandshakeResult {
-        // Generate a new bearer token for this handshake
-        val tokenInfo = tokenManager.generateNewToken()
 
-        // Get the port the HTTP server is bound to
-        val port = runBlocking { httpServer.getBoundPort() }
-            ?: throw IllegalStateException("HTTP server not running or port not bound")
-
-        // Build capability list
-        val catalog = runBlocking { modelRuntime.catalog() }
-        val capabilities = Capabilities(
+    private suspend fun buildCapabilities(): Capabilities {
+        val catalog = modelRuntime.catalog()
+        return Capabilities(
             endpoints = listOf("models", "chat.completions", "embeddings", "audio.transcriptions"),
             models = catalog.map { descriptor ->
                 ModelInfo(
@@ -79,16 +69,6 @@ class EngineHandshakeImpl(
                     quantization = deriveQuantization(descriptor.id)
                 )
             }
-        )
-
-        val capabilitiesJson = Json.encodeToString(capabilities)
-
-        return HandshakeResult(
-            status = "APPROVED",
-            port = port,
-            token = tokenInfo.token,
-            apiVersion = 1,
-            capabilitiesJson = capabilitiesJson
         )
     }
 

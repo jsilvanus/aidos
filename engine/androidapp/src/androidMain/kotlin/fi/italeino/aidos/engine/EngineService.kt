@@ -29,6 +29,7 @@ import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.approval.AppApprovalManager
+import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
@@ -150,7 +151,16 @@ class EngineService : LifecycleService() {
                 val runtime = GlobalModelRuntime(AndroidLlamaCppInferenceBackend(this@EngineService))
                 modelRuntime = runtime
 
-                httpServer = EngineHttpServer(tokenManager, runtime)
+                // A token proves which app it was issued to; whether that app is still approved
+                // is asked of the store on every request, so revoking in Connected Apps cuts a
+                // live session immediately (RFC-0103, "Trust model").
+                httpServer = EngineHttpServer(
+                    tokenManager,
+                    runtime,
+                    isSubjectApproved = { pkg ->
+                        approvalStore?.getApproval(pkg)?.status == AppApprovalStatus.APPROVED
+                    }
+                )
                 httpServer.start()
                 val boundPort = httpServer.getBoundPort()
                     ?: throw IllegalStateException("HTTP server failed to bind")
@@ -225,9 +235,8 @@ class EngineService : LifecycleService() {
      * callers (the Test Chat screen, RFC-0103 Phase E) rather than the Binder-handshake
      * (`EngineHandshakeImpl`) path external client apps use. The engine trusts its own process,
      * so it self-issues a token via [TokenManager] instead of requiring a handshake round trip;
-     * an existing still-valid token (e.g. one already issued to a connected app) is reused rather
-     * than rotated, since [TokenManager] holds only one token at a time and rotating it here would
-     * invalidate that app's session.
+     * an existing still-valid token is reused rather than rotated. Tokens are per subject, so
+     * this one (Engine's own) never invalidates a connected app's session.
      *
      * Null when the engine (and therefore its HTTP server) isn't running.
      */

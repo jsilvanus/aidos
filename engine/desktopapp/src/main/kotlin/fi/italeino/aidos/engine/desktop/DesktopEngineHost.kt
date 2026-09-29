@@ -17,6 +17,7 @@ import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
+import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.KtorEffectBroker
@@ -105,7 +106,11 @@ class DesktopEngineHost(
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
             val runtime = GlobalModelRuntime.create()
-            val server = EngineHttpServer(tokens, runtime)
+            val server = EngineHttpServer(
+                tokens,
+                runtime,
+                isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED }
+            )
             server.start()
             val port = server.getBoundPort() ?: run {
                 server.stop()

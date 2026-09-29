@@ -222,6 +222,24 @@ data class TranscriptionResponse(
 // --- Handshake result shape ----------------------------------------------------------------
 
 /**
+ * The handshake Bundle vocabulary of Engine API v1 (RFC-0103) — frozen, see sdk/CONTRACT.md. Engine
+ * keeps its own copy (`HandshakeWire` in engine/enginehost, a separate Gradle project by design);
+ * both are pinned by a `HandshakeWireContractTest` so drift fails a test instead of a user's phone.
+ */
+internal object HandshakeWire {
+    const val KEY_STATUS = "status"
+    const val KEY_PORT = "port"
+    const val KEY_TOKEN = "token"
+    const val KEY_API_VERSION = "apiVersion"
+    const val KEY_CAPABILITIES_JSON = "capabilitiesJson"
+    const val KEY_DEEP_LINK = "deepLinkPendingIntent"
+
+    const val STATUS_APPROVED = "APPROVED"
+    const val STATUS_PENDING_APPROVAL = "PENDING_APPROVAL"
+    const val STATUS_DENIED = "DENIED"
+}
+
+/**
  * Handshake response from Aidos Engine via Binder (RFC-0103), for the APPROVED case only — the
  * other statuses (`PENDING_APPROVAL`, `DENIED`) are modeled as distinct [HandshakeOutcome] cases
  * rather than fields on this type, so there's nothing here to leave unset.
