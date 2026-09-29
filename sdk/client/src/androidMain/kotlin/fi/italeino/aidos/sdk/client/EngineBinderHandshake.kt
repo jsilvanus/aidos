@@ -81,23 +81,23 @@ internal class EngineBinderHandshake(private val context: Context) : HandshakePe
     }
 
     private fun parseBundle(bundle: Bundle): HandshakeOutcome {
-        return when (bundle.getString("status")) {
-            "APPROVED" -> {
+        return when (bundle.getString(HandshakeWire.KEY_STATUS)) {
+            HandshakeWire.STATUS_APPROVED -> {
                 pendingApprovalIntent = null
                 HandshakeOutcome.Approved(
                     HandshakeResponse(
-                        port = bundle.getInt("port"),
-                        token = bundle.getString("token") ?: "",
-                        apiVersion = bundle.getInt("apiVersion", 1),
-                        capabilities = parseCapabilitiesJson(bundle.getString("capabilitiesJson") ?: "{}")
+                        port = bundle.getInt(HandshakeWire.KEY_PORT),
+                        token = bundle.getString(HandshakeWire.KEY_TOKEN) ?: "",
+                        apiVersion = bundle.getInt(HandshakeWire.KEY_API_VERSION, 1),
+                        capabilities = parseCapabilitiesJson(bundle.getString(HandshakeWire.KEY_CAPABILITIES_JSON) ?: "{}")
                     )
                 )
             }
-            "PENDING_APPROVAL" -> {
-                pendingApprovalIntent = bundle.getPendingIntentCompat("deepLinkPendingIntent")
+            HandshakeWire.STATUS_PENDING_APPROVAL -> {
+                pendingApprovalIntent = bundle.getPendingIntentCompat(HandshakeWire.KEY_DEEP_LINK)
                 HandshakeOutcome.PendingApproval
             }
-            "DENIED" -> {
+            HandshakeWire.STATUS_DENIED -> {
                 pendingApprovalIntent = null
                 HandshakeOutcome.Denied
             }

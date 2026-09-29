@@ -29,7 +29,15 @@ class EngineHttpServer(
     private val tokenManager: TokenManager,
     private val modelRuntime: ModelRuntime,
     private val inferenceManager: InferenceRequestManager = InferenceRequestManager(modelRuntime),
-    private val port: Int = 0
+    private val port: Int = 0,
+    /**
+     * Per-request check that the app a token was issued to is still approved (RFC-0103, "Trust
+     * model"): revoking or denying an app in Connected Apps takes effect on its next request, not
+     * when its token expires. A failed check is a 401, which sends the SDK back through the
+     * handshake and so to the app's real state (PENDING / DENIED). Null skips the check; Engine's
+     * own in-process token ([TokenManager.ENGINE_SUBJECT]) is never subject to it.
+     */
+    private val isSubjectApproved: (suspend (subject: String) -> Boolean)? = null
 ) {
     private var server: EmbeddedServer<*, *>? = null
 
@@ -80,8 +88,13 @@ class EngineHttpServer(
         install(Authentication) {
             bearer("bearerAuth") {
                 authenticate { tokenCredential ->
-                    val token = tokenManager.validateToken(tokenCredential.token)
-                    if (token != null) UserIdPrincipal(token) else null
+                    val info = tokenManager.authenticate(tokenCredential.token)
+                    when {
+                        info == null -> null
+                        info.subject != TokenManager.ENGINE_SUBJECT &&
+                            isSubjectApproved?.invoke(info.subject) == false -> null
+                        else -> UserIdPrincipal(info.subject)
+                    }
                 }
             }
         }
