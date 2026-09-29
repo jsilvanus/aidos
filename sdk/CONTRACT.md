@@ -54,6 +54,15 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   field): bump `apiVersion`. A client whose required version differs from Engine's reports
   `IncompatibleVersion` rather than guessing.
 
+## Known issues (Engine-internal; fixing them does not change the contract)
+
+- **Engine must already be running.** `EngineService.onBind` returns `null` until Engine has finished
+  starting, and the SDK reports a null binding as `NotInstalled`. So a cold Engine (installed, service
+  not started) looks "not installed", and the app's first request never reaches the approval store.
+  Until fixed, open Aidos Engine before Dictator when trying the flow. Likely fix: `onBind` hands out
+  a binder immediately and the handshake waits (bounded) for readiness; the SDK can then also tell
+  "not installed" from "not running" (an additive `EngineAvailability` value).
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).
