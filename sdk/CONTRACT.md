@@ -54,14 +54,17 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   field): bump `apiVersion`. A client whose required version differs from Engine's reports
   `IncompatibleVersion` rather than guessing.
 
-## Known issues (Engine-internal; fixing them does not change the contract)
+## Additions within v1
 
-- **Engine must already be running.** `EngineService.onBind` returns `null` until Engine has finished
-  starting, and the SDK reports a null binding as `NotInstalled`. So a cold Engine (installed, service
-  not started) looks "not installed", and the app's first request never reaches the approval store.
-  Until fixed, open Aidos Engine before Dictator when trying the flow. Likely fix: `onBind` hands out
-  a binder immediately and the handshake waits (bounded) for readiness; the SDK can then also tell
-  "not installed" from "not running" (an additive `EngineAvailability` value).
+- `AidosEngineClientFactory.create(EngineHandshakeSource)`: a client whose handshake comes from
+  somewhere other than Binder. Engine uses it for its own in-process calls; tests use it to run the
+  real client against the real host (`SdkHostContractTest`).
+- `IEngineHandshake.aidl` now lives only in `sdk/client`; Engine implements the generated Stub from
+  the SDK library instead of keeping a second copy.
+- Engine's `onBind` hands out the handshake binder immediately, so a cold Engine records the first
+  request as pending instead of looking "not installed". Only an `APPROVED` reply waits (up to 4 s)
+  for the HTTP server and model catalog; if they never come up the handshake fails and the SDK
+  reports `HandshakeFailed`.
 
 ## Not covered
 
@@ -69,6 +72,6 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 - STT takes a whole utterance and returns no partial results.
 - Per-request token accounting (`requestCount`) is metrics only, not contract.
 - Nothing here has been exercised on a physical device yet: the Android targets do not compile in
-  the cloud environment, so the Binder path (`EngineBinderHandshake`, `EngineHandshakeImpl`,
+  the cloud environment, so the Binder path (`EngineBinderHandshake`, `EngineHandshakeImpl`, `EngineService.onBind`,
   the notification/`PendingIntent`) is verified by reading, not running. The first real Dictator →
   Engine approval on a phone is the acceptance test for this contract.

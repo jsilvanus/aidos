@@ -530,14 +530,73 @@ internal class EngineClientImpl(
 }
 
 /**
+ * Outcome of a handshake performed by something other than the Binder transport — see
+ * [AidosEngineClientFactory.create]. Mirrors the Binder handshake's statuses (sdk/CONTRACT.md).
+ */
+sealed interface EngineHandshakeResult {
+    /** Engine accepted the caller: [port] and [token] are for `http://127.0.0.1:<port>/v1/`. */
+    data class Approved(
+        val port: Int,
+        val token: String,
+        val capabilities: EngineCapabilities,
+        val apiVersion: Int = 1
+    ) : EngineHandshakeResult
+
+    data object NotInstalled : EngineHandshakeResult
+    data object PendingApproval : EngineHandshakeResult
+    data object Denied : EngineHandshakeResult
+    data object Failed : EngineHandshakeResult
+}
+
+/**
+ * A way to obtain a handshake other than Android's Binder call. The reason it exists: Engine
+ * itself, in its own process (its Test Chat screen, its desktop debug app), talks to its own
+ * `/v1/` endpoint through this same client rather than a private duplicate of the transport, and
+ * tests can drive the client against a real Engine host on the JVM.
+ */
+fun interface EngineHandshakeSource {
+    suspend fun handshake(): EngineHandshakeResult
+}
+
+/**
  * Factory for creating Aidos Engine client instances (RFC-0103).
  */
 object AidosEngineClientFactory {
     /**
      * Create a client with no way to reach Engine — there is no Binder on the jvm() target this
      * factory also builds for, so [AidosEngineClient.initialize] always returns `false`. On
-     * Android, use `AndroidAidosEngineClientFactory.createClient(context)` (sdk/client/androidMain)
+     * Android, use `AndroidAidosEngineClientFactory.createClient(context)` (sdk/client's androidMain)
      * instead, which performs the real handshake.
      */
     fun createClient(): AidosEngineClient = EngineClientImpl()
+
+    /**
+     * Create a client whose handshake comes from [source] instead of Binder. Behaviour after the
+     * handshake (transport, 401 → re-handshake, streaming, availability) is identical.
+     */
+    fun create(source: EngineHandshakeSource, requiredApiVersion: Int = 1): AidosEngineClient =
+        EngineClientImpl(
+            handshakePerformer = { source.handshake().toOutcome() },
+            requiredApiVersion = requiredApiVersion
+        )
+}
+
+private fun EngineHandshakeResult.toOutcome(): HandshakeOutcome = when (this) {
+    is EngineHandshakeResult.Approved -> HandshakeOutcome.Approved(
+        HandshakeResponse(
+            port = port,
+            token = token,
+            apiVersion = apiVersion,
+            capabilities = CapabilitiesResponse(
+                endpoints = capabilities.endpoints,
+                models = capabilities.models.map {
+                    ModelInfoResponse(it.id, it.kind, it.contextWindow, it.quantization)
+                }
+            )
+        )
+    )
+    EngineHandshakeResult.NotInstalled -> HandshakeOutcome.NotInstalled
+    EngineHandshakeResult.PendingApproval -> HandshakeOutcome.PendingApproval
+    EngineHandshakeResult.Denied -> HandshakeOutcome.Denied
+    EngineHandshakeResult.Failed -> HandshakeOutcome.Failed
 }

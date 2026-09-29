@@ -35,7 +35,6 @@ import fi.italeino.aidos.engine.approval.EncryptedAppApprovalStore
 import fi.italeino.aidos.engine.binder.EngineHandshakeImpl
 import fi.italeino.aidos.engine.http.KtorEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
-import fi.italeino.aidos.engine.http.HttpModelClient
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
@@ -43,6 +42,12 @@ import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import dev.aidos.kernel.ModelRuntime
+import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
+import fi.italeino.aidos.engine.handshake.handshakeCapabilities
+import fi.italeino.aidos.sdk.client.AidosEngineClient
+import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Android foreground service hosting Aidos Engine Core (RFC-0103).
@@ -63,6 +69,7 @@ class EngineService : LifecycleService() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "aidos_engine"
+        private const val READINESS_TIMEOUT_MS = 4_000L
 
         private var _instance: EngineService? = null
         val instance: EngineService? get() = _instance
@@ -75,6 +82,8 @@ class EngineService : LifecycleService() {
     private lateinit var tokenManager: TokenManager
     private lateinit var httpServer: EngineHttpServer
     private lateinit var binder: EngineHandshakeImpl
+    private val boundPortReady = CompletableDeferred<Int>()
+    private val runtimeReady = CompletableDeferred<ModelRuntime>()
 
     var modelRuntime: GlobalModelRuntime? = null
         private set
@@ -106,9 +115,26 @@ class EngineService : LifecycleService() {
         super.onCreate()
         _instance = this
         _state.value = EngineState.STARTING
+
+        // The handshake surface comes up first and independently of model-runtime start-up: a
+        // caller binding to a cold Engine must reach the approval check (record PENDING, notify
+        // the user) instead of getting a null binder, which the SDK would report as "not
+        // installed". Only an APPROVED reply needs the HTTP port and model catalog, and waits
+        // (bounded) for them below.
+        tokenManager = TokenManager()
+        val approvals = EncryptedAppApprovalStore(this)
+        approvalStore = approvals
+        approvalManager = AppApprovalManager(this, approvals, AppNotificationManager(this))
+        binder = EngineHandshakeImpl(
+            context = this,
+            tokenManager = tokenManager,
+            boundPort = { withTimeoutOrNull(READINESS_TIMEOUT_MS) { boundPortReady.await() } },
+            approvalManager = approvalManager,
+            modelRuntime = { withTimeoutOrNull(READINESS_TIMEOUT_MS) { runtimeReady.await() } }
+        )
+
         serviceScope.launch {
             try {
-                tokenManager = TokenManager()
 
                 httpClient = HttpClient(io.ktor.client.engine.android.Android) {
                     install(ContentNegotiation) { json() }
@@ -165,11 +191,8 @@ class EngineService : LifecycleService() {
                 val boundPort = httpServer.getBoundPort()
                     ?: throw IllegalStateException("HTTP server failed to bind")
 
-                val approvals = EncryptedAppApprovalStore(this@EngineService)
-                approvalStore = approvals
-                val notificationManager = AppNotificationManager(this@EngineService)
-                approvalManager = AppApprovalManager(this@EngineService, approvals, notificationManager)
-                binder = EngineHandshakeImpl(this@EngineService, tokenManager, httpServer, approvalManager, runtime)
+                boundPortReady.complete(boundPort)
+                runtimeReady.complete(runtime)
 
                 _isRunning = true
                 _state.value = EngineState.READY
@@ -227,24 +250,32 @@ class EngineService : LifecycleService() {
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
-        return if (isRunning) binder.asBinder() else null
+        // Always hand out the handshake binder, even while start-up is still running (see onCreate).
+        return binder.asBinder()
     }
 
     /**
-     * A client for this service's own `/v1/chat/completions` endpoint, for first-party in-app
-     * callers (the Test Chat screen, RFC-0103 Phase E) rather than the Binder-handshake
-     * (`EngineHandshakeImpl`) path external client apps use. The engine trusts its own process,
-     * so it self-issues a token via [TokenManager] instead of requiring a handshake round trip;
-     * an existing still-valid token is reused rather than rotated. Tokens are per subject, so
-     * this one (Engine's own) never invalidates a connected app's session.
+     * An Aidos SDK client for this service's own `/v1/` endpoint, for first-party in-app callers
+     * (the Test Chat and model-detail screens, RFC-0103 Phase E). It is the same client external
+     * apps use; only the handshake differs — Engine trusts its own process, so it takes a token
+     * from [TokenManager] directly (per-subject, so it never invalidates a connected app's
+     * session) instead of a Binder round trip.
      *
-     * Null when the engine (and therefore its HTTP server) isn't running.
+     * Null when the engine (and therefore its HTTP server) isn't running. The caller closes it.
      */
-    suspend fun createHttpModelClient(): HttpModelClient? {
-        if (!isRunning) return null
-        val port = httpServer.getBoundPort() ?: return null
-        val token = tokenManager.currentValidToken() ?: tokenManager.generateNewToken().token
-        return HttpModelClient(port = port, token = token)
+    suspend fun createEngineClient(): AidosEngineClient? {
+        val runtime = modelRuntime
+        if (!isRunning || runtime == null) return null
+        val client = AidosEngineClientFactory.create(
+            InProcessHandshakeSource(
+                tokenManager = tokenManager,
+                boundPort = { httpServer.getBoundPort() },
+                capabilities = { runtime.handshakeCapabilities() }
+            )
+        )
+        if (client.initialize()) return client
+        client.close()
+        return null
     }
 
     private fun createNotificationChannel() {

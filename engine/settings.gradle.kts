@@ -35,6 +35,13 @@ rootProject.name = "aidos-engine"
 include(":kernel")
 project(":kernel").projectDir = file("../kernel")
 
+// Aidos SDK client (../sdk/client), included by path like kernel: Engine consumes the same client
+// every other app does, for its own in-process calls (Test Chat, desktop debug app) and to test
+// the real client against the real host. It also owns IEngineHandshake.aidl now, so Engine no
+// longer keeps a second copy of the Binder interface that could drift from the SDK's.
+include(":client")
+project(":client").projectDir = file("../sdk/client")
+
 include(":modelruntime")
 include(":cookbook")
 include(":huggingface")
