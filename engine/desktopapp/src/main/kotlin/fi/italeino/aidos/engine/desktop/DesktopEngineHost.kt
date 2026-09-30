@@ -18,6 +18,10 @@ import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
+import fi.italeino.aidos.engine.handshake.handshakeCapabilities
+import fi.italeino.aidos.sdk.client.AidosEngineClient
+import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.KtorEffectBroker
@@ -126,6 +130,23 @@ class DesktopEngineHost(
             _lastError.value = e.message ?: e::class.simpleName
             _state.value = EngineState.FAILED
         }
+    }
+
+    /**
+     * An Aidos SDK client for this host's own `/v1/` endpoint (the same client external apps use;
+     * see EngineService.createEngineClient). Null when the Engine is not running. Caller closes it.
+     */
+    suspend fun createEngineClient(): AidosEngineClient? {
+        val tokens = tokenManager
+        val server = httpServer
+        val runtime = modelRuntime
+        if (!_isRunning.value || tokens == null || server == null || runtime == null) return null
+        val client = AidosEngineClientFactory.create(
+            InProcessHandshakeSource(tokens, { server.getBoundPort() }, { runtime.handshakeCapabilities() })
+        )
+        if (client.initialize()) return client
+        client.close()
+        return null
     }
 
     /** Mirrors EngineService.onDestroy: stop serving, drain inference, unload, drop tokens. */

@@ -7,6 +7,7 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.EngineService
+import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
@@ -269,12 +270,13 @@ class ModelDetailViewModel : ViewModel() {
             _state.value = _state.value.copy(isEmbeddingTesting = true, embeddingError = null, embeddingVector = emptyList())
             try {
                 val service = EngineService.instance ?: throw IllegalStateException("Engine is not running")
-                val client = service.createHttpModelClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
+                val client = service.createEngineClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
                 val response = try {
-                    withContext(Dispatchers.IO) { client.embeddings(model.id, listOf(input)) }
+                    client.embeddings(EmbeddingsRequest(model = model.id, input = listOf(input)))
                 } finally {
                     client.close()
                 }
+                if (response == null) throw IllegalStateException("Engine did not return an embedding")
                 val vector = response.data.firstOrNull()?.embedding.orEmpty()
                 if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
                 _state.value = _state.value.copy(isEmbeddingTesting = false, embeddingVector = vector, embeddingError = null)

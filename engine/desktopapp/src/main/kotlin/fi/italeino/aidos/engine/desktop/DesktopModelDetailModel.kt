@@ -12,6 +12,7 @@ import fi.italeino.aidos.engine.ui.ModelDetail
 import fi.italeino.aidos.engine.ui.ModelDetailState
 import fi.italeino.aidos.engine.ui.ModelLoadingState
 import fi.italeino.aidos.engine.ui.ModelLoadingStatus
+import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -206,12 +207,39 @@ class DesktopModelDetailModel(
         _state.value = _state.value.copy(embeddingInput = value)
     }
 
-    /** Android tests embeddings through its own HTTP endpoint via HttpModelClient (androidMain). */
+    /** Same as Android: embeds through Engine's own `/v1/embeddings`, via the Aidos SDK client. */
     fun testEmbeddings() {
-        _state.value = _state.value.copy(
-            embeddingError = "Embeddings test is not available in the desktop debug app yet; " +
-                "POST /v1/embeddings to 127.0.0.1:${host.boundPort.value ?: "<port>"} instead.",
-        )
+        val model = _state.value.model ?: return
+        val input = _state.value.embeddingInput.trim()
+        if (input.isBlank()) {
+            _state.value = _state.value.copy(embeddingError = "Enter text to embed.")
+            return
+        }
+        if (model.kind != dev.aidos.kernel.ModelKind.EMBEDDING) return
+
+        scope.launch {
+            _state.value = _state.value.copy(isEmbeddingTesting = true, embeddingError = null, embeddingVector = emptyList())
+            try {
+                val client = host.createEngineClient() ?: throw IllegalStateException("Start the Engine first.")
+                val response = try {
+                    client.embeddings(EmbeddingsRequest(model = model.id, input = listOf(input)))
+                } finally {
+                    client.close()
+                }
+                if (response == null) throw IllegalStateException("Engine did not return an embedding")
+                val vector = response.data.firstOrNull()?.embedding.orEmpty()
+                if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
+                _state.value = _state.value.copy(isEmbeddingTesting = false, embeddingVector = vector, embeddingError = null)
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isEmbeddingTesting = false)
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isEmbeddingTesting = false,
+                    embeddingError = "Embedding test failed: ${e.message ?: "unknown error"}",
+                )
+            }
+        }
     }
 
     /** Same transitions as the Android screen's load button. */
