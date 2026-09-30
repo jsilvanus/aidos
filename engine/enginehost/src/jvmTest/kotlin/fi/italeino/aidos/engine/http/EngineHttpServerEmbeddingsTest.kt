@@ -123,6 +123,8 @@ private class EmbeddingTestRuntime : ModelRuntime {
         if (modelId == "test-embedding") Result.success(adapter)
         else Result.failure(IllegalStateException("Model $modelId is not installed"))
 
+    override suspend fun delete(modelId: String) = Unit
+
     override suspend fun unload(modelId: String) = Unit
 
     override fun loaded(): List<String> = listOf("test-embedding")

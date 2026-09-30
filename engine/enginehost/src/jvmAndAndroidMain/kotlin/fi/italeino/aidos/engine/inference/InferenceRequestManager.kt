@@ -105,17 +105,22 @@ class InferenceRequestManager(
 
     /** Interrupt active and queued work, then unload the model while keeping it installed. */
     suspend fun closeModel(modelId: String): Result<Unit> {
-        val jobsAndAdapter = stateMutex.withLock {
+        var jobs: List<Job> = emptyList()
+        var adapter: CancellableModelAdapter? = null
+        val admission = stateMutex.withLock {
             if (shuttingDown) return@withLock Result.failure<Unit>(EngineShuttingDownException("Engine is shutting down"))
             if (!closingModels.add(modelId)) {
                 return@withLock Result.failure<Unit>(EngineModelBusyException("Model $modelId is already being closed"))
             }
-            requestJobsByModel[modelId]?.toList().orEmpty() to activeAdapters[modelId]
+            jobs = requestJobsByModel[modelId]?.toList().orEmpty()
+            adapter = activeAdapters[modelId]
+            Result.success(Unit)
         }
+        if (admission.isFailure) return admission
 
         return try {
-            jobsAndAdapter.second?.cancelCurrentInference()
-            jobsAndAdapter.first.forEach { it.cancel() }
+            adapter?.cancelCurrentInference()
+            jobs.forEach { it.cancel() }
             val drained = waitUntilModelAdmissionsDrained(modelId, 5_000.milliseconds)
             if (!drained) return Result.failure(
                 EngineModelBusyException("Model $modelId did not stop within the close timeout")

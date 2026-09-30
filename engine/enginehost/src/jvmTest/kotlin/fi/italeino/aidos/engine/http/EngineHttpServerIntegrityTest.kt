@@ -90,6 +90,7 @@ private class IntegrityFailureRuntime(private val message: String) : ModelRuntim
     override suspend fun catalog(): List<ModelDescriptor> = descriptor()
     override suspend fun installed(): List<ModelDescriptor> = descriptor()
     override suspend fun load(modelId: String): Result<ModelAdapter> = Result.failure(IllegalStateException(message))
+    override suspend fun delete(modelId: String) = Unit
     override suspend fun unload(modelId: String) = Unit
     override fun loaded(): List<String> = emptyList()
 
@@ -125,6 +126,7 @@ private class MetadataRuntime : ModelRuntime {
     override suspend fun catalog(): List<ModelDescriptor> = listOf(descriptor)
     override suspend fun installed(): List<ModelDescriptor> = listOf(descriptor)
     override suspend fun load(modelId: String): Result<ModelAdapter> = Result.failure(IllegalStateException("unused"))
+    override suspend fun delete(modelId: String) = Unit
     override suspend fun unload(modelId: String) = Unit
     override fun loaded(): List<String> = emptyList()
 }

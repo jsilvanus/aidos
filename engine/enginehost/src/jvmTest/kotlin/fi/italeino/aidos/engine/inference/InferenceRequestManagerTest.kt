@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.inference
 
+import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
@@ -84,26 +85,64 @@ class InferenceRequestManagerTest {
     }
 
     @Test
-    fun deleteModel_rejectsWhileInferenceIsAdmitted() = runTest {
-        val gate = CompletableDeferred<Unit>()
-        val runtime = FakeRuntime(BlockingAdapter(gate))
+    fun openModel_forceLoadsWithoutInference() = runTest {
+        val runtime = FakeRuntime(CountingAdapter())
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+
+        assertTrue(manager.openModel("test-model").isSuccess)
+        assertEquals(1, runtime.loadCalls)
+    }
+
+    @Test
+    fun closeModel_interruptsRunningInferenceAndUnloadsAfterCancellation() = runTest {
+        val adapter = InterruptibleAdapter()
+        val runtime = FakeRuntime(adapter)
         val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
 
         coroutineScope {
-            val request = async {
-                manager.execute("test-model") { adapter ->
-                    adapter.invoke(dummyRequest()).getOrThrow()
-                }
-            }
-            delay(50)
+            val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            adapter.started.await()
 
-            val deletion = manager.deleteModel("test-model")
-            assertTrue(deletion.isFailure)
-            assertTrue(deletion.exceptionOrNull() is EngineModelBusyException)
-            assertEquals(0, runtime.deleteCalls)
+            assertTrue(manager.closeModel("test-model").isSuccess)
+            assertFailsWith<CancellationException> { request.await() }
+            assertEquals(1, runtime.unloadCalls)
+            assertEquals(1, adapter.cancelCalls)
+        }
+    }
 
-            gate.complete(Unit)
-            assertTrue(request.await().isSuccess)
+    @Test
+    fun closeModel_cancelsQueuedRequestsForTargetModel() = runTest {
+        val adapter = InterruptibleAdapter()
+        val runtime = FakeRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 2)
+
+        coroutineScope {
+            val first = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            adapter.started.await()
+            val queued = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            delay(25)
+
+            assertTrue(manager.closeModel("test-model").isSuccess)
+            assertFailsWith<CancellationException> { first.await() }
+            assertFailsWith<CancellationException> { queued.await() }
+            assertEquals(1, runtime.unloadCalls)
+        }
+    }
+
+    @Test
+    fun deleteModel_interruptsInferenceBeforeDeleting() = runTest {
+        val adapter = InterruptibleAdapter()
+        val runtime = FakeRuntime(adapter)
+        val manager = InferenceRequestManager(runtime, maxConcurrentRequests = 1, maxQueuedRequests = 0)
+
+        coroutineScope {
+            val request = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            adapter.started.await()
+
+            assertTrue(manager.deleteModel("test-model").isSuccess)
+            assertFailsWith<CancellationException> { request.await() }
+            assertEquals(1, runtime.unloadCalls)
+            assertEquals(1, runtime.deleteCalls)
         }
     }
 
@@ -203,7 +242,7 @@ class InferenceRequestManagerTest {
             started.await()
 
             assertTrue(manager.shutdownAndDrain(timeout = 500.milliseconds))
-            assertTrue(request.await().isFailure)
+            assertFailsWith<CancellationException> { request.await() }
         }
 
         val metrics = manager.snapshotMetrics()
@@ -227,6 +266,10 @@ private class FakeRuntime(
 ) : ModelRuntime {
     var deleteCalls: Int = 0
         private set
+    var unloadCalls: Int = 0
+        private set
+    var loadCalls: Int = 0
+        private set
 
     override suspend fun catalog(): List<ModelDescriptor> = listOf(
         ModelDescriptor(
@@ -243,9 +286,14 @@ private class FakeRuntime(
 
     override suspend fun installed(): List<ModelDescriptor> = catalog()
 
-    override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(adapter)
+    override suspend fun load(modelId: String): Result<ModelAdapter> {
+        loadCalls++
+        return Result.success(adapter)
+    }
 
-    override suspend fun unload(modelId: String) = Unit
+    override suspend fun unload(modelId: String) {
+        unloadCalls++
+    }
 
     override suspend fun delete(modelId: String) {
         deleteCalls++
@@ -343,5 +391,32 @@ private class CountingAdapter : ModelAdapter {
                 model = ModelRef(modelId, modelVersion),
             )
         )
+    }
+}
+
+/** A native-style adapter: inference blocks until [cancelCurrentInference] interrupts it. */
+private class InterruptibleAdapter : CancellableModelAdapter {
+    override val providerId: String = "test"
+    override val modelId: String = "test-model"
+    override val modelVersion: String = "1"
+    override val contextWindow: Int = 2048
+    override val isLocal: Boolean = true
+
+    val started = CompletableDeferred<Unit>()
+    private val cancelled = CompletableDeferred<Unit>()
+    var cancelCalls: Int = 0
+        private set
+
+    override fun supportsNativeToolCalls(): Boolean = false
+
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+        started.complete(Unit)
+        cancelled.await()
+        return Result.failure(CancellationException("native inference cancelled"))
+    }
+
+    override fun cancelCurrentInference() {
+        cancelCalls++
+        cancelled.complete(Unit)
     }
 }
