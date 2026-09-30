@@ -36,6 +36,17 @@ interface ModelAdapter {
     val providerRetention: ProviderRetention? get() = null
 }
 
+/** Adapter capability for interrupting the currently running native inference. */
+interface CancellableModelAdapter : ModelAdapter {
+    /** Interrupt the native inference operation currently owned by this adapter, if any. */
+    fun cancelCurrentInference()
+}
+
+/** Adapter capability for models that expose native vector embeddings. */
+interface EmbeddingModelAdapter : ModelAdapter {
+    suspend fun embed(text: String): Result<FloatArray>
+}
+
 /**
  * One event of a streamed [ModelAdapter.invokeStreaming] response. Named to parallel RFC-0052's
  * `RuntimeEvent.AiResponseDelta` one layer down the stack: this is the adapter-to-router event,
@@ -130,6 +141,9 @@ interface ModelRuntime {
     suspend fun load(modelId: String): Result<ModelAdapter>
     suspend fun unload(modelId: String)
     fun loaded(): List<String>
+
+    /** Unload if resident, then remove the installed artifact and its catalog install record. */
+    suspend fun delete(modelId: String)
 }
 
 data class ModelDescriptor(
@@ -141,6 +155,10 @@ data class ModelDescriptor(
     val contextWindow: Int,
     val sizeBytes: Long?,
     val digest: String?,
+    /** Authoritative artifact format / quantization from the catalog, when known. */
+    val format: String? = null,
+    val quantization: String? = null,
+    val metadata: Map<String, String> = emptyMap(),
 )
 
 @Serializable

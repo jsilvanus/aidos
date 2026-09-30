@@ -273,26 +273,19 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissSuggestion(id: String) = suggestionPrefs.dismiss(id)
 
     /**
-     * Unloads the model if it is resident, then removes its file and its install record. The
-     * previous version only asked the runtime to delete, which left the catalog row behind, so
-     * the "deleted" model stayed in the Local list.
+     * Deletes through the Engine's inference admission gate, which rejects the delete while a
+     * request for the model is admitted. The backend removes the artifact and its install record,
+     * so the model does not linger in the Local list.
      */
     fun deleteModel(modelId: String) {
         val service = EngineService.instance ?: return
-        val downloader = service.downloadManager ?: return
-        val catalog = service.catalogManager ?: return
         viewModelScope.launch {
             try {
-                service.modelRuntime?.let { runtime ->
-                    if (modelId in runtime.loaded()) runtime.unload(modelId)
-                }
-                withContext(Dispatchers.IO) {
-                    DefaultModelInstallerWorkflow(downloader, catalog).uninstall(modelId).getOrThrow()
-                }
+                service.deleteModel(modelId).getOrThrow()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _errorMessage.value = "Delete failed: ${e.message ?: e::class.simpleName}"
+                _errorMessage.value = "Delete failed: ${e.message ?: "Model may be busy"}"
             }
             refresh()
         }

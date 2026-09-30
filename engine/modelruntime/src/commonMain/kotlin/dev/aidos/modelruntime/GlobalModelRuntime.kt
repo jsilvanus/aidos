@@ -85,7 +85,7 @@ class GlobalModelRuntime(
 
     fun loadedAtMillis(modelId: String): Long? = loadedModels[modelId]?.loadedAtMillis
 
-    suspend fun delete(modelId: String) {
+    override suspend fun delete(modelId: String) {
         admissionQueue.withLock {
             if (loadedModels.containsKey(modelId)) {
                 loadedModels = loadedModels - modelId
