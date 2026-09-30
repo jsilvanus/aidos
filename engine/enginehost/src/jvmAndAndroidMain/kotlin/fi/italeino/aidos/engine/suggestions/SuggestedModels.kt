@@ -53,6 +53,19 @@ object SuggestedModels {
             approxSizeBytes = 2_367_680,
             runnable = true,
         ),
+        SuggestedModel(
+            id = "convaiinnovations/laya-multilingual",
+            name = "Laya Multilingual Q8_0",
+            description = "About 362 MB multilingual System 1 decision model for 100+ languages. " +
+                "Returns typed decisions and calibrated probabilities instead of generated text. " +
+                "The Q8_0 GGUF is published by mys; Aidos needs the Laya backend before it can run it.",
+            repoId = "mys/laya-multilingual-GGUF",
+            filename = "laya_multilingual_q8_0.gguf",
+            format = "gguf",
+            backend = "laya/ggmlc",
+            approxSizeBytes = 362_000_000,
+            runnable = false,
+        ),
     )
 
     /** Suggestions still shown after the user dismissed [dismissedIds]. */
