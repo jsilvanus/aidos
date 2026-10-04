@@ -97,7 +97,9 @@ class EngineHttpServerTest {
             isLocal = true,
             contextWindow = 32768,
             sizeBytes = 2_104_932_768L,
-            digest = "abc123"
+            digest = "abc123",
+            format = "gguf",
+            quantization = "q4_k_m",
         )
         val embeddingModel = ModelDescriptor(
             id = "nomic-embed-text-v1.5",
@@ -387,6 +389,8 @@ class MockModelRuntime(private val adapter: ModelAdapter = MockModelAdapter()) :
         }
     }
 
+    override suspend fun delete(modelId: String) = Unit
+
     override suspend fun unload(modelId: String) {
         // No-op for mock
     }
@@ -474,6 +478,7 @@ private class FailingLoadRuntime(private val errorMessage: String) : ModelRuntim
     override suspend fun installed(): List<ModelDescriptor> = emptyList()
     override suspend fun load(modelId: String): Result<ModelAdapter> =
         Result.failure(IllegalStateException(errorMessage))
+    override suspend fun delete(modelId: String) = Unit
     override suspend fun unload(modelId: String) = Unit
     override fun loaded(): List<String> = emptyList()
 }
@@ -516,6 +521,8 @@ private class StaticModelRuntime(
 
     override suspend fun load(modelId: String): Result<ModelAdapter> =
         Result.failure(UnsupportedOperationException("not needed for /v1/models tests"))
+
+    override suspend fun delete(modelId: String) = Unit
 
     override suspend fun unload(modelId: String) = Unit
 

@@ -174,8 +174,19 @@ class EngineService : LifecycleService() {
 
                 // Android uses the native llama.cpp binding directly. The JVM-only backend in
                 // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
-                val runtime = GlobalModelRuntime(AndroidLlamaCppInferenceBackend(this@EngineService))
+                // The persistent catalog is authoritative for model identity, kind and expected
+                // digest; filesDir/models is only the artifact store.
+                val runtime = GlobalModelRuntime(
+                    AndroidLlamaCppInferenceBackend(
+                        context = this@EngineService,
+                        catalogManager = catalog,
+                    )
+                )
                 modelRuntime = runtime
+
+                // Reconcile stale installed rows before exposing the Engine to clients: orphan
+                // files are non-executable and rows without a trustworthy artifact are removed.
+                runtime.catalog()
 
                 // A token proves which app it was issued to; whether that app is still approved
                 // is asked of the store on every request, so revoking in Connected Apps cuts a
@@ -276,6 +287,35 @@ class EngineService : LifecycleService() {
         if (client.initialize()) return client
         client.close()
         return null
+    }
+
+    /**
+     * Force-load a model into memory without performing inference. The model remains loaded until
+     * explicitly closed, deleted, or the engine shuts down.
+     */
+    suspend fun openModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        val runtime = modelRuntime ?: return Result.failure(IllegalStateException("Model runtime is not initialized"))
+        return runtime.load(modelId).map { Unit }
+    }
+
+    /**
+     * Interrupt active inference, cancel queued requests for the model, wait for all admitted
+     * work to stop, then unload the model. The installed model artifact remains available for
+     * the next inference request.
+     */
+    suspend fun closeModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        return httpServer.closeModel(modelId)
+    }
+
+    /**
+     * Closes (interrupts + unloads) a model through the Engine admission gate before deleting its
+     * installed artifact.
+     */
+    suspend fun deleteModel(modelId: String): Result<Unit> {
+        if (!isRunning) return Result.failure(IllegalStateException("Engine is not running"))
+        return httpServer.deleteModel(modelId)
     }
 
     private fun createNotificationChannel() {

@@ -152,6 +152,10 @@ class EngineCliTest {
         private val responseText: String = "",
     ) : ModelRuntime {
         private val loadedIds = mutableSetOf<String>()
+
+        override suspend fun delete(modelId: String) {
+            loadedIds.remove(modelId)
+        }
         var lastRequest: ModelRequest? = null
             private set
         val requests = mutableListOf<ModelRequest>()
