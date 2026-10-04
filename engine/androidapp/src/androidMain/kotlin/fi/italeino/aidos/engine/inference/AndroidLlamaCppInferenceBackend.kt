@@ -85,6 +85,9 @@ class AndroidLlamaCppInferenceBackend(
         } catch (e: Throwable) {
             return Result.failure(e)
         }
+        val installed = catalogManager.listInstalled().getOrElse { return Result.failure(it) }
+            .firstOrNull { it.modelId == modelId }
+            ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: model '$modelId' has no install record"))
         if (!file.isFile) return Result.failure(
             IllegalStateException("MODEL_NOT_INSTALLED: model file not found for '$modelId': ${file.absolutePath}")
         )
