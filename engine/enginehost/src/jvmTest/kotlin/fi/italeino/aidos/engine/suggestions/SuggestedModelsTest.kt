@@ -16,23 +16,31 @@ class SuggestedModelsTest {
 
     @Test
     fun onlyGgufIsMarkedRunnable() {
-        // The Android Engine has a llama.cpp backend and no ONNX runtime.
-        // Runnable exactly when the format is GGUF, however many of each format are suggested.
-        assertTrue(SuggestedModels.all.any { it.format == "gguf" })
-        SuggestedModels.all.forEach { assertEquals(it.format == "gguf", it.runnable, it.id) }
+        // The Android Engine has a llama.cpp backend and no ONNX runtime, so only GGUF can run.
+        // A GGUF is still not runnable when it needs another backend (the Laya model).
+        assertTrue(SuggestedModels.all.any { it.runnable })
+        SuggestedModels.all.filter { it.runnable }.forEach { assertEquals("gguf", it.format, it.id) }
+        assertTrue(SuggestedModels.all.first { it.id == "convaiinnovations/laya-multilingual" }.runnable.not())
     }
 
     @Test
     fun dismissedSuggestionsAreHiddenAndRestoreShowsAll() {
         val visible = SuggestedModels.visible(setOf("jsilvanus/aidos-rot13-gguf"))
-        assertEquals(listOf("jsilvanus/aidos-echo-gguf"), visible.map { it.id })
+        assertEquals(listOf("jsilvanus/aidos-echo-gguf", "convaiinnovations/laya-multilingual"), visible.map { it.id })
         assertEquals(SuggestedModels.all, SuggestedModels.visible(emptySet()))
     }
 
     @Test
     fun artifactNameIsFilesystemSafeAndDistinctPerRepo() {
         val names = SuggestedModels.all.map(SuggestedModels::artifactName)
-        assertEquals(listOf("jsilvanus_aidos-echo-gguf_echo.gguf", "jsilvanus_aidos-rot13-gguf_rot13.gguf"), names)
+        assertEquals(
+            listOf(
+                "jsilvanus_aidos-echo-gguf_echo.gguf",
+                "jsilvanus_aidos-rot13-gguf_rot13.gguf",
+                "mys_laya-multilingual-GGUF_laya_multilingual_q8_0.gguf",
+            ),
+            names,
+        )
     }
 
     @Test
