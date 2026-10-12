@@ -5,6 +5,7 @@ import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 import dev.aidos.modelruntime.InferenceBackend
+import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.models.CatalogEntry
 import dev.aidos.models.ModelCatalogManager
 import kotlinx.serialization.json.Json
@@ -77,7 +78,11 @@ class AndroidLlamaCppInferenceBackend(
     override suspend fun load(modelId: String): Result<ModelAdapter> =
         load(modelId, artifactPath = null)
 
-    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
+        load(modelId, artifactPath, ModelRunSettings.DEFAULT)
+
+    /** As above, run with the user's per-model [settings] (RFC-0103); unset fields keep the defaults. */
+    override suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> {
         val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
             ?: return Result.failure(IllegalStateException("Model $modelId is not in the model catalog"))
         val file = try {
@@ -112,9 +117,11 @@ class AndroidLlamaCppInferenceBackend(
             val adapter = AndroidLlamaCppAdapter(
                 modelId = modelId,
                 modelFile = file,
-                contextWindow = contextWindow(catalog),
-                threads = threads,
+                // Cap at the model's own context window: longer degrades output.
+                contextWindow = (settings.contextLength ?: contextWindow(catalog)).coerceAtMost(contextWindow(catalog)),
+                threads = settings.threads ?: threads,
                 embeddingMode = catalog.kind == ModelKind.EMBEDDING,
+                settings = settings,
             )
             liveAdapters[modelId]?.close()
             liveAdapters[modelId] = adapter

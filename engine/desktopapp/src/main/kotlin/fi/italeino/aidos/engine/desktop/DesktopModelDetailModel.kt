@@ -1,9 +1,9 @@
 package fi.italeino.aidos.engine.desktop
 
 import dev.aidos.cookbook.CookbookEngine
-import dev.aidos.cookbook.ModelRequirements
 import dev.aidos.decisions.LayaPackage
 import dev.aidos.kernel.ModelDescriptor
+import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.InstallerEvent
 import dev.aidos.models.ModelDownloadRequest
@@ -15,6 +15,10 @@ import fi.italeino.aidos.engine.ui.ModelDetail
 import fi.italeino.aidos.engine.ui.ModelDetailState
 import fi.italeino.aidos.engine.ui.ModelLoadingState
 import fi.italeino.aidos.engine.ui.ModelLoadingStatus
+import fi.italeino.aidos.engine.ui.RunSettingsUi
+import fi.italeino.aidos.engine.ui.SelfTestOutcome
+import fi.italeino.aidos.engine.ui.runModelSelfTest
+import fi.italeino.aidos.engine.ui.selfTestKind
 import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -38,11 +42,12 @@ import java.io.File
 class DesktopModelDetailModel(
     private val modelId: String,
     private val host: DesktopEngineHost,
+    private val prefs: DesktopPreferences,
     parentScope: CoroutineScope,
 ) {
     private val scope = CoroutineScope(parentScope.coroutineContext + Job(parentScope.coroutineContext[Job]))
 
-    private val _state = MutableStateFlow(ModelDetailState())
+    private val _state = MutableStateFlow(ModelDetailState(runSettings = prefs.runSettingsFor(modelId).toUi()))
     val state: StateFlow<ModelDetailState> = _state.asStateFlow()
 
     private val _loading = MutableStateFlow(ModelLoadingState(modelId = modelId))
@@ -59,6 +64,8 @@ class DesktopModelDetailModel(
                 val current = _loading.value.status
                 if (current != ModelLoadingStatus.LOADING && current != ModelLoadingStatus.UNLOADING) {
                     val loaded = runtime != null && modelId in runtime.loaded()
+                    val loadedWith = if (loaded) runtime?.loadedSettings(modelId)?.toUi() else null
+                    if (_state.value.loadedRunSettings != loadedWith) _state.value = _state.value.copy(loadedRunSettings = loadedWith)
                     _loading.value = _loading.value.copy(
                         status = if (loaded) ModelLoadingStatus.LOADED
                         else if (current == ModelLoadingStatus.ERROR) ModelLoadingStatus.ERROR
@@ -297,6 +304,64 @@ class DesktopModelDetailModel(
         }
     }
 
+    /** Saves to preferences at once; the runtime reads them the next time it loads this model. */
+    fun setRunSettings(value: RunSettingsUi) {
+        prefs.setRunSettings(modelId, value.toRuntime())
+        _state.value = _state.value.copy(runSettings = prefs.runSettingsFor(modelId).toUi())
+    }
+
+    /** Unload and load again so a changed setting takes effect. */
+    fun reload() {
+        val runtime = host.modelRuntime ?: return
+        if (modelId !in runtime.loaded()) return
+        scope.launch {
+            _loading.value = _loading.value.copy(status = ModelLoadingStatus.UNLOADING)
+            try {
+                withTimeout(LOAD_TIMEOUT_MS) { runtime.unload(modelId) }
+                _loading.value = _loading.value.copy(status = ModelLoadingStatus.NOT_LOADED)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _loading.value = _loading.value.copy(status = ModelLoadingStatus.ERROR, error = e.message)
+                return@launch
+            }
+            toggleLoad()
+        }
+    }
+
+    fun setSelfTestText(value: String) {
+        _state.value = _state.value.copy(selfTestText = value)
+    }
+
+    fun setSelfTestFile(value: String) {
+        _state.value = _state.value.copy(selfTestFile = value)
+    }
+
+    /** The test for this model's kind (chat, decisions, transcription, vision), through the Engine's own endpoint. */
+    fun runSelfTest() {
+        val model = _state.value.model ?: return
+        val kind = model.kind.selfTestKind() ?: return
+        val text = _state.value.selfTestText
+        val file = _state.value.selfTestFile
+        scope.launch {
+            _state.value = _state.value.copy(isSelfTesting = true, selfTestOutcome = null)
+            val outcome = try {
+                val client = host.createEngineClient() ?: throw IllegalStateException("Start the Engine first.")
+                try {
+                    withContext(Dispatchers.IO) { runModelSelfTest(client, kind, model.id, text, file) }
+                } finally {
+                    client.close()
+                }
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isSelfTesting = false)
+                throw e
+            } catch (e: Exception) {
+                SelfTestOutcome(false, "Test failed: ${e.message ?: "unknown error"}")
+            }
+            _state.value = _state.value.copy(isSelfTesting = false, selfTestOutcome = outcome)
+        }
+    }
+
     /** Same transitions as the Android screen's load button. */
     fun toggleLoad() {
         val runtime = host.modelRuntime
@@ -358,9 +423,8 @@ class DesktopModelDetailModel(
         val cookbook = CookbookEngine()
         val descriptor = ModelDescriptor(id, name, kind, provider, false, contextWindow, sizeBytes, null)
         val fitRows = listOf(4096, 8192, 16384, 32768).map { ctx ->
-            val verdict = cookbook.verdict(descriptor, device, ctx)
-            val mem = cookbook.computeResidentMemory(ModelRequirements(sizeBytes ?: 0L, ctx, 0, "GGUF"), device, ctx)
-            ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
+            val fit = cookbook.ramFit(descriptor, device, ctx)
+            ContextFitRow(ctx / 1024, fit.currentVerdict.toUiVerdict(), (fit.neededBytes / (1024 * 1024)).toInt(), fit.baselineVerdict?.toUiVerdict())
         }
         val format = formatFromProperties(catalogEntry.propertiesJson)
         return ModelDetail(
@@ -375,8 +439,16 @@ class DesktopModelDetailModel(
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
             isRunnable = format == "gguf" || (format == "onnx" && kind == dev.aidos.kernel.ModelKind.DECISION),
+            format = format,
+            deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
+            deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
+            baselineFreeRamMB = device.baselineAvailableRamBytes?.let { (it / (1024L * 1024L)).toInt() },
         )
     }
+
+    private fun ModelRunSettings.toUi() = RunSettingsUi(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+
+    private fun RunSettingsUi.toRuntime() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
 
     private companion object {
         /** Same budget as Android's ModelLoader default. */

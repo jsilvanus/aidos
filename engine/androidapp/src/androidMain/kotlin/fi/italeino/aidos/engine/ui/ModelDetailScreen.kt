@@ -75,6 +75,14 @@ fun ModelDetailScreen(
         SettingsStore.setPreferredContextLength(context, preferredContext)
     }
 
+    LaunchedEffect(modelId) {
+        SettingsStore.getRunSettings(context, modelId).let { saved ->
+            viewModel.setRunSettingsState(
+                RunSettingsUi(saved.contextLength, saved.threads, saved.batchSize, saved.gpuLayers, saved.temperature, saved.topP, saved.topK)
+            )
+        }
+    }
+
     val onToggleLoad: () -> Unit = onToggleLoad@{
         if (modelLoader == null) {
             modelLoadingState = modelLoadingState.copy(
@@ -170,6 +178,18 @@ fun ModelDetailScreen(
                 onTestEmbeddings = viewModel::testEmbeddings,
                 onToggleLoad = onToggleLoad,
                 onTestChat = { state.model?.let { onTestChatClick?.invoke(it.id, it.name) } },
+                onRunSelfTest = viewModel::runSelfTest,
+                onSelfTestTextChange = viewModel::setSelfTestText,
+                onSelfTestFileChange = viewModel::setSelfTestFile,
+                onRunSettingsChange = { ui ->
+                    SettingsStore.setRunSettings(
+                        context, modelId,
+                        dev.aidos.modelruntime.ModelRunSettings(
+                            ui.contextLength, ui.threads, ui.batchSize, ui.gpuLayers, ui.temperature, ui.topP, ui.topK,
+                        ),
+                    )
+                    viewModel.setRunSettingsState(ui)
+                },
             ),
             modifier = Modifier.padding(innerPadding),
         )
