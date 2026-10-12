@@ -5,7 +5,12 @@ import androidx.lifecycle.viewModelScope
 import dev.aidos.cookbook.CookbookVerdict
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
+import dev.aidos.models.InstallerEvent
 import dev.aidos.models.ModelDownloadRequest
+import dev.aidos.models.PackageInstall
+import dev.aidos.decisions.LayaPackage
+import dev.aidos.stt.WhisperPackage
+import dev.aidos.vision.VisionPackage
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
@@ -130,8 +135,13 @@ class ModelDetailViewModel : ViewModel() {
                 .getOrNull()
                 ?.firstOrNull { it.modelId == modelId }
             val file = installed?.path?.let(::File)
-            val valid = installed != null && file != null && file.isFile &&
-                file.length() == installed.sizeBytes && installed.sizeBytes > 0L
+            // A GGUF is one file of the recorded size; an ONNX decision, speech or vision model is a package directory.
+            val valid = installed != null && file != null && installed.sizeBytes > 0L && when {
+                file.isFile -> file.length() == installed.sizeBytes
+                file.isDirectory -> (LayaPackage.isPackage(file) || WhisperPackage.isPackage(file) || VisionPackage.isPackage(file)) &&
+                    file.listFiles { f -> f.isFile }.orEmpty().sumOf { it.length() } == installed.sizeBytes
+                else -> false
+            }
 
             _state.value = _state.value.copy(
                 isInstalled = valid,
@@ -164,6 +174,33 @@ class ModelDetailViewModel : ViewModel() {
                 val detail = browser.getModelDetail(model.id).getOrThrow()
                 val remote = hf.getModel(model.id).getOrThrow()
 
+                val modelsDir = File(service.filesDir, "models")
+                modelsDir.mkdirs()
+
+                // No GGUF but an ONNX decision, Whisper or SmolVLM package: install it as one directory,
+                // exactly as the desktop does (shared choice and request in PackageInstall).
+                val onnxPackage = PackageInstall.choose(remote.packages)
+                if (remote.quantizations.isEmpty() && onnxPackage != null) {
+                    val packageDir = File(modelsDir, PackageInstall.directoryName(model.id))
+                    DefaultModelInstallerWorkflow(downloader, catalog)
+                        .installPackage(PackageInstall.toRequest(model.id, onnxPackage, packageDir.absolutePath)) { event ->
+                            when (event) {
+                                is InstallerEvent.DownloadProgress -> {
+                                    val total = event.totalBytes
+                                    if (total != null && total > 0) {
+                                        _state.value = _state.value.copy(downloadProgress = ((event.bytesDownloaded * 100L) / total).toInt().coerceIn(0, 100))
+                                    }
+                                }
+                                is InstallerEvent.InstallationFailed ->
+                                    _state.value = _state.value.copy(isDownloading = false, downloadError = event.reason)
+                                else -> Unit
+                            }
+                        }.getOrThrow()
+                    _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
+                    refreshInstalledState(model.id)
+                    return@launch
+                }
+
                 // Prefer known GGUF quantizations (Q4_K_M), but fall back to any available artifact
                 val chosenArtifact = when {
                     remote.quantizations.isNotEmpty() -> {
@@ -180,9 +217,7 @@ class ModelDetailViewModel : ViewModel() {
                     else -> throw IllegalStateException("No downloadable artifact available for ${model.id}")
                 }
 
-                val modelsDir = File(service.filesDir, "models")
-                modelsDir.mkdirs()
-                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val safeModelId = PackageInstall.directoryName(model.id)
                 val (artifactBaseName, downloadUrl, expectedDigest) = chosenArtifact
                 val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
                 val destination = File(modelsDir, artifactName).absolutePath
@@ -346,8 +381,9 @@ class ModelDetailViewModel : ViewModel() {
                 // Delete file on disk if present
                 if (!installedPath.isNullOrBlank()) {
                     try {
+                        // deleteRecursively: an ONNX package is a directory, which delete() leaves behind.
                         val f = File(installedPath)
-                        if (f.exists()) f.delete()
+                        if (f.exists()) f.deleteRecursively()
                     } catch (_: Exception) {
                         // best-effort
                     }
@@ -411,7 +447,7 @@ class ModelDetailViewModel : ViewModel() {
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf",
+            isRunnable = dev.aidos.models.PackageInstall.isRunnable(format, kind),
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
