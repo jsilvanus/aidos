@@ -96,6 +96,8 @@ data class ContextFitRow(
     val contextLength: Int,
     val verdict: ModelFitVerdict,
     val estimatedMemoryMB: Int,
+    /** Fit when the machine is at the user's RAM baseline; null when no baseline is set. */
+    val baselineVerdict: ModelFitVerdict? = null,
 )
 
 data class ModelDetail(
@@ -111,7 +113,31 @@ data class ModelDetail(
     val sizeMB: Int,
     val contextFitTable: List<ContextFitRow> = emptyList(),
     val isRunnable: Boolean = true,
+    /** File format of the installed or offered artifact ("gguf", "onnx"), or empty when unknown. */
+    val format: String = "",
+    /** The device's total and currently free RAM when the card was built; 0 means unknown. */
+    val deviceTotalRamMB: Int = 0,
+    val deviceFreeRamMB: Int = 0,
+    /** RAM free at the user's baseline (total minus baseline in use); null when no baseline is set. */
+    val baselineFreeRamMB: Int? = null,
 )
+
+/**
+ * A model's run settings as the card edits them. Null means "the backend's default". Mirrors the
+ * runtime's ModelRunSettings, which the hosts convert to and from (this module stays clear of :modelruntime,
+ * which has no Android target); the runtime clamps every value into what llama.cpp accepts.
+ */
+data class RunSettingsUi(
+    val contextLength: Int? = null,
+    val threads: Int? = null,
+    val batchSize: Int? = null,
+    val gpuLayers: Int? = null,
+    val temperature: Float? = null,
+    val topP: Float? = null,
+    val topK: Int? = null,
+) {
+    val isDefault: Boolean get() = this == RunSettingsUi()
+}
 
 data class ModelDetailState(
     val model: ModelDetail? = null,
@@ -126,6 +152,14 @@ data class ModelDetailState(
     val embeddingVector: List<Float> = emptyList(),
     val isEmbeddingTesting: Boolean = false,
     val embeddingError: String? = null,
+    /** Per-kind model test (chat, decisions, transcription, vision); see [ModelTestKind]. */
+    val selfTestText: String = "",
+    val selfTestFile: String = "",
+    val isSelfTesting: Boolean = false,
+    val selfTestOutcome: SelfTestOutcome? = null,
+    /** Saved run settings for this model, and the ones its resident copy was loaded with (null when not loaded). */
+    val runSettings: RunSettingsUi = RunSettingsUi(),
+    val loadedRunSettings: RunSettingsUi? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
 )

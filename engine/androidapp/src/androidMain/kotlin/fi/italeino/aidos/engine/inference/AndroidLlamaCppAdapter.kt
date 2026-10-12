@@ -7,6 +7,7 @@ import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EmbeddingModelAdapter
+import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -28,6 +29,7 @@ class AndroidLlamaCppAdapter(
     override val contextWindow: Int,
     private val threads: Int = 4,
     private val embeddingMode: Boolean = false,
+    private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
 ) : CancellableModelAdapter, EmbeddingModelAdapter {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
@@ -44,9 +46,9 @@ class AndroidLlamaCppAdapter(
             .setCtxSize(contextWindow)
             .setThreads(threads)
             .setThreadsBatch(threads)
-            .setBatchSize(512)
-            .setUbatchSize(512)
-            .setGpuLayers(0)
+            .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+            .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+            .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
         if (embeddingMode) parameters = parameters.enableEmbedding()
         model = LlamaModel(parameters)
     }
@@ -103,9 +105,9 @@ class AndroidLlamaCppAdapter(
             val prompt = formatPrompt(request.messages)
             val parameters = InferenceParameters(prompt)
                 .setNPredict(request.maxOutputTokens)
-                .setTemperature(0.7f)
-                .setTopP(0.95f)
-                .setTopK(40)
+                .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
             val output = StringBuilder()
             var tokenCount = 0
             // `generate` is lazy: emitting as the iterator advances keeps the UI and the

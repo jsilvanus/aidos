@@ -257,6 +257,45 @@ class ModelDetailViewModel : ViewModel() {
         _state.value = _state.value.copy(embeddingInput = value)
     }
 
+    /** Mirrors the saved run settings into the card; the screen persists them (it holds the Context). */
+    fun setRunSettingsState(value: RunSettingsUi) {
+        _state.value = _state.value.copy(runSettings = value)
+    }
+
+    fun setSelfTestText(value: String) {
+        _state.value = _state.value.copy(selfTestText = value)
+    }
+
+    fun setSelfTestFile(value: String) {
+        _state.value = _state.value.copy(selfTestFile = value)
+    }
+
+    /** The test for this model's kind (decisions, transcription, vision), through the Engine's own endpoint. */
+    fun runSelfTest() {
+        val model = _state.value.model ?: return
+        val kind = model.kind.selfTestKind() ?: return
+        val text = _state.value.selfTestText
+        val file = _state.value.selfTestFile
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isSelfTesting = true, selfTestOutcome = null)
+            val outcome = try {
+                val service = EngineService.instance ?: throw IllegalStateException("Engine is not running")
+                val client = service.createEngineClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
+                try {
+                    runModelSelfTest(client, kind, model.id, text, file)
+                } finally {
+                    client.close()
+                }
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isSelfTesting = false)
+                throw e
+            } catch (e: Exception) {
+                SelfTestOutcome(false, "Test failed: ${e.message ?: "unknown error"}")
+            }
+            _state.value = _state.value.copy(isSelfTesting = false, selfTestOutcome = outcome)
+        }
+    }
+
     fun testEmbeddings() {
         val model = _state.value.model ?: return
         val input = _state.value.embeddingInput.trim()
@@ -353,10 +392,8 @@ class ModelDetailViewModel : ViewModel() {
         )
         val contexts = listOf(4096, 8192, 16384, 32768)
         val fitRows = contexts.map { ctx ->
-            val verdict = cookbook.verdict(descriptor, device, ctx)
-            val req = dev.aidos.cookbook.ModelRequirements(sizeBytes ?: 0L, ctx, 0, "GGUF")
-            val mem = cookbook.computeResidentMemory(req, device, ctx)
-            ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
+            val fit = cookbook.ramFit(descriptor, device, ctx)
+            ContextFitRow(ctx / 1024, fit.currentVerdict.toUiVerdict(), (fit.neededBytes / (1024 * 1024)).toInt(), fit.baselineVerdict?.toUiVerdict())
         }
         val format = try {
             Json.parseToJsonElement(catalogEntry.propertiesJson).jsonObject["format"]?.jsonPrimitive?.content
@@ -375,6 +412,10 @@ class ModelDetailViewModel : ViewModel() {
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
             isRunnable = format == "gguf",
+            format = format,
+            deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
+            deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
+            baselineFreeRamMB = device.baselineAvailableRamBytes?.let { (it / (1024L * 1024L)).toInt() },
         )
     }
 

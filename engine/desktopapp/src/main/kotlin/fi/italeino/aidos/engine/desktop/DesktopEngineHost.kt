@@ -15,6 +15,7 @@ import dev.aidos.kernel.CapabilityId
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.stt.OnnxSttBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
+import dev.aidos.modelruntime.RunSettingsSource
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.modelruntime.create
 import dev.aidos.models.DatabaseModelCatalogManager
@@ -55,6 +56,8 @@ import java.io.File
 class DesktopEngineHost(
     private val modelsDir: File = DesktopPaths.modelsDir,
     stateDir: File = DesktopPaths.stateDir,
+    /** Per-model run settings the runtime reads at load time (RFC-0103); defaults when none are configured. */
+    private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
     /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
     private val ramBaselineUsedBytes: () -> Long? = { null },
 ) {
@@ -120,7 +123,7 @@ class DesktopEngineHost(
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
             // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45) and Whisper
             // speech-to-text packages (RFC-0103) from the same directory.
-            val runtime = GlobalModelRuntime(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir))
+            val runtime = GlobalModelRuntime(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), runSettings = runSettings)
             val server = EngineHttpServer(
                 tokens,
                 runtime,
