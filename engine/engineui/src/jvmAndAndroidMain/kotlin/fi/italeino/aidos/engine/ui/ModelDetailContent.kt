@@ -28,6 +28,10 @@ class ModelDetailActions(
     val onToggleLoad: () -> Unit,
     /** Null hides the Test Chat button (hosts without a chat screen). */
     val onTestChat: (() -> Unit)? = null,
+    /** Null hides the per-kind test panel (chat, decisions, transcription, vision). */
+    val onRunSelfTest: (() -> Unit)? = null,
+    val onSelfTestTextChange: (String) -> Unit = {},
+    val onSelfTestFileChange: (String) -> Unit = {},
 )
 
 /**
@@ -51,6 +55,8 @@ fun ModelDetailContent(
     val embeddingError = state.embeddingError
     val loadError = loadingState.error
     val onTestChat = actions.onTestChat
+    val onRunSelfTest = actions.onRunSelfTest
+    val testKind = state.model?.kind?.selfTestKind()
     when {
         state.isLoading -> {
             Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -241,6 +247,8 @@ fun ModelDetailContent(
                             }
                         }
                     }
+                } else if (onRunSelfTest != null && testKind != null && (testKind != ModelTestKind.CHAT || onTestChat == null)) {
+                    SelfTestPanel(testKind, state, engineState, model.isRunnable, actions)
                 } else if (onTestChat != null) {
                     Button(
                         onClick = onTestChat,
@@ -329,6 +337,72 @@ fun ModelDetailContent(
 
                 if (loadingState.status == ModelLoadingStatus.ERROR && loadError != null) {
                     Text(loadError, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+/** The test offered for a model's kind: an input or two, a Run button, and the verdict with its evidence. */
+@Composable
+private fun SelfTestPanel(
+    kind: ModelTestKind,
+    state: ModelDetailState,
+    engineState: EngineState,
+    isRunnable: Boolean,
+    actions: ModelDetailActions,
+) {
+    val outcome = state.selfTestOutcome
+    val ready = engineState == EngineState.READY && state.isInstalled && isRunnable
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (kind.needsFile) {
+            OutlinedTextField(
+                value = state.selfTestFile,
+                onValueChange = actions.onSelfTestFileChange,
+                label = { Text(kind.fileLabel) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        OutlinedTextField(
+            value = state.selfTestText,
+            onValueChange = actions.onSelfTestTextChange,
+            label = { Text(kind.inputLabel) },
+            placeholder = { Text(kind.defaultText) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { actions.onRunSelfTest?.invoke() },
+            enabled = ready && !state.isSelfTesting,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+        ) {
+            Text(
+                when {
+                    state.isSelfTesting -> "Testing..."
+                    engineState == EngineState.STARTING -> "Engine starting..."
+                    !state.isInstalled -> "Download model to test"
+                    !isRunnable -> "No runtime for this format yet"
+                    else -> kind.buttonLabel
+                },
+                color = Color.White,
+            )
+        }
+        if (outcome != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (outcome.passed) MaterialTheme.colorScheme.surfaceVariant
+                    else MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        (if (outcome.passed) "Passed: " else "Failed: ") + outcome.title,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                    )
+                    outcome.lines.forEach { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }

@@ -199,8 +199,11 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
                 onEmbeddingInputChange = detail::setEmbeddingInput,
                 onTestEmbeddings = detail::testEmbeddings,
                 onToggleLoad = detail::toggleLoad,
-                // Test Chat is out of scope for the first desktop version.
+                // No chat screen on desktop; the per-kind panel (including a one-shot chat test) covers it.
                 onTestChat = null,
+                onRunSelfTest = detail::runSelfTest,
+                onSelfTestTextChange = detail::setSelfTestText,
+                onSelfTestFileChange = detail::setSelfTestFile,
             ),
         )
     }

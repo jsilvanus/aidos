@@ -257,6 +257,40 @@ class ModelDetailViewModel : ViewModel() {
         _state.value = _state.value.copy(embeddingInput = value)
     }
 
+    fun setSelfTestText(value: String) {
+        _state.value = _state.value.copy(selfTestText = value)
+    }
+
+    fun setSelfTestFile(value: String) {
+        _state.value = _state.value.copy(selfTestFile = value)
+    }
+
+    /** The test for this model's kind (decisions, transcription, vision), through the Engine's own endpoint. */
+    fun runSelfTest() {
+        val model = _state.value.model ?: return
+        val kind = model.kind.selfTestKind() ?: return
+        val text = _state.value.selfTestText
+        val file = _state.value.selfTestFile
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isSelfTesting = true, selfTestOutcome = null)
+            val outcome = try {
+                val service = EngineService.instance ?: throw IllegalStateException("Engine is not running")
+                val client = service.createEngineClient() ?: throw IllegalStateException("Engine endpoint is unavailable")
+                try {
+                    runModelSelfTest(client, kind, model.id, text, file)
+                } finally {
+                    client.close()
+                }
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isSelfTesting = false)
+                throw e
+            } catch (e: Exception) {
+                SelfTestOutcome(false, "Test failed: ${e.message ?: "unknown error"}")
+            }
+            _state.value = _state.value.copy(isSelfTesting = false, selfTestOutcome = outcome)
+        }
+    }
+
     fun testEmbeddings() {
         val model = _state.value.model ?: return
         val input = _state.value.embeddingInput.trim()

@@ -15,6 +15,9 @@ import fi.italeino.aidos.engine.ui.ModelDetail
 import fi.italeino.aidos.engine.ui.ModelDetailState
 import fi.italeino.aidos.engine.ui.ModelLoadingState
 import fi.italeino.aidos.engine.ui.ModelLoadingStatus
+import fi.italeino.aidos.engine.ui.SelfTestOutcome
+import fi.italeino.aidos.engine.ui.runModelSelfTest
+import fi.italeino.aidos.engine.ui.selfTestKind
 import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -283,6 +286,39 @@ class DesktopModelDetailModel(
                     embeddingError = "Embedding test failed: ${e.message ?: "unknown error"}",
                 )
             }
+        }
+    }
+
+    fun setSelfTestText(value: String) {
+        _state.value = _state.value.copy(selfTestText = value)
+    }
+
+    fun setSelfTestFile(value: String) {
+        _state.value = _state.value.copy(selfTestFile = value)
+    }
+
+    /** The test for this model's kind (chat, decisions, transcription, vision), through the Engine's own endpoint. */
+    fun runSelfTest() {
+        val model = _state.value.model ?: return
+        val kind = model.kind.selfTestKind() ?: return
+        val text = _state.value.selfTestText
+        val file = _state.value.selfTestFile
+        scope.launch {
+            _state.value = _state.value.copy(isSelfTesting = true, selfTestOutcome = null)
+            val outcome = try {
+                val client = host.createEngineClient() ?: throw IllegalStateException("Start the Engine first.")
+                try {
+                    withContext(Dispatchers.IO) { runModelSelfTest(client, kind, model.id, text, file) }
+                } finally {
+                    client.close()
+                }
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(isSelfTesting = false)
+                throw e
+            } catch (e: Exception) {
+                SelfTestOutcome(false, "Test failed: ${e.message ?: "unknown error"}")
+            }
+            _state.value = _state.value.copy(isSelfTesting = false, selfTestOutcome = outcome)
         }
     }
 

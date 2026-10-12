@@ -170,6 +170,9 @@ fun ModelDetailScreen(
                 onTestEmbeddings = viewModel::testEmbeddings,
                 onToggleLoad = onToggleLoad,
                 onTestChat = { state.model?.let { onTestChatClick?.invoke(it.id, it.name) } },
+                onRunSelfTest = viewModel::runSelfTest,
+                onSelfTestTextChange = viewModel::setSelfTestText,
+                onSelfTestFileChange = viewModel::setSelfTestFile,
             ),
             modifier = Modifier.padding(innerPadding),
         )

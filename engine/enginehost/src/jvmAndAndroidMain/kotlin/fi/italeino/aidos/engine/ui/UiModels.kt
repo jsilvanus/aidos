@@ -126,6 +126,11 @@ data class ModelDetailState(
     val embeddingVector: List<Float> = emptyList(),
     val isEmbeddingTesting: Boolean = false,
     val embeddingError: String? = null,
+    /** Per-kind model test (chat, decisions, transcription, vision); see [ModelTestKind]. */
+    val selfTestText: String = "",
+    val selfTestFile: String = "",
+    val isSelfTesting: Boolean = false,
+    val selfTestOutcome: SelfTestOutcome? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
 )
