@@ -9,6 +9,7 @@ import fi.italeino.aidos.sdk.client.DecisionRequest
 import fi.italeino.aidos.sdk.client.TranscriptionRequest
 import java.io.File
 import java.util.Base64
+import kotlin.time.TimeSource
 
 /**
  * The test a model card offers, chosen by what the model is (RFC-0103, RFC-0022). Embeddings keep
@@ -37,7 +38,44 @@ fun ModelKind.selfTestKind(): ModelTestKind? = when (this) {
 }
 
 /** What the card shows after a run: a verdict line and the evidence behind it. */
-data class SelfTestOutcome(val passed: Boolean, val title: String, val lines: List<String> = emptyList())
+data class SelfTestOutcome(
+    val passed: Boolean,
+    val title: String,
+    val lines: List<String> = emptyList(),
+    /** Wall time of the whole request, filled in by [runModelSelfTest]. */
+    val durationMs: Long = 0,
+    /** Tokens the model generated, chat only. */
+    val generatedTokens: Int? = null,
+) {
+    /**
+     * Speed over the whole request, so a cold model's load time is included and the first run reads
+     * slow. Null unless the test generates tokens.
+     */
+    val tokensPerSecond: Double?
+        get() = generatedTokens?.takeIf { it > 0 && durationMs > 0 }?.let { it * 1000.0 / durationMs }
+}
+
+/** The Engine `/v1/` endpoint that serves a model of this kind, as the handshake names it; null when none does. */
+fun ModelKind.engineEndpoint(): String? = when (this) {
+    ModelKind.LLM -> "/v1/chat/completions"
+    ModelKind.EMBEDDING -> "/v1/embeddings"
+    ModelKind.DECISION -> "/v1/decisions"
+    ModelKind.STT -> "/v1/audio/transcriptions"
+    else -> null
+}
+
+/** Short human name for the kind, for the card's badge. */
+fun ModelKind.displayName(): String = when (this) {
+    ModelKind.LLM -> "Chat"
+    ModelKind.EMBEDDING -> "Embeddings"
+    ModelKind.DECISION -> "Decisions"
+    ModelKind.STT -> "Speech to text"
+    ModelKind.TTS -> "Text to speech"
+    ModelKind.VISION -> "Vision"
+    ModelKind.OCR -> "OCR"
+    ModelKind.RERANKER -> "Reranker"
+    ModelKind.TRANSLATION -> "Translation"
+}
 
 /**
  * Runs the test for [kind] through the Engine's own `/v1/` endpoint with the Aidos SDK client, the
@@ -51,11 +89,15 @@ suspend fun runModelSelfTest(
     modelId: String,
     text: String,
     filePath: String,
-): SelfTestOutcome = when (kind) {
-    ModelTestKind.CHAT -> chatTest(client, modelId, text.ifBlank { kind.defaultText })
-    ModelTestKind.DECISION -> decisionTest(client, modelId, text.ifBlank { kind.defaultText })
-    ModelTestKind.TRANSCRIPTION -> transcriptionTest(client, modelId, text.trim(), filePath.trim())
-    ModelTestKind.VISION -> visionTest(filePath.trim())
+): SelfTestOutcome {
+    val started = TimeSource.Monotonic.markNow()
+    val outcome = when (kind) {
+        ModelTestKind.CHAT -> chatTest(client, modelId, text.ifBlank { kind.defaultText })
+        ModelTestKind.DECISION -> decisionTest(client, modelId, text.ifBlank { kind.defaultText })
+        ModelTestKind.TRANSCRIPTION -> transcriptionTest(client, modelId, text.trim(), filePath.trim())
+        ModelTestKind.VISION -> visionTest(filePath.trim())
+    }
+    return outcome.copy(durationMs = started.elapsedNow().inWholeMilliseconds)
 }
 
 private suspend fun chatTest(client: AidosEngineClient, modelId: String, prompt: String): SelfTestOutcome {
@@ -66,7 +108,7 @@ private suspend fun chatTest(client: AidosEngineClient, modelId: String, prompt:
     return if (reply.isEmpty()) {
         SelfTestOutcome(false, "The model answered with nothing")
     } else {
-        SelfTestOutcome(true, "Chat works", listOf(reply, "${response.usage.completion_tokens} tokens generated"))
+        SelfTestOutcome(true, "Chat works", listOf(reply), generatedTokens = response.usage.completion_tokens)
     }
 }
 

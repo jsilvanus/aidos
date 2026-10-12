@@ -78,12 +78,7 @@ fun ModelDetailContent(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    "Size: ${formatSize(state.installedSizeBytes ?: model.sizeMB.toLong() * 1024 * 1024)}",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                ModelHeader(model, state, loadingState)
 
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text("Preferred context: $preferredContext tokens", fontSize = 12.sp)
@@ -95,7 +90,13 @@ fun ModelDetailContent(
                         modifier = Modifier.fillMaxWidth()
                     )
                     val nearest = model.contextFitTable.minByOrNull { kotlin.math.abs(it.contextLength * 1024 - preferredContext) }
-                    nearest?.let { FitVerdictChip(it.verdict) }
+                    nearest?.let { row ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FitVerdictChip(row.verdict)
+                            Text("against free RAM now", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        MemoryLines(model, row)
+                    }
                 }
 
                 LicenseInfoCard(
@@ -403,8 +404,86 @@ private fun SelfTestPanel(
                         fontSize = 12.sp,
                     )
                     outcome.lines.forEach { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Text(
+                        testTimingLine(outcome),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
     }
+}
+
+/** Name, what it is, whether it is on this device, and what it serves. */
+@Composable
+private fun ModelHeader(model: ModelDetail, state: ModelDetailState, loadingState: ModelLoadingState) {
+    val status = modelStatus(state, loadingState)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Badge(model.kind.displayName())
+            if (model.format.isNotBlank()) Badge(model.format.uppercase())
+            Badge(status.first, error = status.second)
+        }
+        if (model.description.isNotBlank()) {
+            Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        model.kind.engineEndpoint()?.let {
+            Text("Serves $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            "Size on disk: ${formatSize(state.installedSizeBytes ?: model.sizeMB.toLong() * 1024 * 1024)}",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun Badge(text: String, error: Boolean = false) {
+    val color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = color.copy(alpha = 0.12f),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+        )
+    }
+}
+
+/** Label for the status chip, and whether it is a problem. */
+internal fun modelStatus(state: ModelDetailState, loadingState: ModelLoadingState): Pair<String, Boolean> = when {
+    state.isDownloading -> "Downloading ${state.downloadProgress}%" to false
+    state.downloadError != null && !state.isInstalled -> "Download failed" to true
+    loadingState.status == ModelLoadingStatus.LOADING -> "Loading" to false
+    loadingState.status == ModelLoadingStatus.UNLOADING -> "Unloading" to false
+    loadingState.status == ModelLoadingStatus.ERROR -> "Load failed" to true
+    loadingState.status == ModelLoadingStatus.LOADED -> "Loaded" to false
+    state.isInstalled -> "Installed" to false
+    else -> "Not installed" to false
+}
+
+/** RAM the chosen context needs, next to what the device has free and in total. 0 means the host could not tell. */
+@Composable
+private fun MemoryLines(model: ModelDetail, row: ContextFitRow) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Text("RAM needed at ${row.contextLength}K tokens: ${formatMb(row.estimatedMemoryMB)}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    if (model.deviceFreeRamMB > 0) {
+        val total = if (model.deviceTotalRamMB > 0) " of ${formatMb(model.deviceTotalRamMB)}" else ""
+        Text("Free now: ${formatMb(model.deviceFreeRamMB)}$total", fontSize = 12.sp, color = muted)
+    }
+}
+
+internal fun formatMb(mb: Int): String = if (mb >= 1024) "%.1f GB".format(mb / 1024.0) else "$mb MB"
+
+/** "Last run: 3.2 s, 11 tokens/s". The first run on a cold model includes loading it. */
+internal fun testTimingLine(outcome: SelfTestOutcome): String {
+    val seconds = "%.1f s".format(outcome.durationMs / 1000.0)
+    val speed = outcome.tokensPerSecond?.let { ", %.1f tokens/s".format(it) }.orEmpty()
+    return "Last run: $seconds$speed (includes loading if the model was not resident)"
 }

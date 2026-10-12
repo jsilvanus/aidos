@@ -111,6 +111,11 @@ data class ModelDetail(
     val sizeMB: Int,
     val contextFitTable: List<ContextFitRow> = emptyList(),
     val isRunnable: Boolean = true,
+    /** File format of the installed or offered artifact ("gguf", "onnx"), or empty when unknown. */
+    val format: String = "",
+    /** The device's total and currently free RAM when the card was built; 0 means unknown. */
+    val deviceTotalRamMB: Int = 0,
+    val deviceFreeRamMB: Int = 0,
 )
 
 data class ModelDetailState(

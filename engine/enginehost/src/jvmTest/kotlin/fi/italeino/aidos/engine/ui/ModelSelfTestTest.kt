@@ -26,6 +26,29 @@ class ModelSelfTestTest {
     }
 
     @Test
+    fun everyKindHasANameAndServedKindsHaveAnEndpoint() {
+        ModelKind.values().forEach { assertTrue(it.displayName().isNotBlank()) }
+        assertEquals("/v1/chat/completions", ModelKind.LLM.engineEndpoint())
+        assertEquals("/v1/embeddings", ModelKind.EMBEDDING.engineEndpoint())
+        assertEquals("/v1/decisions", ModelKind.DECISION.engineEndpoint())
+        assertEquals("/v1/audio/transcriptions", ModelKind.STT.engineEndpoint())
+        assertNull(ModelKind.TTS.engineEndpoint())
+    }
+
+    @Test
+    fun speedIsTokensOverTheWholeRequestAndOnlyForChat() = runBlocking {
+        val outcome = SelfTestOutcome(true, "ok", generatedTokens = 20, durationMs = 2000)
+        assertEquals(10.0, outcome.tokensPerSecond)
+        assertNull(SelfTestOutcome(true, "ok", durationMs = 2000).tokensPerSecond)
+        assertNull(SelfTestOutcome(true, "ok", generatedTokens = 0, durationMs = 2000).tokensPerSecond)
+        assertNull(SelfTestOutcome(true, "ok", generatedTokens = 5, durationMs = 0).tokensPerSecond)
+        // The runner records generated tokens and a duration for chat, none for decisions.
+        val chat = run(ModelTestKind.CHAT, FakeClient(chat = "Hi"))
+        assertEquals(2, chat.generatedTokens)
+        assertNull(run(ModelTestKind.DECISION, FakeClient(decision = null)).generatedTokens)
+    }
+
+    @Test
     fun chatPassesOnAReplyAndFailsOnSilenceOrNoAnswer() = runBlocking {
         val ok = run(ModelTestKind.CHAT, FakeClient(chat = "Hello there."))
         assertTrue(ok.passed); assertTrue("Hello there." in ok.lines)

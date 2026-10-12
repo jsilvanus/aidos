@@ -400,6 +400,9 @@ class DesktopModelDetailModel(
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
             isRunnable = format == "gguf" || (format == "onnx" && kind == dev.aidos.kernel.ModelKind.DECISION),
+            format = format,
+            deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
+            deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
         )
     }
 

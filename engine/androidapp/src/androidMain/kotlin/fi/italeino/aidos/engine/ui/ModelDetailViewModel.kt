@@ -409,6 +409,9 @@ class ModelDetailViewModel : ViewModel() {
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
             isRunnable = format == "gguf",
+            format = format,
+            deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
+            deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
         )
     }
 
