@@ -38,8 +38,11 @@ generation_config.json, config.json, preprocessor_config.json   (optional; 128 m
 node scripts/stt/fetch-whisper.mjs ~/.aidos/models/whisper-small onnx-community/whisper-small quantized
 ```
 
-The Engine lists it as kind `stt` with capability `audio.transcriptions`. Installing through the in-app Hugging Face browser is **not**
-wired yet: its package detection only recognises Laya layouts and would treat each Whisper graph as a separate package.
+The Engine lists it as kind `stt` with capability `audio.transcriptions`. On desktop the in-app Hugging Face browser installs a
+Whisper repo (`onnx-community/whisper-*` or an Optimum export) as one package: `ModelPackage.detectWhisper` picks one encoder plus
+the KV-cached decoder of the same precision (int8 `_quantized` first, then `_int8`, fp32, `_fp16`) and the tokenizer/config
+files, and the installer downloads them into a directory, all-or-nothing. The Android model screen has no package install yet
+(Laya has the same gap); use the fetch script or copy the directory.
 
 ## What was measured (desktop JVM, CPU, int8 "quantized" graphs, this repo's tests)
 
@@ -75,4 +78,4 @@ that change the vocabulary are fine; `tokenizer.json` and the added-token ids ar
 - Android: `AndroidOnnxSttBackend` mirrors the JVM decorator and the Laya one; unverified on a device. The int8 graphs are
   the intended phone size; whether small is fast enough there is open.
 - No streaming/partial results, no timestamps, no GPU/NNAPI provider.
-- In-app install (Hugging Face browser) for Whisper repos.
+- Android in-app package install (desktop has it).

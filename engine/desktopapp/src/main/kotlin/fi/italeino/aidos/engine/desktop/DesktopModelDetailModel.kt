@@ -128,18 +128,18 @@ class DesktopModelDetailModel(
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
                 // A GGUF quantization is the single-file path (prefer Q4_K_M, as on Android). Failing
-                // that, an ONNX decision package (graph + tokenizer + config) installs as a directory.
+                // that, an ONNX decision package (graph + tokenizer + config) or a Whisper speech-to-text package installs as a directory.
                 // Anything else (a lone .onnx, safetensors, ...) has no backend here, so installing it
                 // would leave a file the Engine can never load.
-                val decisionPackage = remote.packages.firstOrNull { it.isDecisionPackage }
-                if (remote.quantizations.isEmpty() && decisionPackage != null) {
-                    installDecisionPackage(model.id, safeModelId, decisionPackage)
+                val onnxPackage = remote.packages.firstOrNull { it.isDecisionPackage } ?: remote.packages.firstOrNull { it.isSpeechPackage }
+                if (remote.quantizations.isEmpty() && onnxPackage != null) {
+                    installOnnxPackage(model.id, safeModelId, onnxPackage)
                     return@launch
                 }
                 if (remote.quantizations.isEmpty()) {
                     val found = remote.artifacts.map { it.format.name }.distinct().joinToString().ifEmpty { "none" }
                     throw IllegalStateException(
-                        "No GGUF file or ONNX decision package in ${model.id} (formats found: $found); this Engine cannot run it.",
+                        "No GGUF file, ONNX decision package or Whisper package in ${model.id} (formats found: $found); this Engine cannot run it.",
                     )
                 }
                 val (artifactBaseName, downloadUrl, expectedDigest) = remote.quantizations.let { qs ->
@@ -197,14 +197,14 @@ class DesktopModelDetailModel(
     }
 
     /** Downloads every file of [pkg] into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
-    private suspend fun installDecisionPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+    private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
         val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
         val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
             ModelPackageDownloadRequest(
                 modelId = modelId,
                 files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
                 destinationDir = File(host.artifactDir, safeId).absolutePath,
-                kind = dev.aidos.kernel.ModelKind.DECISION,
+                kind = if (pkg.isSpeechPackage) dev.aidos.kernel.ModelKind.STT else dev.aidos.kernel.ModelKind.DECISION,
                 format = "onnx",
                 backend = "onnx-runtime",
             )
