@@ -31,12 +31,13 @@ object DesktopPaths {
 object DesktopDevice {
     private val os = ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
 
-    fun profile(): DeviceProfile = DeviceProfile(
+    fun profile(baselineUsedRamBytes: Long? = null): DeviceProfile = DeviceProfile(
         totalRamBytes = os?.totalMemorySize ?: Runtime.getRuntime().maxMemory(),
         availableRamBytes = os?.freeMemorySize ?: Runtime.getRuntime().freeMemory(),
         storageFreeBytes = DesktopPaths.modelsDir.usableSpace,
         cpuCoreCount = Runtime.getRuntime().availableProcessors(),
         hasAccelerator = false,
+        baselineUsedRamBytes = baselineUsedRamBytes,
     )
 
     fun memory(): MemoryBudget {

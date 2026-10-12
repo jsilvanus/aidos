@@ -13,6 +13,8 @@ data class DesktopPreferencesData(
     val hfToken: String? = null,
     val hfTokenValidatedMs: Long? = null,
     val preferredContextLength: Int = 4096,
+    /** RAM in use (MB) once the OS and the user's usual apps run, with no model loaded; null if unset. */
+    val ramBaselineUsedMb: Int? = null,
 )
 
 /**
@@ -38,6 +40,8 @@ class DesktopPreferences(private val file: File) {
     fun clearHfToken() = update { it.copy(hfToken = null, hfTokenValidatedMs = null) }
 
     fun setPreferredContextLength(tokens: Int) = update { it.copy(preferredContextLength = tokens) }
+
+    fun setRamBaselineUsedMb(mb: Int?) = update { it.copy(ramBaselineUsedMb = mb?.takeIf { v -> v > 0 }) }
 
     @Synchronized
     private fun update(transform: (DesktopPreferencesData) -> DesktopPreferencesData) {

@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.ui
 
+import android.app.ActivityManager
 import android.content.Context
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -40,6 +41,9 @@ fun SettingsScreen() {
     val prefs = remember(context) { context.getSharedPreferences("aidos_engine_ui_state", Context.MODE_PRIVATE) }
     val suggestionPrefs = remember(context) { SuggestionPreferences.get(context) }
     val dismissedSuggestions by suggestionPrefs.dismissed.collectAsState()
+    val appContext = context.applicationContext
+    var ramNow by remember { mutableStateOf(readRam(appContext)) }
+    var ramBaselineMb by remember { mutableStateOf(SettingsStore.getRamBaselineUsedMb(appContext)) }
     var state by remember {
         mutableStateOf(
             SettingsState(
@@ -70,6 +74,12 @@ fun SettingsScreen() {
                 prefs.edit().remove("hf_token").remove("hf_token_validated_ms").apply()
             },
             onRestoreSuggestions = { suggestionPrefs.restoreAll() },
+            ramBaseline = RamBaselineState(ramBaselineMb, ramNow.usedMB, ramNow.totalMB),
+            onSetRamBaseline = {
+                SettingsStore.setRamBaselineUsedMb(appContext, it)
+                ramBaselineMb = SettingsStore.getRamBaselineUsedMb(appContext)
+            },
+            onRefreshRamBaseline = { ramNow = readRam(appContext) },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
@@ -77,4 +87,11 @@ fun SettingsScreen() {
                 .padding(16.dp),
         )
     }
+}
+
+private fun readRam(context: Context): MemoryBudget {
+    val info = ActivityManager.MemoryInfo()
+    (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(info)
+    val mb = 1024L * 1024L
+    return MemoryBudget(usedMB = ((info.totalMem - info.availMem) / mb).toInt(), totalMB = (info.totalMem / mb).toInt())
 }
