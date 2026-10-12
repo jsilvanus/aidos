@@ -148,7 +148,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
             ?: return Result.failure(IllegalStateException("INVALID_GGUF: $modelId"))
 
         return try {
-            val adapter = LlamaCppAdapter(modelId, file, metadata)
+            val adapter = LlamaCppAdapter(modelId, file, metadata, embeddingMode = isEmbeddingModel(modelId, metadata))
             liveAdapters[modelId] = adapter
             Result.success(adapter)
         } catch (e: UnsatisfiedLinkError) {
@@ -164,5 +164,18 @@ class LlamaCppInferenceBackend : InferenceBackend {
         liveAdapters.remove(modelId)?.close()
     }
 
+    /**
+     * Embedding models need llama.cpp's embedding mode at load time. A curated catalog entry says
+     * so by kind; anything else is recognised by its BERT-family architecture, so a user-installed
+     * embedding GGUF works without a catalog entry.
+     */
+    private suspend fun isEmbeddingModel(modelId: String, metadata: GgufMetadata): Boolean =
+        catalog().any { it.id == modelId && it.kind == ModelKind.EMBEDDING } ||
+            metadata.architecture in EMBEDDING_ARCHITECTURES
+
     private fun modelFile(modelId: String): File = File(modelsDir, "$modelId.gguf")
+
+    private companion object {
+        val EMBEDDING_ARCHITECTURES = setOf("bert", "nomic-bert", "jina-bert-v2", "modern-bert")
+    }
 }
