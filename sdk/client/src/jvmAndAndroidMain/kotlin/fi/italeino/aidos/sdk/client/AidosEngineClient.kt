@@ -424,7 +424,11 @@ internal class EngineClientImpl(
     // RFC-0103, "Version and capability contract": a client whose required major version does
     // not match Engine's treats it as incompatible rather than guessing.
     private val requiredApiVersion: Int = 1,
-    private val httpClient: OkHttpClient = OkHttpClient()
+    // OkHttp's default 10 s read timeout is shorter than a cold model load plus inference (a first
+    // transcription or chat on a freshly started Engine), which surfaced as a null result.
+    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        .readTimeout(java.time.Duration.ofMinutes(5))
+        .build()
 ) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
