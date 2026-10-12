@@ -285,6 +285,9 @@ fake implementations hidden behind completed-looking APIs.
 - Validate native ABI/loading and memory behavior on the target Android device.
 - Add instrumentation tests for the minimum real STT path before marking it complete.
 
+Progress: a real STT path exists on the JVM host (Whisper on ONNX Runtime, `docs/stt.md`); Android wiring is written
+but unrun, and vision is still placeholder text.
+
 **Done when:** every advertised Engine modality is either genuinely exercised on Android or explicitly
 reported as unsupported/deferred; no placeholder implementation is presented as production behavior.
 

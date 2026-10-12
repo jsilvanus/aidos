@@ -70,7 +70,7 @@ class ContractFreezeTest {
         assertEquals(listOf("model", "input"), fields(EmbeddingsRequest::class.java))
         assertEquals(listOf("embedding", "index"), fields(Embedding::class.java))
         assertEquals(listOf("data", "model", "usage"), fields(EmbeddingsResponse::class.java))
-        assertEquals(listOf("file", "model", "language"), fields(TranscriptionRequest::class.java))
+        assertEquals(listOf("file", "model", "language", "prompt"), fields(TranscriptionRequest::class.java))
         assertEquals(listOf("text"), fields(TranscriptionResponse::class.java))
         // Typed decisions, /v1/systemone (additive within v1).
         assertEquals(listOf("model", "state", "questions", "min_confidence"), fields(DecisionRequest::class.java))
