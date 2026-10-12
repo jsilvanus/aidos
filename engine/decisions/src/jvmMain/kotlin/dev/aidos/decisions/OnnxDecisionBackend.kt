@@ -32,7 +32,7 @@ class OnnxDecisionBackend(
         if (packages.contains(modelId)) packages.load(modelId) else delegate.load(modelId)
 
     override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
-        if (packages.contains(modelId)) packages.load(modelId) else delegate.load(modelId, artifactPath)
+        if (packages.handles(modelId, artifactPath)) packages.load(modelId, artifactPath) else delegate.load(modelId, artifactPath)
 
     override suspend fun unload(modelId: String) {
         if (!packages.unload(modelId)) delegate.unload(modelId)

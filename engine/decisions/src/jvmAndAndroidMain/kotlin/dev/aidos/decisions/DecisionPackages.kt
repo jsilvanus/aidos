@@ -21,6 +21,21 @@ class DecisionPackages(private val modelsDir: File) {
 
     fun contains(modelId: String): Boolean = dirFor(modelId) != null
 
+    /**
+     * The package directory at [artifactPath], when it is a package inside [modelsDir]. A catalog
+     * install records the Hugging Face repo id ("org/name"), which cannot be a directory name, so
+     * the host loads by the recorded path instead; anything outside [modelsDir] is refused.
+     */
+    fun dirAt(artifactPath: String?): File? {
+        if (artifactPath.isNullOrBlank()) return null
+        val dir = File(artifactPath).canonicalFile
+        if (!dir.toPath().startsWith(modelsDir.canonicalFile.toPath()) || dir == modelsDir.canonicalFile) return null
+        return dir.takeIf { LayaPackage.isPackage(it) }
+    }
+
+    /** True when [modelId] is installed as a package, or [artifactPath] points at one. */
+    fun handles(modelId: String, artifactPath: String?): Boolean = contains(modelId) || dirAt(artifactPath) != null
+
     fun descriptors(): List<ModelDescriptor> =
         modelsDir.listFiles { f -> f.isDirectory }?.filter { LayaPackage.isPackage(it) }.orEmpty().map { dir ->
             val cfg = LayaPackage.readConfig(File(dir, LayaPackage.CONFIG))
@@ -40,8 +55,9 @@ class DecisionPackages(private val modelsDir: File) {
     fun digest(modelId: String): String? = dirFor(modelId)?.let { sha256(LayaPackage.onnxFile(it)!!) }
 
     @Synchronized
-    fun load(modelId: String): Result<DecisionModelAdapterImpl> {
-        val dir = dirFor(modelId) ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: $modelId"))
+    fun load(modelId: String, artifactPath: String? = null): Result<DecisionModelAdapterImpl> {
+        val dir = dirFor(modelId) ?: dirAt(artifactPath)
+            ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: $modelId"))
         live[modelId]?.let { return Result.success(it) }
         return try {
             val cfg = LayaPackage.readConfig(File(dir, LayaPackage.CONFIG))

@@ -89,6 +89,10 @@ class LlamaCppInferenceBackend : InferenceBackend {
                 contextWindow = metadata.contextWindow,
                 sizeBytes = file.length(),
                 digest = digest,
+                // /v1/models reports this; without it an installed GGUF showed format=null while an
+                // installed ONNX package showed "onnx".
+                format = "gguf",
+                quantization = metadata.quantization.takeIf { it.isNotBlank() && it != "unknown" },
             )
         } ?: emptyList()
     }

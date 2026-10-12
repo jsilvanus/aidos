@@ -34,7 +34,8 @@ rl_agent_config.json  checkpoint's multilingual/rl_agent_config.json
 
 The export checks parity against PyTorch at an untraced shape. `--int8` quantisation is provided but
 **not evaluated** here; compare its output with fp32 before using it. The fp32 graph is 1.29 GB; the
-catalog installer handles single files only, so packages are placed by hand for now.
+catalog installer now installs a Hugging Face repo that holds the three files as one package directory
+(`ModelPackage` / `installPackage`, desktop app). Android's Models screen does not use it yet.
 
 ## Layout
 
@@ -81,7 +82,9 @@ mode, logged and compared with the deterministic activation-word parser), never 
   `onnxruntime-android` dependency and the proguard rule have not been compiled or run (Android targets do not
   compile in the cloud environment). The 34 MB `tokenizer.json` is parsed as JSON at load; that needs measuring
   on a phone.
-- Catalog/installer support for multi-file packages; `SuggestedModels` still lists the ggmlc GGUF as not runnable.
+- Multi-file packages install from a Hugging Face repo on the desktop (`installPackage`, tested with a fake
+  downloader only; no real download was run). Android's Models screen still installs single files, and no
+  Laya ONNX package is published on the Hub yet. `SuggestedModels` still lists the ggmlc GGUF as not runnable.
 - Calibration: probabilities are the checkpoint's own (temperature 1.0). Zero-shot base checkpoints are
   over-confident and weak on new tasks; fit temperatures and fine-tune on your own data before relying on them.
 - Dictator uses it in shadow mode only (off by default): the model's guess is logged beside the parser's
