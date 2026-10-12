@@ -66,6 +66,12 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   for the HTTP server and model catalog; if they never come up the handshake fails and the SDK
   reports `HandshakeFailed`.
 
+- `POST /v1/systemone` (alias `/v1/decisions`) and `AidosEngineClient.decide(DecisionRequest)`: typed
+  decisions (`choice`/`score`/`noul`), request `{model, state, questions, min_confidence?}`, response
+  `{model, answers, usage}`, Jev/OpenJev-compatible. The interface method has a default (`null`), so
+  existing implementers compile. Engine advertises capability `decisions` for models of kind
+  `decision`. See RFC-0022 "Decision capability" (D45, proposed).
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).

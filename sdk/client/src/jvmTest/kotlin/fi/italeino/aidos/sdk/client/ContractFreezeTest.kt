@@ -38,7 +38,7 @@ class ContractFreezeTest {
     fun clientInterfaceMethodsAreFrozen() {
         assertEquals(
             listOf(
-                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "embeddings",
+                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings",
                 "initialize", "isAvailable", "request", "streamChatCompletion", "supportsEndpoint", "transcribe"
             ),
             AidosEngineClient::class.java.methods.map { it.name }.filter { !it.contains("$") }.distinct().sorted()
@@ -72,6 +72,18 @@ class ContractFreezeTest {
         assertEquals(listOf("data", "model", "usage"), fields(EmbeddingsResponse::class.java))
         assertEquals(listOf("file", "model", "language"), fields(TranscriptionRequest::class.java))
         assertEquals(listOf("text"), fields(TranscriptionResponse::class.java))
+        // Typed decisions, /v1/systemone (additive within v1).
+        assertEquals(listOf("model", "state", "questions", "min_confidence"), fields(DecisionRequest::class.java))
+        assertEquals(listOf("type", "instructions", "criteria"), fields(DecisionQuestionSpec::class.java))
+        assertEquals(listOf("model", "answers", "usage"), fields(DecisionResponse::class.java))
+        assertEquals(
+            listOf("type", "choice", "score", "noul", "probabilities", "legend", "confidence", "answer_confidence", "abstained"),
+            fields(DecisionAnswerWire::class.java)
+        )
+        assertEquals(
+            listOf("input_tokens", "output_tokens", "state_tokens", "state_tokens_dropped", "truncated"),
+            fields(DecisionUsageWire::class.java)
+        )
     }
 
     @Test

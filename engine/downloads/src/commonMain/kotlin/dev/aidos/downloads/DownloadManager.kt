@@ -10,6 +10,9 @@ interface DownloadManager {
     fun download(url: String, destination: String, expectedDigest: String?): Flow<DownloadEvent>
     suspend fun canResume(destination: String, url: String): Boolean
     suspend fun delete(destination: String)
+
+    /** Removes [destination] and everything under it, for multi-file model packages installed as a directory. */
+    suspend fun deleteTree(destination: String) = delete(destination)
 }
 
 sealed interface DownloadEvent {

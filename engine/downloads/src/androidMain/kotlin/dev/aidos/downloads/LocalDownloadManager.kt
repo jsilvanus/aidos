@@ -95,6 +95,10 @@ class LocalDownloadManager(private val downloadDir: String) : DownloadManager {
         File("$destination.partial").delete()
     }
 
+    override suspend fun deleteTree(destination: String) {
+        File(destination).deleteRecursively()
+    }
+
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->

@@ -11,6 +11,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -79,6 +84,16 @@ interface AidosEngineClient {
 
     /** `/v1/audio/transcriptions`. Null on any failure (including Engine unavailable). */
     suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse?
+
+    /**
+     * `/v1/systemone`: typed decisions ("System One"). Several typed questions about [DecisionRequest.state]
+     * are answered in one model pass, with probabilities instead of generated text. Null on any
+     * failure (including Engine unavailable, or the model not being a decision model).
+     *
+     * Added to API v1 as an additive default method (sdk/CONTRACT.md); the default exists so
+     * existing implementations of this interface keep compiling.
+     */
+    suspend fun decide(request: DecisionRequest): DecisionResponse? = null
 
     /** Release resources and forget the current handshake. */
     fun close()
@@ -217,6 +232,72 @@ data class TranscriptionRequest(
 @Serializable
 data class TranscriptionResponse(
     val text: String
+)
+
+// --- Typed decisions: /v1/systemone (additive within API v1) -------------------------------------
+// Jev / OpenJev compatible shape: {model, state, questions} -> {model, answers, usage}.
+
+@Serializable
+data class DecisionRequest(
+    val model: String,
+    val state: String,
+    val questions: Map<String, DecisionQuestionSpec>,
+    /** Answers whose answer_confidence is below this come back with abstained = true. */
+    val min_confidence: Double? = null
+)
+
+/**
+ * One typed question. [criteria] is, by [type]: `choice` an object `{label: description|null}`;
+ * `score` an ordered array of level descriptions; `noul` optional `{"false": .., "true": ..}`.
+ */
+@Serializable
+data class DecisionQuestionSpec(
+    val type: String,
+    val instructions: String,
+    val criteria: JsonElement? = null
+) {
+    companion object {
+        fun choice(instructions: String, options: Map<String, String?>) = DecisionQuestionSpec(
+            "choice", instructions,
+            buildJsonObject { options.forEach { (label, desc) -> put(label, desc?.let { JsonPrimitive(it) } ?: JsonNull) } }
+        )
+
+        fun score(instructions: String, levels: List<String>) = DecisionQuestionSpec(
+            "score", instructions, JsonArray(levels.map { JsonPrimitive(it) })
+        )
+
+        fun noul(instructions: String) = DecisionQuestionSpec("noul", instructions)
+    }
+}
+
+@Serializable
+data class DecisionResponse(
+    val model: String,
+    val answers: Map<String, DecisionAnswerWire>,
+    val usage: DecisionUsageWire? = null
+)
+
+/** Fields present depend on [type]: choice -> [choice]; score -> [score] + [legend]; noul -> [noul]. */
+@Serializable
+data class DecisionAnswerWire(
+    val type: String,
+    val choice: String? = null,
+    val score: Double? = null,
+    val noul: Double? = null,
+    val probabilities: Map<String, Double>? = null,
+    val legend: Map<String, String>? = null,
+    val confidence: Double = 0.0,
+    val answer_confidence: Double = 0.0,
+    val abstained: Boolean = false
+)
+
+@Serializable
+data class DecisionUsageWire(
+    val input_tokens: Int = 0,
+    val output_tokens: Int = 0,
+    val state_tokens: Int = 0,
+    val state_tokens_dropped: Int = 0,
+    val truncated: Boolean = false
 )
 
 // --- Handshake result shape ----------------------------------------------------------------
@@ -506,6 +587,17 @@ internal class EngineClientImpl(
     override suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse? {
         val responseBody = executeRaw(
             "audio/transcriptions", "POST", engineJson.encodeToString(request), allowReauth = true
+        ) ?: return null
+        return try {
+            engineJson.decodeFromString(responseBody)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    override suspend fun decide(request: DecisionRequest): DecisionResponse? {
+        val responseBody = executeRaw(
+            "systemone", "POST", engineJson.encodeToString(request), allowReauth = true
         ) ?: return null
         return try {
             engineJson.decodeFromString(responseBody)

@@ -56,7 +56,35 @@ data class ModelDownloadRequest(
     val quantization: String? = null,
 )
 
+/** One file of a [ModelPackageDownloadRequest], saved as `<destinationDir>/<name>`. */
+data class PackageFileRequest(
+    val name: String,
+    val downloadUrl: String,
+    val expectedDigest: String? = null,
+)
+
+/**
+ * A model made of several files that only work together (an ONNX graph with its external-data
+ * sidecar, tokenizer and config), installed into one directory. `install` handles exactly one file.
+ */
+data class ModelPackageDownloadRequest(
+    val modelId: String,
+    val files: List<PackageFileRequest>,
+    val destinationDir: String,
+    val kind: ModelKind,
+    val format: String,
+    val backend: String? = null,
+)
+
 interface ModelInstallerWorkflow {
+    /**
+     * Downloads every file of [request] into its directory. All-or-nothing: if any file fails, the
+     * directory is removed, so a graph is never left without its sidecar. The recorded path is the
+     * directory and the recorded digest covers the file names and digests, so it changes if any part does.
+     */
+    suspend fun installPackage(request: ModelPackageDownloadRequest, onProgress: suspend (InstallerEvent) -> Unit = { }): Result<InstalledModel> =
+        Result.failure(UnsupportedOperationException("package installs are not supported by this installer"))
+
     suspend fun install(request: ModelDownloadRequest, onProgress: suspend (InstallerEvent) -> Unit = { }): Result<InstalledModel>
     suspend fun resume(modelId: String, onProgress: suspend (InstallerEvent) -> Unit = { }): Result<InstalledModel>
     suspend fun uninstall(modelId: String): Result<Unit>
@@ -136,6 +164,58 @@ class DefaultModelInstallerWorkflow(
         }
     }
 
+    override suspend fun installPackage(
+        request: ModelPackageDownloadRequest,
+        onProgress: suspend (InstallerEvent) -> Unit,
+    ): Result<InstalledModel> {
+        val names = request.files.map { it.name }
+        // Names become path components inside destinationDir; refuse anything that could leave it.
+        val badName = names.firstOrNull { it.isEmpty() || it.contains('/') || it.contains('\\') || it == ".." || it == "." }
+        if (badName != null) return Result.failure(IllegalArgumentException("Invalid package file name: '$badName'"))
+        if (names.size != names.toSet().size) return Result.failure(IllegalArgumentException("Duplicate package file names for ${request.modelId}"))
+        if (request.files.isEmpty()) return Result.failure(IllegalArgumentException("Package ${request.modelId} has no files"))
+        return try {
+            val metadata = buildJsonObject {
+                put("package", "true")
+                put("format", request.format)
+                request.backend?.let { put("backend", it) }
+                put("destination", request.destinationDir)
+                put("files", names.joinToString(","))
+            }.toString()
+            catalogManager.addToCatalog(
+                CatalogEntry(request.modelId, request.modelId, request.kind, "huggingface", request.files.first().downloadUrl, metadata, "")
+            ).getOrThrow()
+
+            val digests = mutableListOf<Pair<String, String>>()
+            var total = 0L
+            for (file in request.files) {
+                var completed: DownloadEvent.Completed? = null
+                val destination = "${request.destinationDir.trimEnd('/')}/${file.name}"
+                downloadManager.download(file.downloadUrl, destination, file.expectedDigest).collect { event ->
+                    when (event) {
+                        is DownloadEvent.Started -> onProgress(InstallerEvent.DownloadStarted(request.modelId, event.totalBytes))
+                        is DownloadEvent.Progress -> onProgress(InstallerEvent.DownloadProgress(request.modelId, event.bytesDownloaded, event.totalBytes))
+                        is DownloadEvent.Completed -> completed = event
+                        is DownloadEvent.DigestMismatch -> throw IllegalStateException("SHA-256 mismatch for ${file.name}: expected ${event.expectedDigest}, got ${event.actualDigest}")
+                        is DownloadEvent.Failed -> throw IllegalStateException("${file.name}: ${event.reason}")
+                    }
+                }
+                val done = completed ?: throw IllegalStateException("Download of ${file.name} did not complete")
+                digests += file.name to done.actualDigest
+                total += done.sizeBytes
+            }
+            onProgress(InstallerEvent.DigitVerified(request.modelId))
+            val digest = packageDigest(digests)
+            catalogManager.markInstalled(request.modelId, digest, request.destinationDir, total, null).getOrThrow()
+            onProgress(InstallerEvent.InstallationComplete(request.modelId, ""))
+            Result.success(InstalledModel(request.modelId, digest, request.destinationDir, total, null, "", propertiesJson = metadata))
+        } catch (e: Exception) {
+            downloadManager.deleteTree(request.destinationDir)
+            onProgress(InstallerEvent.InstallationFailed(request.modelId, e.message ?: "Installation failed"))
+            Result.failure(e)
+        }
+    }
+
     override suspend fun resume(modelId: String, onProgress: suspend (InstallerEvent) -> Unit): Result<InstalledModel> {
         val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
             ?: return Result.failure(IllegalArgumentException("No download metadata for $modelId"))
@@ -156,10 +236,18 @@ class DefaultModelInstallerWorkflow(
 
     override suspend fun uninstall(modelId: String): Result<Unit> = try {
         val installed = catalogManager.listInstalled().getOrThrow().firstOrNull { it.modelId == modelId }
-        installed?.let { downloadManager.delete(it.path) }
+        // A package is installed as a directory; delete() on a non-empty directory is a silent no-op.
+        installed?.let { downloadManager.deleteTree(it.path) }
         catalogManager.uninstall(modelId).getOrThrow()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
 }
+
+/**
+ * Identifies a package by its parts: `name:sha256` lines sorted by name. Not itself a hash because
+ * common code has no hashing primitive, and the per-file SHA-256s are what carry the integrity.
+ */
+internal fun packageDigest(parts: List<Pair<String, String>>): String =
+    parts.sortedBy { it.first }.joinToString(";") { (name, digest) -> "$name:$digest" }

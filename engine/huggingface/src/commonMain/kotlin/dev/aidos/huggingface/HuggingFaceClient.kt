@@ -33,6 +33,10 @@ data class HuggingFaceModel(
     val quantizations: List<Quantization> = emptyList(),
     /** License id from the repo's `license:` tag (e.g. "apache-2.0"); null when undeclared. */
     val license: String? = null,
+    /** Every file in the repo (tokenizer, configs and so on), not only recognized weights. */
+    val files: List<RepoFile> = emptyList(),
+    /** Multi-file ONNX packages found in [files]; install these as a unit, not as single files. */
+    val packages: List<ModelPackage> = emptyList(),
 )
 
 data class Quantization(
@@ -137,6 +141,9 @@ class HuggingFaceClient(
         }
 
 
+        /** Percent-encodes each segment of a repo path, keeping the `/` separators. */
+        internal fun encodePath(path: String): String = path.split('/').joinToString("/") { encodeQueryValue(it) }
+
         fun inferModelKind(tags: List<String>, pipeline: String?): ModelKind {
             val tagString = tags.joinToString(" ").lowercase()
             val pipelineStr = pipeline?.lowercase() ?: ""
@@ -168,11 +175,27 @@ class HuggingFaceClient(
             ?: json["config"]?.jsonObject?.get("n_ctx")?.jsonPrimitive?.content?.toIntOrNull()
         val modelSize = json["gguf"]?.jsonObject?.get("totalFileSize")?.jsonPrimitive?.content?.toLongOrNull()
         val artifacts = json["siblings"]?.jsonArray?.mapNotNull { parseArtifact(modelId, it.jsonObject) } ?: emptyList()
-        val quantizations = artifacts.filter { it.format == ModelFormat.GGUF }.map {
+        // Projectors and shards are GGUF files but not quantizations a user can run alone.
+        val quantizations = artifacts.filter { it.format == ModelFormat.GGUF && it.role == ArtifactRole.WEIGHTS }.map {
             Quantization(it.filename.removeSuffix(".gguf"), it.sizeBytes, it.downloadUrl, it.sha256Digest)
         }
         val license = tags.firstOrNull { it.startsWith("license:") }?.removePrefix("license:")
-        HuggingFaceModel(modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength, artifacts, quantizations, license)
+        val files = json["siblings"]?.jsonArray?.mapNotNull { parseRepoFile(it.jsonObject) } ?: emptyList()
+        HuggingFaceModel(
+            modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength,
+            artifacts, quantizations, license, files, ModelPackage.detectOnnx(modelId, files),
+        )
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parseRepoFile(json: JsonObject): RepoFile? = try {
+        val path = (json["filename"] ?: json["rfilename"])?.jsonPrimitive?.content ?: return null
+        RepoFile(
+            path = path,
+            sizeBytes = json["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+            sha256Digest = (json["lfs"]?.jsonObject?.get("sha256") ?: json["sha256"])?.jsonPrimitive?.content,
+        )
     } catch (_: Exception) {
         null
     }
@@ -186,7 +209,7 @@ class HuggingFaceClient(
         ModelArtifact(
             filename = filename,
             sizeBytes = size,
-            downloadUrl = "https://huggingface.co/$modelId/resolve/main/$filename",
+            downloadUrl = "https://huggingface.co/$modelId/resolve/main/${encodePath(filename)}",
             sha256Digest = sha256,
             format = format,
         )

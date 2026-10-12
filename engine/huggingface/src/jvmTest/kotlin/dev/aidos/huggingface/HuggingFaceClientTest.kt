@@ -92,6 +92,55 @@ class HuggingFaceClientTest {
         assertEquals(listOf("echo"), model.quantizations.map { it.name })
     }
 
+    @Test
+    fun getModel_ggufRepoKeepsProjectorsAndShardsOutOfQuantizations() = runBlocking {
+        val body = """{"id":"acme/vl-GGUF","tags":["gguf"],"siblings":[
+            {"rfilename":"vl-Q4_K_M.gguf","size":10},
+            {"rfilename":"mmproj-vl-f16.gguf","size":5},
+            {"rfilename":"big-Q8_0-00001-of-00002.gguf","size":7},
+            {"rfilename":"README.md"}]}"""
+        val model = client(RecordingBroker("HTTP 200\n\n$body")).getModel("acme/vl-GGUF").getOrThrow()
+
+        assertEquals(listOf("vl-Q4_K_M"), model.quantizations.map { it.name })
+        assertEquals(
+            listOf(ArtifactRole.WEIGHTS, ArtifactRole.PROJECTOR, ArtifactRole.SHARD),
+            model.artifacts.map { it.role },
+        )
+    }
+
+    @Test
+    fun getModel_onnxRepoYieldsAPackageWithItsSidecarAndRootTokenizer() = runBlocking {
+        val body = """{"id":"acme/laya-onnx","tags":["onnx"],"siblings":[
+            {"rfilename":"onnx/model.onnx","size":100,"lfs":{"sha256":"aa"}},
+            {"rfilename":"onnx/model.onnx_data","size":900},
+            {"rfilename":"tokenizer.json","size":4},
+            {"rfilename":"rl_agent_config.json","size":1},
+            {"rfilename":"model.safetensors","size":2000}]}"""
+        val model = client(RecordingBroker("HTTP 200\n\n$body")).getModel("acme/laya-onnx").getOrThrow()
+
+        val pkg = model.packages.single()
+        assertEquals("onnx", pkg.directory)
+        assertEquals(setOf("onnx/model.onnx", "onnx/model.onnx_data", "tokenizer.json", "rl_agent_config.json"), pkg.files.map { it.path }.toSet())
+        assertEquals(1005L, pkg.sizeBytes)
+        assertTrue(pkg.isDecisionPackage)
+        assertEquals(ArtifactRole.EXTERNAL_DATA, model.artifacts.first { it.filename.endsWith("_data") }.role)
+        // safetensors is recognized but has no backend, so it is never offered as runnable
+        assertEquals(emptyList(), model.artifacts.first { it.format == ModelFormat.SAFETENSORS }.compatibleBackends)
+    }
+
+    @Test
+    fun onnxPackage_withoutLayaFilesIsNotADecisionPackage() {
+        val pkgs = ModelPackage.detectOnnx("a/b", listOf(RepoFile("model.onnx"), RepoFile("model_quantized.onnx"), RepoFile("tokenizer.json")))
+        assertEquals(2, pkgs.size)
+        assertTrue(pkgs.none { it.isDecisionPackage })
+    }
+
+    @Test
+    fun downloadUrls_percentEncodeEachPathSegment() {
+        val pkg = ModelPackage.detectOnnx("a/b", listOf(RepoFile("my dir/m#1.onnx"))).single()
+        assertEquals("https://huggingface.co/a/b/resolve/main/my%20dir/m%231.onnx", pkg.downloadUrl(pkg.files.single()))
+    }
+
     private fun client(broker: EffectBroker) =
         HuggingFaceClient(broker, BasicResourceHandle(CapabilityId("huggingface")))
 

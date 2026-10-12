@@ -238,6 +238,31 @@ Target capabilities include:
 
 Higher-level adapters may expose embeddings, vision, STT, classification, or generation for known model families without changing the generic ONNX contract.
 
+## Decision capability (typed decisions, "System One")
+
+*Amendment proposed 2026-10-12 (D45, PROPOSED). See also `LAYA.md`.*
+
+A decision model reads a text *state* and several *typed questions* and answers all of them in one
+non-autoregressive pass, with probabilities instead of generated text. The primitives are `choice`
+(one of N labelled options), `score` (position on an ordered rubric) and `noul` (yes/no with a
+probability). Ordinary classification is a `choice`.
+
+- **Kind and capability.** `ModelKind.DECISION`; the Engine advertises capability `decisions`.
+- **Contract.** `dev.aidos.decisions` (`engine/decisions`): `DecisionRequest`, `DecisionAnswer`
+  (`Choice`/`Score`/`Noul`), `DecisionResult`, `DecisionModel`. It deliberately does not live in
+  `:kernel`, which is frozen; the kernel gains only the additive `ModelKind.DECISION`.
+- **Layering.** The ONNX backend stays generic tensor execution (`DecisionTensorRunner`); the Laya
+  adapter (`LayaDecisionModel`) owns tokenizer, question encoding and output decoding. Neither the
+  runner nor the HTTP layer sees Laya's token layout.
+- **Wire.** `POST /v1/systemone` (alias `POST /v1/decisions`), request `{model, state, questions}`,
+  response `{model, answers, usage}`, matching the de facto Jev/OpenJev/laya-serve shape so existing
+  System One clients work unchanged. Additive within API v1 (`sdk/CONTRACT.md`).
+- **Authority.** A decision never executes anything. Applications validate and act; probabilities are
+  uncalibrated until a temperature is fitted on the application's own data, and callers should use
+  `min_confidence` (answers come back `abstained`) rather than trust a raw argmax.
+- **First model.** Laya multilingual (Apache-2.0, mmBERT-base, 322M). It is exported to ONNX by
+  `scripts/laya/export_onnx.py`; weights are never committed.
+
 ## Security and resources
 
 Backends are inside the runtime trust boundary. Selecting an inference backend must not grant arbitrary filesystem, network, shell, or project permissions. Installed model artifacts must pass existing integrity verification.
@@ -269,7 +294,8 @@ The following are recorded in `docs/decisions.md` as D36–D44:
 - **D41:** tensor output is the generic extensible multimodal primitive;
 - **D42:** contracts are shared through KMP with platform-specific implementations;
 - **D43:** `ModelResponse` is generalized to typed outputs;
-- **D44:** ONNX Runtime is the second inference backend.
+- **D44:** ONNX Runtime is the second inference backend;
+- **D45 (PROPOSED):** typed decisions are a first-class capability (`DECISION`), served over `/v1/systemone`.
 
 These decisions supersede the earlier open questions in the draft RFC. The amendments in this revision further constrain D41/D43 so that tensor outputs are named and storage is capable of zero-copy implementations, while response usage retains token accounting. Implementation details remain subject to normal code review and tests.
 

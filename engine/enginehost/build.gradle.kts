@@ -25,6 +25,8 @@ kotlin {
                 api(project(":kernel"))
                 // Aidos SDK client: in-process Engine calls and SDK↔host contract tests.
                 api(project(":client"))
+                // Typed decisions (/v1/systemone); contract + wire format live in :decisions (RFC-0022 D45).
+                api(project(":decisions"))
                 api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
                 implementation("io.ktor:ktor-server-core:3.5.2")

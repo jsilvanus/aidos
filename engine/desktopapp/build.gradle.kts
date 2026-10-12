@@ -23,6 +23,7 @@ dependencies {
     implementation(project(":engineui"))
     implementation(project(":enginehost"))
     implementation(project(":modelruntime"))
+    implementation(project(":decisions"))
     implementation(project(":models"))
     implementation(project(":downloads"))
     implementation(project(":huggingface"))

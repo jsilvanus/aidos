@@ -4,6 +4,7 @@ import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
@@ -32,7 +33,9 @@ class LlamaCppAdapter(
     private val metadata: GgufMetadata,
     contextSize: Int = 2048,
     threads: Int = 4,
-) : ModelAdapter {
+    /** Embedding models are loaded with llama.cpp's embedding mode on and cannot generate text. */
+    private val embeddingMode: Boolean = false,
+) : ModelAdapter, EmbeddingModelAdapter {
     override val providerId = "llama.cpp"
     override val modelVersion = "java-llama.cpp-4.2.0"
     override val contextWindow = contextSize
@@ -58,6 +61,7 @@ class LlamaCppAdapter(
             .setBatchSize(512)
             .setUbatchSize(512)
             .setGpuLayers(0)
+            .let { if (embeddingMode) it.enableEmbedding() else it }
 
         return try {
             LlamaModel(params)
@@ -67,6 +71,20 @@ class LlamaCppAdapter(
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
+
+    /** Mirrors AndroidLlamaCppAdapter.embed so both hosts serve /v1/embeddings (RFC-0022). */
+    override suspend fun embed(text: String): Result<FloatArray> = try {
+        when {
+            closed -> Result.failure(IllegalStateException("Model $modelId was unloaded; reload before invoking again"))
+            !embeddingMode -> Result.failure(UnsupportedOperationException("Model $modelId is not configured for embeddings"))
+            else -> model.embed(text).let {
+                if (it.isEmpty()) Result.failure(IllegalStateException("Embedding model returned an empty vector"))
+                else Result.success(it)
+            }
+        }
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
 
     /**
      * Run inference and return the generalized RFC-0022 response shape.
@@ -102,6 +120,10 @@ class LlamaCppAdapter(
             emit(ModelStreamEvent.Failed(
                 IllegalStateException("Model $modelId was unloaded; reload before invoking again")
             ))
+            return@flow
+        }
+        if (embeddingMode) {
+            emit(ModelStreamEvent.Failed(UnsupportedOperationException("Embedding model cannot perform chat generation")))
             return@flow
         }
 
