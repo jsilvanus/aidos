@@ -28,7 +28,13 @@ data class ChatMessage(
     val content: String? = null,
     val tool_calls: List<ToolCall>? = null,
     val tool_call_id: String? = null,
-    val name: String? = null
+    val name: String? = null,
+    /**
+     * Pictures for a vision model, on `user` messages: base64 of the encoded image (PNG/JPEG/...),
+     * or a `data:image/...;base64,` URL. Additive to API v1 (sdk/CONTRACT.md); the text in
+     * [content] is the question about them.
+     */
+    val images: List<String>? = null
 )
 
 @Serializable

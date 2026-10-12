@@ -100,7 +100,7 @@ class DesktopModelDetailModel(
             // A GGUF is one file of the recorded size; an ONNX decision model is a package directory.
             val valid = installed != null && file != null && installed.sizeBytes > 0L && when {
                 file.isFile -> file.length() == installed.sizeBytes
-                file.isDirectory -> LayaPackage.isPackage(file) &&
+                file.isDirectory -> (LayaPackage.isPackage(file) || dev.aidos.vision.VisionPackage.isPackage(file)) &&
                     file.listFiles { f -> f.isFile }.orEmpty().sumOf { it.length() } == installed.sizeBytes
                 else -> false
             }
@@ -133,7 +133,14 @@ class DesktopModelDetailModel(
                 // would leave a file the Engine can never load.
                 val decisionPackage = remote.packages.firstOrNull { it.isDecisionPackage }
                 if (remote.quantizations.isEmpty() && decisionPackage != null) {
-                    installDecisionPackage(model.id, safeModelId, decisionPackage)
+                    installPackage(model.id, safeModelId, decisionPackage, dev.aidos.kernel.ModelKind.DECISION)
+                    return@launch
+                }
+                // A SmolVLM-style vision model is its three graphs and configs installed as one unit; the
+                // projector-pairing problem of GGUF vision models does not arise on ONNX.
+                val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
+                if (remote.quantizations.isEmpty() && visionPackage != null) {
+                    installPackage(model.id, safeModelId, visionPackage, dev.aidos.kernel.ModelKind.VISION)
                     return@launch
                 }
                 if (remote.quantizations.isEmpty()) {
@@ -196,15 +203,20 @@ class DesktopModelDetailModel(
         }
     }
 
-    /** Downloads every file of [pkg] into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
-    private suspend fun installDecisionPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+    /** Downloads every file of [pkg] (a decision or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
+    private suspend fun installPackage(
+        modelId: String,
+        safeId: String,
+        pkg: dev.aidos.huggingface.ModelPackage,
+        kind: dev.aidos.kernel.ModelKind,
+    ) {
         val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
         val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
             ModelPackageDownloadRequest(
                 modelId = modelId,
                 files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
                 destinationDir = File(host.artifactDir, safeId).absolutePath,
-                kind = dev.aidos.kernel.ModelKind.DECISION,
+                kind = kind,
                 format = "onnx",
                 backend = "onnx-runtime",
             )

@@ -17,6 +17,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HuggingFaceClientTest {
@@ -181,5 +183,37 @@ class HuggingFaceClientTest {
                 pipeline = null,
             )
         )
+    }
+
+    @Test
+    fun smolVlmRepoYieldsOneVisionPackageOfUint8Graphs() = runBlocking {
+        val stems = listOf("vision_encoder", "embed_tokens", "decoder_model_merged")
+        val graphs = stems.flatMap { st -> listOf("", "_int8", "_uint8", "_q4").map { """{"rfilename":"onnx/$st$it.onnx","size":10}""" } }
+        val body = """{"id":"acme/smolvlm","tags":["onnx"],"siblings":[${graphs.joinToString(",")},
+            {"rfilename":"tokenizer.json","size":4},{"rfilename":"config.json","size":1},
+            {"rfilename":"processor_config.json","size":1},{"rfilename":"generation_config.json","size":1}]}"""
+        val model = client(RecordingBroker("HTTP 200\n\n$body")).getModel("acme/smolvlm").getOrThrow()
+
+        val pkg = model.packages.first()
+        assertTrue(pkg.isVisionPackage)
+        assertFalse(pkg.isDecisionPackage)
+        assertEquals(
+            setOf(
+                "onnx/vision_encoder_uint8.onnx", "onnx/embed_tokens_uint8.onnx", "onnx/decoder_model_merged_uint8.onnx",
+                "tokenizer.json", "config.json", "processor_config.json", "generation_config.json",
+            ),
+            pkg.files.map { it.path }.toSet(),
+        )
+    }
+
+    @Test
+    fun visionPackageNeedsAllThreeGraphsAndTheConfigs() {
+        val full = listOf("vision_encoder", "embed_tokens", "decoder_model_merged").map { RepoFile("onnx/${it}_uint8.onnx") }
+        val side = listOf("tokenizer.json", "config.json", "processor_config.json", "generation_config.json").map { RepoFile(it) }
+        assertTrue(ModelPackage.detectVision("a/b", full + side)?.isVisionPackage == true)
+        assertNull(ModelPackage.detectVision("a/b", full.drop(1) + side))
+        assertNull(ModelPackage.detectVision("a/b", full + side.drop(1)))
+        // Signed-int8 exports are not runnable on the CPU provider, so they never make a package.
+        assertNull(ModelPackage.detectVision("a/b", full.map { RepoFile(it.path.replace("uint8", "int8")) } + side))
     }
 }

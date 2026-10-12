@@ -125,7 +125,10 @@ class EngineHttpServer(
             val turns = request.messages.map { msg ->
                 when (msg.role) {
                     "system" -> Turn.System(msg.content ?: "")
-                    "user" -> Turn.User(listOf(ContentBlock.Text(msg.content ?: "")), TrustLevel.TRUSTED)
+                    "user" -> Turn.User(
+                        listOf<ContentBlock>(ContentBlock.Text(msg.content ?: "")) + msg.images.orEmpty().map(::decodeImage),
+                        TrustLevel.TRUSTED,
+                    )
                     "assistant" -> Turn.Assistant(
                         text = msg.content,
                         toolCalls = msg.tool_calls?.map { tc ->
@@ -480,4 +483,21 @@ class EngineHttpServer(
             else -> HttpStatusCode.InternalServerError to ErrorDetail(message, "inference_error")
         }
     }
+}
+
+/** An `images` entry of a chat message: base64, optionally as a `data:image/...;base64,` URL. */
+internal fun decodeImage(entry: String): ContentBlock.Image {
+    val dataUrl = Regex("^data:([^;,]+);base64,", RegexOption.IGNORE_CASE).find(entry)
+    val bytes = try {
+        Base64.getMimeDecoder().decode(entry.removePrefix(dataUrl?.value ?: ""))
+    } catch (e: IllegalArgumentException) {
+        throw IllegalArgumentException("images[] entries must be base64-encoded image bytes or data: URLs")
+    }
+    require(bytes.isNotEmpty()) { "images[] entry is empty" }
+    val mime = dataUrl?.groupValues?.get(1) ?: when {
+        bytes.size > 3 && bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() -> "image/png"
+        bytes.size > 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> "image/jpeg"
+        else -> "application/octet-stream"
+    }
+    return ContentBlock.Image(mime, bytes)
 }

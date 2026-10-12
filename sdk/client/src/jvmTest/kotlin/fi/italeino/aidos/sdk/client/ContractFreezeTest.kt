@@ -60,7 +60,7 @@ class ContractFreezeTest {
     @Test
     fun requestAndResponseWireFieldsAreFrozen() {
         assertEquals(listOf("model", "messages", "temperature", "max_tokens", "top_p", "stream"), fields(ChatCompletionRequest::class.java))
-        assertEquals(listOf("role", "content"), fields(ChatMessage::class.java))
+        assertEquals(listOf("role", "content", "images"), fields(ChatMessage::class.java))
         assertEquals(listOf("id", "created", "model", "choices", "usage"), fields(ChatCompletionResponse::class.java))
         assertEquals(listOf("index", "message", "finish_reason"), fields(ChatChoice::class.java))
         assertEquals(listOf("id", "created", "model", "choices"), fields(ChatCompletionChunk::class.java))

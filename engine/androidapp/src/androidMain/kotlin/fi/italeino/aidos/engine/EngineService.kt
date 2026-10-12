@@ -38,6 +38,7 @@ import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxDecisionBackend
+import fi.italeino.aidos.engine.inference.AndroidOnnxVisionBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -179,11 +180,15 @@ class EngineService : LifecycleService() {
                 // digest; filesDir/models is only the artifact store.
                 // ONNX decision models (typed decisions, RFC-0022 D45) are packages under filesDir/models/<id>/;
                 // every other id still goes to llama.cpp.
+                // SmolVLM vision packages sit in the same directory and are claimed by AndroidOnnxVisionBackend.
                 val runtime = GlobalModelRuntime(
-                    AndroidOnnxDecisionBackend(
-                        delegate = AndroidLlamaCppInferenceBackend(
-                            context = this@EngineService,
-                            catalogManager = catalog,
+                    AndroidOnnxVisionBackend(
+                        delegate = AndroidOnnxDecisionBackend(
+                            delegate = AndroidLlamaCppInferenceBackend(
+                                context = this@EngineService,
+                                catalogManager = catalog,
+                            ),
+                            modelsDir = java.io.File(filesDir, "models"),
                         ),
                         modelsDir = java.io.File(filesDir, "models"),
                     )

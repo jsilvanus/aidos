@@ -72,6 +72,12 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   existing implementers compile. Engine advertises capability `decisions` for models of kind
   `decision`. See RFC-0022 "Decision capability" (D45, proposed).
 
+- `images` on `ChatMessage` (request): optional list of base64 image bytes (PNG/JPEG/...) or
+  `data:image/...;base64,` URLs on `user` messages; `content` is the question about them. Omitted from
+  the JSON when null. Engine serves it with vision models (kind `vision`; SmolVLM-256M on ONNX Runtime,
+  RFC-0022), and a model that cannot take images ignores them as text placeholders. The field list in
+  `ContractFreezeTest` is updated.
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).

@@ -12,6 +12,7 @@ import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.decisions.OnnxDecisionBackend
+import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.modelruntime.create
@@ -111,8 +112,9 @@ class DesktopEngineHost(
             // JVM llama.cpp backend (RFC-0022, M21). It reads its directory from the system
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
-            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45) from the same directory.
-            val runtime = GlobalModelRuntime(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir))
+            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45) and ONNX vision
+            // models (SmolVLM packages) from the same directory; each decorator claims only its own shape.
+            val runtime = GlobalModelRuntime(OnnxVisionBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir))
             val server = EngineHttpServer(
                 tokens,
                 runtime,

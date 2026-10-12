@@ -143,7 +143,13 @@ data class EngineModel(
 @Serializable
 data class ChatMessage(
     val role: String,  // "system", "user", "assistant", "tool"
-    val content: String? = null
+    val content: String? = null,
+    /**
+     * Pictures for a vision model, on `user` messages: base64 of the encoded image (PNG/JPEG/...)
+     * or a `data:image/...;base64,` URL. [content] carries the question about them. Optional and
+     * omitted from the JSON when null, so existing callers are unchanged (additive within API v1).
+     */
+    val images: List<String>? = null
 )
 
 @Serializable
