@@ -226,7 +226,10 @@ data class TranscriptionRequest(
     // future, Engine-side work, not an SDK bug).
     val file: String,
     val model: String,
-    val language: String? = null
+    // ISO 639-1 code ("fi"). Say it when you know it: detection on a short clip is unreliable.
+    val language: String? = null,
+    // Optional spelling and vocabulary hint for Whisper (names, liturgical terms); additive within API v1.
+    val prompt: String? = null
 )
 
 @Serializable

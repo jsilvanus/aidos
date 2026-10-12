@@ -72,10 +72,17 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   existing implementers compile. Engine advertises capability `decisions` for models of kind
   `decision`. See RFC-0022 "Decision capability" (D45, proposed).
 
+- `POST /v1/audio/transcriptions` is backed by a real speech-to-text model (Whisper on ONNX Runtime) when
+  the model's kind is `stt`. Request `{file, model, language?, prompt?}`, response `{text}`, unchanged;
+  `TranscriptionRequest.prompt` is new and optional. `file` is a base64 WAV (any PCM/float depth, any
+  channel count or rate; resampled to 16 kHz mono by Engine). Unusable audio is HTTP 400 on `file`.
+  See `docs/stt.md`.
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).
-- STT takes a whole utterance and returns no partial results.
+- STT takes a whole utterance and returns no partial results and no timestamps; audio over 30 s is
+  cut into windows internally, so send utterance-sized pieces for best results.
 - Per-request token accounting (`requestCount`) is metrics only, not contract.
 - Nothing here has been exercised on a physical device yet: the Android targets do not compile in
   the cloud environment, so the Binder path (`EngineBinderHandshake`, `EngineHandshakeImpl`, `EngineService.onBind`,
