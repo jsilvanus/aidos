@@ -50,6 +50,31 @@ data class DeviceProfile(
 
     /** Battery level floor for inference (0-100). */
     val batteryFloor: Int = 20,
+
+    /**
+     * The user's RAM baseline: bytes in use once the OS and their usual apps are running, before
+     * any model is loaded. Null when the user has not set one. Fit against the baseline answers
+     * "will this run on my machine in its normal state", unlike [availableRamBytes], which is
+     * only a snapshot of right now.
+     */
+    val baselineUsedRamBytes: Long? = null,
+) {
+    /** RAM free when the machine is at its baseline (total minus baseline in use), or null without one. */
+    val baselineAvailableRamBytes: Long?
+        get() = baselineUsedRamBytes?.let { (totalRamBytes - it).coerceAtLeast(0L) }
+}
+
+/**
+ * How a model fits a device at one context length, judged against both current free RAM and the
+ * user's baseline. [baselineVerdict] and [baselineAvailableBytes] are null when no baseline is set.
+ */
+data class RamFitReport(
+    /** Resident RAM the model needs at this context (weights + KV cache + overhead), in bytes. */
+    val neededBytes: Long,
+    val currentAvailableBytes: Long,
+    val currentVerdict: CookbookVerdict,
+    val baselineAvailableBytes: Long?,
+    val baselineVerdict: CookbookVerdict?,
 )
 
 /**
@@ -189,6 +214,40 @@ class CookbookEngine {
             headroomPercent >= 10 -> CookbookVerdict.RUNS_TIGHT
             else -> CookbookVerdict.EXCEEDS_CONTEXT
         }
+    }
+
+    /**
+     * Same as [verdict], but with free RAM taken to be what is left of total RAM at the user's
+     * baseline. Null when [device] carries no baseline.
+     */
+    fun verdictAtBaseline(
+        model: ModelDescriptor,
+        device: DeviceProfile,
+        contextWindow: Int,
+        measurements: PerformanceMeasurement? = null,
+    ): CookbookVerdict? {
+        val baselineFree = device.baselineAvailableRamBytes ?: return null
+        return verdict(model, device.copy(availableRamBytes = baselineFree), contextWindow, measurements)
+    }
+
+    /**
+     * RAM need plus fit against current free RAM and against the baseline, for one context length.
+     * [contextWindow] is an input so a per-model setting can replace the global default.
+     */
+    fun ramFit(
+        model: ModelDescriptor,
+        device: DeviceProfile,
+        contextWindow: Int,
+        measurements: PerformanceMeasurement? = null,
+    ): RamFitReport {
+        val requirements = ModelRequirements(model.sizeBytes ?: 0L, contextWindow, estimateParams(model), "unknown")
+        return RamFitReport(
+            neededBytes = computeResidentMemory(requirements, device, contextWindow),
+            currentAvailableBytes = device.availableRamBytes,
+            currentVerdict = verdict(model, device, contextWindow, measurements),
+            baselineAvailableBytes = device.baselineAvailableRamBytes,
+            baselineVerdict = verdictAtBaseline(model, device, contextWindow, measurements),
+        )
     }
 
     /**

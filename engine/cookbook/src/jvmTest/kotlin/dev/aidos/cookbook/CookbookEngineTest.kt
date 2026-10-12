@@ -154,4 +154,49 @@ class CookbookEngineTest {
         val verdict = engine.verdict(model, device, 4096)
         assertEquals(CookbookVerdict.WILL_NOT_FIT, verdict)
     }
+
+    private val twoGbModel = ModelDescriptor(
+        id = "m", name = "m", kind = ModelKind.LLM, providerId = "huggingface", isLocal = true,
+        contextWindow = 32768, sizeBytes = 2_000_000_000, digest = "x",
+    )
+
+    private fun device(baselineUsed: Long?) = DeviceProfile(
+        totalRamBytes = 16_000_000_000,
+        availableRamBytes = 3_000_000_000, // browser etc. open right now
+        storageFreeBytes = 50_000_000_000,
+        cpuCoreCount = 8,
+        hasAccelerator = false,
+        baselineUsedRamBytes = baselineUsed,
+    )
+
+    @Test
+    fun baselineFreeRamIsTotalMinusBaselineUsed() {
+        assertEquals(10_000_000_000, device(6_000_000_000).baselineAvailableRamBytes)
+        assertEquals(0L, device(20_000_000_000).baselineAvailableRamBytes)
+        assertEquals(null, device(null).baselineAvailableRamBytes)
+    }
+
+    @Test
+    fun noBaselineMeansNoBaselineVerdict() {
+        assertEquals(null, engine.verdictAtBaseline(twoGbModel, device(null), 4096))
+        assertEquals(null, engine.ramFit(twoGbModel, device(null), 4096).baselineVerdict)
+    }
+
+    @Test
+    fun fitCanDifferBetweenCurrentAndBaseline() {
+        val d = device(6_000_000_000)
+        val report = engine.ramFit(twoGbModel, d, 4096)
+        // 3 GB free right now is tight for a 2 GB model; at the 10 GB baseline it runs well.
+        assertEquals(CookbookVerdict.RUNS_TIGHT, report.currentVerdict)
+        assertEquals(CookbookVerdict.RUNS_WELL, report.baselineVerdict)
+        assertEquals(10_000_000_000, report.baselineAvailableBytes)
+        assertEquals(3_000_000_000, report.currentAvailableBytes)
+        assertEquals(engine.verdict(twoGbModel, d, 4096), report.currentVerdict)
+    }
+
+    @Test
+    fun neededRamGrowsWithContext() {
+        val d = device(6_000_000_000)
+        assertEquals(true, engine.ramFit(twoGbModel, d, 16384).neededBytes > engine.ramFit(twoGbModel, d, 2048).neededBytes)
+    }
 }

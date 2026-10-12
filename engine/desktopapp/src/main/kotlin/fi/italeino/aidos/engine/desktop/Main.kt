@@ -17,9 +17,10 @@ import java.io.File
 /** Entry point of the Windows debug app for Aidos Engine (RFC-0103). */
 fun main() {
     DesktopPaths.ensureCreated()
-    val host = DesktopEngineHost()
+    val prefs = DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json"))
+    val host = DesktopEngineHost(ramBaselineUsedBytes = { prefs.data.value.ramBaselineUsedMb?.let { it * 1024L * 1024L } })
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Swing)
-    val models = DesktopModels(host, DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json")), scope)
+    val models = DesktopModels(host, prefs, scope)
 
     application {
         Window(

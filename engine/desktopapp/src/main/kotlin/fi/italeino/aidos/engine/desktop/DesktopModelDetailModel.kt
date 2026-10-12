@@ -343,7 +343,7 @@ class DesktopModelDetailModel(
     }
 
     private fun dev.aidos.models.ModelDetail.toUiModel(license: String?): ModelDetail {
-        val device = DesktopDevice.profile()
+        val device = host.deviceProfile()
         val cookbook = CookbookEngine()
         val descriptor = ModelDescriptor(id, name, kind, provider, false, contextWindow, sizeBytes, null)
         val fitRows = listOf(4096, 8192, 16384, 32768).map { ctx ->
