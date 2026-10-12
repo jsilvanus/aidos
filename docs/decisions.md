@@ -528,14 +528,14 @@ Hugging Face model discovery is already format/backend-neutral.
 
 None.
 
-### D45 — Typed decisions ("System One") are a first-class capability · `PROPOSED`
+### D45 — Typed decisions ("System One") are a first-class capability · `SETTLED`
 
 Models that answer typed questions (`choice`/`score`/`noul`) in one non-generative pass get their own
 capability, kind (`ModelKind.DECISION`) and endpoint (`POST /v1/systemone`, Jev-compatible), instead
 of being squeezed into a classification or chat API. The contract lives in `engine/decisions`, not the
 frozen kernel. Laya multilingual via ONNX Runtime is the first model; ggmlc GGUFs are not supported
-(llama.cpp cannot load them). Decisions never execute actions. Proposed 2026-10-12; needs owner approval
-before this is marked SETTLED. Details: RFC-0022 "Decision capability".
+(llama.cpp cannot load them). Decisions never execute actions. Proposed and settled 2026-10-12 (owner approved).
+Details: RFC-0022 "Decision capability".
 
 ---
 
@@ -549,4 +549,4 @@ before this is marked SETTLED. Details: RFC-0022 "Decision capability".
 | 2026-08-04 | Legacy RFC audit and D29–D34 reconciliation; MCP HTTP MVP amendment; memory and MCP authority decisions settled. |
 | 2026-08-05 | D35 settled: SQLite binding is SQLDelight's drivers, not its schema codegen. |
 | 2026-08-17 | D36–D44 settled: capability-oriented inference backends, policy-driven backend selection, accelerator ownership, first-class streaming, generalized typed model outputs, KMP backend boundaries, and ONNX Runtime as the second backend. |
-| 2026-10-12 | D45 proposed: typed decisions (System One) as a first-class capability. |
+| 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
