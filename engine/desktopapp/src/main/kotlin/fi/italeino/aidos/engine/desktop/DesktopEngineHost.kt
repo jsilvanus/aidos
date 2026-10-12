@@ -13,6 +13,7 @@ import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.decisions.OnnxDecisionBackend
+import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.stt.OnnxSttBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.RunSettingsSource
@@ -121,9 +122,12 @@ class DesktopEngineHost(
             // JVM llama.cpp backend (RFC-0022, M21). It reads its directory from the system
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
-            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45) and Whisper
-            // speech-to-text packages (RFC-0103) from the same directory.
-            val runtime = GlobalModelRuntime(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), runSettings = runSettings)
+            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45), Whisper speech-to-text
+            // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
+            val runtime = GlobalModelRuntime(
+                OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
+                runSettings = runSettings,
+            )
             val server = EngineHttpServer(
                 tokens,
                 runtime,

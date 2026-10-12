@@ -24,6 +24,7 @@ dependencies {
     implementation(project(":enginehost"))
     implementation(project(":modelruntime"))
     implementation(project(":decisions"))
+    implementation(project(":vision"))
     implementation(project(":stt"))
     implementation(project(":models"))
     implementation(project(":downloads"))

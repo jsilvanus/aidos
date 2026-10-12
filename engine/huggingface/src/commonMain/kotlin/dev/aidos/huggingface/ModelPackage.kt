@@ -25,6 +25,8 @@ data class ModelPackage(
     val isDecisionPackage: Boolean,
     /** True for a Whisper speech-to-text package: encoder + decoder graphs and `tokenizer.json` (`WhisperPackage`). */
     val isSpeechPackage: Boolean = false,
+    /** True when it is the SmolVLM-style set the Engine's vision loader reads: three graphs (see [detectVision]), tokenizer and configs. */
+    val isVisionPackage: Boolean = false,
 ) {
     val sizeBytes: Long get() = files.sumOf { it.sizeBytes }
 
@@ -32,6 +34,36 @@ data class ModelPackage(
         "https://huggingface.co/$modelId/resolve/$revision/${HuggingFaceClient.encodePath(file.path)}"
 
     companion object {
+        /** Graph variants the vision loader can run, best first. `_int8` exports use signed ConvInteger, which ONNX Runtime's CPU provider cannot run. */
+        private val visionVariants = listOf("_uint8", "_quantized")
+        private val visionStems = listOf("vision_encoder", "embed_tokens", "decoder_model_merged")
+        private val visionCompanions = listOf("tokenizer.json", "config.json", "processor_config.json", "generation_config.json")
+
+        /**
+         * The vision package in [files]: the vision encoder, token embedding and merged decoder graphs of
+         * one quantized variant (~260 MB for SmolVLM-256M), with the tokenizer and configs from the repo
+         * root. Null when the repo does not have a complete set, so a half-matching repo is never offered.
+         * Only the layout is checked here; the loader refuses a model whose `config.json` is not idefics3.
+         */
+        fun detectVision(modelId: String, files: List<RepoFile>): ModelPackage? {
+            val byPath = files.associateBy { it.path }
+            for (suffix in visionVariants) {
+                val graphs = visionStems.map { byPath["onnx/$it$suffix.onnx"] ?: byPath["$it$suffix.onnx"] }
+                if (graphs.any { it == null }) continue
+                val side = visionCompanions.map { byPath[it] ?: return null }
+                return ModelPackage(
+                    modelId = modelId,
+                    name = "vision$suffix",
+                    format = ModelFormat.ONNX,
+                    directory = graphs.first()!!.path.substringBeforeLast('/', ""),
+                    files = side + graphs.filterNotNull(),
+                    isDecisionPackage = false,
+                    isVisionPackage = true,
+                )
+            }
+            return null
+        }
+
         /** Graph-name suffixes in the order a Whisper install prefers them: int8 first, the size phones can afford. */
         private val whisperPrecisions = listOf("_quantized", "_int8", "", "_fp16")
 
