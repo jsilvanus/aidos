@@ -371,6 +371,13 @@ Do not jump to agent orchestration, MCP, or additional product features because 
 awkward. Fix the seam and add the test first. Do not call an Engine feature complete merely because
 its platform-neutral implementation compiles.
 
+### 2b. System One (typed decisions) — Engine side built, JVM only
+
+`/v1/systemone`, `engine/decisions`, Laya multilingual on ONNX Runtime; parity-tested against the Python
+reference (docs/system-one.md). Open: Android wiring and a phone measurement (tokenizer load, latency,
+memory); multi-file model packages in the installer; fine-tuning on Dictator data (the zero-shot base
+checkpoint misroutes dictation, see the eval table there); D45 needs owner approval before it is SETTLED.
+
 ### 3. MCP (RFC-0031) — the SDK migration landed; the wiring did not
 
 The client is real and speaks the protocol through the official Kotlin MCP SDK. What remains:

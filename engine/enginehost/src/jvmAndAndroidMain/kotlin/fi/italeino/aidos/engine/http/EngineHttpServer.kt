@@ -1,5 +1,8 @@
 package fi.italeino.aidos.engine.http
 
+import dev.aidos.decisions.DecisionModelAdapter
+import dev.aidos.decisions.DecisionRequestException
+import dev.aidos.decisions.DecisionWire
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
 import fi.italeino.aidos.engine.inference.EngineBusyException
@@ -108,6 +111,10 @@ class EngineHttpServer(
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
+                // Typed decisions (RFC-0022 D45). /v1/systemone is the Jev-compatible path; /v1/decisions
+                // is OpenJev's alias for the same handler.
+                post("/v1/systemone") { handleDecisions(call) }
+                post("/v1/decisions") { handleDecisions(call) }
             }
         }
     }
@@ -329,6 +336,7 @@ class EngineHttpServer(
         ModelKind.OCR -> listOf("ocr")
         ModelKind.RERANKER -> listOf("rerank")
         ModelKind.TRANSLATION -> listOf("translation")
+        ModelKind.DECISION -> listOf("decisions")
     }
 
     private suspend fun handleEmbeddings(call: ApplicationCall) {
@@ -385,6 +393,35 @@ class EngineHttpServer(
             )
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
+        }
+    }
+
+    private suspend fun handleDecisions(call: ApplicationCall) {
+        val parsed = try {
+            DecisionWire.parseRequest(call.receive<JsonObject>())
+        } catch (e: DecisionRequestException) {
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "invalid request", "invalid_request_error")))
+            return
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail("request body must be a JSON object", "invalid_request_error")))
+            return
+        }
+        val outcome = inferenceManager.execute(parsed.model) { adapter ->
+            val decisionAdapter = adapter as? DecisionModelAdapter
+                ?: throw UnsupportedOperationException("Model ${parsed.model} is not a decision model")
+            decisionAdapter.decide(parsed.request).getOrThrow()
+        }
+        val error = outcome.exceptionOrNull()
+        when {
+            error is DecisionRequestException ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(error.message ?: "invalid request", "invalid_request_error")))
+            error is UnsupportedOperationException ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(error.message ?: "unsupported", "invalid_request_error", param = "model")))
+            error != null -> respondClassifiedError(call, error)
+            else -> call.respondText(
+                DecisionWire.renderResult(outcome.getOrThrow()).toString(),
+                ContentType.Application.Json,
+            )
         }
     }
 
