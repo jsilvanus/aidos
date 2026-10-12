@@ -24,6 +24,8 @@ import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.EffectBroker
+import dev.aidos.modelruntime.RunSettingsSource
+import fi.italeino.aidos.engine.ui.SettingsStore
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
@@ -192,7 +194,9 @@ class EngineService : LifecycleService() {
                             modelsDir = onnxModelsDir,
                         ),
                         modelsDir = onnxModelsDir,
-                    )
+                    ),
+                    // Per-model run settings the user saved on the model card (RFC-0103).
+                    runSettings = RunSettingsSource { id -> SettingsStore.getRunSettings(this@EngineService, id) },
                 )
                 modelRuntime = runtime
 

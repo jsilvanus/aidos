@@ -4,6 +4,7 @@ import dev.aidos.cookbook.CookbookEngine
 import dev.aidos.cookbook.ModelRequirements
 import dev.aidos.decisions.LayaPackage
 import dev.aidos.kernel.ModelDescriptor
+import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.InstallerEvent
 import dev.aidos.models.ModelDownloadRequest
@@ -15,6 +16,7 @@ import fi.italeino.aidos.engine.ui.ModelDetail
 import fi.italeino.aidos.engine.ui.ModelDetailState
 import fi.italeino.aidos.engine.ui.ModelLoadingState
 import fi.italeino.aidos.engine.ui.ModelLoadingStatus
+import fi.italeino.aidos.engine.ui.RunSettingsUi
 import fi.italeino.aidos.engine.ui.SelfTestOutcome
 import fi.italeino.aidos.engine.ui.runModelSelfTest
 import fi.italeino.aidos.engine.ui.selfTestKind
@@ -41,11 +43,12 @@ import java.io.File
 class DesktopModelDetailModel(
     private val modelId: String,
     private val host: DesktopEngineHost,
+    private val prefs: DesktopPreferences,
     parentScope: CoroutineScope,
 ) {
     private val scope = CoroutineScope(parentScope.coroutineContext + Job(parentScope.coroutineContext[Job]))
 
-    private val _state = MutableStateFlow(ModelDetailState())
+    private val _state = MutableStateFlow(ModelDetailState(runSettings = prefs.runSettingsFor(modelId).toUi()))
     val state: StateFlow<ModelDetailState> = _state.asStateFlow()
 
     private val _loading = MutableStateFlow(ModelLoadingState(modelId = modelId))
@@ -62,6 +65,8 @@ class DesktopModelDetailModel(
                 val current = _loading.value.status
                 if (current != ModelLoadingStatus.LOADING && current != ModelLoadingStatus.UNLOADING) {
                     val loaded = runtime != null && modelId in runtime.loaded()
+                    val loadedWith = if (loaded) runtime?.loadedSettings(modelId)?.toUi() else null
+                    if (_state.value.loadedRunSettings != loadedWith) _state.value = _state.value.copy(loadedRunSettings = loadedWith)
                     _loading.value = _loading.value.copy(
                         status = if (loaded) ModelLoadingStatus.LOADED
                         else if (current == ModelLoadingStatus.ERROR) ModelLoadingStatus.ERROR
@@ -289,6 +294,31 @@ class DesktopModelDetailModel(
         }
     }
 
+    /** Saves to preferences at once; the runtime reads them the next time it loads this model. */
+    fun setRunSettings(value: RunSettingsUi) {
+        prefs.setRunSettings(modelId, value.toRuntime())
+        _state.value = _state.value.copy(runSettings = prefs.runSettingsFor(modelId).toUi())
+    }
+
+    /** Unload and load again so a changed setting takes effect. */
+    fun reload() {
+        val runtime = host.modelRuntime ?: return
+        if (modelId !in runtime.loaded()) return
+        scope.launch {
+            _loading.value = _loading.value.copy(status = ModelLoadingStatus.UNLOADING)
+            try {
+                withTimeout(LOAD_TIMEOUT_MS) { runtime.unload(modelId) }
+                _loading.value = _loading.value.copy(status = ModelLoadingStatus.NOT_LOADED)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _loading.value = _loading.value.copy(status = ModelLoadingStatus.ERROR, error = e.message)
+                return@launch
+            }
+            toggleLoad()
+        }
+    }
+
     fun setSelfTestText(value: String) {
         _state.value = _state.value.copy(selfTestText = value)
     }
@@ -405,6 +435,10 @@ class DesktopModelDetailModel(
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
         )
     }
+
+    private fun ModelRunSettings.toUi() = RunSettingsUi(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+
+    private fun RunSettingsUi.toRuntime() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
 
     private companion object {
         /** Same budget as Android's ModelLoader default. */

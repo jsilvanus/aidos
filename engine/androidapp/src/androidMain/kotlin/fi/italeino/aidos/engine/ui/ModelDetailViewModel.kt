@@ -257,6 +257,11 @@ class ModelDetailViewModel : ViewModel() {
         _state.value = _state.value.copy(embeddingInput = value)
     }
 
+    /** Mirrors the saved run settings into the card; the screen persists them (it holds the Context). */
+    fun setRunSettingsState(value: RunSettingsUi) {
+        _state.value = _state.value.copy(runSettings = value)
+    }
+
     fun setSelfTestText(value: String) {
         _state.value = _state.value.copy(selfTestText = value)
     }

@@ -126,7 +126,11 @@ class LlamaCppInferenceBackend : InferenceBackend {
      * path). As there, the path must lie inside [modelsDir], so a catalog record cannot make the
      * runtime open an arbitrary file.
      */
-    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
+        load(modelId, artifactPath, ModelRunSettings.DEFAULT)
+
+    /** As above, run with the user's per-model [settings] (RFC-0103); unset fields keep the defaults. */
+    override suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> {
         val file = if (artifactPath == null) {
             modelFile(modelId)
         } else {
@@ -148,7 +152,16 @@ class LlamaCppInferenceBackend : InferenceBackend {
             ?: return Result.failure(IllegalStateException("INVALID_GGUF: $modelId"))
 
         return try {
-            val adapter = LlamaCppAdapter(modelId, file, metadata, embeddingMode = isEmbeddingModel(modelId, metadata))
+            // A context longer than the model was trained for degrades output, so cap at the GGUF's own.
+            val trained = metadata.contextWindow.takeIf { it > 0 }
+            val contextSize = (settings.contextLength ?: DEFAULT_CONTEXT).let { if (trained != null) minOf(it, trained) else it }
+            val adapter = LlamaCppAdapter(
+                modelId, file, metadata,
+                contextSize = contextSize,
+                threads = settings.threads ?: ModelRunSettings.DEFAULT_THREADS,
+                embeddingMode = isEmbeddingModel(modelId, metadata),
+                settings = settings,
+            )
             liveAdapters[modelId] = adapter
             Result.success(adapter)
         } catch (e: UnsatisfiedLinkError) {
@@ -176,6 +189,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
     private fun modelFile(modelId: String): File = File(modelsDir, "$modelId.gguf")
 
     private companion object {
+        const val DEFAULT_CONTEXT = 2048
         val EMBEDDING_ARCHITECTURES = setOf("bert", "nomic-bert", "jina-bert-v2", "modern-bert")
     }
 }

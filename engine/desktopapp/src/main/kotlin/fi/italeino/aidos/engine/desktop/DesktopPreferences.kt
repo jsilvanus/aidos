@@ -1,5 +1,7 @@
 package fi.italeino.aidos.engine.desktop
 
+import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.modelruntime.RunSettingsSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,7 +15,28 @@ data class DesktopPreferencesData(
     val hfToken: String? = null,
     val hfTokenValidatedMs: Long? = null,
     val preferredContextLength: Int = 4096,
+    /** Per-model llama.cpp run settings (RFC-0103), keyed by model id; absent means defaults. */
+    val modelRunSettings: Map<String, StoredRunSettings> = emptyMap(),
 )
+
+/** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
+@Serializable
+data class StoredRunSettings(
+    val contextLength: Int? = null,
+    val threads: Int? = null,
+    val batchSize: Int? = null,
+    val gpuLayers: Int? = null,
+    val temperature: Float? = null,
+    val topP: Float? = null,
+    val topK: Int? = null,
+) {
+    fun toSettings() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+
+    companion object {
+        fun of(s: ModelRunSettings) =
+            StoredRunSettings(s.contextLength, s.threads, s.batchSize, s.gpuLayers, s.temperature, s.topP, s.topK)
+    }
+}
 
 /**
  * Desktop stand-in for the Android app's SharedPreferences (SuggestionPreferences, SettingsStore
@@ -38,6 +61,18 @@ class DesktopPreferences(private val file: File) {
     fun clearHfToken() = update { it.copy(hfToken = null, hfTokenValidatedMs = null) }
 
     fun setPreferredContextLength(tokens: Int) = update { it.copy(preferredContextLength = tokens) }
+
+    /** What the runtime reads at load time; a model never configured runs with the defaults. */
+    val runSettingsSource = RunSettingsSource { id -> runSettingsFor(id) }
+
+    fun runSettingsFor(modelId: String): ModelRunSettings =
+        _data.value.modelRunSettings[modelId]?.toSettings()?.coerced() ?: ModelRunSettings.DEFAULT
+
+    fun setRunSettings(modelId: String, settings: ModelRunSettings) = update {
+        val next = if (settings.isDefault) it.modelRunSettings - modelId
+        else it.modelRunSettings + (modelId to StoredRunSettings.of(settings.coerced()))
+        it.copy(modelRunSettings = next)
+    }
 
     @Synchronized
     private fun update(transform: (DesktopPreferencesData) -> DesktopPreferencesData) {

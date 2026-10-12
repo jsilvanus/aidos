@@ -32,6 +32,10 @@ class ModelDetailActions(
     val onRunSelfTest: (() -> Unit)? = null,
     val onSelfTestTextChange: (String) -> Unit = {},
     val onSelfTestFileChange: (String) -> Unit = {},
+    /** Null hides the run-settings section (hosts that cannot store them). */
+    val onRunSettingsChange: ((RunSettingsUi) -> Unit)? = null,
+    /** Null hides the "Reload to apply" button (hosts without a reload path). */
+    val onReload: (() -> Unit)? = null,
 )
 
 /**
@@ -97,6 +101,10 @@ fun ModelDetailContent(
                         }
                         MemoryLines(model, row)
                     }
+                }
+
+                actions.onRunSettingsChange?.let { change ->
+                    RunSettingsSection(model.kind, state, change, actions.onReload)
                 }
 
                 LicenseInfoCard(
@@ -486,4 +494,70 @@ internal fun testTimingLine(outcome: SelfTestOutcome): String {
     val seconds = "%.1f s".format(outcome.durationMs / 1000.0)
     val speed = outcome.tokensPerSecond?.let { ", %.1f tokens/s".format(it) }.orEmpty()
     return "Last run: $seconds$speed (includes loading if the model was not resident)"
+}
+
+/** Per-model run settings. Blank = the default shown as the hint; llama.cpp models only. */
+@Composable
+private fun RunSettingsSection(
+    kind: ModelKind,
+    state: ModelDetailState,
+    onChange: (RunSettingsUi) -> Unit,
+    onReload: (() -> Unit)?,
+) {
+    // Only llama.cpp models read these; ONNX decision and speech packages ignore them.
+    if (kind == ModelKind.DECISION || kind == ModelKind.STT) return
+    val settings = state.runSettings
+    val generates = kind != ModelKind.EMBEDDING
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Run settings", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Text("Blank uses the default. Changes apply the next time the model is loaded.", fontSize = 11.sp, color = muted)
+        NumberField("Context length (tokens)", settings.contextLength, "2048") { onChange(settings.copy(contextLength = it)) }
+        NumberField("CPU threads", settings.threads, "4") { onChange(settings.copy(threads = it)) }
+        NumberField("Batch size", settings.batchSize, "512") { onChange(settings.copy(batchSize = it)) }
+        NumberField("GPU layers", settings.gpuLayers, "0") { onChange(settings.copy(gpuLayers = it)) }
+        if (generates) {
+            DecimalField("Temperature", settings.temperature, "0.7") { onChange(settings.copy(temperature = it)) }
+            DecimalField("Top-p", settings.topP, "0.95") { onChange(settings.copy(topP = it)) }
+            NumberField("Top-k", settings.topK, "40") { onChange(settings.copy(topK = it)) }
+        }
+        val loaded = state.loadedRunSettings
+        val pending = loaded != null && loaded != settings
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { onChange(RunSettingsUi()) }, enabled = !settings.isDefault) { Text("Reset to defaults") }
+            if (pending && onReload != null) Button(onClick = onReload) { Text("Reload to apply") }
+        }
+        if (pending && onReload == null) {
+            Text("The loaded copy still uses the old settings; unload and load it again.", fontSize = 11.sp, color = muted)
+        }
+    }
+}
+
+@Composable
+private fun NumberField(label: String, value: Int?, hint: String, onValue: (Int?) -> Unit) {
+    OutlinedTextField(
+        value = value?.toString().orEmpty(),
+        onValueChange = { text -> if (text.isBlank()) onValue(null) else text.toIntOrNull()?.let(onValue) },
+        label = { Text(label) },
+        placeholder = { Text(hint) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun DecimalField(label: String, value: Float?, hint: String, onValue: (Float?) -> Unit) {
+    // Keep what the user is typing ("0.") instead of re-rendering the parsed float under their cursor.
+    var text by remember(value) { mutableStateOf(value?.toString().orEmpty()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            if (it.isBlank()) onValue(null) else it.toFloatOrNull()?.let(onValue)
+        },
+        label = { Text(label) },
+        placeholder = { Text(hint) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

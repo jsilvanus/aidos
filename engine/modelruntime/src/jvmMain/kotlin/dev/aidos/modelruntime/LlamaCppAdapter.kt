@@ -35,6 +35,8 @@ class LlamaCppAdapter(
     threads: Int = 4,
     /** Embedding models are loaded with llama.cpp's embedding mode on and cannot generate text. */
     private val embeddingMode: Boolean = false,
+    /** Batch size, GPU layers and sampling come from here; context and threads arrive resolved above. */
+    private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
 ) : ModelAdapter, EmbeddingModelAdapter {
     override val providerId = "llama.cpp"
     override val modelVersion = "java-llama.cpp-4.2.0"
@@ -58,9 +60,9 @@ class LlamaCppAdapter(
             .setCtxSize(contextSize)
             .setThreads(threads)
             .setThreadsBatch(threads)
-            .setBatchSize(512)
-            .setUbatchSize(512)
-            .setGpuLayers(0)
+            .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+            .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+            .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
             .let { if (embeddingMode) it.enableEmbedding() else it }
 
         return try {
@@ -137,9 +139,9 @@ class LlamaCppAdapter(
             val output = StringBuilder()
             val parameters = InferenceParameters(prompt)
                 .setNPredict(request.maxOutputTokens)
-                .setTemperature(0.7f)
-                .setTopP(0.95f)
-                .setTopK(40)
+                .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
             val tokens = model.generate(parameters).iterator()
             var tokenCount = 0
 

@@ -4,6 +4,7 @@ import dev.aidos.decisions.DecisionPackages
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.modelruntime.InferenceBackend
+import dev.aidos.modelruntime.ModelRunSettings
 import java.io.File
 
 /**
@@ -39,6 +40,10 @@ class AndroidOnnxDecisionBackend(
 
     override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
         if (packages.handles(modelId, artifactPath)) packages.load(modelId, artifactPath) else delegate.load(modelId, artifactPath)
+
+    // Settings are for llama.cpp; the ONNX packages ignore them, anything else is the delegate's.
+    override suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> =
+        if (packages.handles(modelId, artifactPath)) packages.load(modelId, artifactPath) else delegate.load(modelId, artifactPath, settings)
 
     override suspend fun unload(modelId: String) {
         if (!packages.unload(modelId)) delegate.unload(modelId)

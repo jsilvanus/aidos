@@ -118,6 +118,23 @@ data class ModelDetail(
     val deviceFreeRamMB: Int = 0,
 )
 
+/**
+ * A model's run settings as the card edits them. Null means "the backend's default". Mirrors the
+ * runtime's ModelRunSettings, which the hosts convert to and from (this module stays clear of :modelruntime,
+ * which has no Android target); the runtime clamps every value into what llama.cpp accepts.
+ */
+data class RunSettingsUi(
+    val contextLength: Int? = null,
+    val threads: Int? = null,
+    val batchSize: Int? = null,
+    val gpuLayers: Int? = null,
+    val temperature: Float? = null,
+    val topP: Float? = null,
+    val topK: Int? = null,
+) {
+    val isDefault: Boolean get() = this == RunSettingsUi()
+}
+
 data class ModelDetailState(
     val model: ModelDetail? = null,
     val isInstalled: Boolean = false,
@@ -136,6 +153,9 @@ data class ModelDetailState(
     val selfTestFile: String = "",
     val isSelfTesting: Boolean = false,
     val selfTestOutcome: SelfTestOutcome? = null,
+    /** Saved run settings for this model, and the ones its resident copy was loaded with (null when not loaded). */
+    val runSettings: RunSettingsUi = RunSettingsUi(),
+    val loadedRunSettings: RunSettingsUi? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
 )

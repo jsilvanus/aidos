@@ -18,12 +18,13 @@ import kotlinx.coroutines.sync.withLock
 class GlobalModelRuntime(
     private val backend: InferenceBackend,
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
+    private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
 ) : ModelRuntime {
 
     private val admissionQueue = Mutex()
     @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
 
-    private data class LoadedModel(val adapter: ModelAdapter, val loadedAtMillis: Long)
+    private data class LoadedModel(val adapter: ModelAdapter, val loadedAtMillis: Long, val settings: ModelRunSettings)
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
@@ -68,10 +69,12 @@ class GlobalModelRuntime(
                 }
             }
 
-            val adapter = backend.load(modelId, artifactPath).getOrElse { err ->
+            // Settings are read once, here, so what the card shows as "loaded with" is what the backend got.
+            val settings = runSettings.settingsFor(modelId).coerced()
+            val adapter = backend.load(modelId, artifactPath, settings).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
-            loadedModels = loadedModels + (modelId to LoadedModel(adapter, nowMillis()))
+            loadedModels = loadedModels + (modelId to LoadedModel(adapter, nowMillis(), settings))
             Result.success(adapter)
         }
     }
@@ -84,6 +87,9 @@ class GlobalModelRuntime(
     }
 
     fun loadedAtMillis(modelId: String): Long? = loadedModels[modelId]?.loadedAtMillis
+
+    /** The settings a resident model was loaded with, or null when it is not loaded. */
+    fun loadedSettings(modelId: String): ModelRunSettings? = loadedModels[modelId]?.settings
 
     override suspend fun delete(modelId: String) {
         admissionQueue.withLock {
@@ -109,6 +115,9 @@ interface InferenceBackend {
     suspend fun delete(modelId: String)
     suspend fun load(modelId: String): Result<ModelAdapter>
     suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> = load(modelId)
+    /** [settings] only matter to backends that run llama.cpp; the default ignores them. */
+    suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> =
+        load(modelId, artifactPath)
     suspend fun unload(modelId: String)
 }
 

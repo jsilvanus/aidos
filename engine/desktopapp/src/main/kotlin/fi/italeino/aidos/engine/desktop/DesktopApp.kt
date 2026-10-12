@@ -172,7 +172,7 @@ private fun ModelsColumn(models: DesktopModels, onModelSelected: (String) -> Uni
 
 @Composable
 private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> Unit) {
-    val detail = remember(modelId) { DesktopModelDetailModel(modelId, models.host, models.scope) }
+    val detail = remember(modelId) { DesktopModelDetailModel(modelId, models.host, models.prefs, models.scope) }
     DisposableEffect(detail) { onDispose { detail.dispose() } }
 
     val state by detail.state.collectAsState()
@@ -204,6 +204,8 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
                 onRunSelfTest = detail::runSelfTest,
                 onSelfTestTextChange = detail::setSelfTestText,
                 onSelfTestFileChange = detail::setSelfTestFile,
+                onRunSettingsChange = detail::setRunSettings,
+                onReload = detail::reload,
             ),
         )
     }
