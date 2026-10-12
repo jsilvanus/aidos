@@ -240,7 +240,7 @@ Higher-level adapters may expose embeddings, vision, STT, classification, or gen
 
 ## Decision capability (typed decisions, "System One")
 
-*Amendment proposed 2026-10-12 (D45, PROPOSED). See also `LAYA.md`.*
+*Amendment 2026-10-12 (D45, SETTLED). See also `LAYA.md`.*
 
 A decision model reads a text *state* and several *typed questions* and answers all of them in one
 non-autoregressive pass, with probabilities instead of generated text. The primitives are `choice`
@@ -295,7 +295,7 @@ The following are recorded in `docs/decisions.md` as D36–D44:
 - **D42:** contracts are shared through KMP with platform-specific implementations;
 - **D43:** `ModelResponse` is generalized to typed outputs;
 - **D44:** ONNX Runtime is the second inference backend;
-- **D45 (PROPOSED):** typed decisions are a first-class capability (`DECISION`), served over `/v1/systemone`.
+- **D45 (SETTLED):** typed decisions are a first-class capability (`DECISION`), served over `/v1/systemone`.
 
 These decisions supersede the earlier open questions in the draft RFC. The amendments in this revision further constrain D41/D43 so that tensor outputs are named and storage is capable of zero-copy implementations, while response usage retains token accounting. Implementation details remain subject to normal code review and tests.
 

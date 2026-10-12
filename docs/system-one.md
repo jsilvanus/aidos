@@ -1,7 +1,7 @@
 # System One (typed decisions) in the Aidos Engine
 
 Status: implemented and tested on the JVM/desktop host; Android wiring written but never compiled or run (see "Not done"). Design:
-RFC-0022 "Decision capability", D45 (proposed). Background: `LAYA.md`.
+RFC-0022 "Decision capability", D45 (settled). Background: `LAYA.md`.
 
 ## What it is
 
