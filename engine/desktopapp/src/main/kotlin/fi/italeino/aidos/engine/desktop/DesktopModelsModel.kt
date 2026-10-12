@@ -208,7 +208,7 @@ internal fun BrowsableModel.toUiModel(): CookbookModel {
         sizeBytes = sizeBytes ?: installedModel?.sizeBytes,
         contextLength = contextWindow,
         fitVerdict = verdict.toUiVerdict(),
-        isRunnable = format == "gguf",
+        isRunnable = dev.aidos.models.PackageInstall.isRunnable(format, kind),
     )
 }
 

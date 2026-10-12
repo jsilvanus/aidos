@@ -305,7 +305,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
             sizeBytes = sizeBytes ?: installedModel?.sizeBytes,
             contextLength = contextWindow,
             fitVerdict = verdict.toUiVerdict(),
-            isRunnable = format == "gguf",
+            isRunnable = dev.aidos.models.PackageInstall.isRunnable(format, kind),
         )
     }
 

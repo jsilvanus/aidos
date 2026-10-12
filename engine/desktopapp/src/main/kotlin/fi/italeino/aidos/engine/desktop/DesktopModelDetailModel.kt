@@ -7,8 +7,7 @@ import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.InstallerEvent
 import dev.aidos.models.ModelDownloadRequest
-import dev.aidos.models.ModelPackageDownloadRequest
-import dev.aidos.models.PackageFileRequest
+import dev.aidos.models.PackageInstall
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.ui.ContextFitRow
 import fi.italeino.aidos.engine.ui.ModelDetail
@@ -132,22 +131,15 @@ class DesktopModelDetailModel(
                 val detail = host.modelBrowser.getModelDetail(model.id).getOrThrow()
                 val remote = host.hfClient.getModel(model.id).getOrThrow()
 
-                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val safeModelId = PackageInstall.directoryName(model.id)
 
                 // A GGUF quantization is the single-file path (prefer Q4_K_M, as on Android). Failing
-                // that, an ONNX decision package (graph + tokenizer + config) or a Whisper speech-to-text package installs as a directory.
+                // that, an ONNX decision, Whisper or SmolVLM vision package installs as a directory.
                 // Anything else (a lone .onnx, safetensors, ...) has no backend here, so installing it
                 // would leave a file the Engine can never load.
-                val onnxPackage = remote.packages.firstOrNull { it.isDecisionPackage } ?: remote.packages.firstOrNull { it.isSpeechPackage }
+                val onnxPackage = PackageInstall.choose(remote.packages)
                 if (remote.quantizations.isEmpty() && onnxPackage != null) {
                     installOnnxPackage(model.id, safeModelId, onnxPackage)
-                    return@launch
-                }
-                // A SmolVLM-style vision model is its three graphs and configs installed as one unit; the
-                // projector-pairing problem of GGUF vision models does not arise on ONNX.
-                val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
-                if (remote.quantizations.isEmpty() && visionPackage != null) {
-                    installOnnxPackage(model.id, safeModelId, visionPackage)
                     return@launch
                 }
                 if (remote.quantizations.isEmpty()) {
@@ -212,20 +204,8 @@ class DesktopModelDetailModel(
 
     /** Downloads every file of [pkg] (a decision, speech or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
     private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
-        val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
         val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
-            ModelPackageDownloadRequest(
-                modelId = modelId,
-                files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
-                destinationDir = File(host.artifactDir, safeId).absolutePath,
-                kind = when {
-                    pkg.isSpeechPackage -> dev.aidos.kernel.ModelKind.STT
-                    pkg.isVisionPackage -> dev.aidos.kernel.ModelKind.VISION
-                    else -> dev.aidos.kernel.ModelKind.DECISION
-                },
-                format = "onnx",
-                backend = "onnx-runtime",
-            )
+            PackageInstall.toRequest(modelId, pkg, File(host.artifactDir, safeId).absolutePath)
         ) { event ->
             when (event) {
                 is InstallerEvent.DownloadProgress -> {
@@ -438,7 +418,7 @@ class DesktopModelDetailModel(
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf" || (format == "onnx" && kind == dev.aidos.kernel.ModelKind.DECISION),
+            isRunnable = PackageInstall.isRunnable(format, kind),
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
