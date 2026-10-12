@@ -3,6 +3,9 @@ package fi.italeino.aidos.engine.http
 import dev.aidos.decisions.DecisionModelAdapter
 import dev.aidos.decisions.DecisionRequestException
 import dev.aidos.decisions.DecisionWire
+import dev.aidos.stt.SttModelAdapter
+import dev.aidos.stt.SttRequest
+import dev.aidos.stt.SttRequestException
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
 import fi.italeino.aidos.engine.inference.EngineBusyException
@@ -430,6 +433,12 @@ class EngineHttpServer(
             val request = call.receive<TranscriptionRequest>()
             val audioBytes = Base64.getDecoder().decode(request.file)
             val result = inferenceManager.execute(request.model) { adapter ->
+                // A speech-to-text model (Whisper) transcribes directly. Any other model keeps the older
+                // path of handing the audio to the model as a chat turn (an audio-capable LLM, once one exists).
+                if (adapter is SttModelAdapter) {
+                    val stt = adapter.transcribe(SttRequest(audioBytes, request.language, request.prompt)).getOrThrow()
+                    return@execute stt.text
+                }
                 val modelRequest = ModelRequest(
                     messages = listOf(
                         Turn.System(request.prompt ?: "Transcribe audio"),
@@ -440,14 +449,18 @@ class EngineHttpServer(
                     maxOutputTokens = 1000,
                     stopConditions = emptyList()
                 )
-                adapter.invoke(modelRequest).getOrThrow()
+                adapter.invoke(modelRequest).getOrThrow().outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
             }
-            if (result.isFailure) {
-                respondClassifiedError(call, result.exceptionOrNull())
+            val failure = result.exceptionOrNull()
+            if (failure is SttRequestException) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(failure.message ?: "invalid audio", "invalid_request_error", param = "file")))
                 return
             }
-            val text = result.getOrThrow().outputs.filterIsInstance<TextOutput>().joinToString("") { it.text }
-            call.respond(TranscriptionResponse(text = text))
+            if (result.isFailure) {
+                respondClassifiedError(call, failure)
+                return
+            }
+            call.respond(TranscriptionResponse(text = result.getOrThrow()))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(e.message ?: "Unknown error", "invalid_request_error")))
         }
