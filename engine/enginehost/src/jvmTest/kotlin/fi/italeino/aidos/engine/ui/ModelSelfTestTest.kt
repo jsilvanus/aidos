@@ -82,11 +82,15 @@ class ModelSelfTestTest {
     }
 
     @Test
-    fun visionSaysItIsUnsupportedUntilTheEngineCanDoIt() = runBlocking {
-        val png = File.createTempFile("selftest", ".png").apply { writeBytes(byteArrayOf(1)); deleteOnExit() }
-        val outcome = run(ModelTestKind.VISION, FakeClient(), file = png.path)
-        assertFalse(outcome.passed)
-        assertTrue("not supported" in outcome.title)
+    fun visionSendsThePictureWithTheQuestionAndPassesOnAnAnswer() = runBlocking {
+        val png = File.createTempFile("selftest", ".png").apply { writeBytes(byteArrayOf(1, 2, 3)); deleteOnExit() }
+        val client = FakeClient(chat = "A red square.")
+        val outcome = run(ModelTestKind.VISION, client, text = "What is it?", file = png.path)
+        assertTrue(outcome.passed); assertEquals(listOf("A red square."), outcome.lines)
+        val sent = client.lastChat!!.messages.single()
+        assertEquals("What is it?", sent.content)
+        assertEquals(listOf(java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))), sent.images)
+        assertFalse(run(ModelTestKind.VISION, FakeClient(chat = null), file = png.path).passed)
         assertTrue("Enter the path" in run(ModelTestKind.VISION, FakeClient(), file = "").title)
     }
 
@@ -98,6 +102,7 @@ class ModelSelfTestTest {
         val decision: Map<String, DecisionAnswerWire>? = null,
         val transcript: String? = null,
     ) : AidosEngineClient {
+        var lastChat: ChatCompletionRequest? = null
         override suspend fun initialize() = true
         override fun isAvailable() = true
         override fun availability() = EngineAvailability.Available
@@ -105,7 +110,7 @@ class ModelSelfTestTest {
         override suspend fun capabilities() = EngineCapabilities(emptyList(), emptyList())
         override suspend fun request(endpoint: String, method: String, body: String?): String? = null
         override suspend fun supportsEndpoint(endpoint: String) = true
-        override suspend fun chatCompletion(request: ChatCompletionRequest) = chat?.let {
+        override suspend fun chatCompletion(request: ChatCompletionRequest) = chat?.also { lastChat = request }?.let {
             ChatCompletionResponse("id", 0, request.model, listOf(ChatChoice(0, ChatMessage("assistant", it))), TokenUsage(1, 2, 3))
         }
         override fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatCompletionChunk> = emptyFlow()

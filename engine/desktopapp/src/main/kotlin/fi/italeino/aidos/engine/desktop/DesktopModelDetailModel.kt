@@ -107,7 +107,7 @@ class DesktopModelDetailModel(
             // A GGUF is one file of the recorded size; an ONNX decision model is a package directory.
             val valid = installed != null && file != null && installed.sizeBytes > 0L && when {
                 file.isFile -> file.length() == installed.sizeBytes
-                file.isDirectory -> LayaPackage.isPackage(file) &&
+                file.isDirectory -> (LayaPackage.isPackage(file) || dev.aidos.stt.WhisperPackage.isPackage(file) || dev.aidos.vision.VisionPackage.isPackage(file)) &&
                     file.listFiles { f -> f.isFile }.orEmpty().sumOf { it.length() } == installed.sizeBytes
                 else -> false
             }
@@ -143,10 +143,17 @@ class DesktopModelDetailModel(
                     installOnnxPackage(model.id, safeModelId, onnxPackage)
                     return@launch
                 }
+                // A SmolVLM-style vision model is its three graphs and configs installed as one unit; the
+                // projector-pairing problem of GGUF vision models does not arise on ONNX.
+                val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
+                if (remote.quantizations.isEmpty() && visionPackage != null) {
+                    installOnnxPackage(model.id, safeModelId, visionPackage)
+                    return@launch
+                }
                 if (remote.quantizations.isEmpty()) {
                     val found = remote.artifacts.map { it.format.name }.distinct().joinToString().ifEmpty { "none" }
                     throw IllegalStateException(
-                        "No GGUF file, ONNX decision package or Whisper package in ${model.id} (formats found: $found); this Engine cannot run it.",
+                        "No GGUF file, ONNX decision, Whisper or vision package in ${model.id} (formats found: $found); this Engine cannot run it.",
                     )
                 }
                 val (artifactBaseName, downloadUrl, expectedDigest) = remote.quantizations.let { qs ->
@@ -203,7 +210,7 @@ class DesktopModelDetailModel(
         }
     }
 
-    /** Downloads every file of [pkg] into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
+    /** Downloads every file of [pkg] (a decision, speech or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
     private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
         val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
         val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
@@ -211,7 +218,11 @@ class DesktopModelDetailModel(
                 modelId = modelId,
                 files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
                 destinationDir = File(host.artifactDir, safeId).absolutePath,
-                kind = if (pkg.isSpeechPackage) dev.aidos.kernel.ModelKind.STT else dev.aidos.kernel.ModelKind.DECISION,
+                kind = when {
+                    pkg.isSpeechPackage -> dev.aidos.kernel.ModelKind.STT
+                    pkg.isVisionPackage -> dev.aidos.kernel.ModelKind.VISION
+                    else -> dev.aidos.kernel.ModelKind.DECISION
+                },
                 format = "onnx",
                 backend = "onnx-runtime",
             )

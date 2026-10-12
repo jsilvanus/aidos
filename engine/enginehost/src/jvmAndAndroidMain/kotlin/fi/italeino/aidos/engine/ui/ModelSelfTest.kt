@@ -95,7 +95,7 @@ suspend fun runModelSelfTest(
         ModelTestKind.CHAT -> chatTest(client, modelId, text.ifBlank { kind.defaultText })
         ModelTestKind.DECISION -> decisionTest(client, modelId, text.ifBlank { kind.defaultText })
         ModelTestKind.TRANSCRIPTION -> transcriptionTest(client, modelId, text.trim(), filePath.trim())
-        ModelTestKind.VISION -> visionTest(filePath.trim())
+        ModelTestKind.VISION -> visionTest(client, modelId, text.ifBlank { kind.defaultText }, filePath.trim())
     }
     return outcome.copy(durationMs = started.elapsedNow().inWholeMilliseconds)
 }
@@ -157,14 +157,19 @@ private suspend fun transcriptionTest(client: AidosEngineClient, modelId: String
     else SelfTestOutcome(true, "Transcription works", listOf(transcript))
 }
 
-/**
- * The Engine has no image input yet (the SDK's ChatMessage carries only text, and the llama.cpp
- * adapters render images as "[Image: ...]"). Say so plainly rather than send a request that can
- * only fail confusingly; the vision work replaces this with a real call.
- */
-private fun visionTest(path: String): SelfTestOutcome {
-    if (readInput(path, "image") == null) return SelfTestOutcome(false, inputProblem(path, "an image file"))
-    return SelfTestOutcome(false, "Vision input is not supported by this Engine yet")
+private suspend fun visionTest(client: AidosEngineClient, modelId: String, question: String, path: String): SelfTestOutcome {
+    val image = readInput(path, "image") ?: return SelfTestOutcome(false, inputProblem(path, "an image file"))
+    val response = client.chatCompletion(
+        ChatCompletionRequest(
+            modelId,
+            listOf(ChatMessage("user", question, images = listOf(Base64.getEncoder().encodeToString(image.readBytes())))),
+            temperature = 0f,
+            max_tokens = 96,
+        )
+    ) ?: return SelfTestOutcome(false, "Engine returned no answer (is the file a PNG or JPEG?)")
+    val answer = response.choices.firstOrNull()?.message?.content.orEmpty().trim()
+    return if (answer.isEmpty()) SelfTestOutcome(false, "The model answered with nothing")
+    else SelfTestOutcome(true, "Vision works", listOf(answer))
 }
 
 private fun readInput(path: String, @Suppress("UNUSED_PARAMETER") what: String): File? =

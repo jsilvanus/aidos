@@ -72,6 +72,11 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   existing implementers compile. Engine advertises capability `decisions` for models of kind
   `decision`. See RFC-0022 "Decision capability" (D45, proposed).
 
+- `images` on `ChatMessage` (request): optional list of base64 image bytes (PNG/JPEG/...) or
+  `data:image/...;base64,` URLs on `user` messages; `content` is the question about them. Omitted from
+  the JSON when null. Engine serves it with vision models (kind `vision`; SmolVLM-256M on ONNX Runtime,
+  RFC-0022), and a model that cannot take images ignores them as text placeholders. The field list in
+  `ContractFreezeTest` is updated.
 - `POST /v1/audio/transcriptions` is backed by a real speech-to-text model (Whisper on ONNX Runtime) when
   the model's kind is `stt`. Request `{file, model, language?, prompt?}`, response `{text}`, unchanged;
   `TranscriptionRequest.prompt` is new and optional. `file` is a base64 WAV (any PCM/float depth, any

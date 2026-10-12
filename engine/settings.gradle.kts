@@ -44,6 +44,7 @@ project(":client").projectDir = file("../sdk/client")
 
 include(":modelruntime")
 include(":decisions")
+include(":vision")
 include(":stt")
 include(":cookbook")
 include(":huggingface")

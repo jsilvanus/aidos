@@ -27,6 +27,8 @@ kotlin {
                 api(project(":client"))
                 // Typed decisions (/v1/systemone); contract + wire format live in :decisions (RFC-0022 D45).
                 api(project(":decisions"))
+                // Vision models (image + text chat); SmolVLM on ONNX Runtime (RFC-0022).
+                api(project(":vision"))
                 // Whisper speech-to-text behind /v1/audio/transcriptions; contract lives in :stt.
                 api(project(":stt"))
                 api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")

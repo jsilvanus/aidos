@@ -33,12 +33,11 @@ import kotlin.test.assertTrue
  * |------------|------------------------------------------------------------------------|
  * | embeddings | `AIDOS_TEST_EMBED_GGUF` (e.g. nomic-embed-text-v1.5 GGUF)              |
  * | decisions  | `AIDOS_LAYA_DIR` + `AIDOS_LAYA_ONNX` (see OnnxDecisionBackendTest)     |
- * | vision     | `AIDOS_TEST_VISION_GGUF`, `AIDOS_TEST_VISION_IMAGE`, `_EXPECTED`       |
+ * | vision     | `AIDOS_VISION_MODEL_DIR` (SmolVLM package); optional `AIDOS_TEST_VISION_IMAGE`/`_QUESTION`/`_EXPECTED` |
  * | stt        | `AIDOS_STT_MODEL_DIR` (Whisper package); optional `AIDOS_TEST_STT_AUDIO`/`_EXPECTED`/`_LANGUAGE` |
  *
- * Vision has no Engine backend yet (the llama.cpp adapters render images as placeholder text), so
- * its test is written first and fails, rather than skips, the day someone sets the variables;
- * that is the cue to wire the backend. STT needs the Whisper backend from aidos#72 in the
+ * Vision runs SmolVLM-256M on ONNX Runtime (the llama.cpp Java binding is built without
+ * multimodal support); images travel in the chat message's `images` field. STT needs the Whisper backend from aidos#72 in the
  * desktop host; without it the request falls through to the chat model and the assertion fails.
  */
 class LoadedModelTest {
@@ -184,17 +183,43 @@ class LoadedModelTest {
     // --- vision ------------------------------------------------------------------------------
 
     @Test
-    fun visionAnswersAboutAPicture() {
-        optionalFile("AIDOS_TEST_VISION_GGUF")
-        optionalFile("AIDOS_TEST_VISION_IMAGE")
-        // Not wirable yet: the SDK's ChatMessage carries only a string, and the JVM/Android
-        // adapters turn ContentBlock.Image into "[Image: mime]". Fail loudly once someone supplies
-        // a model so the missing backend is noticed instead of silently untested.
-        error(
-            "Vision has no Engine backend yet: add image content parts to /v1/chat/completions and " +
-                "a multimodal (mmproj) path to LlamaCppAdapter, then send AIDOS_TEST_VISION_IMAGE " +
-                "with a question and assert the answer contains AIDOS_TEST_VISION_EXPECTED."
+    fun visionAnswersAboutAPicture() = runBlocking<Unit> {
+        // A SmolVLM package directory (`node scripts/vision/fetch-smolvlm.mjs <dir>`). The picture is
+        // generated unless AIDOS_TEST_VISION_IMAGE brings one; the question and the word the answer
+        // must contain default to a red rectangle on white.
+        val packageDir = optionalFile("AIDOS_VISION_MODEL_DIR")
+        val image = System.getenv("AIDOS_TEST_VISION_IMAGE")?.takeIf { it.isNotBlank() }?.let(::File)?.readBytes()
+            ?: redRectanglePng()
+        val question = System.getenv("AIDOS_TEST_VISION_QUESTION")?.takeIf { it.isNotBlank() } ?: "What color is the rectangle?"
+        val expected = System.getenv("AIDOS_TEST_VISION_EXPECTED")?.takeIf { it.isNotBlank() } ?: "red"
+
+        val target = File(modelsDir, "smolvlm").apply { mkdirs() }
+        packageDir.listFiles { f -> f.isFile }!!.forEach { link(it, File(target, it.name)) }
+        val response = assertNotNull(
+            client!!.chatCompletion(
+                ChatCompletionRequest(
+                    model = "smolvlm",
+                    messages = listOf(
+                        ChatMessage("user", question, images = listOf(Base64.getEncoder().encodeToString(image)))
+                    ),
+                    max_tokens = 32,
+                )
+            ),
+            "vision chat returned no response",
         )
+        val answer = response.choices.first().message.content.orEmpty()
+        println("vision: $answer")
+        assertTrue(expected.lowercase() in answer.lowercase(), "answer \"$answer\" does not mention \"$expected\"")
+    }
+
+    /** 320x240 white picture with a red rectangle, as PNG. */
+    private fun redRectanglePng(): ByteArray {
+        val img = java.awt.image.BufferedImage(320, 240, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.color = java.awt.Color.WHITE; g.fillRect(0, 0, 320, 240)
+        g.color = java.awt.Color(220, 20, 20); g.fillRect(60, 40, 200, 160)
+        g.dispose()
+        return java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(img, "png", it) }.toByteArray()
     }
 
     // --- speech to text ----------------------------------------------------------------------
