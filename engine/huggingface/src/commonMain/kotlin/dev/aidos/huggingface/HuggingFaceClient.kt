@@ -183,7 +183,9 @@ class HuggingFaceClient(
         val files = json["siblings"]?.jsonArray?.mapNotNull { parseRepoFile(it.jsonObject) } ?: emptyList()
         HuggingFaceModel(
             modelId, author, displayName, description, tags, downloads, likes, pipeline, modelSize, contextLength,
-            artifacts, quantizations, license, files, listOfNotNull(ModelPackage.detectVision(modelId, files)) + ModelPackage.detectOnnx(modelId, files),
+            artifacts, quantizations, license, files,
+            listOfNotNull(ModelPackage.detectVision(modelId, files)) + ModelPackage.detectOnnx(modelId, files) +
+                listOfNotNull(ModelPackage.detectWhisper(modelId, files)),
         )
     } catch (_: Exception) {
         null

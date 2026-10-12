@@ -131,6 +131,36 @@ class HuggingFaceClientTest {
     }
 
     @Test
+    fun whisperRepoYieldsOneSpeechPackageOfTheSamePrecision() {
+        val files = listOf(
+            "onnx/encoder_model.onnx", "onnx/encoder_model_quantized.onnx", "onnx/encoder_model_fp16.onnx",
+            "onnx/decoder_model.onnx", "onnx/decoder_model_merged.onnx", "onnx/decoder_model_merged_quantized.onnx",
+            "tokenizer.json", "config.json", "generation_config.json", "preprocessor_config.json", "added_tokens.json",
+        ).map { RepoFile(it, 10) }
+        val pkg = ModelPackage.detectWhisper("onnx-community/whisper-small", files)!!
+        assertTrue(pkg.isSpeechPackage)
+        assertTrue(!pkg.isDecisionPackage)
+        assertEquals("onnx", pkg.directory)
+        assertEquals(
+            setOf(
+                "onnx/encoder_model_quantized.onnx", "onnx/decoder_model_merged_quantized.onnx",
+                "tokenizer.json", "config.json", "generation_config.json", "preprocessor_config.json",
+            ),
+            pkg.files.map { it.path }.toSet(),
+        )
+    }
+
+    @Test
+    fun whisperDetection_fallsBackToFp32AndRejectsOtherRepos() {
+        val fp32 = listOf("onnx/encoder_model.onnx", "onnx/decoder_model_merged.onnx", "tokenizer.json").map { RepoFile(it) }
+        assertEquals("onnx/encoder_model.onnx", ModelPackage.detectWhisper("a/b", fp32)!!.files.first().path)
+        // No KV-cached decoder at this precision, or no tokenizer: not offered.
+        assertEquals(null, ModelPackage.detectWhisper("a/b", listOf(RepoFile("encoder_model.onnx"), RepoFile("decoder_model.onnx"), RepoFile("tokenizer.json"))))
+        assertEquals(null, ModelPackage.detectWhisper("a/b", listOf(RepoFile("encoder_model.onnx"), RepoFile("decoder_model_merged.onnx"))))
+        assertEquals(null, ModelPackage.detectWhisper("a/b", listOf(RepoFile("model.onnx"), RepoFile("tokenizer.json"))))
+    }
+
+    @Test
     fun onnxPackage_withoutLayaFilesIsNotADecisionPackage() {
         val pkgs = ModelPackage.detectOnnx("a/b", listOf(RepoFile("model.onnx"), RepoFile("model_quantized.onnx"), RepoFile("tokenizer.json")))
         assertEquals(2, pkgs.size)

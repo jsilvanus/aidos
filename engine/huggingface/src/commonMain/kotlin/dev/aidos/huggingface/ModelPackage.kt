@@ -23,6 +23,8 @@ data class ModelPackage(
     val files: List<RepoFile>,
     /** True when it has everything the Engine's Laya/decision loader reads: `.onnx`, tokenizer and `rl_agent_config.json`. */
     val isDecisionPackage: Boolean,
+    /** True for a Whisper speech-to-text package: encoder + decoder graphs and `tokenizer.json` (`WhisperPackage`). */
+    val isSpeechPackage: Boolean = false,
     /** True when it is the SmolVLM-style set the Engine's vision loader reads: three graphs (see [detectVision]), tokenizer and configs. */
     val isVisionPackage: Boolean = false,
 ) {
@@ -57,6 +59,43 @@ data class ModelPackage(
                     files = side + graphs.filterNotNull(),
                     isDecisionPackage = false,
                     isVisionPackage = true,
+                )
+            }
+            return null
+        }
+
+        /** Graph-name suffixes in the order a Whisper install prefers them: int8 first, the size phones can afford. */
+        private val whisperPrecisions = listOf("_quantized", "_int8", "", "_fp16")
+
+        /**
+         * The Whisper package in an `onnx-community/whisper-*` (or Optimum export) repo: one encoder and one
+         * KV-cached decoder of the same precision, plus tokenizer and config files. [detectOnnx] would
+         * split these into one package per graph, none of which is loadable alone. Null when the repo is not
+         * a Whisper export (no `encoder_model*` beside a `decoder_model_merged*`, or no `tokenizer.json`).
+         */
+        fun detectWhisper(modelId: String, files: List<RepoFile>): ModelPackage? {
+            val byPath = files.associateBy { it.path }
+            for (suffix in whisperPrecisions) {
+                val enc = files.firstOrNull { it.path.substringAfterLast('/') == "encoder_model$suffix.onnx" } ?: continue
+                val dir = enc.path.substringBeforeLast('/', "")
+                fun inDir(name: String) = if (dir.isEmpty()) name else "$dir/$name"
+                val dec = byPath[inDir("decoder_model_merged$suffix.onnx")] ?: continue
+                val tokenizer = byPath[inDir("tokenizer.json")] ?: byPath["tokenizer.json"] ?: return null
+                val side = listOf("generation_config.json", "config.json", "preprocessor_config.json")
+                    .mapNotNull { byPath[inDir(it)] ?: byPath[it] }
+                // Large exports keep weights in `<graph>.onnx_data` beside the graph.
+                val data = files.filter { f ->
+                    f.path.substringBeforeLast('/', "") == dir &&
+                        f.path.substringAfterLast('/').let { it == "encoder_model$suffix.onnx_data" || it == "decoder_model_merged$suffix.onnx_data" }
+                }
+                return ModelPackage(
+                    modelId = modelId,
+                    name = "whisper${suffix.ifEmpty { "_fp32" }}",
+                    format = ModelFormat.ONNX,
+                    directory = dir,
+                    files = listOf(enc, dec, tokenizer) + side + data,
+                    isDecisionPackage = false,
+                    isSpeechPackage = true,
                 )
             }
             return null

@@ -6,6 +6,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.cookbook.DeviceProfile
 import dev.aidos.downloads.DownloadManager
 import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
@@ -13,6 +14,7 @@ import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.vision.OnnxVisionBackend
+import dev.aidos.stt.OnnxSttBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.modelruntime.create
@@ -54,6 +56,8 @@ import java.io.File
 class DesktopEngineHost(
     private val modelsDir: File = DesktopPaths.modelsDir,
     stateDir: File = DesktopPaths.stateDir,
+    /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
+    private val ramBaselineUsedBytes: () -> Long? = { null },
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -89,8 +93,11 @@ class DesktopEngineHost(
         catalogManager = catalogManager,
         hfClient = hfClient,
         cookbookEngine = CookbookEngine(),
-        deviceProfile = DesktopDevice.profile(),
+        deviceProfile = DesktopDevice.profile(ramBaselineUsedBytes()),
     )
+
+    /** A fresh device profile (current free RAM) carrying the user's RAM baseline. */
+    fun deviceProfile(): DeviceProfile = DesktopDevice.profile(ramBaselineUsedBytes())
 
     /** Where installers should put artifacts; the runtime only loads from inside it. */
     val artifactDir: File get() = modelsDir
@@ -112,9 +119,11 @@ class DesktopEngineHost(
             // JVM llama.cpp backend (RFC-0022, M21). It reads its directory from the system
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
-            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45) and ONNX vision
-            // models (SmolVLM packages) from the same directory; each decorator claims only its own shape.
-            val runtime = GlobalModelRuntime(OnnxVisionBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir))
+            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45), Whisper speech-to-text
+            // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
+            val runtime = GlobalModelRuntime(
+                OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir)
+            )
             val server = EngineHttpServer(
                 tokens,
                 runtime,

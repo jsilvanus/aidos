@@ -16,9 +16,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,6 +50,9 @@ fun SettingsContent(
     onRestoreSuggestions: () -> Unit,
     modifier: Modifier = Modifier,
     tokenStorageNote: String? = null,
+    ramBaseline: RamBaselineState? = null,
+    onSetRamBaseline: (Int?) -> Unit = {},
+    onRefreshRamBaseline: () -> Unit = {},
 ) {
     Column(
         modifier = modifier,
@@ -245,6 +253,10 @@ fun SettingsContent(
             }
         }
 
+        if (ramBaseline != null) {
+            RamBaselineSection(ramBaseline, onSetRamBaseline, onRefreshRamBaseline)
+        }
+
         Text(
             "Suggested Models",
             fontSize = 13.sp,
@@ -292,5 +304,75 @@ private fun formatMinutesAgo(ms: Long?): String {
         minutesAgo < 60 -> "${minutesAgo}m ago"
         minutesAgo < 1440 -> "${minutesAgo / 60}h ago"
         else -> "${minutesAgo / 1440}d ago"
+    }
+}
+
+/**
+ * RAM baseline (model fit): the RAM in use after the OS and the user's usual apps, with no model
+ * loaded. "Use current usage" captures it; the field takes a value in MB by hand.
+ */
+@Composable
+private fun RamBaselineSection(
+    ramBaseline: RamBaselineState,
+    onSet: (Int?) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    var input by remember(ramBaseline.baselineUsedMB) { mutableStateOf(ramBaseline.baselineUsedMB?.toString() ?: "") }
+    val parsed = input.trim().toIntOrNull()?.takeIf { it > 0 && (ramBaseline.totalMB == 0 || it < ramBaseline.totalMB) }
+
+    Text(
+        "RAM baseline",
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 16.dp)
+    )
+    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "RAM in use after the OS and your usual apps are running, with no model loaded. " +
+                    "Model fit is shown against this baseline as well as against the RAM free right now.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Now: ${ramBaseline.currentUsedMB} MB in use of ${ramBaseline.totalMB} MB",
+                fontSize = 11.sp
+            )
+            Text(
+                ramBaseline.baselineUsedMB?.let {
+                    "Baseline: $it MB in use, so ${ramBaseline.baselineFreeMB} MB free at baseline"
+                } ?: "No baseline set",
+                fontSize = 11.sp,
+                color = if (ramBaseline.baselineUsedMB != null) Color(0xFF22C55E) else MaterialTheme.colorScheme.outline
+            )
+            Button(
+                onClick = { onSet(ramBaseline.currentUsedMB) },
+                enabled = ramBaseline.currentUsedMB > 0,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Use current usage as baseline")
+            }
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it.filter(Char::isDigit).take(7) },
+                label = { Text("RAM in use at baseline (MB)") },
+                singleLine = true,
+                isError = input.isNotBlank() && parsed == null,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onSet(parsed) }, enabled = parsed != null, modifier = Modifier.weight(1f)) {
+                    Text("Save")
+                }
+                OutlinedButton(
+                    onClick = { onSet(null) },
+                    enabled = ramBaseline.baselineUsedMB != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Clear")
+                }
+                TextButton(onClick = onRefresh) { Text("Refresh") }
+            }
+        }
     }
 }

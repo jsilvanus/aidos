@@ -30,6 +30,7 @@ class DeviceProfileProvider(private val context: Context) {
             cpuCoreCount = Runtime.getRuntime().availableProcessors(),
             hasAccelerator = false, // Placeholder: check for NPU/GPU in later phases
             thermalHeadroom = 50, // Placeholder
+            baselineUsedRamBytes = SettingsStore.getRamBaselineUsedMb(context)?.let { it * 1024L * 1024L },
         )
     }
 }

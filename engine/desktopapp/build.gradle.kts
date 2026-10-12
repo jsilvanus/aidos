@@ -25,6 +25,7 @@ dependencies {
     implementation(project(":modelruntime"))
     implementation(project(":decisions"))
     implementation(project(":vision"))
+    implementation(project(":stt"))
     implementation(project(":models"))
     implementation(project(":downloads"))
     implementation(project(":huggingface"))

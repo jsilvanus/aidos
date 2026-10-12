@@ -232,7 +232,10 @@ data class TranscriptionRequest(
     // future, Engine-side work, not an SDK bug).
     val file: String,
     val model: String,
-    val language: String? = null
+    // ISO 639-1 code ("fi"). Say it when you know it: detection on a short clip is unreliable.
+    val language: String? = null,
+    // Optional spelling and vocabulary hint for Whisper (names, liturgical terms); additive within API v1.
+    val prompt: String? = null
 )
 
 @Serializable
@@ -427,7 +430,11 @@ internal class EngineClientImpl(
     // RFC-0103, "Version and capability contract": a client whose required major version does
     // not match Engine's treats it as incompatible rather than guessing.
     private val requiredApiVersion: Int = 1,
-    private val httpClient: OkHttpClient = OkHttpClient()
+    // OkHttp's default 10 s read timeout is shorter than a cold model load plus inference (a first
+    // transcription or chat on a freshly started Engine), which surfaced as a null result.
+    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        .readTimeout(java.time.Duration.ofMinutes(5))
+        .build()
 ) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
