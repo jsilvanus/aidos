@@ -34,11 +34,12 @@ import kotlin.test.assertTrue
  * | embeddings | `AIDOS_TEST_EMBED_GGUF` (e.g. nomic-embed-text-v1.5 GGUF)              |
  * | decisions  | `AIDOS_LAYA_DIR` + `AIDOS_LAYA_ONNX` (see OnnxDecisionBackendTest)     |
  * | vision     | `AIDOS_TEST_VISION_GGUF`, `AIDOS_TEST_VISION_IMAGE`, `_EXPECTED`       |
- * | stt        | `AIDOS_TEST_STT_MODEL`, `AIDOS_TEST_STT_AUDIO`, `AIDOS_TEST_STT_EXPECTED` |
+ * | stt        | `AIDOS_STT_MODEL_DIR` (Whisper package); optional `AIDOS_TEST_STT_AUDIO`/`_EXPECTED`/`_LANGUAGE` |
  *
- * Vision and STT have no Engine backend yet (the llama.cpp adapters render images and audio as
- * placeholder text), so their tests are written first and will start failing, rather than
- * skipping, the day someone sets the variables; that is the cue to wire the backend.
+ * Vision has no Engine backend yet (the llama.cpp adapters render images as placeholder text), so
+ * its test is written first and fails, rather than skips, the day someone sets the variables;
+ * that is the cue to wire the backend. STT needs the Whisper backend from aidos#72 in the
+ * desktop host; without it the request falls through to the chat model and the assertion fails.
  */
 class LoadedModelTest {
     private val root = Files.createTempDirectory("aidos-loaded-model").toFile()
@@ -199,18 +200,25 @@ class LoadedModelTest {
     // --- speech to text ----------------------------------------------------------------------
 
     @Test
-    fun sttTranscribesAudio() = runBlocking {
-        val model = System.getenv("AIDOS_TEST_STT_MODEL")
-        assumeTrue(!model.isNullOrBlank(), "AIDOS_TEST_STT_MODEL not set")
-        val audio = optionalFile("AIDOS_TEST_STT_AUDIO")
-        val expected = System.getenv("AIDOS_TEST_STT_EXPECTED")
-        assumeTrue(!expected.isNullOrBlank(), "AIDOS_TEST_STT_EXPECTED not set")
+    fun sttTranscribesAudio() = runBlocking<Unit> {
+        // Same variable as the stt module's own tests: a Whisper ONNX package directory
+        // (`node scripts/stt/fetch-whisper.mjs <dir>`). Finnish needs whisper-small or larger.
+        val packageDir = optionalFile("AIDOS_STT_MODEL_DIR")
+        // Audio and the words it must contain: bring your own, or fall back to the public-domain
+        // JFK clip bundled with the stt module.
+        val audio = System.getenv("AIDOS_TEST_STT_AUDIO")?.takeIf { it.isNotBlank() }?.let(::File)
+            ?: repoFileOrNull("engine/stt/src/jvmTest/resources/jfk.wav")
+        assumeTrue(audio != null, "no audio: set AIDOS_TEST_STT_AUDIO or build with the stt module's jfk.wav")
+        val expected = System.getenv("AIDOS_TEST_STT_EXPECTED")?.takeIf { it.isNotBlank() } ?: "country"
+        val language = System.getenv("AIDOS_TEST_STT_LANGUAGE")?.takeIf { it.isNotBlank() } ?: "en"
 
+        packageDir.copyRecursively(File(modelsDir, "whisper"))
         val response = assertNotNull(
             client!!.transcribe(
                 TranscriptionRequest(
-                    file = Base64.getEncoder().encodeToString(audio.readBytes()),
-                    model = model,
+                    file = Base64.getEncoder().encodeToString(audio!!.readBytes()),
+                    model = "whisper",
+                    language = language,
                 )
             ),
             "transcription returned no response",
@@ -245,14 +253,17 @@ class LoadedModelTest {
     }
 
     /** Walk up from the working directory: the engine is its own Gradle build. */
-    private fun repoFile(relative: String): File {
+    private fun repoFileOrNull(relative: String): File? {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
         while (dir != null) {
             File(dir, relative).takeIf { it.isFile }?.let { return it }
             dir = dir.parentFile
         }
-        error("$relative not found above ${System.getProperty("user.dir")}")
+        return null
     }
+
+    private fun repoFile(relative: String): File =
+        repoFileOrNull(relative) ?: error("$relative not found above ${System.getProperty("user.dir")}")
 
     private fun cosine(a: List<Float>, b: List<Float>): Double {
         var dot = 0.0; var na = 0.0; var nb = 0.0
