@@ -1,6 +1,6 @@
 # System One (typed decisions) in the Aidos Engine
 
-Status: implemented on the JVM/desktop host; Android wiring not done (see "Not done"). Design:
+Status: implemented and tested on the JVM/desktop host; Android wiring written but never compiled or run (see "Not done"). Design:
 RFC-0022 "Decision capability", D45 (proposed). Background: `LAYA.md`.
 
 ## What it is
@@ -76,11 +76,14 @@ mode, logged and compared with the deterministic activation-word parser), never 
 
 ## Not done
 
-- Android: `engine/decisions` declares an Android target and `onnxruntime-android`, and `EngineHttpServer`
-  already serves the route, but `EngineService` does not wrap its backend in an Android equivalent of
-  `OnnxDecisionBackend`, and none of it has been compiled or run (Android targets do not compile in the
-  cloud environment). The 34 MB `tokenizer.json` is parsed as JSON at load; that needs measuring on a phone.
+- Android: `AndroidOnnxDecisionBackend` wraps the llama.cpp backend in `EngineService` and shares
+  `DecisionPackages` with the desktop backend (that shared part is JVM-tested). The Android glue, the
+  `onnxruntime-android` dependency and the proguard rule have not been compiled or run (Android targets do not
+  compile in the cloud environment). The 34 MB `tokenizer.json` is parsed as JSON at load; that needs measuring
+  on a phone.
 - Catalog/installer support for multi-file packages; `SuggestedModels` still lists the ggmlc GGUF as not runnable.
 - Calibration: probabilities are the checkpoint's own (temperature 1.0). Zero-shot base checkpoints are
   over-confident and weak on new tasks; fit temperatures and fine-tune on your own data before relying on them.
-- Dictator is not wired in. See `scripts/laya/dictation_eval.py` for why.
+- Dictator uses it in shadow mode only (off by default): the model's guess is logged beside the parser's
+  decision and never acted on. See `scripts/laya/dictation_eval.py` for why routing is not allowed yet.
+- Fine-tuning on Dictator data is deferred.

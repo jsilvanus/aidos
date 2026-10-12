@@ -37,6 +37,7 @@ import fi.italeino.aidos.engine.http.KtorEffectBroker
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
+import fi.italeino.aidos.engine.inference.AndroidOnnxDecisionBackend
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -176,10 +177,15 @@ class EngineService : LifecycleService() {
                 // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
                 // The persistent catalog is authoritative for model identity, kind and expected
                 // digest; filesDir/models is only the artifact store.
+                // ONNX decision models (typed decisions, RFC-0022 D45) are packages under filesDir/models/<id>/;
+                // every other id still goes to llama.cpp.
                 val runtime = GlobalModelRuntime(
-                    AndroidLlamaCppInferenceBackend(
-                        context = this@EngineService,
-                        catalogManager = catalog,
+                    AndroidOnnxDecisionBackend(
+                        delegate = AndroidLlamaCppInferenceBackend(
+                            context = this@EngineService,
+                            catalogManager = catalog,
+                        ),
+                        modelsDir = java.io.File(filesDir, "models"),
                     )
                 )
                 modelRuntime = runtime

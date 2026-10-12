@@ -371,10 +371,10 @@ Do not jump to agent orchestration, MCP, or additional product features because 
 awkward. Fix the seam and add the test first. Do not call an Engine feature complete merely because
 its platform-neutral implementation compiles.
 
-### 2b. System One (typed decisions) — Engine side built, JVM only
+### 2b. System One (typed decisions) — Engine side built and tested on JVM; Android wiring unverified
 
 `/v1/systemone`, `engine/decisions`, Laya multilingual on ONNX Runtime; parity-tested against the Python
-reference (docs/system-one.md). Open: Android wiring and a phone measurement (tokenizer load, latency,
+reference (docs/system-one.md). Android wiring is written but uncompiled; Dictator shadow mode logs model-vs-parser (dictator repo). Open: verifying Android on a phone and a measurement (tokenizer load, latency,
 memory); multi-file model packages in the installer; fine-tuning on Dictator data (the zero-shot base
 checkpoint misroutes dictation, see the eval table there); D45 needs owner approval before it is SETTLED.
 
