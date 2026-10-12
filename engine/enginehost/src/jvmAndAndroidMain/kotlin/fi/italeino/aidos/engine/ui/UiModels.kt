@@ -96,6 +96,8 @@ data class ContextFitRow(
     val contextLength: Int,
     val verdict: ModelFitVerdict,
     val estimatedMemoryMB: Int,
+    /** Fit when the machine is at the user's RAM baseline; null when no baseline is set. */
+    val baselineVerdict: ModelFitVerdict? = null,
 )
 
 data class ModelDetail(
@@ -116,6 +118,8 @@ data class ModelDetail(
     /** The device's total and currently free RAM when the card was built; 0 means unknown. */
     val deviceTotalRamMB: Int = 0,
     val deviceFreeRamMB: Int = 0,
+    /** RAM free at the user's baseline (total minus baseline in use); null when no baseline is set. */
+    val baselineFreeRamMB: Int? = null,
 )
 
 /**

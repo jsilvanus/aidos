@@ -1,7 +1,6 @@
 package fi.italeino.aidos.engine.desktop
 
 import dev.aidos.cookbook.CookbookEngine
-import dev.aidos.cookbook.ModelRequirements
 import dev.aidos.decisions.LayaPackage
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.modelruntime.ModelRunSettings
@@ -413,9 +412,8 @@ class DesktopModelDetailModel(
         val cookbook = CookbookEngine()
         val descriptor = ModelDescriptor(id, name, kind, provider, false, contextWindow, sizeBytes, null)
         val fitRows = listOf(4096, 8192, 16384, 32768).map { ctx ->
-            val verdict = cookbook.verdict(descriptor, device, ctx)
-            val mem = cookbook.computeResidentMemory(ModelRequirements(sizeBytes ?: 0L, ctx, 0, "GGUF"), device, ctx)
-            ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
+            val fit = cookbook.ramFit(descriptor, device, ctx)
+            ContextFitRow(ctx / 1024, fit.currentVerdict.toUiVerdict(), (fit.neededBytes / (1024 * 1024)).toInt(), fit.baselineVerdict?.toUiVerdict())
         }
         val format = formatFromProperties(catalogEntry.propertiesJson)
         return ModelDetail(
@@ -433,6 +431,7 @@ class DesktopModelDetailModel(
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
+            baselineFreeRamMB = device.baselineAvailableRamBytes?.let { (it / (1024L * 1024L)).toInt() },
         )
     }
 

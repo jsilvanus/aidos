@@ -392,10 +392,8 @@ class ModelDetailViewModel : ViewModel() {
         )
         val contexts = listOf(4096, 8192, 16384, 32768)
         val fitRows = contexts.map { ctx ->
-            val verdict = cookbook.verdict(descriptor, device, ctx)
-            val req = dev.aidos.cookbook.ModelRequirements(sizeBytes ?: 0L, ctx, 0, "GGUF")
-            val mem = cookbook.computeResidentMemory(req, device, ctx)
-            ContextFitRow(ctx / 1024, verdict.toUiVerdict(), (mem / (1024 * 1024)).toInt())
+            val fit = cookbook.ramFit(descriptor, device, ctx)
+            ContextFitRow(ctx / 1024, fit.currentVerdict.toUiVerdict(), (fit.neededBytes / (1024 * 1024)).toInt(), fit.baselineVerdict?.toUiVerdict())
         }
         val format = try {
             Json.parseToJsonElement(catalogEntry.propertiesJson).jsonObject["format"]?.jsonPrimitive?.content
@@ -417,6 +415,7 @@ class ModelDetailViewModel : ViewModel() {
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
+            baselineFreeRamMB = device.baselineAvailableRamBytes?.let { (it / (1024L * 1024L)).toInt() },
         )
     }
 

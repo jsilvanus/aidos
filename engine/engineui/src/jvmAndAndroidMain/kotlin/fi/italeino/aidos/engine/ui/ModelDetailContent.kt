@@ -99,6 +99,12 @@ fun ModelDetailContent(
                             FitVerdictChip(row.verdict)
                             Text("against free RAM now", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        row.baselineVerdict?.let { atBaseline ->
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FitVerdictChip(atBaseline)
+                                Text("against your RAM baseline", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         MemoryLines(model, row)
                     }
                 }
@@ -485,6 +491,12 @@ private fun MemoryLines(model: ModelDetail, row: ContextFitRow) {
         val total = if (model.deviceTotalRamMB > 0) " of ${formatMb(model.deviceTotalRamMB)}" else ""
         Text("Free now: ${formatMb(model.deviceFreeRamMB)}$total", fontSize = 12.sp, color = muted)
     }
+    val baselineFree = model.baselineFreeRamMB
+    Text(
+        if (baselineFree != null) "Free at your baseline: ${formatMb(baselineFree)}" else "No RAM baseline set (Settings)",
+        fontSize = 12.sp,
+        color = muted,
+    )
 }
 
 internal fun formatMb(mb: Int): String = if (mb >= 1024) "%.1f GB".format(mb / 1024.0) else "$mb MB"
