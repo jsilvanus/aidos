@@ -18,8 +18,8 @@ import kotlinx.serialization.json.jsonPrimitive
  *         tokenizer.json        (from the checkpoint's tokenizer/ folder)
  *         rl_agent_config.json  (max_len, head_max_len, temperature, ...)
  *
- * Single-file catalog installs cannot express this yet; installing a package is a manual or
- * scripted step (docs/system-one.md).
+ * A single-file catalog install cannot express this; the installer's `installPackage` downloads a
+ * Hugging Face repo's files into one such directory (docs/system-one.md).
  */
 object LayaPackage {
     const val TOKENIZER = "tokenizer.json"

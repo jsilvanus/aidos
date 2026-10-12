@@ -2,10 +2,13 @@ package fi.italeino.aidos.engine.desktop
 
 import dev.aidos.cookbook.CookbookEngine
 import dev.aidos.cookbook.ModelRequirements
+import dev.aidos.decisions.LayaPackage
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.InstallerEvent
 import dev.aidos.models.ModelDownloadRequest
+import dev.aidos.models.ModelPackageDownloadRequest
+import dev.aidos.models.PackageFileRequest
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.ui.ContextFitRow
 import fi.italeino.aidos.engine.ui.ModelDetail
@@ -94,8 +97,13 @@ class DesktopModelDetailModel(
                 host.catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
             }
             val file = installed?.path?.let(::File)
-            val valid = installed != null && file != null && file.isFile &&
-                file.length() == installed.sizeBytes && installed.sizeBytes > 0L
+            // A GGUF is one file of the recorded size; an ONNX decision model is a package directory.
+            val valid = installed != null && file != null && installed.sizeBytes > 0L && when {
+                file.isFile -> file.length() == installed.sizeBytes
+                file.isDirectory -> LayaPackage.isPackage(file) &&
+                    file.listFiles { f -> f.isFile }.orEmpty().sumOf { it.length() } == installed.sizeBytes
+                else -> false
+            }
             _state.value = _state.value.copy(
                 isInstalled = valid,
                 installedPath = if (valid) installed?.path else null,
@@ -117,21 +125,28 @@ class DesktopModelDetailModel(
                 val detail = host.modelBrowser.getModelDetail(model.id).getOrThrow()
                 val remote = host.hfClient.getModel(model.id).getOrThrow()
 
-                // Prefer Q4_K_M, then any quantization, then any non-empty artifact (as on Android).
-                val (artifactBaseName, downloadUrl, expectedDigest) = when {
-                    remote.quantizations.isNotEmpty() -> {
-                        val q = remote.quantizations.find { it.name.contains("Q4_K_M", ignoreCase = true) }
-                            ?: remote.quantizations.first()
-                        Triple(q.name, q.downloadUrl, q.sha256Digest)
-                    }
-                    remote.artifacts.isNotEmpty() -> {
-                        val art = remote.artifacts.first { it.sizeBytes > 0L }
-                        Triple(art.filename, art.downloadUrl, art.sha256Digest)
-                    }
-                    else -> throw IllegalStateException("No downloadable artifact available for ${model.id}")
+                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+                // A GGUF quantization is the single-file path (prefer Q4_K_M, as on Android). Failing
+                // that, an ONNX decision package (graph + tokenizer + config) installs as a directory.
+                // Anything else (a lone .onnx, safetensors, ...) has no backend here, so installing it
+                // would leave a file the Engine can never load.
+                val decisionPackage = remote.packages.firstOrNull { it.isDecisionPackage }
+                if (remote.quantizations.isEmpty() && decisionPackage != null) {
+                    installDecisionPackage(model.id, safeModelId, decisionPackage)
+                    return@launch
+                }
+                if (remote.quantizations.isEmpty()) {
+                    val found = remote.artifacts.map { it.format.name }.distinct().joinToString().ifEmpty { "none" }
+                    throw IllegalStateException(
+                        "No GGUF file or ONNX decision package in ${model.id} (formats found: $found); this Engine cannot run it.",
+                    )
+                }
+                val (artifactBaseName, downloadUrl, expectedDigest) = remote.quantizations.let { qs ->
+                    val q = qs.find { it.name.contains("Q4_K_M", ignoreCase = true) } ?: qs.first()
+                    Triple(q.name, q.downloadUrl, q.sha256Digest)
                 }
 
-                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
                 val destination = File(host.artifactDir, artifactName).absolutePath
                 val format = if (artifactName.lowercase().endsWith(".gguf")) "gguf" else artifactName.substringAfterLast('.', "bin").lowercase()
@@ -179,6 +194,35 @@ class DesktopModelDetailModel(
                 downloadJob = null
             }
         }
+    }
+
+    /** Downloads every file of [pkg] into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
+    private suspend fun installDecisionPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+        val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
+        val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
+            ModelPackageDownloadRequest(
+                modelId = modelId,
+                files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
+                destinationDir = File(host.artifactDir, safeId).absolutePath,
+                kind = dev.aidos.kernel.ModelKind.DECISION,
+                format = "onnx",
+                backend = "onnx-runtime",
+            )
+        ) { event ->
+            when (event) {
+                is InstallerEvent.DownloadProgress -> {
+                    val total = event.totalBytes
+                    if (total != null && total > 0) {
+                        _state.value = _state.value.copy(downloadProgress = ((event.bytesDownloaded * 100L) / total).toInt().coerceIn(0, 100))
+                    }
+                }
+                is InstallerEvent.InstallationFailed -> _state.value = _state.value.copy(isDownloading = false, downloadError = event.reason)
+                else -> Unit
+            }
+        }
+        result.exceptionOrNull()?.let { throw it }
+        _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
+        refreshInstalledState()
     }
 
     fun cancelDownload() {
@@ -319,7 +363,7 @@ class DesktopModelDetailModel(
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf",
+            isRunnable = format == "gguf" || (format == "onnx" && kind == dev.aidos.kernel.ModelKind.DECISION),
         )
     }
 
