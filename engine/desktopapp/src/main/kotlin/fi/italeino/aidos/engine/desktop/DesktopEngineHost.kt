@@ -6,6 +6,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.aidos.cookbook.CookbookEngine
+import dev.aidos.cookbook.DeviceProfile
 import dev.aidos.downloads.DownloadManager
 import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
@@ -57,6 +58,8 @@ class DesktopEngineHost(
     stateDir: File = DesktopPaths.stateDir,
     /** Per-model run settings the runtime reads at load time (RFC-0103); defaults when none are configured. */
     private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
+    /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
+    private val ramBaselineUsedBytes: () -> Long? = { null },
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -92,8 +95,11 @@ class DesktopEngineHost(
         catalogManager = catalogManager,
         hfClient = hfClient,
         cookbookEngine = CookbookEngine(),
-        deviceProfile = DesktopDevice.profile(),
+        deviceProfile = DesktopDevice.profile(ramBaselineUsedBytes()),
     )
+
+    /** A fresh device profile (current free RAM) carrying the user's RAM baseline. */
+    fun deviceProfile(): DeviceProfile = DesktopDevice.profile(ramBaselineUsedBytes())
 
     /** Where installers should put artifacts; the runtime only loads from inside it. */
     val artifactDir: File get() = modelsDir

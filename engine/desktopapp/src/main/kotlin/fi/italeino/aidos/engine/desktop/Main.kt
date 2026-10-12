@@ -18,7 +18,10 @@ import java.io.File
 fun main() {
     DesktopPaths.ensureCreated()
     val prefs = DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json"))
-    val host = DesktopEngineHost(runSettings = prefs.runSettingsSource)
+    val host = DesktopEngineHost(
+        runSettings = prefs.runSettingsSource,
+        ramBaselineUsedBytes = { prefs.data.value.ramBaselineUsedMb?.let { it * 1024L * 1024L } },
+    )
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Swing)
     val models = DesktopModels(host, prefs, scope)
 

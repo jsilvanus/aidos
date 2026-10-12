@@ -168,6 +168,19 @@ data class HfTokenStatus(
     val lastValidatedMs: Long? = null,
 )
 
+/**
+ * The user's RAM baseline, as Settings shows it: RAM in use once the OS and their usual apps are
+ * running, with no model loaded. Model fit is judged against both this and the current free RAM.
+ */
+data class RamBaselineState(
+    val baselineUsedMB: Int? = null,
+    val currentUsedMB: Int = 0,
+    val totalMB: Int = 0,
+) {
+    /** Free RAM at baseline, or null when none is set. */
+    val baselineFreeMB: Int? get() = baselineUsedMB?.let { (totalMB - it).coerceAtLeast(0) }
+}
+
 data class SettingsState(
     val hfTokenStatus: HfTokenStatus = HfTokenStatus(false),
     val showTokenInput: Boolean = false,

@@ -17,6 +17,8 @@ data class DesktopPreferencesData(
     val preferredContextLength: Int = 4096,
     /** Per-model llama.cpp run settings (RFC-0103), keyed by model id; absent means defaults. */
     val modelRunSettings: Map<String, StoredRunSettings> = emptyMap(),
+    /** RAM in use (MB) once the OS and the user's usual apps run, with no model loaded; null if unset. */
+    val ramBaselineUsedMb: Int? = null,
 )
 
 /** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
@@ -73,6 +75,7 @@ class DesktopPreferences(private val file: File) {
         else it.modelRunSettings + (modelId to StoredRunSettings.of(settings.coerced()))
         it.copy(modelRunSettings = next)
     }
+    fun setRamBaselineUsedMb(mb: Int?) = update { it.copy(ramBaselineUsedMb = mb?.takeIf { v -> v > 0 }) }
 
     @Synchronized
     private fun update(transform: (DesktopPreferencesData) -> DesktopPreferencesData) {

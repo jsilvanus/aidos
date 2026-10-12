@@ -214,6 +214,7 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
 @Composable
 private fun SettingsDialog(prefs: DesktopPreferences, onClose: () -> Unit) {
     val data by prefs.data.collectAsState()
+    var ramNow by remember { mutableStateOf(DesktopDevice.memory()) }
     var state by remember {
         mutableStateOf(
             SettingsState(
@@ -237,6 +238,13 @@ private fun SettingsDialog(prefs: DesktopPreferences, onClose: () -> Unit) {
                 onSaveToken = prefs::saveHfToken,
                 onClearToken = prefs::clearHfToken,
                 onRestoreSuggestions = prefs::restoreSuggestions,
+                ramBaseline = RamBaselineState(
+                    baselineUsedMB = data.ramBaselineUsedMb,
+                    currentUsedMB = ramNow.usedMB,
+                    totalMB = ramNow.totalMB,
+                ),
+                onSetRamBaseline = prefs::setRamBaselineUsedMb,
+                onRefreshRamBaseline = { ramNow = DesktopDevice.memory() },
                 tokenStorageNote = "Debug build: stored unencrypted in ${DesktopPaths.stateDir}.",
                 modifier = Modifier
                     .fillMaxSize()
