@@ -44,7 +44,7 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /**
- * In-process Engine host for the Windows debug app: the desktop counterpart of Android's
+ * In-process Engine host for the Windows desktop app / daemon: the desktop counterpart of Android's
  * EngineService (RFC-0103), wiring the same Engine Core pieces.
  *
  * Two lifetimes, matching how the Android UI behaves:
@@ -53,6 +53,9 @@ import java.io.File
  *   for the same reason).
  * - The model runtime, token manager and loopback HTTP server exist only between [start] and
  *   [stop].
+ *
+ * When started, writes connection details (port, token, baseUrl) to [discoveryFile] (~/.aidos/engine.json)
+ * and unlinks it when stopped.
  */
 class DesktopEngineHost(
     private val modelsDir: File = DesktopPaths.modelsDir,
@@ -61,6 +64,10 @@ class DesktopEngineHost(
     private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
     /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
     private val ramBaselineUsedBytes: () -> Long? = { null },
+    /** Port to bind on localhost; defaults to 18080. If 0, OS allocates ephemeral port. */
+    private val serverPort: () -> Int = { 18080 },
+    /** Path to write active connection info (port, token, etc.). Null skips discovery write. */
+    private val discoveryFile: File? = DesktopPaths.discoveryFile,
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -119,6 +126,16 @@ class DesktopEngineHost(
         _lastError.value = null
         try {
             val tokens = TokenManager()
+            // Ensure desktop localhost caller has an approved token for external clients (RFC-0103)
+            val localTokenInfo = tokens.generateNewToken(
+                validityDurationSeconds = 86400 * 365,
+                subject = LOCALHOST_SUBJECT
+            )
+            if (approvalStore.getApproval(LOCALHOST_SUBJECT) == null) {
+                approvalStore.recordFirstHandshake(LOCALHOST_SUBJECT, "Localhost Desktop Client")
+            }
+            approvalStore.approveApp(LOCALHOST_SUBJECT)
+
             // JVM llama.cpp backend (RFC-0022, M21). It reads its directory from the system
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
@@ -128,9 +145,11 @@ class DesktopEngineHost(
                 OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
                 runSettings = runSettings,
             )
+            val desiredPort = serverPort()
             val server = EngineHttpServer(
                 tokens,
                 runtime,
+                port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED }
             )
             server.start()
@@ -144,9 +163,42 @@ class DesktopEngineHost(
             _boundPort.value = port
             _isRunning.value = true
             _state.value = EngineState.READY
+
+            writeDiscoveryFile(port, localTokenInfo.token)
         } catch (e: Exception) {
             _lastError.value = e.message ?: e::class.simpleName
             _state.value = EngineState.FAILED
+            removeDiscoveryFile()
+        }
+    }
+
+    private fun writeDiscoveryFile(port: Int, token: String) {
+        val file = discoveryFile ?: return
+        try {
+            file.parentFile?.mkdirs()
+            val pid = ProcessHandle.current().pid()
+            val json = """
+                {
+                  "status": "READY",
+                  "port": $port,
+                  "baseUrl": "http://127.0.0.1:$port",
+                  "token": "$token",
+                  "apiVersion": 1,
+                  "pid": $pid
+                }
+            """.trimIndent()
+            file.writeText(json)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun removeDiscoveryFile() {
+        val file = discoveryFile ?: return
+        try {
+            if (file.exists()) {
+                file.delete()
+            }
+        } catch (_: Exception) {
         }
     }
 
@@ -171,6 +223,7 @@ class DesktopEngineHost(
     suspend fun stop() = lifecycle.withLock {
         val server = httpServer
         val runtime = modelRuntime
+        removeDiscoveryFile()
         try {
             if (server != null) {
                 server.stop()
@@ -196,6 +249,10 @@ class DesktopEngineHost(
     suspend fun close() {
         stop()
         httpClient.close()
+    }
+
+    companion object {
+        const val LOCALHOST_SUBJECT = "desktop.localhost"
     }
 
     /** Same schema bootstrap EngineService uses for its AndroidSqliteDriver. */

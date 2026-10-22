@@ -21,7 +21,13 @@ import kotlin.test.assertTrue
  */
 class DesktopEngineHostTest {
     private val root = Files.createTempDirectory("aidos-desktop-host").toFile()
-    private val host = DesktopEngineHost(modelsDir = root.resolve("models").apply { mkdirs() }, stateDir = root)
+    private val discoveryFile = root.resolve("engine.json")
+    private val host = DesktopEngineHost(
+        modelsDir = root.resolve("models").apply { mkdirs() },
+        stateDir = root,
+        serverPort = { 0 },
+        discoveryFile = discoveryFile,
+    )
 
     @AfterTest
     fun cleanUp() {
@@ -36,17 +42,40 @@ class DesktopEngineHostTest {
         assertTrue(host.isRunning.value)
         val port = assertNotNull(host.boundPort.value)
 
-        val response = HttpClient.newHttpClient().send(
+        // Health endpoint (unauthenticated)
+        val client = HttpClient.newHttpClient()
+        val response = client.send(
             HttpRequest.newBuilder(URI("http://127.0.0.1:$port/health")).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         )
         assertEquals(200, response.statusCode())
         assertTrue("ok" in response.body())
 
+        // Verify discovery file creation and content
+        assertTrue(discoveryFile.exists(), "engine.json discovery file was not created")
+        val discoveryContent = discoveryFile.readText()
+        assertTrue(discoveryContent.contains("\"READY\""))
+        assertTrue(discoveryContent.contains("\"port\": $port"))
+        assertTrue(discoveryContent.contains("\"token\":"))
+
+        // Extract token and test authenticated /v1/models endpoint
+        val tokenRegex = Regex("\"token\":\\s*\"([^\"]+)\"")
+        val token = tokenRegex.find(discoveryContent)?.groupValues?.get(1)
+        assertNotNull(token, "Token could not be extracted from discovery file")
+
+        val modelsResponse = client.send(
+            HttpRequest.newBuilder(URI("http://127.0.0.1:$port/v1/models"))
+                .header("Authorization", "Bearer $token")
+                .GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        assertEquals(200, modelsResponse.statusCode(), "Authenticated request failed: ${modelsResponse.body()}")
+
         host.stop()
         assertFalse(host.isRunning.value)
         assertNull(host.boundPort.value)
         assertNull(host.modelRuntime)
+        assertFalse(discoveryFile.exists(), "engine.json should be removed when engine stops")
     }
 
     @Test

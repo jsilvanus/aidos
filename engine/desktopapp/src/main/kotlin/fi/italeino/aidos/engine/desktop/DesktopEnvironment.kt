@@ -6,22 +6,39 @@ import java.io.File
 import java.lang.management.ManagementFactory
 
 /**
- * Where the desktop debug host keeps its files.
+ * Where the desktop host keeps its files.
  *
  * Models live where the JVM llama.cpp backend and the engine CLI already look
  * (`aidos.models.dir`, default `~/.aidos/models`), so a model fetched with the CLI shows up here
  * and vice versa. Desktop-only state (catalog DB, approvals, preferences) is kept apart under
  * `~/.aidos/engine-desktop` so it never mixes with the Agent's own `~/.aidos` data.
+ *
+ * An active connection discovery file (`engine.json`) is published under `~/.aidos/` when Engine
+ * starts on desktop, enabling external localhost clients (Dictator, CLI, scripts) to connect.
  */
 object DesktopPaths {
-    val modelsDir: File = File(
-        System.getProperty("aidos.models.dir")
-            ?: File(System.getProperty("user.home"), ".aidos/models").absolutePath
+    val aidosDir: File = File(
+        System.getProperty("aidos.dir")
+            ?: File(System.getProperty("user.home"), ".aidos").absolutePath
     )
 
-    val stateDir: File = File(System.getProperty("user.home"), ".aidos/engine-desktop")
+    val modelsDir: File = File(
+        System.getProperty("aidos.models.dir")
+            ?: File(aidosDir, "models").absolutePath
+    )
+
+    val stateDir: File = File(
+        System.getProperty("aidos.state.dir")
+            ?: File(System.getProperty("user.home"), ".aidos/engine-desktop").absolutePath
+    )
+
+    val discoveryFile: File = File(
+        System.getProperty("aidos.discovery.file")
+            ?: File(aidosDir, "engine.json").absolutePath
+    )
 
     fun ensureCreated() {
+        aidosDir.mkdirs()
         modelsDir.mkdirs()
         stateDir.mkdirs()
     }

@@ -133,9 +133,14 @@ serving straight into an Android app module:
   what makes that possible without contradicting RFC-0055 for everything else: the exception is
   in how Aidos Engine is hosted, not in what MOBILE means for Aidos Agent.
 - Keeping the core separate also means a future non-Android host for Aidos Engine — a desktop
-  build, for instance — would expose the same core behind a Unix socket instead of loopback HTTP,
-  exactly as RFC-0055 already does for the main runtime's DESKTOP daemon. Nothing here commits to
-  building that; it falls out of the split for free if it's ever needed (Future Work).
+  build, for instance — can expose the same core on loopback HTTP (or a Unix socket),
+  serving independent local applications (e.g. Dictator, Aidos Agent, or developer scripts).
+  On DESKTOP (Windows/macOS/Linux), where Android Binder IPC is unavailable, Aidos Engine
+  operates as a local daemon or foreground host listening on 127.0.0.1 (default port 18080).
+  On startup, it publishes an active connection discovery file to ~/.aidos/engine.json
+  containing the bound port, base URL, API version, and a loopback bearer token. Localhost
+  clients read this file to authenticate and consume /v1/chat/completions and
+  /v1/audio/transcriptions. When Engine shuts down, the discovery file is cleanly unlinked.
 - Concretely, the repository is one monorepo with the boundary drawn at the directory level:
   `agent/` (Aidos Agent, formerly `runtime/`), `engine/` (Aidos Engine Core plus its own
   `androidapp`), and `sdk/` (Aidos SDK) are three independent Gradle projects side by side.
