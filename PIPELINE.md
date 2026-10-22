@@ -60,12 +60,6 @@ Ordered by what blocks the product, not by milestone number.
 These are live defects in code that is wired into the production path, not missing features.
 Nothing below is waiting on hardware or on a decision.
 
-- **`AgentLoopTaskRunner` discards each tool's real `RecoveryClass`.** It resolves the declared
-  class from the `ToolDescriptor` and then writes the attempt row with a hardcoded literal
-  (`recoveryClass = "IDEMPOTENT"` in `executeToolCall`, `"PURE"` in the model-call path). Crash
-  recovery reads that column to decide whether an effect may be re-executed, so an `UNSAFE` tool
-  is currently recorded as safely re-runnable. This is exactly the class of bug RFC-0009's
-  guarantee exists to prevent, and it undercuts M8, which must never be amber.
 - **RFC-0042 (Networking and Egress) has no enforcement anywhere.** There is no centralized egress
   chokepoint: no host allowlist, no private/loopback-address rejection, no `egress_records` written
   by any path. `CapabilityScope.Network` exists in the kernel with the RFC's field shape and is

@@ -27,6 +27,7 @@ import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SessionId
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.ModelRef
+import dev.aidos.kernel.MutationScope
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
@@ -718,5 +719,131 @@ class AgentLoopTaskRunnerTest {
         assertEquals("FAILED", runRow(driver, runId).first)
         assertEquals("FAILED", toolCallTaskState(driver, runId))
         assertEquals(0L, continuationCount(driver, runId))
+    }
+
+    private fun toolCallRecoveryClass(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, callId: String): String =
+        driver.executeQuery(
+            null,
+            "SELECT a.recovery_class FROM tool_calls tc " +
+                "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
+                "WHERE tc.call_id = ?",
+            mapper = { c ->
+                check(c.next().value) { "no attempt for call $callId" }
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, callId) }.value
+
+    private fun brokerWithDescriptors(
+        descriptors: List<ToolDescriptor>,
+        outcome: ToolOutcome = ToolOutcome.Ok,
+        trustLevel: TrustLevel = TrustLevel.TRUSTED,
+    ): EffectBroker = object : EffectBroker {
+        override fun register(tool: Tool) {}
+        override fun descriptorsFor(subjectId: String, profile: PlatformProfile, networkAvailable: Boolean) = descriptors
+        override suspend fun invoke(subjectId: String, call: ToolCall, runTaint: TrustLevel) = ToolCallResult(
+            callId = call.callId,
+            outcome = outcome,
+            trustLevel = trustLevel,
+            content = listOf(ContentBlock.Text("ok")),
+        )
+        override suspend fun preview(subjectId: String, call: ToolCall) = Result.success(Preview.Description("preview"))
+        override suspend fun cancel(callId: String) {}
+    }
+
+    @Test
+    fun `tool call attempt records the tool descriptor RecoveryClass`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(
+            toolCallResponse("unsafe-tool", callId = "call-unsafe"),
+            toolCallResponse("pure-tool", callId = "call-pure"),
+            toolCallResponse("idempotent-tool", callId = "call-idempotent"),
+            toolCallResponse("checkable-tool", callId = "call-checkable"),
+            toolCallResponse("unregistered-tool", callId = "call-unregistered"),
+            endTurnResponse("Done"),
+        ))
+        val descriptors = listOf(
+            ToolDescriptor(
+                name = "unsafe-tool",
+                title = "Unsafe",
+                description = "Mutating effect",
+                inputSchema = buildJsonObject {},
+                effect = EffectKind.Egress("remote"),
+                requiredPermission = Permission.NETWORK_EGRESS,
+                recoveryClass = RecoveryClass.UNSAFE,
+                availability = ToolAvailability(setOf(PlatformProfile.DESKTOP), AvailabilityTier.UNIVERSAL),
+            ),
+            ToolDescriptor(
+                name = "pure-tool",
+                title = "Pure",
+                description = "Pure read",
+                inputSchema = buildJsonObject {},
+                effect = EffectKind.Read,
+                requiredPermission = Permission.FS_READ,
+                recoveryClass = RecoveryClass.PURE,
+                availability = ToolAvailability(setOf(PlatformProfile.DESKTOP), AvailabilityTier.UNIVERSAL),
+            ),
+            ToolDescriptor(
+                name = "idempotent-tool",
+                title = "Idempotent",
+                description = "Idempotent write",
+                inputSchema = buildJsonObject {},
+                effect = EffectKind.Mutate(MutationScope.IN_PROJECT),
+                requiredPermission = Permission.FS_WRITE,
+                recoveryClass = RecoveryClass.IDEMPOTENT,
+                availability = ToolAvailability(setOf(PlatformProfile.DESKTOP), AvailabilityTier.UNIVERSAL),
+            ),
+            ToolDescriptor(
+                name = "checkable-tool",
+                title = "Checkable",
+                description = "Checkable effect",
+                inputSchema = buildJsonObject {},
+                effect = EffectKind.Mutate(MutationScope.IN_PROJECT),
+                requiredPermission = Permission.FS_WRITE,
+                recoveryClass = RecoveryClass.CHECKABLE,
+                availability = ToolAvailability(setOf(PlatformProfile.DESKTOP), AvailabilityTier.UNIVERSAL),
+            ),
+        )
+        val broker = brokerWithDescriptors(descriptors)
+        buildExecutor(driver, fakeRouter(adapter), broker).drive(runId)
+
+        assertEquals("UNSAFE", toolCallRecoveryClass(driver, "call-unsafe"))
+        assertEquals("PURE", toolCallRecoveryClass(driver, "call-pure"))
+        assertEquals("IDEMPOTENT", toolCallRecoveryClass(driver, "call-idempotent"))
+        assertEquals("CHECKABLE", toolCallRecoveryClass(driver, "call-checkable"))
+        assertEquals("UNSAFE", toolCallRecoveryClass(driver, "call-unregistered"), "unregistered tools default to UNSAFE")
+    }
+
+    @Test
+    fun `model call attempt records PURE recovery class`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(endTurnResponse("Done")))
+
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+
+        val recoveryClass = driver.executeQuery(
+            null,
+            "SELECT recovery_class FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.run_id = ? AND t.kind = 'MODEL_CALL'",
+            mapper = { c ->
+                check(c.next().value)
+                app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!)
+            }, 1
+        ) { bindString(0, runId.value) }.value
+        assertEquals("PURE", recoveryClass)
+    }
+
+    @Test
+    fun `ask_user attempt records IDEMPOTENT recovery class`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val adapter = fakeModel(listOf(askUserResponse("Confirm?"), endTurnResponse("Proceeding")))
+        val executor = buildExecutor(driver, fakeRouter(adapter), noOpBroker())
+        executor.drive(runId)
+
+        val resolution = executor.resolveUserPrompt(runId, answer = "yes")
+        assertIs<CapabilityApprovalResolution.Resumed>(resolution)
+
+        assertEquals("IDEMPOTENT", toolCallRecoveryClass(driver, "call-1"))
     }
 }

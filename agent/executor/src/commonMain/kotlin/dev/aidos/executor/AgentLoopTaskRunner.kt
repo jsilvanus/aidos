@@ -526,6 +526,7 @@ class AgentLoopTaskRunner(
     }
 
     private fun descriptorRecoveryClass(run: RunContext, toolName: String): RecoveryClass {
+        if (toolName == askUserToolDescriptor.name) return askUserToolDescriptor.recoveryClass
         val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
             .firstOrNull { it.name == toolName }
         return descriptor?.recoveryClass ?: RecoveryClass.UNSAFE
