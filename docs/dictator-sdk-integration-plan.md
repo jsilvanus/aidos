@@ -68,7 +68,7 @@ Dictator cannot reach the approval flow that was built for it.
 ```
 
 Android grants a `signature` permission only to apps signed with the declaring app's certificate,
-and the service is gated on holding it. A differently-signed caller — `com.dictator.android` —
+and the service is gated on holding it. A differently-signed caller — `fi.italeino.aidos.dictator` —
 receives a `SecurityException` at `bindService`. It never reaches `performHandshake()`, so
 `AppApprovalManager.checkApproval()` never runs, so it never records a `PENDING` row, so it never
 appears on ConnectedAppsScreen. **The approval UI can only ever offer apps that already cleared
