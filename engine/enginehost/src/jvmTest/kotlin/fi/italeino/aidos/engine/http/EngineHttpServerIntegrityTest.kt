@@ -84,6 +84,54 @@ class EngineHttpServerIntegrityTest {
         assertTrue(body.contains("\"family\":\"test\""))
         assertTrue(!body.contains("\"quantization\":\"q4_k_m\""))
     }
+
+    @Test
+    fun models_reflectsReconciledInstalledState() = testApplication {
+        val tokenManager = TokenManager()
+        val runtime = ReconcilingRuntime()
+        val server = EngineHttpServer(tokenManager, runtime)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken()
+
+        val response1 = client.get("/v1/models") { bearerAuth(token.token) }
+        assertEquals(HttpStatusCode.OK, response1.status)
+        val body1 = response1.bodyAsText()
+        assertTrue(body1.contains("\"id\":\"model-1\""))
+        assertTrue(body1.contains("\"installed\":true"))
+
+        runtime.simulateDiskRemoval("model-1")
+
+        val response2 = client.get("/v1/models") { bearerAuth(token.token) }
+        assertEquals(HttpStatusCode.OK, response2.status)
+        val body2 = response2.bodyAsText()
+        assertTrue(body2.contains("\"id\":\"model-1\""))
+        assertTrue(body2.contains("\"installed\":false"))
+    }
+}
+
+private class ReconcilingRuntime : ModelRuntime {
+    private val catalogDescriptor = ModelDescriptor(
+        id = "model-1",
+        name = "Model One",
+        kind = ModelKind.LLM,
+        providerId = "test",
+        isLocal = true,
+        contextWindow = 2048,
+        sizeBytes = 100L,
+        digest = "digest-1",
+    )
+    private var isDiskInstalled = true
+
+    fun simulateDiskRemoval(modelId: String) {
+        if (modelId == "model-1") isDiskInstalled = false
+    }
+
+    override suspend fun catalog(): List<ModelDescriptor> = listOf(catalogDescriptor)
+    override suspend fun installed(): List<ModelDescriptor> = if (isDiskInstalled) listOf(catalogDescriptor) else emptyList()
+    override suspend fun load(modelId: String): Result<ModelAdapter> = Result.failure(UnsupportedOperationException())
+    override suspend fun delete(modelId: String) { isDiskInstalled = false }
+    override suspend fun unload(modelId: String) = Unit
+    override fun loaded(): List<String> = emptyList()
 }
 
 private class IntegrityFailureRuntime(private val message: String) : ModelRuntime {

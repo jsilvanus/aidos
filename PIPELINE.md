@@ -76,21 +76,13 @@ Nothing below is waiting on hardware or on a decision.
 
 ### Immediate next five items for the engine app
 
-These are the next five engine-specific items to finish in order. They keep the work on the Android
-application and runtime that is actually in scope for this branch rather than the Aidos agent path.
+These five engine-specific items to turn remaining mock states into real, durable app state are completed and verified:
 
-1. **Make the Engine app start and stay alive** — ensure the foreground service, notification flow,
-   and bind/start path reliably bring the HTTP runtime and model stack online on Android.
-2. **Turn the settings screen into real app state** — validate and save the Hugging Face token,
-   surface clear success/error feedback, and keep the saved value in-memory rather than leaving it a
-   static mock.
-3. **Turn provider configuration into real controls** — wire the provider enable/disable switch, API
-   key save flow, and model list update actions so the UI reflects real user decisions.
-4. **Verify the Android model catalog + UI contract** — connect the catalog browser, installed model
-   list, and model detail flow to the real engine model manager instead of static mock data.
-5. **Close the remaining engine app stub gaps** — eliminate placeholder toggles and TODO-driven UI
-   actions in the app until the navigation, model management, and settings flows behave as a usable
-   local engine client.
+1. **Make the Engine app start and stay alive** — ✅ Complete. Refactored `EngineService` with unified `startEngine()`, `START_STICKY`, synchronous bounded teardown (`runBlocking` with 3s timeout) preventing port leaks/races across process restarts, foreground service notification state handling (`STARTING`, `READY`, `FAILED`), safe foreground service type mapping (`FOREGROUND_SERVICE_TYPE_DATA_SYNC`), and hardened `EngineHandshakeImpl` IPC failure handling.
+2. **Turn the settings screen into real app state** — ✅ Complete. Expanded `SettingsStore` with real encrypted persistence for Hugging Face tokens and validation timestamps, wired `SettingsScreen` validation and save flow with live feedback, and wired Hugging Face Bearer auth into `LocalDownloadManager` and `KtorEffectBroker`.
+3. **Turn provider configuration into real controls** — ✅ Complete. Implemented `ProviderDetailScreen` and `SettingsStore` provider persistence (`ProviderDetail`, `ConfiguredRemoteModel`, `ProviderConfigStatus`) for OpenAI, Anthropic, and Custom providers; wired enable/disable switch, API key storage, custom model additions/removals; added provider navigation route and connected `ModelsPanes` provider tab directly.
+4. **Verify the Android model catalog + UI contract** — ✅ Complete. Added model catalog reconciliation (`reconcile()` / `reconcileInstalledState()`) in `DatabaseModelCatalogManager` and `AndroidLlamaCppInferenceBackend`. Reconciles cleanly on deletions, `.partial` interrupted downloads, zero-byte artifacts, and size/digest mismatches across single-file and directory packages. Added unit tests (`DatabaseModelCatalogManagerTest`) and HTTP integrity tests (`EngineHttpServerIntegrityTest` for `/v1/models`).
+5. **Close the remaining engine app stub gaps** — ✅ Complete. Replaced remaining mock states in `androidapp` and `engineui`, ensuring model management, provider navigation, download progress, and settings flows operate against real backing stores and runtime state. Verified with full Gradle build (`test :androidapp:compileDebugKotlinAndroid`).
 
 ### 2. Android Engine — complete the offline runtime
 
