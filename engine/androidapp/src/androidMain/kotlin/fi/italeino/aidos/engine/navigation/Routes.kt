@@ -21,8 +21,10 @@ sealed class EngineRoute(val route: String) {
         fun createRoute(modelId: String, modelName: String) = 
             "test_chat?id=${java.net.URLEncoder.encode(modelId, "UTF-8")}&name=${java.net.URLEncoder.encode(modelName, "UTF-8")}"
     }
+    data class ProviderDetail(val providerId: String) : EngineRoute("provider_detail?id={id}") {
+        fun createRoute(providerId: String) = "provider_detail?id=${java.net.URLEncoder.encode(providerId, "UTF-8")}"
+    }
     data object Models : EngineRoute("models")
     data object ConnectedApps : EngineRoute("connected_apps")
     data object Settings : EngineRoute("settings")
 }
-

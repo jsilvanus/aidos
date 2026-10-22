@@ -1,6 +1,5 @@
 package fi.italeino.aidos.engine.ui
 
-import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -9,8 +8,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +21,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+data class ProviderDetailState(
+    val provider: ProviderDetail?,
+    val showApiKeyField: Boolean = false,
+    val apiKeyInput: String = "",
+    val showAddModelDialog: Boolean = false,
+    val newModelId: String = "",
+    val newModelName: String = "",
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProviderDetailScreen(
@@ -29,9 +38,9 @@ fun ProviderDetailScreen(
 ) {
     val context = LocalContext.current
     var state by remember(providerId) {
-        mutableStateOf<ProviderDetailState>(
+        mutableStateOf(
             ProviderDetailState(
-                provider = loadProviderDetail(context, providerId)
+                provider = SettingsStore.getProvider(context, providerId)
             )
         )
     }
@@ -44,7 +53,7 @@ fun ProviderDetailScreen(
                 title = { Text(provider.name) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -65,21 +74,31 @@ fun ProviderDetailScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Enabled", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Enabled", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (provider.apiKeyValid) {
+                                    if (provider.isEnabled) "Provider active" else "Provider disabled"
+                                } else "Requires API key",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
                         Switch(
                             checked = provider.isEnabled,
+                            enabled = provider.apiKeyValid,
                             onCheckedChange = { enabled ->
                                 val updatedProvider = provider.copy(
                                     isEnabled = enabled,
                                     status = if (enabled) ProviderConfigStatus.ENABLED else ProviderConfigStatus.CONFIGURED_DISABLED
                                 )
-                                persistProviderDetail(context, providerId, updatedProvider)
+                                SettingsStore.setProvider(context, providerId, updatedProvider)
                                 state = state.copy(provider = updatedProvider)
                             }
                         )
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -100,6 +119,20 @@ fun ProviderDetailScreen(
                             }
                             TextButton(onClick = { state = state.copy(showApiKeyField = !state.showApiKeyField) }) {
                                 Text(if (provider.apiKeyValid) "Change" else "Add", fontSize = 11.sp)
+                            }
+                            if (provider.apiKeyValid) {
+                                TextButton(onClick = {
+                                    val updatedProvider = provider.copy(
+                                        apiKey = null,
+                                        apiKeyValid = false,
+                                        isEnabled = false,
+                                        status = ProviderConfigStatus.NOT_CONFIGURED,
+                                    )
+                                    SettingsStore.setProvider(context, providerId, updatedProvider)
+                                    state = state.copy(provider = updatedProvider, showApiKeyField = false, apiKeyInput = "")
+                                }) {
+                                    Text("Clear", fontSize = 11.sp)
+                                }
                             }
                         }
 
@@ -137,11 +170,12 @@ fun ProviderDetailScreen(
                                         val sanitizedKey = state.apiKeyInput.trim()
                                         if (sanitizedKey.isEmpty()) return@Button
                                         val updatedProvider = provider.copy(
+                                            apiKey = sanitizedKey,
                                             apiKeyValid = true,
                                             isEnabled = true,
                                             status = ProviderConfigStatus.ENABLED,
                                         )
-                                        persistProviderDetail(context, providerId, updatedProvider)
+                                        SettingsStore.setProvider(context, providerId, updatedProvider)
                                         state = state.copy(
                                             provider = updatedProvider,
                                             showApiKeyField = false,
@@ -172,10 +206,32 @@ fun ProviderDetailScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 provider.configuredModels.forEach { model ->
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(model.displayName, fontWeight = FontWeight.SemiBold)
                                 Text("Remote model: ${model.modelId}", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                            }
+                            Switch(
+                                checked = model.isEnabled,
+                                onCheckedChange = { isChecked ->
+                                    val updatedModels = provider.configuredModels.map { m ->
+                                        if (m.modelId == model.modelId) m.copy(isEnabled = isChecked) else m
+                                    }
+                                    val updatedProvider = provider.copy(configuredModels = updatedModels)
+                                    SettingsStore.setProvider(context, providerId, updatedProvider)
+                                    state = state.copy(provider = updatedProvider)
+                                }
+                            )
+                            IconButton(onClick = {
+                                val updatedModels = provider.configuredModels.filterNot { it.modelId == model.modelId }
+                                val updatedProvider = provider.copy(configuredModels = updatedModels)
+                                SettingsStore.setProvider(context, providerId, updatedProvider)
+                                state = state.copy(provider = updatedProvider)
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Delete model", modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -183,17 +239,11 @@ fun ProviderDetailScreen(
                 
                 TextButton(
                     onClick = {
-                        val nextIndex = provider.configuredModels.size + 1
-                        val nextModel = ConfiguredRemoteModel(
-                            modelId = "custom-model-$nextIndex",
-                            displayName = "Custom Model $nextIndex",
-                            isEnabled = true,
+                        state = state.copy(
+                            showAddModelDialog = true,
+                            newModelId = "",
+                            newModelName = "",
                         )
-                        val updatedProvider = provider.copy(
-                            configuredModels = provider.configuredModels + nextModel,
-                        )
-                        persistProviderDetail(context, providerId, updatedProvider)
-                        state = state.copy(provider = updatedProvider)
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -201,88 +251,59 @@ fun ProviderDetailScreen(
                 }
             }
         }
+
+        if (state.showAddModelDialog) {
+            AlertDialog(
+                onDismissRequest = { state = state.copy(showAddModelDialog = false) },
+                title = { Text("Add Remote Model") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = state.newModelId,
+                            onValueChange = { state = state.copy(newModelId = it) },
+                            label = { Text("Model ID (e.g. gpt-4o)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = state.newModelName,
+                            onValueChange = { state = state.copy(newModelName = it) },
+                            label = { Text("Display Name (e.g. GPT-4o)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val id = state.newModelId.trim()
+                            if (id.isNotEmpty()) {
+                                val name = state.newModelName.trim().ifEmpty { id }
+                                val newModel = ConfiguredRemoteModel(modelId = id, displayName = name, isEnabled = true)
+                                val updatedProvider = provider.copy(
+                                    configuredModels = provider.configuredModels.filterNot { it.modelId == id } + newModel
+                                )
+                                SettingsStore.setProvider(context, providerId, updatedProvider)
+                                state = state.copy(
+                                    provider = updatedProvider,
+                                    showAddModelDialog = false,
+                                    newModelId = "",
+                                    newModelName = "",
+                                )
+                            }
+                        },
+                        enabled = state.newModelId.isNotBlank()
+                    ) {
+                        Text("Add")
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { state = state.copy(showAddModelDialog = false) }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 }
-
-private fun loadProviderDetail(context: Context, providerId: String): ProviderDetail {
-    val prefs = context.getSharedPreferences("aidos_engine_provider_state", Context.MODE_PRIVATE)
-    val base = ProviderDetail(
-        id = providerId,
-        name = providerId.replaceFirstChar { it.uppercase() },
-        status = ProviderConfigStatus.ENABLED,
-        apiKeyValid = true,
-        isEnabled = true,
-        configuredModels = listOf(
-            ConfiguredRemoteModel("gpt-4o", "GPT-4o", true),
-            ConfiguredRemoteModel("gpt-3.5-turbo", "GPT-3.5 Turbo", true),
-        ),
-    )
-    val enabled = prefs.getBoolean("${providerId}:enabled", base.isEnabled)
-    val apiKeyValid = prefs.getBoolean("${providerId}:api_key_valid", base.apiKeyValid)
-    val storedModels = prefs.getString("${providerId}:models", null)
-        ?.takeIf { it.isNotBlank() }
-        ?.split(";")
-        ?.mapNotNull { row ->
-            val parts = row.split("|")
-            if (parts.size >= 3) {
-                ConfiguredRemoteModel(
-                    modelId = parts[0],
-                    displayName = parts[1],
-                    isEnabled = parts[2].toBooleanStrictOrNull() == true,
-                )
-            } else null
-        }
-        ?: base.configuredModels
-
-    return base.copy(
-        isEnabled = enabled,
-        apiKeyValid = apiKeyValid,
-        status = when {
-            enabled -> ProviderConfigStatus.ENABLED
-            apiKeyValid -> ProviderConfigStatus.CONFIGURED_DISABLED
-            else -> ProviderConfigStatus.NOT_CONFIGURED
-        },
-        configuredModels = storedModels,
-    )
-}
-
-private fun persistProviderDetail(context: Context, providerId: String, provider: ProviderDetail) {
-    val prefs = context.getSharedPreferences("aidos_engine_provider_state", Context.MODE_PRIVATE)
-    prefs.edit()
-        .putBoolean("${providerId}:enabled", provider.isEnabled)
-        .putBoolean("${providerId}:api_key_valid", provider.apiKeyValid)
-        .putString(
-            "${providerId}:models",
-            provider.configuredModels.joinToString(";") { model ->
-                listOf(model.modelId, model.displayName, model.isEnabled.toString()).joinToString("|")
-            },
-        )
-        .apply()
-}
-
-enum class ProviderConfigStatus {
-    ENABLED,
-    CONFIGURED_DISABLED,
-    NOT_CONFIGURED
-}
-
-data class ConfiguredRemoteModel(
-    val modelId: String,
-    val displayName: String,
-    val isEnabled: Boolean = true
-)
-
-data class ProviderDetail(
-    val id: String,
-    val name: String,
-    val status: ProviderConfigStatus,
-    val apiKeyValid: Boolean,
-    val isEnabled: Boolean,
-    val configuredModels: List<ConfiguredRemoteModel>
-)
-
-data class ProviderDetailState(
-    val provider: ProviderDetail?,
-    val showApiKeyField: Boolean = false,
-    val apiKeyInput: String = ""
-)

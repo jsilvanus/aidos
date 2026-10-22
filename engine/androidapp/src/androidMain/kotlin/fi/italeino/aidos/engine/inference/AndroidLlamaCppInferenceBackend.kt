@@ -1,227 +1,278 @@
-package fi.italeino.aidos.engine.inference
-
-import android.content.Context
-import dev.aidos.kernel.ModelAdapter
-import dev.aidos.kernel.ModelDescriptor
-import dev.aidos.kernel.ModelKind
-import dev.aidos.modelruntime.InferenceBackend
-import dev.aidos.modelruntime.ModelRunSettings
-import dev.aidos.models.CatalogEntry
-import dev.aidos.models.ModelCatalogManager
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import java.io.File
-import java.security.MessageDigest
-
-/**
- * Android inference backend. Model identity and expected digests come from the persistent model
- * catalog; installed metadata comes from the same catalog database. The filesystem is treated as
- * an artifact store, not as an authoritative model catalog.
- */
-class AndroidLlamaCppInferenceBackend(
-    context: Context,
-    private val catalogManager: ModelCatalogManager,
-    private val threads: Int = 4,
-) : InferenceBackend {
-    private val modelsDir = File(context.filesDir, "models").apply { mkdirs() }
-    private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
-
-    override suspend fun catalog(): List<ModelDescriptor> {
-        reconcileInstalledState().getOrThrow()
-        return catalogManager.listCatalog().getOrElse { throw it }.map { entry -> descriptorFromCatalog(entry) }
-    }
-
-    override suspend fun installed(): List<ModelDescriptor> =
-        catalogManager.listInstalled().getOrElse { throw it }
-            .filter { File(it.path).isFile }
-            .mapNotNull { installed ->
-                val catalog = catalogManager.getCatalog(installed.modelId).getOrElse { throw it }
-                catalog?.let { descriptorFromCatalog(it, installed.sizeBytes, installed.digest) }
-            }
-
-    /**
-     * Reconciles persistent installed state with the artifact store and catalog authority.
-     * Orphan files are intentionally ignored: they have no trusted model identity and cannot
-     * become executable merely by existing in filesDir/models.
-     */
-    suspend fun reconcileInstalledState(): Result<Unit> = runCatching {
-        val catalogEntries = catalogManager.listCatalog().getOrThrow().associateBy { it.id }
-        val installedEntries = catalogManager.listInstalled().getOrThrow()
-        for (installed in installedEntries) {
-            val catalog = catalogEntries[installed.modelId]
-            val file = File(installed.path)
-            val expectedDigest = catalog?.let(::expectedDigest)
-            val valid = catalog != null &&
-                file.isFile &&
-                installed.digest.isNotBlank() &&
-                (expectedDigest == null || expectedDigest.equals(installed.digest, ignoreCase = true))
-            if (!valid) {
-                liveAdapters.remove(installed.modelId)?.close()
-                catalogManager.uninstall(installed.modelId).getOrThrow()
-            }
-        }
-    }
-
-    override suspend fun computeDigest(modelId: String): String = sha256(resolveModelFile(modelId))
-
-    override suspend fun computeDigest(modelId: String, artifactPath: String?): String =
-        sha256(resolveArtifact(modelId, artifactPath))
-
-    override suspend fun delete(modelId: String) {
-        liveAdapters.remove(modelId)?.close()
-        val file = resolveModelFile(modelId)
-        if (file.isFile) file.delete()
-        catalogManager.uninstall(modelId).getOrThrow()
-    }
-
-    override suspend fun load(modelId: String): Result<ModelAdapter> =
-        load(modelId, artifactPath = null)
-
-    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
-        load(modelId, artifactPath, ModelRunSettings.DEFAULT)
-
-    /** As above, run with the user's per-model [settings] (RFC-0103); unset fields keep the defaults. */
-    override suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> {
-        val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
-            ?: return Result.failure(IllegalStateException("Model $modelId is not in the model catalog"))
-        val file = try {
-            resolveArtifact(modelId, artifactPath)
-        } catch (e: Throwable) {
-            return Result.failure(e)
-        }
-        val installed = catalogManager.listInstalled().getOrElse { return Result.failure(it) }
-            .firstOrNull { it.modelId == modelId }
-            ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: model '$modelId' has no install record"))
-        if (!file.isFile) return Result.failure(
-            IllegalStateException("MODEL_NOT_INSTALLED: model file not found for '$modelId': ${file.absolutePath}")
-        )
-
-        return try {
-            if (installed.digest.isBlank()) {
-                return Result.failure(IllegalStateException("MODEL_INTEGRITY_MISSING: no installed digest for '$modelId'"))
-            }
-            val expectedDigest = expectedDigest(catalog)
-            if (expectedDigest != null && !expectedDigest.equals(installed.digest, ignoreCase = true)) {
-                return Result.failure(
-                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed metadata for '$modelId' does not match catalog")
-                )
-            }
-            val actualDigest = sha256(file)
-            if (!actualDigest.equals(installed.digest, ignoreCase = true)) {
-                return Result.failure(
-                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed digest for '$modelId' does not match the model file")
-                )
-            }
-
-            val adapter = AndroidLlamaCppAdapter(
-                modelId = modelId,
-                modelFile = file,
-                // Cap at the model's own context window: longer degrades output.
-                contextWindow = (settings.contextLength ?: contextWindow(catalog)).coerceAtMost(contextWindow(catalog)),
-                threads = settings.threads ?: threads,
-                embeddingMode = catalog.kind == ModelKind.EMBEDDING,
-                settings = settings,
-            )
-            liveAdapters[modelId]?.close()
-            liveAdapters[modelId] = adapter
-            Result.success(adapter)
-        } catch (e: Throwable) {
-            Result.failure(e)
-        }
-    }
-
-    override suspend fun unload(modelId: String) {
-        liveAdapters.remove(modelId)?.close()
-    }
-
-    /**
-     * Resolve the exact caller-selected artifact when supplied. Paths are restricted to the
-     * engine's model directory so a catalog record cannot make the runtime open an arbitrary
-     * filesystem location.
-     */
-    private suspend fun resolveArtifact(modelId: String, artifactPath: String?): File {
-        if (artifactPath != null) {
-            val candidate = File(artifactPath).canonicalFile
-            val root = modelsDir.canonicalFile
-            val relative = candidate.toPath().normalize()
-            if (!relative.startsWith(root.toPath())) {
-                throw IllegalArgumentException("Model artifact path is outside the engine model directory")
-            }
-            return candidate
-        }
-        return resolveModelFile(modelId)
-    }
-
-    private fun descriptorFromCatalog(
-        entry: CatalogEntry,
-        sizeBytes: Long? = null,
-        installedDigest: String? = null,
-    ): ModelDescriptor {
-        val metadata = runCatching { Json.parseToJsonElement(entry.propertiesJson).jsonObject }.getOrNull()
-        val expectedDigest = metadata?.get("sha256")?.jsonPrimitive?.content
-        val format = metadata?.get("format")?.jsonPrimitive?.content
-        val quantization = metadata?.get("quantization")?.jsonPrimitive?.content
-        val extraMetadata = metadata?.entries
-            ?.filter { it.value is kotlinx.serialization.json.JsonPrimitive }
-            ?.associate { it.key to it.value.jsonPrimitive.content }
-            ?: emptyMap()
-        return ModelDescriptor(
-            id = entry.id,
-            name = entry.name,
-            kind = entry.kind,
-            providerId = entry.provider,
-            isLocal = true,
-            contextWindow = contextWindow(entry),
-            sizeBytes = sizeBytes,
-            digest = installedDigest ?: expectedDigest,
-            format = format,
-            quantization = quantization,
-            metadata = extraMetadata,
-        )
-    }
-
-    private fun expectedDigest(entry: CatalogEntry): String? =
-        runCatching {
-            Json.parseToJsonElement(entry.propertiesJson).jsonObject["sha256"]?.jsonPrimitive?.content
-        }.getOrNull()?.takeIf { it.isNotBlank() }
-
-    private fun contextWindow(entry: CatalogEntry): Int =
-        runCatching {
-            Json.parseToJsonElement(entry.propertiesJson).jsonObject["context_window"]?.jsonPrimitive?.content?.toIntOrNull()
-                ?: DEFAULT_CONTEXT
-        }.getOrDefault(DEFAULT_CONTEXT)
-
-    /**
-     * Prefers the persistent installed path; filename scanning (exact id, then the
-     * `<model>_<quantization>.gguf` installer scheme) is only a legacy fallback.
-     */
-    private suspend fun resolveModelFile(modelId: String): File {
-        val installed = catalogManager.listInstalled().getOrThrow().firstOrNull { it.modelId == modelId }
-        if (installed != null) return File(installed.path)
-        val exact = File(modelsDir, "$modelId.gguf")
-        if (exact.isFile) return exact
-        val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        return modelsDir.listFiles()
-            ?.firstOrNull { it.isFile && it.extension.equals("gguf", true) && it.nameWithoutExtension.startsWith("${safeId}_") }
-            ?: exact
-    }
-
-    private fun sha256(file: File): String {
-        if (!file.isFile) return ""
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
-    private companion object {
-        const val DEFAULT_CONTEXT = 4096
-    }
-}
+package fi.italeino.aidos.engine.inference
+
+import android.content.Context
+import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelDescriptor
+import dev.aidos.kernel.ModelKind
+import dev.aidos.modelruntime.InferenceBackend
+import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.models.CatalogEntry
+import dev.aidos.models.ModelCatalogManager
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * Android inference backend. Model identity and expected digests come from the persistent model
+ * catalog; installed metadata comes from the same catalog database. The filesystem is treated as
+ * an artifact store, not as an authoritative model catalog.
+ */
+class AndroidLlamaCppInferenceBackend(
+    context: Context,
+    private val catalogManager: ModelCatalogManager,
+    private val threads: Int = 4,
+) : InferenceBackend {
+    private val modelsDir = File(context.filesDir, "models").apply { mkdirs() }
+    private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
+
+    override suspend fun catalog(): List<ModelDescriptor> {
+        reconcileInstalledState().getOrThrow()
+        return catalogManager.listCatalog().getOrElse { throw it }.map { entry -> descriptorFromCatalog(entry) }
+    }
+
+    override suspend fun installed(): List<ModelDescriptor> {
+        reconcileInstalledState().getOrThrow()
+        return catalogManager.listInstalled().getOrElse { throw it }
+            .mapNotNull { installed ->
+                val file = File(installed.path)
+                val isPackage = runCatching {
+                    Json.parseToJsonElement(installed.propertiesJson).jsonObject["package"]?.jsonPrimitive?.content == "true"
+                }.getOrDefault(false) || file.isDirectory
+                if (isPackage) {
+                    if (!file.isDirectory) return@mapNotNull null
+                } else {
+                    if (!file.isFile) return@mapNotNull null
+                }
+                val catalog = catalogManager.getCatalog(installed.modelId).getOrElse { throw it }
+                catalog?.let { descriptorFromCatalog(it, installed.sizeBytes, installed.digest) }
+            }
+    }
+
+    /**
+     * Reconciles persistent installed state with the artifact store and catalog authority.
+     * Handles file deletion, corruption (size mismatch, digest mismatch), and download interrupts
+     * (.partial file left on disk).
+     * Orphan files are intentionally ignored: they have no trusted model identity and cannot
+     * become executable merely by existing in filesDir/models.
+     */
+    suspend fun reconcileInstalledState(): Result<Unit> = runCatching {
+        val catalogEntries = catalogManager.listCatalog().getOrThrow().associateBy { it.id }
+        val installedEntries = catalogManager.listInstalled().getOrThrow()
+        for (installed in installedEntries) {
+            val catalog = catalogEntries[installed.modelId]
+            val file = File(installed.path)
+            val partialFile = File("${installed.path}.partial")
+            val isPackage = runCatching {
+                Json.parseToJsonElement(installed.propertiesJson).jsonObject["package"]?.jsonPrimitive?.content == "true"
+            }.getOrDefault(false) || file.isDirectory
+
+            val expectedDigest = catalog?.let(::expectedDigest)
+
+            // A .partial marker indicates an interrupted or partial download
+            val hasInterruptedDownload = partialFile.exists()
+
+            val fileValid = if (isPackage) {
+                file.isDirectory && !file.list().isNullOrEmpty() && !hasInterruptedDownload
+            } else {
+                file.isFile && file.length() > 0L &&
+                    (installed.sizeBytes <= 0L || file.length() == installed.sizeBytes) &&
+                    !hasInterruptedDownload
+            }
+
+            // Verify checksum if an expected digest exists in catalog
+            val digestValid = if (fileValid && expectedDigest != null && file.isFile) {
+                val actual = sha256(file)
+                actual.equals(expectedDigest, ignoreCase = true)
+            } else {
+                fileValid
+            }
+
+            val valid = catalog != null &&
+                fileValid &&
+                digestValid &&
+                installed.digest.isNotBlank() &&
+                (expectedDigest == null || expectedDigest.equals(installed.digest, ignoreCase = true))
+
+            if (!valid) {
+                liveAdapters.remove(installed.modelId)?.close()
+                // Clean up corrupted file or interrupted artifact
+                if (file.exists()) {
+                    if (file.isDirectory) file.deleteRecursively() else file.delete()
+                }
+                if (partialFile.exists()) {
+                    partialFile.delete()
+                }
+                catalogManager.uninstall(installed.modelId).getOrThrow()
+            }
+        }
+    }
+
+    override suspend fun computeDigest(modelId: String): String = sha256(resolveModelFile(modelId))
+
+    override suspend fun computeDigest(modelId: String, artifactPath: String?): String =
+        sha256(resolveArtifact(modelId, artifactPath))
+
+    override suspend fun delete(modelId: String) {
+        liveAdapters.remove(modelId)?.close()
+        val installed = catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
+        val file = installed?.let { File(it.path) } ?: resolveModelFile(modelId)
+        val partial = File("${file.absolutePath}.partial")
+        if (file.exists()) {
+            if (file.isDirectory) file.deleteRecursively() else file.delete()
+        }
+        if (partial.exists()) partial.delete()
+        catalogManager.uninstall(modelId).getOrThrow()
+    }
+
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        load(modelId, artifactPath = null)
+
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> =
+        load(modelId, artifactPath, ModelRunSettings.DEFAULT)
+
+    /** As above, run with the user's per-model [settings] (RFC-0103); unset fields keep the defaults. */
+    override suspend fun load(modelId: String, artifactPath: String?, settings: ModelRunSettings): Result<ModelAdapter> {
+        val catalog = catalogManager.getCatalog(modelId).getOrElse { return Result.failure(it) }
+            ?: return Result.failure(IllegalStateException("Model $modelId is not in the model catalog"))
+        val file = try {
+            resolveArtifact(modelId, artifactPath)
+        } catch (e: Throwable) {
+            return Result.failure(e)
+        }
+        val installed = catalogManager.listInstalled().getOrElse { return Result.failure(it) }
+            .firstOrNull { it.modelId == modelId }
+            ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: model '$modelId' has no install record"))
+        if (!file.isFile) return Result.failure(
+            IllegalStateException("MODEL_NOT_INSTALLED: model file not found for '$modelId': ${file.absolutePath}")
+        )
+
+        return try {
+            if (installed.digest.isBlank()) {
+                return Result.failure(IllegalStateException("MODEL_INTEGRITY_MISSING: no installed digest for '$modelId'"))
+            }
+            val expectedDigest = expectedDigest(catalog)
+            if (expectedDigest != null && !expectedDigest.equals(installed.digest, ignoreCase = true)) {
+                return Result.failure(
+                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed metadata for '$modelId' does not match catalog")
+                )
+            }
+            val actualDigest = sha256(file)
+            if (!actualDigest.equals(installed.digest, ignoreCase = true)) {
+                return Result.failure(
+                    IllegalStateException("MODEL_INTEGRITY_MISMATCH: installed digest for '$modelId' does not match the model file")
+                )
+            }
+
+            val adapter = AndroidLlamaCppAdapter(
+                modelId = modelId,
+                modelFile = file,
+                // Cap at the model's own context window: longer degrades output.
+                contextWindow = (settings.contextLength ?: contextWindow(catalog)).coerceAtMost(contextWindow(catalog)),
+                threads = settings.threads ?: threads,
+                embeddingMode = catalog.kind == ModelKind.EMBEDDING,
+                settings = settings,
+            )
+            liveAdapters[modelId]?.close()
+            liveAdapters[modelId] = adapter
+            Result.success(adapter)
+        } catch (e: Throwable) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun unload(modelId: String) {
+        liveAdapters.remove(modelId)?.close()
+    }
+
+    /**
+     * Resolve the exact caller-selected artifact when supplied. Paths are restricted to the
+     * engine's model directory so a catalog record cannot make the runtime open an arbitrary
+     * filesystem location.
+     */
+    private suspend fun resolveArtifact(modelId: String, artifactPath: String?): File {
+        if (artifactPath != null) {
+            val candidate = File(artifactPath).canonicalFile
+            val root = modelsDir.canonicalFile
+            val relative = candidate.toPath().normalize()
+            if (!relative.startsWith(root.toPath())) {
+                throw IllegalArgumentException("Model artifact path is outside the engine model directory")
+            }
+            return candidate
+        }
+        return resolveModelFile(modelId)
+    }
+
+    private fun descriptorFromCatalog(
+        entry: CatalogEntry,
+        sizeBytes: Long? = null,
+        installedDigest: String? = null,
+    ): ModelDescriptor {
+        val metadata = runCatching { Json.parseToJsonElement(entry.propertiesJson).jsonObject }.getOrNull()
+        val expectedDigest = metadata?.get("sha256")?.jsonPrimitive?.content
+        val format = metadata?.get("format")?.jsonPrimitive?.content
+        val quantization = metadata?.get("quantization")?.jsonPrimitive?.content
+        val extraMetadata = metadata?.entries
+            ?.filter { it.value is kotlinx.serialization.json.JsonPrimitive }
+            ?.associate { it.key to it.value.jsonPrimitive.content }
+            ?: emptyMap()
+        return ModelDescriptor(
+            id = entry.id,
+            name = entry.name,
+            kind = entry.kind,
+            providerId = entry.provider,
+            isLocal = true,
+            contextWindow = contextWindow(entry),
+            sizeBytes = sizeBytes,
+            digest = installedDigest ?: expectedDigest,
+            format = format,
+            quantization = quantization,
+            metadata = extraMetadata,
+        )
+    }
+
+    private fun expectedDigest(entry: CatalogEntry): String? =
+        runCatching {
+            Json.parseToJsonElement(entry.propertiesJson).jsonObject["sha256"]?.jsonPrimitive?.content
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    private fun contextWindow(entry: CatalogEntry): Int =
+        runCatching {
+            Json.parseToJsonElement(entry.propertiesJson).jsonObject["context_window"]?.jsonPrimitive?.content?.toIntOrNull()
+                ?: DEFAULT_CONTEXT
+        }.getOrDefault(DEFAULT_CONTEXT)
+
+    /**
+     * Prefers the persistent installed path; filename scanning (exact id, then the
+     * `<model>_<quantization>.gguf` installer scheme) is only a legacy fallback.
+     */
+    private suspend fun resolveModelFile(modelId: String): File {
+        val installed = catalogManager.listInstalled().getOrThrow().firstOrNull { it.modelId == modelId }
+        if (installed != null) return File(installed.path)
+        val exact = File(modelsDir, "$modelId.gguf")
+        if (exact.isFile) return exact
+        val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return modelsDir.listFiles()
+            ?.firstOrNull { it.isFile && it.extension.equals("gguf", true) && it.nameWithoutExtension.startsWith("${safeId}_") }
+            ?: exact
+    }
+
+    private fun sha256(file: File): String {
+        if (!file.isFile) return ""
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private companion object {
+        const val DEFAULT_CONTEXT = 4096
+    }
+}

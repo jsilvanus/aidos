@@ -15,6 +15,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @Composable
 fun ModelsScreen(
     onModelSelected: (String) -> Unit,
+    onProviderSelected: (String) -> Unit = {},
     viewModel: ModelsViewModel = viewModel(),
 ) {
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
@@ -24,6 +25,7 @@ fun ModelsScreen(
     val cookbookModels by viewModel.cookbookModels.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
     val suggestions by viewModel.suggestions.collectAsState()
+    val providers by viewModel.providers.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -41,13 +43,14 @@ fun ModelsScreen(
         }
     }
 
-    val actions = remember(viewModel, onModelSelected) {
+    val actions = remember(viewModel, onModelSelected, onProviderSelected) {
         ModelsPaneActions(
             onModelSelected = onModelSelected,
             onDeleteModel = viewModel::deleteModel,
             onSearch = viewModel::searchRemote,
             onInstallSuggestion = viewModel::installSuggestion,
             onDismissSuggestion = { viewModel.dismissSuggestion(it) },
+            onProviderSelected = onProviderSelected,
         )
     }
 
@@ -64,6 +67,7 @@ fun ModelsScreen(
                 cookbookModels = cookbookModels,
                 isSearching = isSearching,
                 suggestions = suggestions,
+                providers = providers,
             ),
             actions = actions,
             modifier = Modifier.padding(innerPadding),
