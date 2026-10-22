@@ -6,6 +6,11 @@ import dev.aidos.cookbook.CookbookVerdict
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
+import dev.aidos.models.ModelPackageDownloadRequest
+import dev.aidos.models.PackageFileRequest
+import dev.aidos.decisions.LayaPackage
+import dev.aidos.stt.WhisperPackage
+import dev.aidos.vision.VisionPackage
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
@@ -104,7 +109,9 @@ class ModelDetailViewModel : ViewModel() {
                         modelUrl = "https://huggingface.co/${hfModel.modelId}",
                         sizeMB = ((modelSize ?: 0L) / (1024L * 1024L)).toInt(),
                         contextFitTable = fitRows,
-                        isRunnable = hfModel.quantizations.isNotEmpty() || hfModel.artifacts.any { it.format == dev.aidos.huggingface.ModelFormat.GGUF },
+                        isRunnable = hfModel.quantizations.isNotEmpty() ||
+                            hfModel.artifacts.any { it.format == dev.aidos.huggingface.ModelFormat.GGUF } ||
+                            hfModel.packages.any { it.isDecisionPackage || it.isSpeechPackage || it.isVisionPackage },
                     )
 
                     _state.value = _state.value.copy(model = uiDetail, isLoading = false)
@@ -130,8 +137,14 @@ class ModelDetailViewModel : ViewModel() {
                 .getOrNull()
                 ?.firstOrNull { it.modelId == modelId }
             val file = installed?.path?.let(::File)
-            val valid = installed != null && file != null && file.isFile &&
-                file.length() == installed.sizeBytes && installed.sizeBytes > 0L
+            val valid = installed != null && file != null && installed.sizeBytes > 0L && when {
+                file.isFile -> file.length() == installed.sizeBytes
+                file.isDirectory -> (LayaPackage.isPackage(file) ||
+                    WhisperPackage.isPackage(file) ||
+                    VisionPackage.isPackage(file)) &&
+                    file.listFiles { f -> f.isFile }.orEmpty().sumOf { it.length() } == installed.sizeBytes
+                else -> false
+            }
 
             _state.value = _state.value.copy(
                 isInstalled = valid,
@@ -163,6 +176,24 @@ class ModelDetailViewModel : ViewModel() {
             try {
                 val detail = browser.getModelDetail(model.id).getOrThrow()
                 val remote = hf.getModel(model.id).getOrThrow()
+                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+                val onnxPackage = remote.packages.firstOrNull { it.isDecisionPackage } ?: remote.packages.firstOrNull { it.isSpeechPackage }
+                if (remote.quantizations.isEmpty() && onnxPackage != null) {
+                    installOnnxPackage(model.id, safeModelId, onnxPackage)
+                    return@launch
+                }
+                val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
+                if (remote.quantizations.isEmpty() && visionPackage != null) {
+                    installOnnxPackage(model.id, safeModelId, visionPackage)
+                    return@launch
+                }
+                if (remote.quantizations.isEmpty()) {
+                    val found = remote.artifacts.map { it.format.name }.distinct().joinToString().ifEmpty { "none" }
+                    throw IllegalStateException(
+                        "No GGUF file, ONNX decision, Whisper or vision package in ${model.id} (formats found: $found); this Engine cannot run it.",
+                    )
+                }
 
                 // Prefer known GGUF quantizations (Q4_K_M), but fall back to any available artifact
                 val chosenArtifact = when {
@@ -182,7 +213,6 @@ class ModelDetailViewModel : ViewModel() {
 
                 val modelsDir = File(service.filesDir, "models")
                 modelsDir.mkdirs()
-                val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 val (artifactBaseName, downloadUrl, expectedDigest) = chosenArtifact
                 val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
                 val destination = File(modelsDir, artifactName).absolutePath
@@ -247,6 +277,43 @@ class ModelDetailViewModel : ViewModel() {
                 downloadJob = null
             }
         }
+    }
+
+    /** Downloads every file of [pkg] (a decision, speech or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
+    private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+        val service = EngineService.instance ?: return
+        val downloader = service.downloadManager ?: return
+        val catalog = service.catalogManager ?: return
+        val modelsDir = File(service.filesDir, "models").apply { mkdirs() }
+        val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
+        val result = DefaultModelInstallerWorkflow(downloader, catalog).installPackage(
+            ModelPackageDownloadRequest(
+                modelId = modelId,
+                files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
+                destinationDir = File(modelsDir, safeId).absolutePath,
+                kind = when {
+                    pkg.isSpeechPackage -> dev.aidos.kernel.ModelKind.STT
+                    pkg.isVisionPackage -> dev.aidos.kernel.ModelKind.VISION
+                    else -> dev.aidos.kernel.ModelKind.DECISION
+                },
+                format = "onnx",
+                backend = "onnx-runtime",
+            )
+        ) { event ->
+            when (event) {
+                is dev.aidos.models.InstallerEvent.DownloadProgress -> {
+                    val total = event.totalBytes
+                    if (total != null && total > 0) {
+                        _state.value = _state.value.copy(downloadProgress = ((event.bytesDownloaded * 100L) / total).toInt().coerceIn(0, 100))
+                    }
+                }
+                is dev.aidos.models.InstallerEvent.InstallationFailed -> _state.value = _state.value.copy(isDownloading = false, downloadError = event.reason)
+                else -> Unit
+            }
+        }
+        result.exceptionOrNull()?.let { throw it }
+        _state.value = _state.value.copy(isDownloading = false, downloadProgress = 100)
+        refreshInstalledState(modelId)
     }
 
     fun cancelDownload() {
@@ -347,7 +414,8 @@ class ModelDetailViewModel : ViewModel() {
                 if (!installedPath.isNullOrBlank()) {
                     try {
                         val f = File(installedPath)
-                        if (f.exists()) f.delete()
+                        if (f.isDirectory) f.deleteRecursively()
+                        else if (f.isFile) f.delete()
                     } catch (_: Exception) {
                         // best-effort
                     }
@@ -411,7 +479,7 @@ class ModelDetailViewModel : ViewModel() {
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf",
+            isRunnable = format == "gguf" || (format == "onnx" && (kind == dev.aidos.kernel.ModelKind.DECISION || kind == dev.aidos.kernel.ModelKind.STT || kind == dev.aidos.kernel.ModelKind.VISION)),
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),

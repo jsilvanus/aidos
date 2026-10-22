@@ -438,7 +438,7 @@ class DesktopModelDetailModel(
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf" || (format == "onnx" && kind == dev.aidos.kernel.ModelKind.DECISION),
+            isRunnable = format == "gguf" || (format == "onnx" && (kind == dev.aidos.kernel.ModelKind.DECISION || kind == dev.aidos.kernel.ModelKind.STT || kind == dev.aidos.kernel.ModelKind.VISION)),
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),

@@ -47,6 +47,12 @@ kotlin {
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
             }
         }
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test-junit"))
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+            }
+        }
     }
 }
 

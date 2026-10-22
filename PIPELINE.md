@@ -378,8 +378,8 @@ its platform-neutral implementation compiles.
 
 `/v1/systemone`, `engine/decisions`, Laya multilingual on ONNX Runtime; parity-tested against the Python
 reference (docs/system-one.md). Android wiring is written but uncompiled; Dictator shadow mode logs model-vs-parser (dictator repo). Open: verifying Android on a phone and a measurement (tokenizer load, latency,
-memory); multi-file model packages on Android's Models screen (desktop installs them); fine-tuning on Dictator data (the zero-shot base
-checkpoint misroutes dictation, see the eval table there). D45 is SETTLED.
+memory); fine-tuning on Dictator data (the zero-shot base checkpoint misroutes dictation, see the eval table
+there). Multi-file model packages are supported on Android and desktop. D45 is SETTLED.
 Later (Juha, 2026-10-12): export an int8 ONNX (~330 MB vs 1.29 GB fp32; matches the ggmlc Q8_0 size), then measure
 latency and Dictator eval accuracy against fp32 before choosing a shipped format.
 

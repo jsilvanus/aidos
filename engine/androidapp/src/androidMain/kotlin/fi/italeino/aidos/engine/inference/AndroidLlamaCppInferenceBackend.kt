@@ -71,7 +71,7 @@ class AndroidLlamaCppInferenceBackend(
     override suspend fun delete(modelId: String) {
         liveAdapters.remove(modelId)?.close()
         val file = resolveModelFile(modelId)
-        if (file.isFile) file.delete()
+        if (file.isDirectory) file.deleteRecursively() else if (file.isFile) file.delete()
         catalogManager.uninstall(modelId).getOrThrow()
     }
 
