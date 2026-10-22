@@ -19,6 +19,10 @@ data class DesktopPreferencesData(
     val modelRunSettings: Map<String, StoredRunSettings> = emptyMap(),
     /** RAM in use (MB) once the OS and the user's usual apps run, with no model loaded; null if unset. */
     val ramBaselineUsedMb: Int? = null,
+    /** Port to bind the loopback HTTP server on. 18080 by default; 0 means dynamic port. */
+    val serverPort: Int = 18080,
+    /** Automatically start the engine on application launch. */
+    val autoStartEngine: Boolean = true,
 )
 
 /** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
@@ -63,6 +67,10 @@ class DesktopPreferences(private val file: File) {
     fun clearHfToken() = update { it.copy(hfToken = null, hfTokenValidatedMs = null) }
 
     fun setPreferredContextLength(tokens: Int) = update { it.copy(preferredContextLength = tokens) }
+
+    fun setServerPort(port: Int) = update { it.copy(serverPort = port) }
+
+    fun setAutoStartEngine(enabled: Boolean) = update { it.copy(autoStartEngine = enabled) }
 
     /** What the runtime reads at load time; a model never configured runs with the defaults. */
     val runSettingsSource = RunSettingsSource { id -> runSettingsFor(id) }
