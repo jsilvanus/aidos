@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
  */
 class PermissionFlowTest {
 
-    private val dictator = "com.dictator.android"
+    private val dictator = "fi.italeino.aidos.dictator"
     private val agent = "dev.aidos.agent"
 
     private class Rig {
