@@ -65,6 +65,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 - [docs/vision.md](docs/vision.md) — Mission statement.
 - [docs/roadmap.md](docs/roadmap.md) — Index into the three levels of plan.
 - [docs/decisions.md](docs/decisions.md) — Why the architecture is this and not something else.
+- [docs/TCR_COMPONENT_DOMAIN_OWNERS.md](docs/TCR_COMPONENT_DOMAIN_OWNERS.md) — TCR component domain owners across the Aidos ecosystem (D46).
 
 **RFCs (62):**
 - All architectural decisions documented as RFCs in [docs/rfcs/](docs/rfcs/).

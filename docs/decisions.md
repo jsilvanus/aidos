@@ -537,20 +537,19 @@ frozen kernel. Laya multilingual via ONNX Runtime is the first model; ggmlc GGUF
 (llama.cpp cannot load them). Decisions never execute actions. Proposed and settled 2026-10-12 (owner approved).
 Details: RFC-0022 "Decision capability".
 
-### D46 — Dictator owns the text-editing and actor pill domain in Generative UI (TCR) · `SETTLED`
+### D46 — Dictator owns the text-editing and actor pill domain in Generative UI (Trusted Component Registry / TCR) · `SETTLED`
 
-In Aidos Desktop and generative UI, the text-editing subsystem and cursor-following "Actor Pill" domain
-(superscript voice dictation orchestrator, deterministic text editing with cadence/staging, and inline
-generative AI streaming pills) are owned by the Dictator repository (`jsilvanus/dictator`).
+In Aidos Desktop and Generative UI, TCR stands for **Trusted Component Registry**. These pre-vetted, trusted components are used when generating the end goal: the Desktop Generative UI.
 
-Aidos Desktop consumes these atomic and molecular Translucent / Reactive Component (TCR) primitives
-directly from Dictator's Kotlin Multiplatform layer (`dictator-core` for headless state machines,
-actor models, cadence timers, and selection buffers) and Compose Multiplatform UI components, rather
-than implementing duplicate editor or actor pill logic inside Aidos.
+Other projects in the ecosystem are not Generative UI hosts, but they author, create, and own their domain-specific components. Specifically, the text-editing subsystem and cursor-following "Actor Pill" domain (the Red Pill voice dictation orchestrator, deterministic text editing with cadence/staging, and inline generative AI streaming pills) are owned by the Dictator repository (`jsilvanus/dictator`).
 
-**Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping
-text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator
-preserves single-source-of-truth ownership while enabling Aidos Desktop to render generative UI seamlessly.
+Aidos Desktop consumes these atomic and molecular Trusted Component Registry (TCR) primitives directly from Dictator's Kotlin Multiplatform layer (`dictator-core` for headless state machines, actor models, cadence timers, and selection buffers) and Compose Multiplatform UI components, rather than implementing duplicate editor or actor pill logic inside Aidos.
+
+It is likely that the TCR will at some point move into a specific separate repository, but for now, all UI components are owned by the applications that first came up with them.
+
+See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_OWNERS.md).
+
+**Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator preserves single-source-of-truth ownership while enabling Aidos Desktop Generative UI to assemble interfaces reliably.
 **RFCs:** 0051 (Desktop), 0103.
 
 ---
