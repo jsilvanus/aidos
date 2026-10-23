@@ -537,6 +537,22 @@ frozen kernel. Laya multilingual via ONNX Runtime is the first model; ggmlc GGUF
 (llama.cpp cannot load them). Decisions never execute actions. Proposed and settled 2026-10-12 (owner approved).
 Details: RFC-0022 "Decision capability".
 
+### D46 — Dictator owns the text-editing and actor pill domain in Generative UI (TCR) · `SETTLED`
+
+In Aidos Desktop and generative UI, the text-editing subsystem and cursor-following "Actor Pill" domain
+(superscript voice dictation orchestrator, deterministic text editing with cadence/staging, and inline
+generative AI streaming pills) are owned by the Dictator repository (`jsilvanus/dictator`).
+
+Aidos Desktop consumes these atomic and molecular Translucent / Reactive Component (TCR) primitives
+directly from Dictator's Kotlin Multiplatform layer (`dictator-core` for headless state machines,
+actor models, cadence timers, and selection buffers) and Compose Multiplatform UI components, rather
+than implementing duplicate editor or actor pill logic inside Aidos.
+
+**Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping
+text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator
+preserves single-source-of-truth ownership while enabling Aidos Desktop to render generative UI seamlessly.
+**RFCs:** 0051 (Desktop), 0103.
+
 ---
 
 ## Revision history
@@ -550,3 +566,4 @@ Details: RFC-0022 "Decision capability".
 | 2026-08-05 | D35 settled: SQLite binding is SQLDelight's drivers, not its schema codegen. |
 | 2026-08-17 | D36–D44 settled: capability-oriented inference backends, policy-driven backend selection, accelerator ownership, first-class streaming, generalized typed model outputs, KMP backend boundaries, and ONNX Runtime as the second backend. |
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
+| 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
