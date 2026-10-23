@@ -49,6 +49,8 @@ M18 MCP (as a deferral, not a deletion; cut stdio before HTTP) → M34 F-Droid �
 does not mean the phone app works end to end; nothing in Phases 3–4 has run on a device. The open
 items below say which claims are still unverified rather than leaving it to the checkmarks.
 
+**Ecosystem Component Ownership:** Multiplatform messaging and collaborative Generative UI components (Login, Contacts directory, 4-party Conversation Mesh, Dual-View toggle, Progressive Disclosure approval cards, and the `GenerativeUiRegistry`) are **strictly owned by `agentic-messenger` (`:amp-ui`)**. Aidos Desktop & Android consume these atomic/molecular components as direct dependencies for spatial canvas nodes, chat panes, and execution timelines rather than reimplementing them. Audio voice capture UI remains owned by `dictator`.
+
 ---
 
 ## What is next

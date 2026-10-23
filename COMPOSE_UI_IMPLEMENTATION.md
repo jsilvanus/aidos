@@ -94,6 +94,7 @@ agent/
 3. **No Shared State**: UI state comes from presenters only
 4. **Composable**: Screens are pure functions of state flows
 5. **Testable**: Presenters unit-tested on JVM; no Android dependencies there
+6. **Ecosystem Component Ownership**: Multiplatform messaging and collaborative Generative UI components (Login, Contacts directory, 4-party Conversation Mesh, Dual-View toggle, Progressive Disclosure approval cards, and Generative UI registry) are **strictly owned by `agentic-messenger` (`:amp-ui`)**. Aidos Desktop & Android consume these atomic/molecular components as direct dependencies for spatial canvas nodes, chat panes, and execution timelines rather than reimplementing them. Audio voice capture UI remains owned by `dictator`.
 
 ---
 
