@@ -508,6 +508,15 @@ Conflict resolution:
   - Manual merge if needed
 ```
 
+### Text Editing & Generative UI (TCR Actor Pills)
+
+Per **D46**, text editing and the generative UI "actor pill" domain are owned by the **Dictator** repository (`jsilvanus/dictator`).
+
+Aidos Desktop integrates Dictator's Kotlin Multiplatform core (`dictator-core`) and Compose Multiplatform UI components directly rather than building a separate editor runtime:
+- **Red Pill (Voice Orchestrator)**: Caret-following superscript badge; single-click opens Happenings HUD, double-click opens 50% split transcript drawer.
+- **Blue Pill (Deterministic Editor)**: Manages precise text manipulation, paragraph operations with human-cadence radial fuse timers, and text selection buffers ("holding shelf").
+- **Green Pill (Generative AI)**: Anchors to target sections and streams generative tokens visually emerging from the pill tip.
+
 ### Code Editing
 
 Edit project files:
