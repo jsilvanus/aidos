@@ -95,6 +95,10 @@ Do not make every Android app implement a full MCP server just to expose a local
 
 Likewise, a Binder transport does not itself solve security. Binder establishes an IPC channel; Aidos still needs explicit provider identity, policy evaluation, bounded request handling, lifecycle handling, and safe failure behaviour.
 
+### Important scope distinction: MCP client versus provider server
+
+RFC-0031 currently specifies Aidos primarily as an **MCP client** that consumes external MCP servers; it explicitly makes Aidos exposing its own runtime as an MCP server a v1 non-goal. That is not the same as an independently installed app exposing its own operations to Aidos. For the cross-app vision, we must explicitly design and test the provider-side direction too: Aidos connects as the MCP client over Binder, while the other app hosts an MCP server over the Binder transport. The planned Kotlin Binder transport project can support that direction only if its transport contract and SDK integration work for both client and server roles. Alternatively, a small native Android provider contract can be used for integrations that do not need MCP interoperability. Do not assume the current inbound MCP client implementation automatically delivers cross-app agent discovery or provider hosting.
+
 ## 5. Recommended request path
 
 All agent-initiated operations—whether local, cross-app, or remote—should converge on the same internal policy and execution path:
