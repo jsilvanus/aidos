@@ -73,6 +73,34 @@ The governing rule is:
 
 For cross-app Android providers, use an explicit service/interface and verify the calling app identity at the IPC boundary. Capture Binder caller identity synchronously before dispatching work to another coroutine/thread; then apply package/signature identity checks and Aidos's own policy. Android permissions alone—especially normal-level permissions—must not be treated as the complete authorisation system. Keep requests bounded and handle timeout, cancellation, Binder death, and provider process death.
 
+## 3A. Two-sided authorisation: Aidos grants and provider grants
+
+Cross-app tool use requires **both sides to authorise the invocation**. These are separate decisions with separate owners; neither side can grant authority on behalf of the other.
+
+- **Aidos-side authorisation:** Aidos decides whether this agent may request this operation, for this scope, under Aidos's grants, effect policy, and user-approval rules.
+- **Provider-side authorisation:** the app exposing the tool decides whether this authenticated agent identity is permitted to use that app's operation, and within what provider-defined scope or limits.
+
+An invocation proceeds only when both decisions permit it. A denial, missing grant, unverifiable identity, or unavailable policy decision on either side means deny. Aidos-side permission is necessary but not sufficient for access to an app's tools; likewise, a provider grant does not bypass Aidos's broker or approval requirements.
+
+### Provider policy is per agent, not just per calling app
+
+Provider authorisation should distinguish individual agent identities, not merely allow every agent hosted by Aidos. For example, Amp may automatically trust its designated first-party agent for a deliberately defined set of Amp operations, while denying every other agent by default. A user could then explicitly allow a separate life-assistant agent selected operations, such as searching messages, without allowing it to send messages or perform other mutations.
+
+The provider policy should support at least:
+
+- **First-party agent:** an explicitly designated agent that belongs to the provider's intended product experience. Amp can pre-authorise a carefully defined baseline of its own agent's tools, without prompting for every low-risk call.
+- **Other agents:** denied by default until the user or provider policy explicitly grants access.
+- **Per-agent grants:** identify the particular agent, the allowed operations, resource/account scope, and any limits or expiry.
+- **Operation-level separation:** read/search, draft/prepare, and side-effecting operations such as send/delete must be distinct permissions. Access to one does not imply access to another.
+- **Revocation and review:** users must be able to inspect and revoke provider-side grants; policy changes should apply to subsequent calls.
+- **Safe identity failure:** if the provider cannot authenticate which agent is calling, it must not fall back to a generic “Aidos” or “any agent” identity.
+
+“Automatically approved” means a narrow, explicit first-party policy—not that any agent can claim to be Amp's own agent. The identity used for a provider decision must be authenticated through the trusted Aidos-to-provider integration, bound to a stable agent identifier, and protected against spoofing or confused-deputy behaviour. Binder caller UID/package/signature checks establish which app is connecting; they do **not alone** distinguish multiple agents running inside Aidos. Aidos must supply a trustworthy agent identity/context, and Amp must validate that assertion through the agreed integration contract rather than trusting a display name or arbitrary request field.
+
+The two policies should be visible as distinct layers in product design. Aidos's **Agent Permissions** view governs what the agent may request through Aidos. Amp's own settings or consent UI governs which agents Amp accepts and what those agents may do inside Amp. Where helpful, Aidos may show the provider's decision and explain that the provider controls it, but it must not present provider policy as a grant Aidos can silently override.
+
+This does not require duplicating the same policy engine in both apps. Each side evaluates the authority it owns, and the integration returns a clear allow/deny result with a safe reason code. Provider policy is enforced inside the provider app, close to the domain operation; it must not be merely a UI toggle or a claim made by the agent.
+
 ## 4. Is the planned MCP path right for this vision?
 
 **Yes—with one important distinction: MCP is the interoperability protocol, not Aidos's permission system or Android app-management model.**
@@ -112,7 +140,7 @@ This means there are two distinct communication paths between the apps, even if 
 1. **Agent interaction path:** Amp's UI requests agent work from the Aidos agent service through the appropriate Aidos client/runtime API.
 2. **Tool invocation path:** Aidos's MCP client calls Amp's MCP server over Binder to perform an Amp-owned operation.
 
-These paths must not be conflated. Amp is not the agent runtime merely because it hosts the agent's entry point, and Aidos should not manipulate Amp's private database or internal classes directly. The MCP server should be a thin adapter over Amp's existing application/domain services.
+These paths must not be conflated. Amp is not the agent runtime merely because it hosts the agent's entry point, and Aidos should not manipulate Amp's private database or internal classes directly. The MCP server should be a thin adapter over Amp's existing application/domain services. It must also enforce Amp's own provider-side authorisation before calling those services: Amp may automatically allow its authenticated first-party agent for a narrow baseline, but must deny other agent identities unless explicitly granted. Aidos's permission check and Amp's permission check are both required.
 
 A minimal first slice should prove one harmless read-only operation, then one explicitly approved mutation. It should cover discovery/registration, caller/provider identity, permission denial, cancellation/timeout, and provider process death. Side-effecting calls must not be blindly retried when the outcome is ambiguous.
 
