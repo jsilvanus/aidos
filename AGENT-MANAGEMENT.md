@@ -2,7 +2,7 @@
 
 **Status:** Product/architecture proposal  
 **Scope:** Aidos Android app, agent discovery, permissions, and cross-app capabilities  
-**Relationship to RFCs:** This document develops the user-facing direction. It does not silently amend accepted RFCs; implementation should reconcile any conflicts with RFC-0050 (Android), RFC-0018 (capabilities), RFC-0030 (Tool Broker), RFC-0031 (MCP), RFC-0052 (Runtime API), RFC-0054 (identity/scopes), and RFC-0103 (Engine).
+**Relationship to RFCs:** This document develops the user-facing direction. It does not silently amend accepted RFCs; implementation should reconcile any conflicts with RFC-0050 (Android), RFC-0018 (capabilities), RFC-0030 (Tool Broker), RFC-0031 (MCP), RFC-0052 (Runtime API), RFC-0046 (identity), and RFC-0103 (Engine).
 
 ## Product direction
 
@@ -142,11 +142,11 @@ The Android UI may present one coherent Aidos app experience while Engine Core a
 
 ## Related architecture
 
-- [RFC-0018: Capability Manager](docs/rfcs/0018-capabilities.md)
+- [RFC-0018: Capability Manager](docs/rfcs/0018-capability-model.md)
 - [RFC-0030: Tool Broker](docs/rfcs/0030-tool-broker.md)
 - [RFC-0031: MCP](docs/rfcs/0031-mcp.md)
 - [RFC-0050: Android](docs/rfcs/0050-android.md)
 - [RFC-0052: Runtime API](docs/rfcs/0052-runtime-api.md)
-- [RFC-0054: Identity and scopes](docs/rfcs/0054-identity.md)
+- [RFC-0046: Identity](docs/rfcs/0046-identity.md) (Draft; reconcile identity requirements before implementation)
 - [RFC-0103: Aidos Engine](docs/rfcs/0103-aidos-engine.md)
 - [RFC-0103 change rationale](RFC-0103-CHANGE-RATIONALE.md)
