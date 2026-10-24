@@ -60,6 +60,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 
 **Project overview:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Map to the RFCs; start here.
+- [AGENT-MANAGEMENT.md](AGENT-MANAGEMENT.md) — Android Agents and Agent Permissions pages; cross-app providers, authorisation, and MCP/Binder direction.
 - [docs/README.md](docs/README.md) — Documentation structure.
 - [docs/principles.md](docs/principles.md) — Ten core principles.
 - [docs/vision.md](docs/vision.md) — Mission statement.
