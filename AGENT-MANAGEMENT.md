@@ -91,9 +91,36 @@ The crucial design is to keep three concerns separate:
 2. **Transport:** how a request reaches it—an in-process native call, Android Binder, MCP over HTTP, or MCP over stdio where supported.
 3. **Authority and execution:** whether Aidos permits this agent to invoke this operation in this scope, and how approval, effects, audit, cancellation, and recovery are handled.
 
-Do not make every Android app implement a full MCP server just to expose a local capability. Aidos may define a small, versioned Android provider contract and adapt it to the same internal operation model. MCP-over-Binder is valuable where MCP interoperability is desired, but it is not a prerequisite for every local integration. Avoid inventing a proprietary MCP dialect: Binder should carry standard MCP JSON-RPC semantics if it is presented as an MCP transport.
+**For the intended Android ecosystem, MCP servers over Binder are the standard way for an app to expose its own tools to Aidos agents.** This makes Android apps the owners of their domain capabilities while Aidos remains the agent runtime and MCP client. Keep the option of native in-process tools for Aidos-owned functionality or a narrowly justified platform integration, but do not create a competing cross-app tool protocol by default. Avoid inventing a proprietary MCP dialect: Binder should carry standard MCP JSON-RPC semantics if it is presented as an MCP transport.
 
 Likewise, a Binder transport does not itself solve security. Binder establishes an IPC channel; Aidos still needs explicit provider identity, policy evaluation, bounded request handling, lifecycle handling, and safe failure behaviour.
+
+## 4A. First vertical slice: Agentic Messenger (Amp)
+
+The first end-to-end integration should use **Agentic Messenger (Amp)** as the concrete example of an Android app that provides tools to an Aidos-hosted agent.
+
+Responsibilities:
+
+- **Amp owns the messaging domain**: its UI, conversation and message state, and the implementation of messaging operations.
+- **Amp provides the user-facing agent entry point initially**. The user starts or interacts with the agent from Amp.
+- **Aidos owns the agent runtime**: agent loop, model orchestration, task state, tool selection, policy checks, approvals, execution and recovery.
+- **Amp exposes its tools as an MCP server over Binder**. The server invokes Amp's existing domain logic; it must not duplicate or bypass that logic.
+- **Aidos acts as the MCP client** and invokes Amp's tools only through the Tool Broker / Effect Broker and the applicable permissions.
+
+This means there are two distinct communication paths between the apps, even if both use Android IPC:
+
+1. **Agent interaction path:** Amp's UI requests agent work from the Aidos agent service through the appropriate Aidos client/runtime API.
+2. **Tool invocation path:** Aidos's MCP client calls Amp's MCP server over Binder to perform an Amp-owned operation.
+
+These paths must not be conflated. Amp is not the agent runtime merely because it hosts the agent's entry point, and Aidos should not manipulate Amp's private database or internal classes directly. The MCP server should be a thin adapter over Amp's existing application/domain services.
+
+A minimal first slice should prove one harmless read-only operation, then one explicitly approved mutation. It should cover discovery/registration, caller/provider identity, permission denial, cancellation/timeout, and provider process death. Side-effecting calls must not be blindly retried when the outcome is ambiguous.
+
+### Later: surface the same agent in Aidos
+
+A later step may add an **Agents** view in Aidos itself. This should be another frontend to the same Aidos-hosted agent/session, not a second copy of the agent running independently inside Amp. It can show the agent's status, current work, provider/tool availability and permissions, and may let the user open or continue the same session.
+
+The agent should have a stable identity/session reference across both entry points. UI state can differ between Amp and Aidos, but execution state and authorisation remain owned by Aidos. The initial release does not need the full Aidos agent-management UI if Amp is the intended starting point; design the contracts so that adding the second view does not require moving the runtime.
 
 ### Important scope distinction: MCP client versus provider server
 
