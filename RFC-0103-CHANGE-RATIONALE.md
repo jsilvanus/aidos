@@ -122,3 +122,40 @@ Do not change these documents merely to imply that the proposal is already accep
 **Use one persistent Android host application and start with one coordinating foreground service, while keeping Engine Core and Agent Runtime as independent modules with separate contracts and authorization boundaries.**
 
 This preserves the most valuable part of RFC-0103—the shared local inference service—without assuming that separate installed apps and separate persistent services are necessary to achieve it. Revisit process or service separation only when there is a concrete isolation, reliability, or lifecycle requirement that justifies the additional complexity.
+
+
+## Cross-application tools: invoke a client-owned service without opening its UI
+
+A further consequence of this hosting decision is that **the Agent Runtime does not need to live in the same app as every tool it can use**. For example, Agentic Messenger should retain ownership of message data and its message-reading tools. Aidos can orchestrate the agent loop while asking Messenger to execute an explicitly authorized tool through an Android inter-process communication (IPC) contract.
+
+### Can Android start an app whose UI is closed?
+
+Generally, an Android app can communicate with a service in another installed app without launching that app's Activity or displaying its UI. If the provider app declares an appropriate service and the caller is allowed to bind to it, Android can create the provider process to handle the binding even when the provider process was not already running. The provider's UI does not have to be opened just to service that IPC request.
+
+However, this is **not an unconditional guarantee** that Aidos can silently start any app or run arbitrary work whenever it wants:
+
+- The provider must be installed, enabled, and expose a suitable service. An app's ordinary, non-exported internal service is not callable by unrelated apps.
+- Android background-execution and foreground-service restrictions still apply, and the exact behaviour depends on the Android version and circumstances. Long-running work may need its own compliant foreground-service design and user-visible notification.
+- If the user force-stops the provider app, Android can prevent its components from running until the app is explicitly launched again. A disabled, uninstalled, crashed, or otherwise unavailable provider must be treated as unavailable.
+- Package visibility and component-discovery rules can affect how the caller finds the provider. Prefer an explicit, documented component/contract rather than broad package scanning.
+- A successful bind or IPC call does not itself constitute user consent to perform every possible operation. Authorization must be checked at the tool boundary.
+
+Therefore, the correct promise is: **Aidos can request an available, authorized client-owned tool without opening the client's UI, when Android permits the service interaction. It cannot guarantee that every client app can always be started or that every tool can run silently in the background.**
+
+### Proposed tool-provider pattern
+
+1. **The provider owns the tool and its data.** Messenger defines and implements tools that read or act on Messenger data. Aidos does not copy the implementation or gain direct access to Messenger's private database.
+2. **Aidos owns orchestration.** The Agent Runtime validates the model's proposed tool call against the current job, user grants, and policy, then routes the request to the registered provider.
+3. **Use a narrow Android IPC contract.** A provider may expose a bound service with a versioned Binder interface (or another deliberately selected Android IPC mechanism). Define tool discovery/registration, request and response schemas, cancellation, deadlines, error codes, and API-version negotiation. Aidos SDK or a dedicated provider SDK can supply shared contract types and client helpers.
+4. **Secure the provider boundary.** Use explicit component addressing, verify caller identity where available, and require a deliberate authorization/grant model. Export only the intended service surface; do not expose a general-purpose command or arbitrary-code interface. Do not rely on package names alone as proof of identity.
+5. **Treat availability as temporary.** If the provider is not installed, cannot be bound, is force-stopped, disconnects, or times out, mark the tool unavailable or the job waiting/failed according to policy. Persist the execution state and resume only when safe and appropriate.
+6. **Make retries safe.** Tool calls that change state need request identifiers or idempotency semantics so a lost response does not cause an action to execute twice. Do not automatically replay side-effecting calls unless the provider can establish that doing so is safe.
+7. **Keep user interaction explicit where needed.** A tool may be able to return data without showing UI, but operations that require confirmation, authentication, or a foreground interaction must request that interaction rather than trying to bypass it.
+
+This arrangement supports a hybrid tool system: built-in tools can run in-process where appropriate; app-owned tools can be invoked over IPC; remote tools can use their own authorized transport. The model sees a logical tool contract, while the runtime decides which authorized provider can fulfil it. Tool routing must not become a way to bypass the owning app's security model.
+
+### Implications for the RFC revision
+
+When revising RFC-0103 and the agent/tool RFCs, specify the difference between **inference clients** and **tool providers**. A client permitted to use the shared model service is not automatically an agent host or a tool provider. Conversely, a provider that exposes a tool does not need to host the agent loop or duplicate the local model runtime.
+
+Add tests for a provider whose process is not running, provider bind failure/disconnection, denied grants, incompatible contract versions, force-stop/unavailability, cancellation, deadlines, and safe retry of side-effecting tools. Validate the exact service-start and foreground-service behaviour against the minimum and target Android versions used by the project before promising background execution guarantees.
