@@ -95,9 +95,32 @@ interface AidosEngineClient {
      */
     suspend fun decide(request: DecisionRequest): DecisionResponse? = null
 
+    /**
+     * The limit on where inference may run that this client requires of Engine (RFC-0104). Not
+     * [Locality.ANY] means every request carries it and Engine refuses a model served wider
+     * (HTTP 403, `locality_violation`, surfaced here as a null result). The default is for
+     * implementers that cannot express a limit; they are honest about it by reporting [Locality.ANY].
+     */
+    val locality: Locality get() = Locality.ANY
+
     /** Release resources and forget the current handshake. */
     fun close()
 }
+
+/**
+ * The widest place a request's data may go (RFC-0104), sent as `X-Aidos-Locality`. [LOCAL_ONLY]:
+ * Engine's own process on this device. [TRUSTED_CLUSTER]: also devices in an authorised Aidos group.
+ * [ANY]: also third-party providers. Additive within API v1 (sdk/CONTRACT.md).
+ */
+enum class Locality(val wire: String) {
+    LOCAL_ONLY("local_only"),
+    TRUSTED_CLUSTER("trusted_cluster"),
+    ANY("any")
+}
+
+/** Capability entry in [EngineCapabilities.endpoints] meaning Engine enforces `X-Aidos-Locality`. */
+const val LOCALITY_CAPABILITY = "locality"
+const val LOCALITY_HEADER = "X-Aidos-Locality"
 
 /**
  * Why Engine is or isn't usable right now (RFC-0103, "Degradation"). [PendingApproval]'s deep
@@ -129,7 +152,12 @@ data class EngineModel(
     val id: String,
     val kind: String,  // "llm", "embedding", "stt", "tts"
     val contextWindow: Int? = null,
-    val quantization: String? = null
+    val quantization: String? = null,
+    /**
+     * Where this model's requests are served: `local`, `cluster` or `remote` (RFC-0104); null from
+     * an Engine that predates it. Treat anything but `local` as leaving the device.
+     */
+    val placement: String? = null
 )
 
 // --- OpenAI-compatible wire schema (RFC-0103, "Handshake and transport") -----------------------
@@ -352,7 +380,8 @@ internal data class ModelInfoResponse(
     val id: String,
     val kind: String,
     val context_window: Int? = null,
-    val quantization: String? = null
+    val quantization: String? = null,
+    val placement: String? = null
 )
 
 // ignoreUnknownKeys tolerates Engine's wire shape carrying fields this module doesn't model (e.g.
@@ -434,7 +463,11 @@ internal class EngineClientImpl(
     // transcription or chat on a freshly started Engine), which surfaced as a null result.
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .readTimeout(java.time.Duration.ofMinutes(5))
-        .build()
+        .build(),
+    // RFC-0104: the limit this client requires. Fail closed: if Engine does not advertise that it
+    // enforces limits, requests are not sent at all, because an Engine that ignores the header
+    // would serve them anywhere it likes.
+    override val locality: Locality = Locality.ANY
 ) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
@@ -495,7 +528,8 @@ internal class EngineClientImpl(
                         id = model.id,
                         kind = model.kind,
                         contextWindow = model.context_window,
-                        quantization = model.quantization
+                        quantization = model.quantization,
+                        placement = model.placement
                     )
                 }
             ).also {
@@ -515,6 +549,7 @@ internal class EngineClientImpl(
         allowReauth: Boolean
     ): String? {
         val current = handshakeResult ?: return null
+        if (!localityEnforceable(current)) return null
         // OkHttp requires a non-null body for methods that carry one (POST/PUT/PATCH) — unlike
         // HttpURLConnection, it refuses to build the request rather than sending an empty body.
         val requestBody = body?.toRequestBody(jsonMediaType)
@@ -523,6 +558,7 @@ internal class EngineClientImpl(
             .url("http://127.0.0.1:${current.port}/v1/$endpoint")
             .method(method, requestBody)
             .header("Authorization", "Bearer ${current.token}")
+            .withLocality()
             .build()
 
         return try {
@@ -545,6 +581,13 @@ internal class EngineClientImpl(
         }
     }
 
+    /** True when no limit is required, or Engine says it enforces them. */
+    private fun localityEnforceable(handshake: HandshakeResponse): Boolean =
+        locality == Locality.ANY || LOCALITY_CAPABILITY in handshake.capabilities.endpoints
+
+    private fun Request.Builder.withLocality(): Request.Builder =
+        if (locality == Locality.ANY) this else header(LOCALITY_HEADER, locality.wire)
+
     override suspend fun supportsEndpoint(endpoint: String): Boolean =
         capabilities().endpoints.contains(endpoint)
 
@@ -561,11 +604,13 @@ internal class EngineClientImpl(
 
     override fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatCompletionChunk> = flow {
         val current = handshakeResult ?: return@flow
+        if (!localityEnforceable(current)) return@flow
         val streamingRequest = if (request.stream) request else request.copy(stream = true)
         val httpRequest = Request.Builder()
             .url("http://127.0.0.1:${current.port}/v1/chat/completions")
             .post(engineJson.encodeToString(streamingRequest).toRequestBody(jsonMediaType))
             .header("Authorization", "Bearer ${current.token}")
+            .withLocality()
             .build()
 
         try {
@@ -679,10 +724,15 @@ object AidosEngineClientFactory {
      * Create a client whose handshake comes from [source] instead of Binder. Behaviour after the
      * handshake (transport, 401 → re-handshake, streaming, availability) is identical.
      */
-    fun create(source: EngineHandshakeSource, requiredApiVersion: Int = 1): AidosEngineClient =
+    fun create(
+        source: EngineHandshakeSource,
+        requiredApiVersion: Int = 1,
+        locality: Locality = Locality.ANY
+    ): AidosEngineClient =
         EngineClientImpl(
             handshakePerformer = { source.handshake().toOutcome() },
-            requiredApiVersion = requiredApiVersion
+            requiredApiVersion = requiredApiVersion,
+            locality = locality
         )
 }
 
@@ -695,7 +745,7 @@ private fun EngineHandshakeResult.toOutcome(): HandshakeOutcome = when (this) {
             capabilities = CapabilitiesResponse(
                 endpoints = capabilities.endpoints,
                 models = capabilities.models.map {
-                    ModelInfoResponse(it.id, it.kind, it.contextWindow, it.quantization)
+                    ModelInfoResponse(it.id, it.kind, it.contextWindow, it.quantization, it.placement)
                 }
             )
         )

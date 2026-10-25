@@ -552,6 +552,17 @@ See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_
 **Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator preserves single-source-of-truth ownership while enabling Aidos Desktop Generative UI to assemble interfaces reliably.
 **RFCs:** 0051 (Desktop), 0103.
 
+### D47 — Where a request may be served is Engine-enforced "locality", derived fail-closed · `PROPOSED`
+
+Every model is served at a placement (`local` < `cluster` < `remote`), derived as the widest of all
+claims; a request, an app and Engine itself each may set a limit (`local_only` < `trusted_cluster`
+< `any`) and the strictest wins. Engine refuses (HTTP 403 `locality_violation`) rather than serving
+wider, and an SDK client with a limit sends nothing to an Engine that does not advertise enforcement.
+Open for the owner: (1) the layering above; (2) the default for apps that say nothing (`any`, which
+preserves today's behaviour, vs. `trusted_cluster`/`local_only`); (3) whether a peer's `cluster`
+placement counts as `cluster` or `remote` for the origin before group identity exists (RFC says
+`remote`). Details: RFC-0104.
+
 ---
 
 ## Revision history
@@ -566,3 +577,4 @@ See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_
 | 2026-08-17 | D36–D44 settled: capability-oriented inference backends, policy-driven backend selection, accelerator ownership, first-class streaming, generalized typed model outputs, KMP backend boundaries, and ONNX Runtime as the second backend. |
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
+| 2026-10-25 | D47 proposed: Engine-enforced inference locality (RFC-0104). |

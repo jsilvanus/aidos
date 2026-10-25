@@ -83,6 +83,14 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   channel count or rate; resampled to 16 kHz mono by Engine). Unusable audio is HTTP 400 on `file`.
   See `docs/stt.md`.
 
+- **Locality (RFC-0104).** Request header `X-Aidos-Locality: local_only|trusted_cluster|any`; response
+  header `X-Aidos-Placement: local|cluster|remote`; optional `placement` on `/v1/models` cards and on
+  handshake models (`EngineModel.placement`); refusal is HTTP 403 `error.type = "locality_violation"`;
+  handshake `endpoints` contains `"locality"` when Engine enforces the header. SDK: `AidosEngineClient.locality`
+  (interface property with a default), `Locality`, and an optional `locality` argument on both factories.
+  A client with a limit sends nothing to an Engine that does not advertise `"locality"`. Values in the
+  `Locality` enum and the header/capability names are pinned in `ContractFreezeTest`.
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).

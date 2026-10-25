@@ -2,6 +2,7 @@ package fi.italeino.aidos.engine.inference
 
 import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -54,7 +55,26 @@ class InferenceRequestManager(
     private var failedRequests = 0L
     private var shuttingDown = false
 
-    suspend fun <T> execute(modelId: String, block: suspend (ModelAdapter) -> T): Result<T> {
+    suspend fun <T> execute(modelId: String, block: suspend (ModelAdapter) -> T): Result<T> =
+        execute(modelId, Locality.ANY) { adapter, _ -> block(adapter) }
+
+    /**
+     * [execute] under a [Locality] requirement (RFC-0104). The check runs before the model is
+     * loaded, so a refused request never loads (or contacts) a model it may not use, and again
+     * against the loaded adapter, so a runtime whose descriptor says local but whose adapter says
+     * otherwise is still refused. [block] receives the [Placement] the request is served at.
+     * A refusal is a [LocalityViolationException] result; one caught before loading takes no admission slot.
+     */
+    suspend fun <T> execute(
+        modelId: String,
+        locality: Locality,
+        block: suspend (ModelAdapter, Placement) -> T,
+    ): Result<T> {
+        val descriptor = if (locality == Locality.ANY) null else describe(modelId)
+        if (descriptor != null) {
+            val declared = placementOf(descriptor)
+            if (!locality.permits(declared)) return Result.failure(LocalityViolationException(modelId, locality, declared))
+        }
         val requestJob = currentCoroutineContext()[Job]
             ?: return Result.failure(IllegalStateException("Inference request requires a coroutine Job"))
         val admitted = acquireAdmissionSlot(modelId, requestJob)
@@ -63,12 +83,14 @@ class InferenceRequestManager(
         try {
             updateState(InferenceRequestState.LOADING)
             val adapter = modelRuntime.load(modelId).getOrElse { return Result.failure(it) }
+            val placement = placementOf(descriptor ?: describe(modelId), adapter)
+            if (!locality.permits(placement)) return Result.failure(LocalityViolationException(modelId, locality, placement))
             val modelMutex = stateMutex.withLock { modelLocks.getOrPut(modelId) { Mutex() } }
             return modelMutex.withLock {
                 markActive(modelId, +1, adapter)
                 try {
                     updateState(InferenceRequestState.RUNNING)
-                    Result.success(block(adapter)).also { updateState(InferenceRequestState.COMPLETED) }
+                    Result.success(block(adapter, placement)).also { updateState(InferenceRequestState.COMPLETED) }
                 } catch (e: CancellationException) {
                     updateState(InferenceRequestState.CANCELLED)
                     Result.failure(e)
@@ -83,6 +105,10 @@ class InferenceRequestManager(
             releaseAdmissionSlot(modelId, requestJob)
         }
     }
+
+    /** The descriptor for [modelId], preferring the installed record over the catalog's. */
+    private suspend fun describe(modelId: String): ModelDescriptor? =
+        modelRuntime.installed().firstOrNull { it.id == modelId } ?: modelRuntime.catalog().firstOrNull { it.id == modelId }
 
     /** Force-load a model into memory without performing inference. */
     suspend fun openModel(modelId: String): Result<Unit> {

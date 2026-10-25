@@ -249,4 +249,60 @@ class AidosEngineClientTest {
         val transcription = client.transcribe(TranscriptionRequest(file = "base64", model = "whisper"))
         assertEquals("hello world", transcription?.text)
     }
+
+    // --- RFC-0104: locality ---------------------------------------------------------------------
+
+    private fun localityClient(locality: Locality, enforcedByEngine: Boolean) = EngineClientImpl(locality = locality).apply {
+        setHandshakeResult(
+            approvedResponse(port = server.port).let { base ->
+                val endpoints = if (enforcedByEngine) base.capabilities.endpoints + LOCALITY_CAPABILITY else base.capabilities.endpoints
+                base.copy(capabilities = base.capabilities.copy(endpoints = endpoints))
+            }
+        )
+    }
+
+    private val hi = ChatCompletionRequest(model = "m", messages = listOf(ChatMessage(role = "user", content = "hi")))
+
+    @Test
+    fun locality_isSentOnEveryRequestKind() = runTest {
+        val body = """{"id":"c1","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"""
+        server.enqueue(MockResponse().setBody(body))
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody("data: [DONE]\n\n"))
+        val client = localityClient(Locality.LOCAL_ONLY, enforcedByEngine = true)
+
+        client.chatCompletion(hi)
+        client.streamChatCompletion(hi).toList()
+
+        assertEquals("local_only", server.takeRequest().getHeader(LOCALITY_HEADER))
+        assertEquals("local_only", server.takeRequest().getHeader(LOCALITY_HEADER))
+    }
+
+    @Test
+    fun locality_failsClosedAgainstAnEngineThatDoesNotEnforceIt() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
+        val client = localityClient(Locality.LOCAL_ONLY, enforcedByEngine = false)
+
+        assertEquals(null, client.chatCompletion(hi))
+        assertEquals(emptyList(), client.streamChatCompletion(hi).toList())
+        assertEquals(null, client.request("embeddings"))
+        assertEquals(0, server.requestCount, "nothing may be sent to an Engine that would ignore the limit")
+    }
+
+    @Test
+    fun noLocality_sendsNoHeaderAndNeedsNoCapability() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
+        val client = localityClient(Locality.ANY, enforcedByEngine = false)
+
+        client.request("chat/completions")
+
+        assertEquals(null, server.takeRequest().getHeader(LOCALITY_HEADER))
+    }
+
+    @Test
+    fun locality_refusalFrom403IsANullResult() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":{"message":"m","type":"locality_violation"}}"""))
+        val client = localityClient(Locality.LOCAL_ONLY, enforcedByEngine = true)
+
+        assertEquals(null, client.chatCompletion(hi))
+    }
 }

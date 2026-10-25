@@ -33,9 +33,16 @@ object AndroidAidosEngineClientFactory {
      * @param requiredApiVersion the wire-format major version this client was built against
      *   (RFC-0103, "Version and capability contract"); a mismatch reports
      *   [EngineAvailability.IncompatibleVersion] instead of proceeding.
+     * @param locality the widest place inference for this client's requests may run (RFC-0104);
+     *   Engine enforces it, and a client that requires a limit sends nothing to an Engine that
+     *   cannot. Use one client per limit.
      */
-    fun createClient(context: Context, requiredApiVersion: Int = 1): AndroidEngineClient {
+    fun createClient(
+        context: Context,
+        requiredApiVersion: Int = 1,
+        locality: Locality = Locality.ANY
+    ): AndroidEngineClient {
         val handshake = EngineBinderHandshake(context.applicationContext)
-        return AndroidEngineClient(EngineClientImpl(handshake, requiredApiVersion), handshake)
+        return AndroidEngineClient(EngineClientImpl(handshake, requiredApiVersion, locality = locality), handshake)
     }
 }
