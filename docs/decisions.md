@@ -554,6 +554,18 @@ See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_
 
 ---
 
+### D48 — The desktop host serves the agent runtime beside the Engine, over the same loopback API · `PROPOSED`
+
+The desktop Aidos app (`engine/desktopapp`) hosts the agent loop (`agent/amp`'s `AmpAgentRunner`) in the same process as the model Engine and exposes it under `/v1/agent/` on the Engine's loopback server (additive to Engine API v1). It reuses the Engine's bearer tokens and per-app approval, and the agent calls the models through the Engine's own `/v1/chat/completions` rather than around it. The agent code stays in the `agent/` Gradle root and is included into the engine build by path (`:amp`, like `:kernel`); the HTTP surface lives in the JVM-only `engine/agenthost` module so Android's Engine does not inherit it.
+
+Tools belong to the calling app. A run that needs one returns `status: "tool_calls"`; the app executes it and posts the result back. This is the desktop analogue of the Binder MCP path on Android (AGENT-MANAGEMENT.md, "Tool invocation path"): the runtime asks, the app that owns the domain answers.
+
+**Not yet enforced:** per-agent identity and per-tool authorization (AGENT-MANAGEMENT.md). Today any approved app may run an agent, and a run can only use the tools that app supplies.
+
+**Why:** the one-host direction is already the plan (RFC-0103 change rationale, D47 discussion); this is its smallest slice that lets Agentic Messenger use a local agent today.
+
+---
+
 ## Revision history
 
 | Date | Change |
@@ -566,3 +578,4 @@ See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_
 | 2026-08-17 | D36–D44 settled: capability-oriented inference backends, policy-driven backend selection, accelerator ownership, first-class streaming, generalized typed model outputs, KMP backend boundaries, and ONNX Runtime as the second backend. |
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
+| 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |

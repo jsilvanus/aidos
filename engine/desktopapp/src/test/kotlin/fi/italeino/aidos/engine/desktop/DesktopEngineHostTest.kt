@@ -84,4 +84,24 @@ class DesktopEngineHostTest {
         assertTrue(host.modelBrowser.browse(onlyInstalled = true).getOrThrow().isEmpty())
         assertFalse(host.isRunning.value)
     }
+
+    @Test
+    fun servesAgentRuntimeBehindTheEngineToken() = runBlocking {
+        host.start()
+        val port = assertNotNull(host.boundPort.value)
+        val token = Regex("\"token\": \"([^\"]+)\"").find(discoveryFile.readText())!!.groupValues[1]
+        assertTrue(discoveryFile.readText().contains("\"agentApi\": \"/v1/agent\""))
+
+        val client = HttpClient.newHttpClient()
+        fun get(auth: Boolean): HttpResponse<String> = client.send(
+            HttpRequest.newBuilder(URI("http://127.0.0.1:$port/v1/agent/info")).apply {
+                if (auth) header("Authorization", "Bearer $token")
+            }.GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        assertEquals(401, get(auth = false).statusCode())
+        val ok = get(auth = true)
+        assertEquals(200, ok.statusCode())
+        assertTrue("maxConcurrentRuns" in ok.body())
+    }
 }

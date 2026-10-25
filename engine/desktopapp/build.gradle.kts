@@ -22,6 +22,8 @@ kotlin {
 dependencies {
     implementation(project(":engineui"))
     implementation(project(":enginehost"))
+    implementation(project(":agenthost"))
+    implementation(project(":amp"))
     implementation(project(":modelruntime"))
     implementation(project(":decisions"))
     implementation(project(":vision"))
@@ -34,6 +36,7 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("io.ktor:ktor-server-core:3.5.2")
     implementation("io.ktor:ktor-client-cio:3.5.2")
     implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")

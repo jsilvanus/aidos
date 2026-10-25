@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.aidos.amp.OpenAiHttpModelAdapter
 import dev.aidos.cookbook.CookbookEngine
 import dev.aidos.cookbook.DeviceProfile
 import dev.aidos.downloads.DownloadManager
@@ -23,6 +24,8 @@ import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
+import fi.italeino.aidos.engine.agent.AgentRuntime
+import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
@@ -36,6 +39,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -119,6 +126,7 @@ class DesktopEngineHost(
 
     private var tokenManager: TokenManager? = null
     private var httpServer: EngineHttpServer? = null
+    private var agentScope: CoroutineScope? = null
 
     suspend fun start() = lifecycle.withLock {
         if (_isRunning.value) return@withLock
@@ -146,17 +154,33 @@ class DesktopEngineHost(
                 runSettings = runSettings,
             )
             val desiredPort = serverPort()
+            // The agent runtime (/v1/agent) is served from this same process and calls the Engine
+            // through its own loopback API, so approvals, tokens and model loading stay on one path.
+            var boundPort = 0
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val agent = AgentRuntime(scope, { req ->
+                OpenAiHttpModelAdapter(
+                    baseUrl = "http://127.0.0.1:$boundPort",
+                    modelId = req.model,
+                    apiKey = localTokenInfo.token,
+                    contextWindow = req.contextWindow ?: 8192,
+                )
+            })
             val server = EngineHttpServer(
                 tokens,
                 runtime,
                 port = desiredPort,
-                isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED }
+                isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
+                extraRoutes = { agentRoutes(agent) },
             )
             server.start()
             val port = server.getBoundPort() ?: run {
                 server.stop()
+                scope.cancel()
                 throw IllegalStateException("HTTP server failed to bind")
             }
+            boundPort = port
+            agentScope = scope
             tokenManager = tokens
             modelRuntime = runtime
             httpServer = server
@@ -184,6 +208,7 @@ class DesktopEngineHost(
                   "baseUrl": "http://127.0.0.1:$port",
                   "token": "$token",
                   "apiVersion": 1,
+                  "agentApi": "/v1/agent",
                   "pid": $pid
                 }
             """.trimIndent()
@@ -224,6 +249,8 @@ class DesktopEngineHost(
         val server = httpServer
         val runtime = modelRuntime
         removeDiscoveryFile()
+        agentScope?.cancel()
+        agentScope = null
         try {
             if (server != null) {
                 server.stop()

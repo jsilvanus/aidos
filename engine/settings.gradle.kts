@@ -42,6 +42,11 @@ project(":kernel").projectDir = file("../kernel")
 include(":client")
 project(":client").projectDir = file("../sdk/client")
 
+// Aidos Agent's AMP runner (../agent/amp), included by path like kernel: the desktop host serves the
+// agent loop beside the model API (AGENT-MANAGEMENT.md). It depends only on :kernel.
+include(":amp")
+project(":amp").projectDir = file("../agent/amp")
+
 include(":modelruntime")
 include(":decisions")
 include(":vision")
@@ -55,4 +60,5 @@ include(":enginehost")
 include(":engineui")
 include(":androidapp")
 include(":cli")
+include(":agenthost")
 include(":desktopapp")
