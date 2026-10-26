@@ -25,11 +25,17 @@ class PeerLink internal constructor(
     val peer: PeerCredentials,
     /** Trust domains the peer was admitted in; per-action scope checks still go to [TrustStore]. */
     val domains: Set<TrustDomain>,
+    /**
+     * Set on a link admitted for pairing or enrolment (invite secret proven, peer not trusted
+     * yet). Such a link carries pairing messages only; [domains] is empty.
+     */
+    val pairingSecret: ByteArray?,
     // The streams setup already used: a second buffered reader would lose bytes the first had read ahead.
     private val input: DataInputStream,
     private val output: DataOutputStream,
 ) : Closeable {
     val nodeId: NodeId get() = peer.nodeId
+    val isPairing: Boolean get() = pairingSecret != null
     private val writeLock = Any()
 
     fun send(message: LinkMessage) = synchronized(writeLock) { writeFrame(output, message) }
@@ -93,14 +99,25 @@ class PeerLinkEndpoint(
     private val admit: (PeerCredentials) -> TrustDecision,
     private val ownCertificates: () -> List<MembershipCertificate> = { emptyList() },
     private val handshakeTimeoutMillis: Int = 10_000,
+    /** Secrets of invites this node is currently showing (QR on screen); usually none. */
+    private val pendingInviteSecrets: () -> List<ByteArray> = { emptyList() },
 ) {
     private val context = PeerTls.context(key)
 
-    fun connect(host: String, port: Int): PeerLink {
+    fun connect(host: String, port: Int): PeerLink = open(host, port, invite = null)
+
+    /**
+     * Connect to the device whose [invite] was scanned, to pair with it or enrol it. The TLS key
+     * the device presents must be the invite's key: that is what the QR code authenticates.
+     */
+    fun connectForPairing(invite: PairingInvite, host: String = invite.addresses.first(), port: Int = invite.port): PeerLink =
+        open(host, port, invite)
+
+    private fun open(host: String, port: Int, invite: PairingInvite?): PeerLink {
         val socket = context.socketFactory.createSocket() as SSLSocket
         try {
             socket.connect(InetSocketAddress(host, port), handshakeTimeoutMillis)
-            return setUp(socket, connecting = true)
+            return setUp(socket, connecting = true, invite = invite)
         } catch (e: Exception) {
             socket.close()
             throw e
@@ -122,7 +139,7 @@ class PeerLinkEndpoint(
         server.enabledProtocols = arrayOf(PeerTls.PROTOCOL)
         return PeerLinkServer(server) { socket ->
             try {
-                onLink(setUp(socket, connecting = false))
+                onLink(setUp(socket, connecting = false, invite = null))
             } catch (e: Exception) {
                 onReject(e.message ?: e.javaClass.simpleName)
                 socket.close()
@@ -130,14 +147,18 @@ class PeerLinkEndpoint(
         }
     }
 
-    private fun setUp(socket: SSLSocket, connecting: Boolean): PeerLink {
+    private fun setUp(socket: SSLSocket, connecting: Boolean, invite: PairingInvite?): PeerLink {
         socket.enabledProtocols = arrayOf(PeerTls.PROTOCOL)
         socket.soTimeout = handshakeTimeoutMillis
         socket.startHandshake()
         val peerKey = PeerTls.peerPublicKey(socket)
         val input = DataInputStream(socket.inputStream.buffered())
         val output = DataOutputStream(socket.outputStream.buffered())
-        val hello = LinkMessage.Hello(AIDIN_PROTOCOL_VERSION, ownCertificates().map { it.toWire() })
+        if (invite != null && !invite.publicKey.contentEquals(peerKey)) {
+            throw PeerRejectedException("device at that address is not the one in the invite")
+        }
+        val proof = invite?.let { PairingProof.of(it.secret, key.publicKey, peerKey) }
+        val hello = LinkMessage.Hello(AIDIN_PROTOCOL_VERSION, ownCertificates().map { it.toWire() }, proof)
 
         if (connecting) PeerLink.writeFrame(output, hello)
         val theirs = try {
@@ -155,11 +176,24 @@ class PeerLinkEndpoint(
         }
         val credentials = PeerCredentials(peerKey, theirs.certificates.mapNotNull { it.toCertificate() })
         val decision = admit(credentials)
-        if (decision !is TrustDecision.Allowed) refuse(output, "not trusted")
+        val link = when {
+            invite != null ->
+                // We scanned the peer's invite and its TLS key matched: pairing link, whatever the
+                // trust store says (re-pairing an already trusted device is allowed).
+                PeerLink(socket, credentials, emptySet(), invite.secret, input, output)
+            !connecting && theirs.pairingProof != null -> {
+                val secret = pendingInviteSecrets().firstOrNull {
+                    PairingProof.matches(theirs.pairingProof, it, peerKey, key.publicKey)
+                } ?: refuse(output, "invite expired or not shown here")
+                PeerLink(socket, credentials, emptySet(), secret, input, output)
+            }
+            decision is TrustDecision.Allowed -> PeerLink(socket, credentials, decision.domains, null, input, output)
+            else -> refuse(output, "not trusted")
+        }
         if (!connecting) PeerLink.writeFrame(output, hello)
 
         socket.soTimeout = 0
-        return PeerLink(socket, credentials, decision.domains, input, output)
+        return link
     }
 
     private fun refuse(output: DataOutputStream, reason: String): Nothing {
