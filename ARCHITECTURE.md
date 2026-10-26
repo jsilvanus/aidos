@@ -65,6 +65,12 @@ services.
 
 ## Two apps on MOBILE (RFC-0103, added 2026-08-14)
 
+**Update 2026-10-26 (D49, proposed):** the two-app description below is superseded as the hosting
+plan. On MOBILE the Agent Runtime and Engine Core are separate modules hosted by one app (Aidos
+Engine) and one coordinating foreground service; client apps still reach inference through the Aidos
+SDK, and inference access does not imply agent or tool authority. On DESKTOP one host already serves
+both (D48). The text below is kept for the reasoning behind a shared Engine.
+
 Everything above describes one runtime, hosted somewhere. On MOBILE specifically, "somewhere" is
 now **two independent Android apps**, not one, because local model inference (an LLM, an embedding
 model, STT) needs sharing across apps that the single-app design above didn't provide for:

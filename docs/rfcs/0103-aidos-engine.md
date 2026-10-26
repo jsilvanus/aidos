@@ -93,6 +93,17 @@ debt Motivation already records for RFC-0050/0022's in-process-hosting language.
 
 ### Two apps, one device
 
+**Amendment 2026-10-26 (D49, proposed):** the premise of this section, two always-on Android apps, is
+revised. On Android the host is one app (Aidos Engine) with one coordinating foreground service
+hosting Engine Core and the Agent Runtime as separate modules; Aidos Agent is no longer a second
+always-on host. What stays: the Engine's shared inference API for client apps, the Aidos SDK
+handshake, the loopback-only bearer-token endpoint, and the rule that permission to call a model is
+not permission to run an agent or a tool. The bullets below describe the original two-app shape and
+are kept as the record of why inference is shared; read them with this amendment. See
+RFC-0103-CHANGE-RATIONALE.md for the costs (larger failure domain, coupled releases, in-process trust
+that must be enforced by explicit checks) and D49 for the open foreground-service-type item.
+On desktop the Engine daemon already serves the agent runtime beside the models (D48).
+
 - **Aidos Agent** (`fi.italeino.aidos`) keeps everything RFC-0050 describes except model loading:
   sessions, projects, capabilities, executor, agent loop, tools, knowledge, memory, settings,
   identity, vault. It becomes a *client* of local inference the same way it is already a client
