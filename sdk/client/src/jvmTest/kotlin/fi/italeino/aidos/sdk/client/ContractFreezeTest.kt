@@ -16,10 +16,14 @@ class ContractFreezeTest {
     @Test
     fun handshakeBundleKeysAreFrozen() {
         assertEquals(
-            listOf("status", "port", "token", "apiVersion", "capabilitiesJson", "deepLinkPendingIntent"),
+            listOf(
+                "status", "port", "token", "apiVersion", "capabilitiesJson", "deepLinkPendingIntent",
+                "engineVersion", "minApiVersion"
+            ),
             listOf(
                 HandshakeWire.KEY_STATUS, HandshakeWire.KEY_PORT, HandshakeWire.KEY_TOKEN,
-                HandshakeWire.KEY_API_VERSION, HandshakeWire.KEY_CAPABILITIES_JSON, HandshakeWire.KEY_DEEP_LINK
+                HandshakeWire.KEY_API_VERSION, HandshakeWire.KEY_CAPABILITIES_JSON, HandshakeWire.KEY_DEEP_LINK,
+                HandshakeWire.KEY_ENGINE_VERSION, HandshakeWire.KEY_MIN_API_VERSION
             )
         )
     }
@@ -38,7 +42,7 @@ class ContractFreezeTest {
     fun clientInterfaceMethodsAreFrozen() {
         assertEquals(
             listOf(
-                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "getLocality",
+                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "engineVersion", "getLocality",
                 "initialize", "isAvailable", "request", "streamChatCompletion", "supportsEndpoint", "transcribe"
             ),
             AidosEngineClient::class.java.methods.map { it.name }.filter { !it.contains("$") }.distinct().sorted()
@@ -104,5 +108,12 @@ class ContractFreezeTest {
             listOf("local_only", "trusted_cluster", "any"),
             Locality.entries.map { it.wire }
         )
+    }
+
+    /** Version negotiation: both headers are wire; Engine reads them by these names. */
+    @Test
+    fun versionNegotiationVocabularyIsFrozen() {
+        assertEquals("X-Aidos-Sdk-Version", SDK_VERSION_HEADER)
+        assertEquals("X-Aidos-Api-Version", API_VERSION_HEADER)
     }
 }

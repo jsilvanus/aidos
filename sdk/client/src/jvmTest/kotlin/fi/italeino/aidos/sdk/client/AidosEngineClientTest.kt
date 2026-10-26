@@ -93,7 +93,7 @@ class AidosEngineClientTest {
     fun initialize_withIncompatibleApiVersion_reportsThatReasonButKeepsApiVersion() = runTest {
         val client = EngineClientImpl(
             handshakePerformer = HandshakePerformer { HandshakeOutcome.Approved(approvedResponse(apiVersion = 2)) },
-            requiredApiVersion = 1
+            supportedApiVersions = 1..1
         )
 
         assertFalse(client.initialize())
@@ -314,5 +314,75 @@ class AidosEngineClientTest {
         val client = localityClient(Locality.LOCAL_ONLY, enforcedByEngine = true)
 
         assertEquals(null, client.chatCompletion(hi))
+    }
+
+    // --- Version negotiation (sdk/CONTRACT.md) -----------------------------------------------------
+
+    private suspend fun availabilityOf(
+        engine: HandshakeResponse,
+        supported: IntRange
+    ): EngineAvailability {
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer { HandshakeOutcome.Approved(engine) },
+            supportedApiVersions = supported
+        )
+        client.initialize()
+        return client.availability()
+    }
+
+    @Test
+    fun versionRanges_overlapIsCompatible_disjointIsNot() = runTest {
+        // Engine speaks 1..3 (new Engine still serving old apps).
+        val engine = approvedResponse(apiVersion = 3).copy(minApiVersion = 1)
+        assertEquals(EngineAvailability.Available, availabilityOf(engine, 1..1))
+        assertEquals(EngineAvailability.Available, availabilityOf(engine, 2..5))
+        assertEquals(EngineAvailability.Available, availabilityOf(engine, 3..3))
+        assertEquals(EngineAvailability.IncompatibleVersion, availabilityOf(engine, 4..5))
+        // Engine dropped v1 support: an app that only speaks v1 is told so, rather than guessing.
+        assertEquals(EngineAvailability.IncompatibleVersion, availabilityOf(approvedResponse(apiVersion = 3).copy(minApiVersion = 2), 1..1))
+    }
+
+    @Test
+    fun versionRanges_missingMinApiVersionMeansAnEngineThatSpeaksOnlyItsApiVersion() = runTest {
+        assertEquals(EngineAvailability.Available, availabilityOf(approvedResponse(apiVersion = 2), 1..2))
+        assertEquals(EngineAvailability.IncompatibleVersion, availabilityOf(approvedResponse(apiVersion = 2), 1..1))
+    }
+
+    @Test
+    fun engineVersion_isExposedFromTheHandshake() = runTest {
+        val client = EngineClientImpl(
+            HandshakePerformer { HandshakeOutcome.Approved(approvedResponse().copy(engineVersion = "1.4.0")) }
+        )
+        assertNull(client.engineVersion())
+        client.initialize()
+        assertEquals("1.4.0", client.engineVersion())
+    }
+
+    @Test
+    fun versionHeaders_areSentOnEveryRequestKind_withTheNegotiatedApiVersion() = runTest {
+        val body = """{"id":"c1","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"""
+        server.enqueue(MockResponse().setBody(body))
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody("data: [DONE]\n\n"))
+        // Client speaks 1..2, Engine 1..1: the request says v1, the version both speak.
+        val client = EngineClientImpl(
+            HandshakePerformer { HandshakeOutcome.Approved(approvedResponse(port = server.port)) },
+            supportedApiVersions = 1..2,
+            sdkVersion = "9.9.9-test"
+        )
+        client.initialize()
+
+        client.chatCompletion(hi)
+        client.streamChatCompletion(hi).toList()
+
+        repeat(2) {
+            val recorded = server.takeRequest()
+            assertEquals("9.9.9-test", recorded.getHeader(SDK_VERSION_HEADER))
+            assertEquals("1", recorded.getHeader(API_VERSION_HEADER))
+        }
+    }
+
+    @Test
+    fun sdkVersion_defaultsToThePublishedBuildVersion() {
+        assertTrue(SDK_VERSION.isNotBlank())
     }
 }

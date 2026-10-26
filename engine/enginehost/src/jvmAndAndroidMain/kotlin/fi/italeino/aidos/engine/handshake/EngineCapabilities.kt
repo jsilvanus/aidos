@@ -45,6 +45,10 @@ class InProcessHandshakeSource(
     override suspend fun handshake(): EngineHandshakeResult {
         val port = boundPort() ?: return EngineHandshakeResult.Failed
         val token = tokenManager.currentValidToken() ?: tokenManager.generateNewToken().token
-        return EngineHandshakeResult.Approved(port, token, capabilities().toSdk())
+        return EngineHandshakeResult.Approved(
+            port, token, capabilities().toSdk(),
+            apiVersion = HandshakeWire.API_VERSION,
+            minApiVersion = HandshakeWire.MIN_API_VERSION
+        )
     }
 }

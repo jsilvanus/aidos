@@ -5,6 +5,22 @@ plugins {
     id("maven-publish")
 }
 
+val generateSdkVersion = tasks.register("generateSdkVersion") {
+    val outDir = layout.buildDirectory.dir("generated/sdkVersion")
+    val sdkVersion = provider { project.version.toString() }
+    inputs.property("version", sdkVersion)
+    outputs.dir(outDir)
+    doLast {
+        val file = outDir.get().asFile.resolve("fi/italeino/aidos/sdk/client/SdkVersion.kt")
+        file.parentFile.mkdirs()
+        file.writeText(
+            "package fi.italeino.aidos.sdk.client\n\n" +
+                "/** This SDK build's published version; generated from the Gradle project version. */\n" +
+                "const val SDK_VERSION = \"${sdkVersion.get()}\"\n"
+        )
+    }
+}
+
 kotlin {
     jvmToolchain(17)
 
@@ -40,6 +56,10 @@ kotlin {
                 implementation("com.squareup.okhttp3:okhttp:4.11.0")
             }
         }
+
+        // SDK_VERSION: the published version (below) as a constant, so a request can report which
+        // SDK build sent it (X-Aidos-Sdk-Version) without a hand-maintained copy that would drift.
+        jvmAndAndroidMain.kotlin.srcDir(generateSdkVersion)
 
         androidMain.get().dependsOn(jvmAndAndroidMain)
         jvmMain.get().dependsOn(jvmAndAndroidMain)

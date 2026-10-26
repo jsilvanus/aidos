@@ -51,8 +51,8 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 - **Additive** (new optional Bundle key, new endpoint, new optional JSON field, new interface method
   with a default): allowed within v1. Update the expected list in the tests and this file.
 - **Breaking** (rename/remove/retype anything above, change a status meaning, add a required
-  field): bump `apiVersion`. A client whose required version differs from Engine's reports
-  `IncompatibleVersion` rather than guessing.
+  field): bump `apiVersion`. A client whose supported versions do not overlap Engine's reports
+  `IncompatibleVersion` rather than guessing (see "Version negotiation").
 
 ## Additions within v1
 
@@ -91,6 +91,23 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   **A request without the header is held to `local_only` (D47).** Going wider is explicit: `trusted_cluster` or `any`.
   A client with a limit sends nothing to an Engine that does not advertise `"locality"`. Values in the
   `Locality` enum and the header/capability names are pinned in `ContractFreezeTest`.
+
+- **Version negotiation.** Both sides now say which versions they speak; neither refuses on it yet.
+  - Engine handshake keys `apiVersion` (newest API version Engine speaks), `minApiVersion` (oldest it
+    still serves) and `engineVersion` (Engine build string, display only). A missing `minApiVersion`
+    means an Engine that speaks only `apiVersion`. `AidosEngineClient.engineVersion()` exposes the last
+    (interface method with a default, `null`).
+  - The client is compatible when its supported range overlaps `[minApiVersion, apiVersion]`; before,
+    it required equality. Supported versions default to the single `requiredApiVersion`; both factories
+    take an optional `supportedApiVersions: IntRange`.
+  - Every SDK request carries `X-Aidos-Sdk-Version` (the published SDK build, generated from the Gradle
+    project version into `SDK_VERSION`) and `X-Aidos-Api-Version` (the newest version both sides speak).
+    Engine records them per app (`AppApprovalRecord.sdkVersion`/`apiVersion`, shown in Connected Apps)
+    and **never refuses on them**; an unreadable value is dropped and an SDK version is cut to 64
+    characters. Engine's own in-process client is not recorded.
+  - Features are still detected through handshake `endpoints` (`supportsEndpoint`), not version
+    numbers: a version marks a breaking change only. Pinned in `ContractFreezeTest` and both
+    `HandshakeWireContractTest`s.
 
 ## Not covered
 

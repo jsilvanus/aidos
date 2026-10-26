@@ -8,6 +8,7 @@ import dev.aidos.stt.SttRequest
 import dev.aidos.stt.SttRequestException
 import dev.aidos.kernel.*
 import dev.aidos.kernel.ToolCall as KernelToolCall
+import fi.italeino.aidos.engine.handshake.HandshakeWire
 import fi.italeino.aidos.engine.inference.EngineBusyException
 import fi.italeino.aidos.engine.inference.EngineModelBusyException
 import fi.italeino.aidos.engine.inference.EngineShuttingDownException
@@ -34,6 +35,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
+
+/** An SDK version is a short build string; anything longer is not one, and is cut before it is stored. */
+private const val MAX_SDK_VERSION_LENGTH = 64
 
 class EngineHttpServer(
     private val tokenManager: TokenManager,
@@ -66,6 +70,12 @@ class EngineHttpServer(
      * e.g. the desktop host's the /v1/agent routes. Additive to API v1; null on hosts without any.
      */
     private val extraRoutes: (Route.() -> Unit)? = null,
+    /**
+     * Told which SDK build and API version an app's request carries (`X-Aidos-Sdk-Version`,
+     * `X-Aidos-Api-Version`), so Connected Apps can show them. Record-only: a request is never
+     * refused over its version. Not called for Engine's own subject, or when neither header is sent.
+     */
+    private val onClientVersions: (suspend (subject: String, sdkVersion: String?, apiVersion: Int?) -> Unit)? = null
 ) {
     private var server: EmbeddedServer<*, *>? = null
 
@@ -123,11 +133,22 @@ class EngineHttpServer(
                         info == null -> null
                         info.subject != TokenManager.ENGINE_SUBJECT &&
                             isSubjectApproved?.invoke(info.subject) == false -> null
-                        else -> UserIdPrincipal(info.subject)
+                        else -> {
+                            if (info.subject != TokenManager.ENGINE_SUBJECT) reportClientVersions(info.subject)
+                            UserIdPrincipal(info.subject)
+                        }
                     }
                 }
             }
         }
+    }
+
+    /** Hands the SDK's version headers to [onClientVersions]; a bad value is dropped, not an error. */
+    private suspend fun ApplicationCall.reportClientVersions(subject: String) {
+        val callback = onClientVersions ?: return
+        val sdk = request.headers[HandshakeWire.HEADER_SDK_VERSION]?.trim()?.take(MAX_SDK_VERSION_LENGTH)?.takeIf { it.isNotEmpty() }
+        val api = request.headers[HandshakeWire.HEADER_API_VERSION]?.trim()?.toIntOrNull()
+        if (sdk != null || api != null) callback(subject, sdk, api)
     }
 
     private fun Application.setupRouting() {

@@ -17,7 +17,8 @@ import fi.italeino.aidos.engine.http.Capabilities
  *    - status = "APPROVED"
  *    - port: ephemeral HTTP server port (loopback only, 127.0.0.1)
  *    - token: bearer token for HTTP Authorization header
- *    - apiVersion: handshake API version (1 for MVP)
+ *    - apiVersion: newest API version Engine speaks (1 for MVP)
+ *    - minApiVersion / engineVersion: oldest API version still served, and Engine's build version
  *    - capabilitiesJson: JSON-serialized [Capabilities]
  *    - deepLinkPendingIntent: null
  *
@@ -39,7 +40,9 @@ data class HandshakeResult(
     val token: String = "",
     val apiVersion: Int = 1,
     val capabilitiesJson: String = "{}",  // JSON-serialized Capabilities
-    val deepLinkPendingIntent: PendingIntent? = null
+    val deepLinkPendingIntent: PendingIntent? = null,
+    val engineVersion: String = "",
+    val minApiVersion: Int = apiVersion
 ) {
 
     /** Bundle keys are documented on [fi.italeino.aidos.engine.IEngineHandshake.performHandshake]. */
@@ -50,5 +53,7 @@ data class HandshakeResult(
         putInt("apiVersion", apiVersion)
         putString("capabilitiesJson", capabilitiesJson)
         putParcelable("deepLinkPendingIntent", deepLinkPendingIntent)
+        putString("engineVersion", engineVersion)
+        putInt("minApiVersion", minApiVersion)
     }
 }

@@ -29,6 +29,7 @@ import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.ManagedModelAdapter
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.handshake.HandshakeWire
 import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.sdk.client.AidosEngineClient
@@ -183,6 +184,7 @@ class DesktopEngineHost(
                 port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
                 extraRoutes = { agentRoutes(agent) { subject, requested -> server.effectiveLocality(subject, requested) } },
+                onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) }
             )
             server.start()
             val port = server.getBoundPort() ?: run {
@@ -217,7 +219,8 @@ class DesktopEngineHost(
                   "port": $port,
                   "baseUrl": "http://127.0.0.1:$port",
                   "token": "$token",
-                  "apiVersion": 1,
+                  "apiVersion": ${HandshakeWire.API_VERSION},
+                  "minApiVersion": ${HandshakeWire.MIN_API_VERSION},
                   "agentApi": "/v1/agent",
                   "pid": $pid
                 }

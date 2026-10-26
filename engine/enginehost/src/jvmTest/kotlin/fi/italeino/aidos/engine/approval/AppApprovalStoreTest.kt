@@ -107,6 +107,12 @@ class AppApprovalStoreTest {
             return updated
         }
         
+        override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord? {
+            val current = records[packageName] ?: return null
+            return current.copy(sdkVersion = sdkVersion ?: current.sdkVersion, apiVersion = apiVersion ?: current.apiVersion)
+                .also { records[packageName] = it }
+        }
+
         override suspend fun clear() {
             records.clear()
         }

@@ -126,7 +126,8 @@ private fun AppCard(app: AppApprovalRecord, actions: @Composable RowScope.() -> 
             Text(
                 "Last handshake ${formatIsoAgo(app.lastSeenAt)} · ${app.attemptCount} handshake" +
                     (if (app.attemptCount == 1) "" else "s") +
-                    " · first seen ${formatIsoAgo(app.firstSeenAt)}",
+                    " · first seen ${formatIsoAgo(app.firstSeenAt)}" +
+                    clientVersionsSuffix(app),
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
@@ -147,3 +148,9 @@ private fun formatIsoAgo(iso: String): String = try {
 } catch (_: Exception) {
     "unknown"
 }
+
+/** " · SDK <build> · API v<n>" for what the app last reported, or "" before its first request. */
+internal fun clientVersionsSuffix(app: AppApprovalRecord): String =
+    if (app.sdkVersion == null && app.apiVersion == null) ""
+    else listOfNotNull(app.sdkVersion?.let { "SDK $it" }, app.apiVersion?.let { "API v$it" })
+        .joinToString(separator = " · ", prefix = " · ")

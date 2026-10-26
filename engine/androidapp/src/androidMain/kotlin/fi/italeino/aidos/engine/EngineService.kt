@@ -245,7 +245,8 @@ class EngineService : LifecycleService() {
                     runtime,
                     isSubjectApproved = { pkg ->
                         approvalStore?.getApproval(pkg)?.status == AppApprovalStatus.APPROVED
-                    }
+                    },
+                    onClientVersions = { pkg, sdk, api -> approvalStore?.recordClientVersions(pkg, sdk, api) }
                 )
                 httpServer.start()
                 val boundPort = httpServer.getBoundPort()

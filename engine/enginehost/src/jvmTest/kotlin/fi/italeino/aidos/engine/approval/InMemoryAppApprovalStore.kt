@@ -58,5 +58,8 @@ class InMemoryAppApprovalStore : AppApprovalStore {
     override suspend fun updateRequestCount(packageName: String, increment: Int) =
         set(packageName) { it.copy(requestCount = it.requestCount + increment) }
 
+    override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?) =
+        set(packageName) { it.copy(sdkVersion = sdkVersion ?: it.sdkVersion, apiVersion = apiVersion ?: it.apiVersion) }
+
     override suspend fun clear() = records.clear()
 }

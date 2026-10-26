@@ -43,7 +43,13 @@ data class AppApprovalRecord(
     val attemptCount: Int,
     
     /** Approximate total number of inference requests (session-scoped or summed). */
-    val requestCount: Int = 0
+    val requestCount: Int = 0,
+
+    /** SDK build the app last reported (`X-Aidos-Sdk-Version`); null until it sends a request. Recorded, never enforced. */
+    val sdkVersion: String? = null,
+
+    /** API version the app last reported speaking (`X-Aidos-Api-Version`); null until it sends a request. */
+    val apiVersion: Int? = null
 )
 
 /**
@@ -117,6 +123,12 @@ interface AppApprovalStore {
      */
     suspend fun updateRequestCount(packageName: String, increment: Int): AppApprovalRecord?
     
+    /**
+     * Record the versions an approved app reported on a request. A no-op when they are unchanged,
+     * so calling it on every request costs no write. Returns null for an unknown app.
+     */
+    suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord?
+
     /**
      * Delete all records (for testing, or if Engine is uninstalled).
      */
