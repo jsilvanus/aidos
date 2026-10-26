@@ -1,13 +1,18 @@
 package dev.aidos.downloads
 
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertTrue
 
 /**
  * `testDownloadSuccess` used to hit a real `https://huggingface.co/model.gguf` URL, which 404s
@@ -77,5 +82,32 @@ class DownloadManagerTest {
         val destination = File(tempDir, "partial-model.gguf").path
         manager.delete(destination)
         // Should not throw
+    }
+
+    /** The desktop UI collects downloads on its Swing coroutine; blocking reads there froze the window. */
+    @Test
+    fun downloadDoesNotBlockTheCollectingThread() = runBlocking {
+        val httpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        httpServer.createContext("/slow.gguf") { exchange ->
+            exchange.sendResponseHeaders(200, 6L * 1024)
+            exchange.responseBody.use { out ->
+                repeat(6) { out.write(ByteArray(1024)); out.flush(); Thread.sleep(80) }
+            }
+        }
+        httpServer.start()
+        server = httpServer
+        val ui = java.util.concurrent.Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        try {
+            var ticks = 0
+            val ticker = launch(ui) { while (true) { delay(10); ticks++ } }
+            withContext(ui) {
+                manager.download("http://127.0.0.1:${httpServer.address.port}/slow.gguf", File(tempDir, "slow.gguf").path, null).toList()
+            }
+            ticker.cancel()
+            // The download takes ~480 ms; a blocked collector thread would get no ticks at all.
+            assertTrue(ticks >= 10, "UI thread was blocked during download (ticks=$ticks)")
+        } finally {
+            ui.close()
+        }
     }
 }
