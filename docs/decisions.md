@@ -616,7 +616,7 @@ Aidos Engines near each other may form **inference groups** (RFC-0105, the first
 
 With group identity defined, RFC-0105 replaces D47 item 3's interim rule: a trusted peer's `local`
 model, and a split model whose every node the origin itself trusts, count as `cluster`; anything else
-from a peer counts as `remote`. The RFC text is Proposed and awaits review; the open Android FGS type
+from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the open Android FGS type
 (D49) blocks phone hosting, not phases 1–3.
 
 **RFCs:** 0105, 0104, 0103, 0003.

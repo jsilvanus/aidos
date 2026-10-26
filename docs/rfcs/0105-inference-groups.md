@@ -1,7 +1,8 @@
 # RFC-0105: Inference Groups — Delegation and Layer-Split Inference Across Aidos Engines (AIDIN, first slice)
 
-Status: Proposed 2026-10-26. Owner choices settled the same day (D50): child-process split
-inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
+Status: Accepted 2026-10-26 by the owner. Owner choices settled the same day (D50): child-process
+split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
+Not implemented yet.
 
 Related: RFC-0103 (Aidos Engine), RFC-0104 (inference locality, D47), RFC-0003 (security),
 RFC-0046 (identity), `docs/aidin.md` (AIDIN design background), `IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md`
