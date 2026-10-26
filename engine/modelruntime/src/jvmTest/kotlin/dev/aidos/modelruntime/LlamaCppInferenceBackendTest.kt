@@ -74,9 +74,17 @@ class LlamaCppInferenceBackendTest {
 
     @Test
     fun `installed returns empty when no models present`() = runTest {
-        val backend = LlamaCppInferenceBackend()
-        val installed = backend.installed()
-        assertTrue(installed.isEmpty(), "No models should be installed initially")
+        // An empty temp dir, not ~/.aidos/models: a developer machine running Aidos already has models there.
+        val dir = java.nio.file.Files.createTempDirectory("aidos-models-test").toFile()
+        val previous = System.getProperty("aidos.models.dir")
+        System.setProperty("aidos.models.dir", dir.absolutePath)
+        try {
+            val installed = LlamaCppInferenceBackend().installed()
+            assertTrue(installed.isEmpty(), "No models should be installed initially")
+        } finally {
+            if (previous == null) System.clearProperty("aidos.models.dir") else System.setProperty("aidos.models.dir", previous)
+            dir.deleteRecursively()
+        }
     }
 
     @Test
