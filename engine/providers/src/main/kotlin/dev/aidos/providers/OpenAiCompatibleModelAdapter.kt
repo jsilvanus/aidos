@@ -1,4 +1,4 @@
-package dev.aidos.amp
+package dev.aidos.providers
 
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
@@ -68,20 +68,23 @@ class DefaultJavaHttpTransport(
 }
 
 /**
- * Aidos [ModelAdapter] connecting to any OpenAI-compatible Chat Completions API
- * (Ollama, Aidos Desktop Engine, vLLM, LocalAI, LM Studio, etc.) with tool calling support.
+ * [ModelAdapter] for any OpenAI-compatible Chat Completions API (Ollama, vLLM, LocalAI, LM Studio),
+ * served by a configured provider (RFC-0021). [isLocal] is decided by the backend that creates the
+ * adapter, never defaulted here: the old `OpenAiHttpModelAdapter` hard-coded `true` for every URL,
+ * which made "local" a label rather than a fact (RFC-0104).
  */
-class OpenAiHttpModelAdapter(
-    val baseUrl: String = "http://localhost:11434",
-    override val modelId: String = "llama3",
+class OpenAiCompatibleModelAdapter(
+    val baseUrl: String,
+    /** The model's name at the provider (what goes in the request's `model` field). */
+    override val modelId: String,
+    override val providerId: String,
+    override val isLocal: Boolean,
     val apiKey: String = "",
     override val contextWindow: Int = 4096,
     private val transport: HttpTransport = DefaultJavaHttpTransport(),
 ) : ModelAdapter {
 
-    override val providerId: String = "openai-http"
     override val modelVersion: String = "1.0"
-    override val isLocal: Boolean = true
 
     override fun supportsNativeToolCalls(): Boolean = true
 
