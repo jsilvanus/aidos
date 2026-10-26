@@ -34,6 +34,7 @@ import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
 import java.util.Base64
@@ -68,10 +69,18 @@ class RuntimeSocketServer(
         Files.deleteIfExists(socketPath)
         writeTokenFile()
 
+        // Bind to a sibling path and rename into place: clients (and RealSocketIntegrationTest) treat
+        // the socket file appearing as "the daemon is listening", but bind() creates the file a
+        // moment before the listen() inside it completes, and a client landing in that gap gets
+        // "Connection refused" on a loaded runner. A rename is atomic, so the final path only ever
+        // names a socket that is already listening (and already 0600).
+        val bindPath = socketPath.resolveSibling(socketPath.fileName.toString() + ".binding")
+        Files.deleteIfExists(bindPath)
         val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
-        channel.bind(UnixDomainSocketAddress.of(socketPath))
+        channel.bind(UnixDomainSocketAddress.of(bindPath))
         serverChannel = channel
-        restrictPermissions(socketPath)
+        restrictPermissions(bindPath)
+        Files.move(bindPath, socketPath, StandardCopyOption.ATOMIC_MOVE)
 
         val runScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = runScope
