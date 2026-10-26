@@ -1,5 +1,7 @@
-package dev.aidos.amp
+package dev.aidos.providers
 
+import dev.aidos.amp.DefaultJavaHttpTransport
+import dev.aidos.amp.HttpTransport
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelOutput
@@ -26,62 +28,26 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import java.util.UUID
 
 /**
- * Functional interface for HTTP transport to enable seamless unit testing without live sockets.
+ * [ModelAdapter] for any OpenAI-compatible Chat Completions API (Ollama, vLLM, LocalAI, LM Studio),
+ * served by a configured provider (RFC-0021). [isLocal] is decided by the backend that creates the
+ * adapter, never defaulted here: the old `OpenAiHttpModelAdapter` hard-coded `true` for every URL,
+ * which made "local" a label rather than a fact (RFC-0104).
  */
-fun interface HttpTransport {
-    suspend fun postJson(url: String, headers: Map<String, String>, bodyJson: String): String
-}
-
-/**
- * Default JVM HTTP transport using standard java.net.http.HttpClient.
- */
-class DefaultJavaHttpTransport(
-    private val httpClient: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
-        .build()
-) : HttpTransport {
-    override suspend fun postJson(url: String, headers: Map<String, String>, bodyJson: String): String =
-        withContext(Dispatchers.IO) {
-            val reqBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
-                .timeout(Duration.ofSeconds(45))
-
-            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-
-            val response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() !in 200..299) {
-                throw IllegalStateException("HTTP ${response.statusCode()}: ${response.body()}")
-            }
-            response.body()
-        }
-}
-
-/**
- * Aidos [ModelAdapter] connecting to any OpenAI-compatible Chat Completions API
- * (Ollama, Aidos Desktop Engine, vLLM, LocalAI, LM Studio, etc.) with tool calling support.
- */
-class OpenAiHttpModelAdapter(
-    val baseUrl: String = "http://localhost:11434",
-    override val modelId: String = "llama3",
+class OpenAiCompatibleModelAdapter(
+    val baseUrl: String,
+    /** The model's name at the provider (what goes in the request's `model` field). */
+    override val modelId: String,
+    override val providerId: String,
+    override val isLocal: Boolean,
     val apiKey: String = "",
     override val contextWindow: Int = 4096,
     private val transport: HttpTransport = DefaultJavaHttpTransport(),
 ) : ModelAdapter {
 
-    override val providerId: String = "openai-http"
     override val modelVersion: String = "1.0"
-    override val isLocal: Boolean = true
 
     override fun supportsNativeToolCalls(): Boolean = true
 

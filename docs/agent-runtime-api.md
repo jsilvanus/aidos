@@ -59,3 +59,12 @@ Same envelope as the rest of the Engine API: `{"error": {"message", "type", "cod
 - At most `maxConcurrentRuns` live runs. State is in memory; a restart of the app drops runs.
 - No streaming yet; each call returns at the next point the runtime needs the app, or at the end.
 - No per-agent identity or per-tool authorization yet (AGENT-MANAGEMENT.md). Any approved app can run an agent with its own tools.
+
+## Locality (RFC-0104)
+
+`POST /v1/agent/turns` accepts an optional `locality` (`local_only`, `trusted_cluster`, `any`): the
+widest placement the turn's model calls may use. Absent means `local_only` (D47). Engine applies the
+same layering as the model API (the strictest of the request, the app's limit and Engine's limit) and
+checks every model call of the turn, so a turn cannot reach a provider or peer its caller did not
+allow. Model calls inside the agent runtime go through the in-process inference manager, not through
+the Engine's own HTTP API.
