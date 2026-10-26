@@ -70,7 +70,7 @@ import java.io.File
  */
 class DesktopEngineHost(
     private val modelsDir: File = DesktopPaths.modelsDir,
-    stateDir: File = DesktopPaths.stateDir,
+    private val stateDir: File = DesktopPaths.stateDir,
     /** Per-model run settings the runtime reads at load time (RFC-0103); defaults when none are configured. */
     private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
     /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
