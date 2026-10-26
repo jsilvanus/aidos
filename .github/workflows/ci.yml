@@ -57,6 +57,24 @@ jobs:
         working-directory: engine
         run: gradle :androidapp:assembleDebug --no-daemon
 
+  build-engine-desktopapp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # engine/desktopapp (Compose Desktop, hosts the Engine and the agent runtime) is not part of
+      # `gradle jvmTest` above, so a compile break there went unnoticed until someone ran the app.
+      # Compiling it also runs DesktopEngineHostTest.
+      - name: Compile and test Aidos Engine desktop app
+        working-directory: engine
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle :desktopapp:test --no-daemon
+
   build-sdk:
     runs-on: ubuntu-latest
     steps:
