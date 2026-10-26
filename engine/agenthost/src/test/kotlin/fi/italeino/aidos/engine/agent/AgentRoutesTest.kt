@@ -178,13 +178,15 @@ class AgentRoutesTest {
         val started = json.decodeFromString<AgentTurnResponse>(
             postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true,"tools":$lookupTools}""").bodyAsText()
         )
-        assertEquals("running", started.status)
+        // the handle is a snapshot: the run may already have reached its first tool call
+        assertTrue(started.status == "running" || started.status == "tool_calls", started.status)
         val id = assertNotNull(started.runId)
 
         // long poll returns once the run needs the app
-        val waiting = json.decodeFromString<AgentTurnResponse>(snapshot(id, query = "?since=${started.seq}&waitMs=5000").bodyAsText())
+        val waiting = if (started.status == "tool_calls") started else
+            json.decodeFromString<AgentTurnResponse>(snapshot(id, query = "?since=${started.seq}&waitMs=5000").bodyAsText())
         assertEquals("tool_calls", waiting.status)
-        assertTrue(waiting.seq > started.seq)
+        assertTrue(waiting.seq >= started.seq)
 
         val ack = json.decodeFromString<AgentTurnResponse>(
             postJson("/v1/agent/runs/$id/tool-results", json.encodeToString(ToolResultsRequest(listOf(ClientToolResult(waiting.toolCalls.single().callId, "7")), async = true))).bodyAsText()
