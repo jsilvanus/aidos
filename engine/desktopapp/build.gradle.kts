@@ -33,6 +33,7 @@ dependencies {
     implementation(project(":downloads"))
     implementation(project(":huggingface"))
     implementation(project(":cookbook"))
+    implementation(project(":aidin"))
 
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
