@@ -11,6 +11,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.cacheControl
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondTextWriter
+import fi.italeino.aidos.engine.inference.Locality
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -42,11 +43,21 @@ private const val MAX_WAIT_MS = 30_000L
 fun Route.agentRoutes(
     runtime: AgentRuntime,
     subjectOf: (ApplicationCall) -> String = { it.principal<UserIdPrincipal>()?.name ?: "anonymous" },
+    /** Applies the host's locality layering (app and Engine limits); the default is the caller's own limit, else local only. */
+    localityFor: suspend (subject: String?, requested: Locality?) -> Locality = { _, requested -> requested ?: Locality.LOCAL_ONLY },
 ) {
     get("/v1/agent/info") { call.respond(runtime.info()) }
 
     post("/v1/agent/turns") {
-        guarded(call) { call.respond(runtime.start(subjectOf(call), call.receive<AgentTurnRequest>())) }
+        guarded(call) {
+            val request = call.receive<AgentTurnRequest>()
+            val requested = request.locality?.let {
+                Locality.parse(it) ?: throw AgentRequestException("invalid_request", "locality must be local_only, trusted_cluster or any")
+            }
+            val subject = subjectOf(call)
+            val effective = localityFor(subject, requested)
+            call.respond(runtime.start(subject, request.copy(locality = effective.wire)))
+        }
     }
 
     get("/v1/agent/runs") { call.respond(runtime.list(subjectOf(call))) }

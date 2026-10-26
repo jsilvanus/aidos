@@ -24,6 +24,12 @@ data class AgentTurnRequest(
     val contextWindow: Int? = null,
     /** Return at once with a `running` task handle instead of waiting for the next stop point. */
     val async: Boolean = false,
+    /**
+     * The widest placement the caller accepts for the turn's model calls: `local_only`,
+     * `trusted_cluster` or `any` (RFC-0104). Absent means `local_only` (D47). The runtime replaces it
+     * with the effective limit (strictest of this, the app's and Engine's) before the run starts.
+     */
+    val locality: String? = null,
 )
 
 @Serializable

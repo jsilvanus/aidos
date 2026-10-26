@@ -182,10 +182,18 @@ class EngineHttpServer(
                 )
                 return null
             }
-        } ?: defaultLocality()
-        val subject = call.principal<UserIdPrincipal>()?.name
+        }
+        return effectiveLocality(call.principal<UserIdPrincipal>()?.name, requested)
+    }
+
+    /**
+     * The [Locality] a request is held to: the strictest of what it [requested] (null: [defaultLocality]),
+     * its app's limit and Engine's. Public so routes mounted through [extraRoutes] (the agent
+     * runtime) apply the same layering instead of inventing their own.
+     */
+    suspend fun effectiveLocality(subject: String?, requested: Locality?): Locality {
         val forSubject = if (subject == null || subject == TokenManager.ENGINE_SUBJECT) null else subjectLocality?.invoke(subject)
-        return listOfNotNull(requested, forSubject, engineLocality()).reduce(Locality::strictest)
+        return listOfNotNull(requested ?: defaultLocality(), forSubject, engineLocality()).reduce(Locality::strictest)
     }
 
     private suspend fun handleChatCompletions(call: ApplicationCall) {

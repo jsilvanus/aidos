@@ -5,7 +5,6 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.aidos.amp.OpenAiHttpModelAdapter
 import dev.aidos.cookbook.CookbookEngine
 import dev.aidos.cookbook.DeviceProfile
 import dev.aidos.downloads.DownloadManager
@@ -15,6 +14,8 @@ import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.vision.OnnxVisionBackend
+import dev.aidos.providers.ProviderBackend
+import dev.aidos.providers.ProviderConfigs
 import dev.aidos.stt.OnnxSttBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.RunSettingsSource
@@ -25,6 +26,7 @@ import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.agent.AgentRuntime
+import fi.italeino.aidos.engine.agent.ManagedModelAdapter
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.handshake.HandshakeWire
@@ -36,6 +38,8 @@ import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.http.KtorEffectBroker
 import fi.italeino.aidos.engine.http.TokenManager
+import fi.italeino.aidos.engine.inference.InferenceRequestManager
+import fi.italeino.aidos.engine.inference.Locality
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -67,7 +71,7 @@ import java.io.File
  */
 class DesktopEngineHost(
     private val modelsDir: File = DesktopPaths.modelsDir,
-    stateDir: File = DesktopPaths.stateDir,
+    private val stateDir: File = DesktopPaths.stateDir,
     /** Per-model run settings the runtime reads at load time (RFC-0103); defaults when none are configured. */
     private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
     /** The user's RAM baseline in bytes (a Settings value), read each time a device profile is taken. */
@@ -151,28 +155,35 @@ class DesktopEngineHost(
             // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45), Whisper speech-to-text
             // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
             val runtime = GlobalModelRuntime(
-                OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
+                // HTTP providers (e.g. a local Ollama) from providers.json; read per call, so editing it needs no restart.
+                ProviderBackend(
+                    OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
+                    { ProviderConfigs.load(File(stateDir, "providers.json")) },
+                ),
                 runSettings = runSettings,
             )
             val desiredPort = serverPort()
-            // The agent runtime (/v1/agent) is served from this same process and calls the Engine
-            // through its own loopback API, so approvals, tokens and model loading stay on one path.
-            var boundPort = 0
+            // The agent runtime (/v1/agent) is served from this same process and calls the models
+            // through the same InferenceRequestManager as the HTTP API, so admission, model loading
+            // and the locality limits (RFC-0104) stay on one path.
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val manager = InferenceRequestManager(runtime)
+            lateinit var server: EngineHttpServer
             val agent = AgentRuntime(scope, { req ->
-                OpenAiHttpModelAdapter(
-                    baseUrl = "http://127.0.0.1:$boundPort",
-                    modelId = req.model,
-                    apiKey = localTokenInfo.token,
-                    contextWindow = req.contextWindow ?: 8192,
+                ManagedModelAdapter(
+                    manager,
+                    req.model,
+                    Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
+                    req.contextWindow ?: 8192,
                 )
             })
-            val server = EngineHttpServer(
+            server = EngineHttpServer(
                 tokens,
                 runtime,
+                inferenceManager = manager,
                 port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
-                extraRoutes = { agentRoutes(agent) },
+                extraRoutes = { agentRoutes(agent) { subject, requested -> server.effectiveLocality(subject, requested) } },
                 onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) }
             )
             server.start()
@@ -181,7 +192,6 @@ class DesktopEngineHost(
                 scope.cancel()
                 throw IllegalStateException("HTTP server failed to bind")
             }
-            boundPort = port
             agentScope = scope
             tokenManager = tokens
             modelRuntime = runtime
