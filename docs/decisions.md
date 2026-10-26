@@ -560,6 +560,8 @@ The desktop Aidos app (`engine/desktopapp`) hosts the agent loop (`agent/amp`'s 
 
 Tools belong to the calling app. A run that needs one returns `status: "tool_calls"`; the app executes it and posts the result back. This is the desktop analogue of the Binder MCP path on Android (AGENT-MANAGEMENT.md, "Tool invocation path"): the runtime asks, the app that owns the domain answers.
 
+**Tasks and notifications (2026-10-26):** every run is a task (async start, `seq`-versioned snapshots, long-poll read, cooperative cancel, owner-bound, 10-minute retention) and `/v1/agent/events` pushes advisory state changes, following the client-side design in kotlin-mcp-android-binder `MCP-TASKS-AND-NOTIFICATIONS.md`: notifications never carry correctness, the snapshot is authoritative.
+
 **Not yet enforced:** per-agent identity and per-tool authorization (AGENT-MANAGEMENT.md). Today any approved app may run an agent, and a run can only use the tools that app supplies.
 
 **Why:** the one-host direction is already the plan (RFC-0103 change rationale, D47 discussion); this is its smallest slice that lets Agentic Messenger use a local agent today.

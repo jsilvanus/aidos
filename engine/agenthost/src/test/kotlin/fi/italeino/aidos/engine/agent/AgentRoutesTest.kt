@@ -13,6 +13,9 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readUTF8Line
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -72,7 +75,7 @@ class AgentRoutesTest {
     private fun app(runtime: AgentRuntime, block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         application {
             install(ContentNegotiation) { json(json) }
-            routing { agentRoutes(runtime) }
+            routing { agentRoutes(runtime, subjectOf = { it.request.headers["X-Test-App"] ?: "app-a" }) }
         }
         block()
     }
@@ -163,5 +166,104 @@ class AgentRoutesTest {
         val info = json.decodeFromString<AgentInfo>(client.get("/v1/agent/info").bodyAsText())
         assertEquals(1, info.apiVersion)
         assertEquals(8, info.maxConcurrentRuns)
+    }
+
+    private val lookupTools = """[{"name":"lookup"}]"""
+
+    private suspend fun ApplicationTestBuilder.snapshot(id: String?, app: String = "app-a", query: String = "") =
+        client.get("/v1/agent/runs/$id$query") { headers.append("X-Test-App", app) }
+
+    @Test
+    fun asyncRunIsATaskYouCanObserveAndFinish() = app(runtime()) {
+        val started = json.decodeFromString<AgentTurnResponse>(
+            postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true,"tools":$lookupTools}""").bodyAsText()
+        )
+        assertEquals("running", started.status)
+        val id = assertNotNull(started.runId)
+
+        // long poll returns once the run needs the app
+        val waiting = json.decodeFromString<AgentTurnResponse>(snapshot(id, query = "?since=${started.seq}&waitMs=5000").bodyAsText())
+        assertEquals("tool_calls", waiting.status)
+        assertTrue(waiting.seq > started.seq)
+
+        val ack = json.decodeFromString<AgentTurnResponse>(
+            postJson("/v1/agent/runs/$id/tool-results", json.encodeToString(ToolResultsRequest(listOf(ClientToolResult(waiting.toolCalls.single().callId, "7")), async = true))).bodyAsText()
+        )
+        assertEquals("running", ack.status)
+
+        val done = json.decodeFromString<AgentTurnResponse>(snapshot(id, query = "?since=${ack.seq}&waitMs=5000").bodyAsText())
+        assertEquals("completed", done.status)
+        assertEquals("tool said: 7", done.reply)
+        // async runs stay readable after they finish, and a repeat read is the same snapshot
+        assertEquals(done, json.decodeFromString<AgentTurnResponse>(snapshot(id).bodyAsText()))
+        assertEquals(HttpStatusCode.Conflict, postJson("/v1/agent/runs/$id/tool-results", """{"results":[]}""").status)
+    }
+
+    @Test
+    fun runsBelongToTheAppThatStartedThem() = app(runtime()) {
+        val started = json.decodeFromString<AgentTurnResponse>(
+            postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true,"tools":$lookupTools}""").bodyAsText()
+        )
+        val id = started.runId
+        assertEquals(HttpStatusCode.NotFound, snapshot(id, app = "app-b").status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.post("/v1/agent/runs/$id/tool-results") {
+                headers.append("X-Test-App", "app-b"); contentType(ContentType.Application.Json); setBody("""{"results":[]}""")
+            }.status,
+        )
+        assertEquals(HttpStatusCode.NotFound, client.delete("/v1/agent/runs/$id") { headers.append("X-Test-App", "app-b") }.status)
+        assertEquals("[]", client.get("/v1/agent/runs") { headers.append("X-Test-App", "app-b") }.bodyAsText())
+        assertEquals(1, json.decodeFromString<List<AgentTurnResponse>>(client.get("/v1/agent/runs").bodyAsText()).size)
+        assertEquals(HttpStatusCode.OK, snapshot(id).status)
+    }
+
+    @Test
+    fun cancelledAsyncRunStaysCancelled() = app(runtime()) {
+        val started = json.decodeFromString<AgentTurnResponse>(
+            postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true,"tools":$lookupTools}""").bodyAsText()
+        )
+        val id = started.runId
+        assertEquals(HttpStatusCode.NoContent, client.delete("/v1/agent/runs/$id").status)
+        assertEquals("cancelled", json.decodeFromString<AgentTurnResponse>(snapshot(id).bodyAsText()).status)
+        assertEquals(HttpStatusCode.NoContent, client.delete("/v1/agent/runs/$id").status)
+    }
+
+    @Test
+    fun finishedAsyncRunsAreRetainedOnlyForTheRetentionWindow() {
+        var clock = 0L
+        val rt = AgentRuntime(scope, { ScriptedAdapter() }, retention = 1_000.milliseconds, now = { clock })
+        app(rt) {
+            val done = json.decodeFromString<AgentTurnResponse>(
+                postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true}""").bodyAsText()
+            )
+            val finished = json.decodeFromString<AgentTurnResponse>(snapshot(done.runId, query = "?since=0&waitMs=5000").bodyAsText())
+            assertEquals("completed", finished.status)
+            clock = 5_000
+            postJson("/v1/agent/turns", """{"model":"m","message":"y"}""") // any start prunes
+            assertEquals(HttpStatusCode.NotFound, snapshot(done.runId).status)
+        }
+    }
+
+    @Test
+    fun eventsStreamReportsStateChangesOfTheCallersRunsOnly() = app(runtime()) {
+        val lines = mutableListOf<String>()
+        client.prepareGet("/v1/agent/events") { headers.append("X-Test-App", "app-a") }.execute { stream ->
+            val ch = stream.bodyAsChannel()
+            assertEquals(": connected", ch.readUTF8Line())
+            // another app's run must not show up
+            client.post("/v1/agent/turns") {
+                headers.append("X-Test-App", "app-b"); contentType(ContentType.Application.Json); setBody("""{"model":"m","message":"x"}""")
+            }
+            val started = json.decodeFromString<AgentTurnResponse>(
+                postJson("/v1/agent/turns", """{"model":"m","message":"x","async":true}""").bodyAsText()
+            )
+            while (lines.none { it.contains("\"completed\"") }) {
+                val line = ch.readUTF8Line() ?: break
+                if (line.startsWith("data:")) lines += line
+            }
+            assertTrue(lines.all { it.contains(started.runId!!) }, lines.toString())
+            assertEquals(listOf("running", "completed"), lines.map { Regex("\"status\":\"(\\w+)\"").find(it)!!.groupValues[1] })
+        }
     }
 }
