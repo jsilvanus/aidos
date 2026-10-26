@@ -106,6 +106,8 @@ handshake is cheap; a Dictator that dictates locally and offers an optional clou
 - **Delegation.** The origin Engine maps a peer's models to `cluster` at best. A peer's own
   `local` is the origin's `cluster`; a peer's `cluster` or `remote` is the origin's `remote`
   (the peer's group is not necessarily the origin's), until group identity is modelled.
+  RFC-0105 (Accepted, D50) defines group identity and the replacement mapping: a peer's `cluster`
+  counts as `cluster` only when the origin itself trusts every node serving it.
 - **Peer side.** A delegated request arrives with the origin's limit and is evaluated against the
   peer's own placements. A peer never re-delegates a request it received (hop limit 1), so a
   `trusted_cluster` request cannot be laundered to a cloud provider through a peer.

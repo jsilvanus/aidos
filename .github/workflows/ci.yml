@@ -53,9 +53,11 @@ jobs:
       # engine/androidapp's Kotlin lives entirely in src/androidMain, which `gradle jvmTest`
       # above does not compile (it only exercises the jvm() target). This is a debug compile
       # check, not a release build — engine/androidapp is a scaffold (RFC-0103), not shipped yet.
+      # :aidin (RFC-0105) is not a dependency of the app yet, so its Android target is compiled
+      # here explicitly; its tests run in the jvmTest job above.
       - name: Compile Aidos Engine app (debug)
         working-directory: engine
-        run: gradle :androidapp:assembleDebug --no-daemon
+        run: gradle :androidapp:assembleDebug :aidin:assembleDebug --no-daemon
 
   build-engine-desktopapp:
     runs-on: ubuntu-latest

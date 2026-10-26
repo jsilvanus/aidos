@@ -1,5 +1,7 @@
 # AIDIN — AIdos Distributed Inference Network
 
+> The first implementable slice of this design is [RFC-0105: Inference Groups](rfcs/0105-inference-groups.md) (D50). This document remains the long-term background.
+
 AIDIN is the distributed inference layer of Aidos. It allows multiple Aidos Engine instances to cooperate as a single logical inference system across nearby Android devices, laptops, and other supported hosts.
 
 ## Core principle
