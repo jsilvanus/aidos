@@ -25,6 +25,9 @@ import java.security.spec.X509EncodedKeySpec
 class SigningKey private constructor(private val keyPair: KeyPair) {
     val publicKey: ByteArray get() = keyPair.public.encoded
 
+    /** For the peer link's TLS key manager; never leaves the process. */
+    internal val javaKeyPair: KeyPair get() = keyPair
+
     /** PKCS#8 DER of the private key, for a [NodeKeyStore] to persist. */
     fun privateKeyEncoded(): ByteArray = keyPair.private.encoded
 

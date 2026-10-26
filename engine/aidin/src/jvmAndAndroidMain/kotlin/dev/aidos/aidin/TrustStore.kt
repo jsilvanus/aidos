@@ -113,6 +113,22 @@ class TrustStore(private val ownNodeId: NodeId) {
         return TrustDecision.Denied(reasons)
     }
 
+    /**
+     * Admission to the peer link: trusted for at least one scope in some domain. Every action on
+     * the link is still checked with [authorize] for its own scope.
+     */
+    fun authorizeAny(peer: PeerCredentials, nowMillis: Long): TrustDecision {
+        val domains = LinkedHashSet<TrustDomain>()
+        val reasons = LinkedHashSet<String>()
+        for (scope in Scope.entries) {
+            when (val d = authorize(peer, scope, nowMillis)) {
+                is TrustDecision.Allowed -> domains += d.domains
+                is TrustDecision.Denied -> reasons += d.reasons
+            }
+        }
+        return if (domains.isNotEmpty()) TrustDecision.Allowed(domains) else TrustDecision.Denied(reasons.toList())
+    }
+
     private fun ownMembershipValid(membership: GroupMembership, nowMillis: Long): Boolean =
         membership.ownCertificate.isValidAt(nowMillis) &&
             membership.revocations?.revoked?.contains(ownNodeId) != true

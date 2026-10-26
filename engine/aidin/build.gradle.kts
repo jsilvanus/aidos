@@ -23,8 +23,20 @@ kotlin {
         // Android, so everything that touches crypto lives in jvmAndAndroidMain.
         val jvmAndAndroidMain by creating {
             dependsOn(commonMain.get())
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+                // Self-signed X.509 certificates for the mTLS peer link. JCA can verify them but
+                // has no public API to build one; Bouncy Castle's builder works on both platforms.
+                implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
+            }
         }
-        jvmMain.get().dependsOn(jvmAndAndroidMain)
+        jvmMain {
+            dependsOn(jvmAndAndroidMain)
+            dependencies {
+                // Desktop mDNS/DNS-SD (RFC-0105 "Discovery"); Android uses the platform NsdManager.
+                implementation("org.jmdns:jmdns:3.6.4")
+            }
+        }
         androidMain.get().dependsOn(jvmAndAndroidMain)
 
         commonTest.dependencies {
@@ -33,6 +45,7 @@ kotlin {
 
         jvmTest.dependencies {
             implementation(kotlin("test-junit"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
         }
     }
 }
