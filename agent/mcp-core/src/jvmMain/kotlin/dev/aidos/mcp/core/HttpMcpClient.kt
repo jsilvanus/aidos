@@ -16,7 +16,7 @@ class HttpMcpClient(
     private val authHeaderValue: String? = null,
     private val requestTimeoutMillis: Long = 30_000,
     @Suppress("UNUSED_PARAMETER") private val maxRedirects: Int = 5,
-) : McpClient {
+) : McpClient, McpTaskClient {
     private val httpClient = HttpClient(CIO) {
         followRedirects = false
         install(SSE)
@@ -37,6 +37,14 @@ class HttpMcpClient(
     override suspend fun listTools(): List<McpToolSpec> = delegate.listTools()
     override suspend fun callTool(name: String, arguments: JsonObject): McpCallResult =
         delegate.callTool(name, arguments)
+
+    override val notifications = delegate.notifications
+    override suspend fun supportsTasks(): Boolean = delegate.supportsTasks()
+    override suspend fun callToolAsTask(name: String, arguments: JsonObject, ttlMillis: Long?): McpToolExecution =
+        delegate.callToolAsTask(name, arguments, ttlMillis)
+    override suspend fun getTask(taskId: String): McpTaskSnapshot = delegate.getTask(taskId)
+    override suspend fun getTaskResult(taskId: String): McpCallResult = delegate.getTaskResult(taskId)
+    override suspend fun cancelTask(taskId: String): McpCancelOutcome = delegate.cancelTask(taskId)
 
     override fun close() {
         delegate.close()

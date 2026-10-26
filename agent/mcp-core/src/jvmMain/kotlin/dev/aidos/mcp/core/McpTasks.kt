@@ -1,7 +1,8 @@
 package dev.aidos.mcp.core
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlin.math.min
@@ -93,8 +94,10 @@ suspend fun McpTaskClient.awaitTask(
     var wait = last.pollIntervalMillis ?: 1_000
     val finished = withTimeoutOrNull(timeoutMillis) {
         while (!last.status.terminal) {
+            // A notifications flow that ends (a client without push) must still be waited out.
             withTimeoutOrNull(wait) {
-                notifications.first { it is McpNotification.TaskStatus && it.snapshot.taskId == taskId }
+                val hint = notifications.firstOrNull { it is McpNotification.TaskStatus && it.snapshot.taskId == taskId }
+                if (hint == null) delay(wait)
             }
             val next = getTask(taskId)
             if (next != last) {
