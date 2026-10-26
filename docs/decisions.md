@@ -562,6 +562,8 @@ Tools belong to the calling app. A run that needs one returns `status: "tool_cal
 
 **Tasks and notifications (2026-10-26):** every run is a task (async start, `seq`-versioned snapshots, long-poll read, cooperative cancel, owner-bound, 10-minute retention) and `/v1/agent/events` pushes advisory state changes, following the client-side design in kotlin-mcp-android-binder `MCP-TASKS-AND-NOTIFICATIONS.md`: notifications never carry correctness, the snapshot is authoritative.
 
+**MCP client side:** `mcp-core` gains `McpTaskClient` (implemented by `SdkMcpClient` over the official SDK 0.15.0 task types): `callToolAsTask` (falls back to an ordinary call unless the server advertised task-augmented `tools/call`; a server may still answer at once), `getTask`, `getTaskResult`, `cancelTask` (reports what was observed, `confirmed` only when the server says cancelled), `awaitTask` (poll with backoff, early wake on a status notification, timeout visible as a non-terminal snapshot) and a typed `notifications` flow (progress, task status, tools list changed, log). Not yet wired into `mcp-broker`/`McpTool`: the broker still sees only synchronous calls. Tested against a scripted wire-level server only, not a real task-capable one.
+
 **Not yet enforced:** per-agent identity and per-tool authorization (AGENT-MANAGEMENT.md). Today any approved app may run an agent, and a run can only use the tools that app supplies.
 
 **Why:** the one-host direction is already the plan (RFC-0103 change rationale, D47 discussion); this is its smallest slice that lets Agentic Messenger use a local agent today.
