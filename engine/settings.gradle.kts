@@ -49,6 +49,8 @@ project(":amp").projectDir = file("../agent/amp")
 
 include(":modelruntime")
 include(":decisions")
+// RFC-0105 (D50): inference groups (AIDIN first slice).
+include(":aidin")
 include(":vision")
 include(":providers")
 include(":stt")
