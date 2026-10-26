@@ -35,7 +35,8 @@ class EngineHandshakeImpl(
         boundPort = boundPort,
         capabilities = { (modelRuntime() ?: throw IllegalStateException("Model runtime not ready")).handshakeCapabilities() },
         resolveDisplayName = approvalManager::displayNameOf,
-        onFirstRequest = approvalManager::notifyFirstRequest
+        onFirstRequest = approvalManager::notifyFirstRequest,
+        engineVersion = engineVersionName()
     )
 
     override fun performHandshake(): Bundle {
@@ -51,6 +52,8 @@ class EngineHandshakeImpl(
                 token = reply.token,
                 apiVersion = reply.apiVersion,
                 capabilitiesJson = reply.capabilitiesJson,
+                engineVersion = reply.engineVersion,
+                minApiVersion = reply.minApiVersion,
                 deepLinkPendingIntent =
                     if (reply.status == HandshakeWire.STATUS_PENDING_APPROVAL) approvalManager.deepLinkIntent() else null
             ).toBundle()
@@ -65,6 +68,13 @@ class EngineHandshakeImpl(
             ).toBundle()
         }
     }
+
+    private fun engineVersionName(): String =
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) {
+            ""
+        }
 
     private fun getPackageNameForUid(uid: Int): String? {
         val packageManager = context.packageManager

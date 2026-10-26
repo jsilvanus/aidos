@@ -24,12 +24,24 @@ object HandshakeWire {
     const val KEY_API_VERSION = "apiVersion"
     const val KEY_CAPABILITIES_JSON = "capabilitiesJson"
     const val KEY_DEEP_LINK = "deepLinkPendingIntent"
+    // Added within API v1 (sdk/CONTRACT.md, "Version negotiation"); a client that predates them
+    // ignores them, and an Engine that predates them omits them.
+    const val KEY_ENGINE_VERSION = "engineVersion"
+    const val KEY_MIN_API_VERSION = "minApiVersion"
 
     const val STATUS_APPROVED = "APPROVED"
     const val STATUS_PENDING_APPROVAL = "PENDING_APPROVAL"
     const val STATUS_DENIED = "DENIED"
 
+    /** The newest API version this Engine speaks. */
     const val API_VERSION = 1
+
+    /** The oldest API version this Engine still serves; raise it only when v1 support is dropped. */
+    const val MIN_API_VERSION = 1
+
+    /** Request headers every SDK request carries; Engine records them per app, it does not refuse on them. */
+    const val HEADER_SDK_VERSION = "X-Aidos-Sdk-Version"
+    const val HEADER_API_VERSION = "X-Aidos-Api-Version"
 }
 
 /** Host-neutral result of a handshake; the Android layer turns it into a Bundle. */
@@ -38,7 +50,9 @@ data class HandshakeReply(
     val port: Int = 0,
     val token: String = "",
     val apiVersion: Int = HandshakeWire.API_VERSION,
-    val capabilitiesJson: String = "{}"
+    val capabilitiesJson: String = "{}",
+    val engineVersion: String = "",
+    val minApiVersion: Int = HandshakeWire.MIN_API_VERSION
 )
 
 /**
@@ -56,6 +70,8 @@ class HandshakeCore(
     private val boundPort: suspend () -> Int?,
     private val capabilities: suspend () -> Capabilities,
     private val resolveDisplayName: (packageName: String) -> String = { it },
+    /** This Engine build's version string (Android: the app's versionName), reported to every approved caller. */
+    private val engineVersion: String = "",
     /** Called exactly once per app, on its first ever handshake (Android: posts the notification). */
     private val onFirstRequest: suspend (packageName: String, displayName: String) -> Unit = { _, _ -> }
 ) {
@@ -91,7 +107,8 @@ class HandshakeCore(
             status = HandshakeWire.STATUS_APPROVED,
             port = port,
             token = token.token,
-            capabilitiesJson = Json.encodeToString(capabilities())
+            capabilitiesJson = Json.encodeToString(capabilities()),
+            engineVersion = engineVersion
         )
     }
 }

@@ -45,13 +45,15 @@ class SdkHostContractTest {
     private val server = EngineHttpServer(
         tokens,
         runtime,
-        isSubjectApproved = { pkg -> store.getApproval(pkg)?.status == AppApprovalStatus.APPROVED }
+        isSubjectApproved = { pkg -> store.getApproval(pkg)?.status == AppApprovalStatus.APPROVED },
+        onClientVersions = { pkg, sdk, api -> store.recordClientVersions(pkg, sdk, api) }
     ).also { it.start() }
     private val core = HandshakeCore(
         store = store,
         tokenManager = tokens,
         boundPort = { server.getBoundPort() },
-        capabilities = { runtime.handshakeCapabilities() }
+        capabilities = { runtime.handshakeCapabilities() },
+        engineVersion = "test-engine-1.2"
     )
     private val opened = mutableListOf<AidosEngineClient>()
 
@@ -71,7 +73,10 @@ class SdkHostContractTest {
                     reply.token,
                     // Same JSON the Bundle carries, decoded by the SDK's own parser would be ideal;
                     // capabilities content is asserted separately below.
-                    EngineCapabilities(listOf("chat.completions"), listOf(EngineModel("test-model", "llm", 2048)))
+                    EngineCapabilities(listOf("chat.completions"), listOf(EngineModel("test-model", "llm", 2048))),
+                    apiVersion = reply.apiVersion,
+                    minApiVersion = reply.minApiVersion,
+                    engineVersion = reply.engineVersion
                 )
                 HandshakeWire.STATUS_PENDING_APPROVAL -> EngineHandshakeResult.PendingApproval
                 HandshakeWire.STATUS_DENIED -> EngineHandshakeResult.Denied
@@ -185,5 +190,48 @@ class SdkHostContractTest {
         assertTrue(own.supportsEndpoint("locality"))
         assertEquals("local", own.capabilities().models.single { it.id == "test-model" }.placement)
         assertNotNull(ask(own))
+    }
+
+    /** Version negotiation end to end: the SDK reports its versions, Engine records them per app and reports its own. */
+    @Test
+    fun engineRecordsEachAppsVersions_andTheClientSeesEnginesVersion() = runBlocking<Unit> {
+        for (pkg in listOf(dictator, agent)) {
+            store.recordFirstHandshake(pkg, pkg)
+            store.approveApp(pkg)
+        }
+        val client = asCaller(dictator)
+        assertTrue(client.initialize())
+        assertEquals("test-engine-1.2", client.engineVersion())
+        // Nothing has been requested yet, so nothing is recorded.
+        assertNull(store.getApproval(dictator)?.sdkVersion)
+
+        assertNotNull(ask(client))
+
+        val recorded = store.getApproval(dictator)!!
+        assertEquals(fi.italeino.aidos.sdk.client.SDK_VERSION, recorded.sdkVersion)
+        assertEquals(1, recorded.apiVersion)
+        // Per app: the other app has sent nothing.
+        assertNull(store.getApproval(agent)?.sdkVersion)
+    }
+
+    /** An app is recorded, not refused, whatever version it claims (the headers are untrusted input too). */
+    @Test
+    fun anUnreadableVersionHeader_isIgnoredNotRefused() = runBlocking<Unit> {
+        store.recordFirstHandshake(dictator, "Dictator")
+        store.approveApp(dictator)
+        assertTrue(asCaller(dictator).initialize())
+        val token = tokens.currentValidToken(dictator)!!
+
+        val code = (java.net.URI("http://127.0.0.1:${server.getBoundPort()}/v1/models").toURL().openConnection() as java.net.HttpURLConnection).run {
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty(HandshakeWire.HEADER_API_VERSION, "not-a-number")
+            setRequestProperty(HandshakeWire.HEADER_SDK_VERSION, "x".repeat(500))
+            responseCode.also { disconnect() }
+        }
+
+        assertEquals(200, code)
+        val recorded = store.getApproval(dictator)!!
+        assertNull(recorded.apiVersion)
+        assertEquals(64, recorded.sdkVersion?.length, "an oversized build string is cut, not stored whole")
     }
 }

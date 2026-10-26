@@ -89,6 +89,8 @@ internal class EngineBinderHandshake(private val context: Context) : HandshakePe
                         port = bundle.getInt(HandshakeWire.KEY_PORT),
                         token = bundle.getString(HandshakeWire.KEY_TOKEN) ?: "",
                         apiVersion = bundle.getInt(HandshakeWire.KEY_API_VERSION, 1),
+                        minApiVersion = if (bundle.containsKey(HandshakeWire.KEY_MIN_API_VERSION)) bundle.getInt(HandshakeWire.KEY_MIN_API_VERSION) else null,
+                        engineVersion = bundle.getString(HandshakeWire.KEY_ENGINE_VERSION)?.takeIf { it.isNotEmpty() },
                         capabilities = parseCapabilitiesJson(bundle.getString(HandshakeWire.KEY_CAPABILITIES_JSON) ?: "{}")
                     )
                 )

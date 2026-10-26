@@ -164,6 +164,18 @@ class EncryptedAppApprovalStore(context: Context) : AppApprovalStore {
             updated
         }
     
+    override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord? =
+        withContext(Dispatchers.IO) {
+            val current = getApproval(packageName) ?: return@withContext null
+            val updated = current.copy(sdkVersion = sdkVersion ?: current.sdkVersion, apiVersion = apiVersion ?: current.apiVersion)
+            // Every request reports; only a change is worth a write.
+            if (updated != current) {
+                saveRecord(updated)
+                emitUpdate()
+            }
+            updated
+        }
+
     override suspend fun clear() {
         withContext(Dispatchers.IO) {
             prefs.edit().clear().apply()

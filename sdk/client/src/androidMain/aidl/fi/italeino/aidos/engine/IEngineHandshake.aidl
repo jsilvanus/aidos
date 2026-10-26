@@ -38,7 +38,10 @@ interface IEngineHandshake {
      *     0 unless status is "APPROVED"
      *   - "token" (String): bearer token for HTTP Authorization header, valid for this session;
      *     empty unless status is "APPROVED"
-     *   - "apiVersion" (Int): the API version (1 for MVP)
+     *   - "apiVersion" (Int): the newest API version Engine speaks (1 for MVP)
+     *   - "minApiVersion" (Int, optional): the oldest API version Engine still serves; absent means
+     *     only "apiVersion"
+     *   - "engineVersion" (String, optional): Engine's build version, for display
      *   - "capabilitiesJson" (String): JSON string listing available endpoints and models;
      *     "{}" unless status is "APPROVED"
      *   - "deepLinkPendingIntent" (PendingIntent, optional): present only when status is

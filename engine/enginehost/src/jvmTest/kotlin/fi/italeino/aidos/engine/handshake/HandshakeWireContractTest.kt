@@ -13,10 +13,14 @@ class HandshakeWireContractTest {
     @Test
     fun bundleKeysAreFrozenForApiV1() {
         assertEquals(
-            listOf("status", "port", "token", "apiVersion", "capabilitiesJson", "deepLinkPendingIntent"),
+            listOf(
+                "status", "port", "token", "apiVersion", "capabilitiesJson", "deepLinkPendingIntent",
+                "engineVersion", "minApiVersion"
+            ),
             listOf(
                 HandshakeWire.KEY_STATUS, HandshakeWire.KEY_PORT, HandshakeWire.KEY_TOKEN,
-                HandshakeWire.KEY_API_VERSION, HandshakeWire.KEY_CAPABILITIES_JSON, HandshakeWire.KEY_DEEP_LINK
+                HandshakeWire.KEY_API_VERSION, HandshakeWire.KEY_CAPABILITIES_JSON, HandshakeWire.KEY_DEEP_LINK,
+                HandshakeWire.KEY_ENGINE_VERSION, HandshakeWire.KEY_MIN_API_VERSION
             )
         )
     }
@@ -28,5 +32,12 @@ class HandshakeWireContractTest {
             listOf(HandshakeWire.STATUS_APPROVED, HandshakeWire.STATUS_PENDING_APPROVAL, HandshakeWire.STATUS_DENIED)
         )
         assertEquals(1, HandshakeWire.API_VERSION)
+        assertEquals(1, HandshakeWire.MIN_API_VERSION)
+    }
+
+    @Test
+    fun versionHeadersAreFrozenForApiV1() {
+        assertEquals("X-Aidos-Sdk-Version", HandshakeWire.HEADER_SDK_VERSION)
+        assertEquals("X-Aidos-Api-Version", HandshakeWire.HEADER_API_VERSION)
     }
 }

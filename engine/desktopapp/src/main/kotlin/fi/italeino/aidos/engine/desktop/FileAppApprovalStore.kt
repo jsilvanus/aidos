@@ -83,6 +83,10 @@ class FileAppApprovalStore(
     override suspend fun updateRequestCount(packageName: String, increment: Int): AppApprovalRecord? =
         update(packageName) { it.copy(requestCount = it.requestCount + increment) }
 
+    // update() skips the write when nothing changed, which is the common case: every request reports.
+    override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord? =
+        update(packageName) { it.copy(sdkVersion = sdkVersion ?: it.sdkVersion, apiVersion = apiVersion ?: it.apiVersion) }
+
     override suspend fun clear() {
         mutex.withLock { commit(emptyMap()) }
     }

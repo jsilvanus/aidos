@@ -51,8 +51,15 @@ interface AidosEngineClient {
      */
     fun availability(): EngineAvailability
 
-    /** Engine's reported API version, or 0 if there has been no successful handshake yet. */
+    /** Engine's reported (newest) API version, or 0 if there has been no successful handshake yet. */
     fun apiVersion(): Int
+
+    /**
+     * Engine's build version string from the handshake, or null before a successful handshake or
+     * from an Engine that predates it. For display and diagnostics, never for feature checks:
+     * detect behaviour with [supportsEndpoint].
+     */
+    fun engineVersion(): String? = null
 
     /** Engine's supported capabilities/endpoints (RFC-0103). */
     suspend fun capabilities(): EngineCapabilities
@@ -123,6 +130,13 @@ enum class Locality(val wire: String) {
 /** Capability entry in [EngineCapabilities.endpoints] meaning Engine enforces `X-Aidos-Locality`. */
 const val LOCALITY_CAPABILITY = "locality"
 const val LOCALITY_HEADER = "X-Aidos-Locality"
+
+/**
+ * Sent on every request so Engine can record which SDK build and API version each app speaks
+ * (Connected Apps) — recorded, never refused on. Additive within API v1 (sdk/CONTRACT.md).
+ */
+const val SDK_VERSION_HEADER = "X-Aidos-Sdk-Version"
+const val API_VERSION_HEADER = "X-Aidos-Api-Version"
 
 /**
  * Why Engine is or isn't usable right now (RFC-0103, "Degradation"). [PendingApproval]'s deep
@@ -353,6 +367,9 @@ internal object HandshakeWire {
     const val KEY_API_VERSION = "apiVersion"
     const val KEY_CAPABILITIES_JSON = "capabilitiesJson"
     const val KEY_DEEP_LINK = "deepLinkPendingIntent"
+    // Added within API v1 (sdk/CONTRACT.md, "Version negotiation"): absent from an Engine that predates them.
+    const val KEY_ENGINE_VERSION = "engineVersion"
+    const val KEY_MIN_API_VERSION = "minApiVersion"
 
     const val STATUS_APPROVED = "APPROVED"
     const val STATUS_PENDING_APPROVAL = "PENDING_APPROVAL"
@@ -368,7 +385,10 @@ internal data class HandshakeResponse(
     val port: Int,
     val token: String,
     val apiVersion: Int = 1,
-    val capabilities: CapabilitiesResponse
+    val capabilities: CapabilitiesResponse,
+    /** Oldest API version Engine still serves; null from an Engine that predates it, meaning only [apiVersion]. */
+    val minApiVersion: Int? = null,
+    val engineVersion: String? = null
 )
 
 @Serializable
@@ -458,9 +478,12 @@ internal class EngineClientImpl(
     // to speak of. The real implementation is `EngineBinderHandshake` (sdk/client/androidMain),
     // wired in via `AndroidAidosEngineClientFactory`.
     private val handshakePerformer: HandshakePerformer = HandshakePerformer { HandshakeOutcome.NotInstalled },
-    // RFC-0103, "Version and capability contract": a client whose required major version does
-    // not match Engine's treats it as incompatible rather than guessing.
-    private val requiredApiVersion: Int = 1,
+    // RFC-0103, "Version and capability contract": the API versions this client can speak. It is
+    // compatible when they overlap Engine's [minApiVersion, apiVersion] (a missing minApiVersion
+    // means an Engine that speaks only apiVersion), and incompatible rather than guessing when not.
+    private val supportedApiVersions: IntRange = 1..1,
+    // Reported to Engine in SDK_VERSION_HEADER on every request.
+    private val sdkVersion: String = SDK_VERSION,
     // OkHttp's default 10 s read timeout is shorter than a cold model load plus inference (a first
     // transcription or chat on a freshly started Engine), which surfaced as a null result.
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
@@ -496,7 +519,7 @@ internal class EngineClientImpl(
         availabilityState = when (outcome) {
             is HandshakeOutcome.Approved -> {
                 handshakeResult = outcome.response
-                if (outcome.response.apiVersion == requiredApiVersion) {
+                if (negotiatedApiVersion(outcome.response) != null) {
                     EngineAvailability.Available
                 } else {
                     EngineAvailability.IncompatibleVersion
@@ -515,6 +538,15 @@ internal class EngineClientImpl(
     override fun availability(): EngineAvailability = availabilityState
 
     override fun apiVersion(): Int = handshakeResult?.apiVersion ?: 0
+
+    override fun engineVersion(): String? = handshakeResult?.engineVersion
+
+    /** The newest API version both sides speak, or null when the ranges do not overlap. */
+    private fun negotiatedApiVersion(handshake: HandshakeResponse): Int? {
+        val engine = (handshake.minApiVersion ?: handshake.apiVersion)..handshake.apiVersion
+        val newest = minOf(engine.last, supportedApiVersions.last)
+        return newest.takeIf { it >= maxOf(engine.first, supportedApiVersions.first) }
+    }
 
     override suspend fun capabilities(): EngineCapabilities {
         val now = System.currentTimeMillis()
@@ -561,6 +593,7 @@ internal class EngineClientImpl(
             .method(method, requestBody)
             .header("Authorization", "Bearer ${current.token}")
             .withLocality()
+            .withVersions(current)
             .build()
 
         return try {
@@ -590,6 +623,10 @@ internal class EngineClientImpl(
     private fun Request.Builder.withLocality(): Request.Builder =
         locality?.let { header(LOCALITY_HEADER, it.wire) } ?: this
 
+    private fun Request.Builder.withVersions(handshake: HandshakeResponse): Request.Builder =
+        header(SDK_VERSION_HEADER, sdkVersion)
+            .header(API_VERSION_HEADER, (negotiatedApiVersion(handshake) ?: handshake.apiVersion).toString())
+
     override suspend fun supportsEndpoint(endpoint: String): Boolean =
         capabilities().endpoints.contains(endpoint)
 
@@ -613,6 +650,7 @@ internal class EngineClientImpl(
             .post(engineJson.encodeToString(streamingRequest).toRequestBody(jsonMediaType))
             .header("Authorization", "Bearer ${current.token}")
             .withLocality()
+            .withVersions(current)
             .build()
 
         try {
@@ -691,7 +729,10 @@ sealed interface EngineHandshakeResult {
         val port: Int,
         val token: String,
         val capabilities: EngineCapabilities,
-        val apiVersion: Int = 1
+        val apiVersion: Int = 1,
+        /** Oldest API version the Engine still serves; null means only [apiVersion]. */
+        val minApiVersion: Int? = null,
+        val engineVersion: String? = null
     ) : EngineHandshakeResult
 
     data object NotInstalled : EngineHandshakeResult
@@ -729,11 +770,12 @@ object AidosEngineClientFactory {
     fun create(
         source: EngineHandshakeSource,
         requiredApiVersion: Int = 1,
-        locality: Locality? = null
+        locality: Locality? = null,
+        supportedApiVersions: IntRange = requiredApiVersion..requiredApiVersion
     ): AidosEngineClient =
         EngineClientImpl(
             handshakePerformer = { source.handshake().toOutcome() },
-            requiredApiVersion = requiredApiVersion,
+            supportedApiVersions = supportedApiVersions,
             locality = locality
         )
 }
@@ -744,6 +786,8 @@ private fun EngineHandshakeResult.toOutcome(): HandshakeOutcome = when (this) {
             port = port,
             token = token,
             apiVersion = apiVersion,
+            minApiVersion = minApiVersion,
+            engineVersion = engineVersion,
             capabilities = CapabilitiesResponse(
                 endpoints = capabilities.endpoints,
                 models = capabilities.models.map {
