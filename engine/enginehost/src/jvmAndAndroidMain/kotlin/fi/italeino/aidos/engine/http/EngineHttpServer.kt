@@ -55,7 +55,12 @@ class EngineHttpServer(
      */
     private val engineLocality: () -> Locality = { Locality.ANY },
     /** Per-app limit (the user's choice in Connected Apps), or null for none. Engine's own subject is exempt. */
-    private val subjectLocality: (suspend (subject: String) -> Locality?)? = null
+    private val subjectLocality: (suspend (subject: String) -> Locality?)? = null,
+    /**
+     * Extra routes a host mounts inside the authenticated block (same tokens and approval check),
+     * e.g. the desktop host's the /v1/agent routes. Additive to API v1; null on hosts without any.
+     */
+    private val extraRoutes: (Route.() -> Unit)? = null,
 ) {
     private var server: EmbeddedServer<*, *>? = null
 
@@ -132,6 +137,7 @@ class EngineHttpServer(
                 // is OpenJev's alias for the same handler.
                 post("/v1/systemone") { handleDecisions(call) }
                 post("/v1/decisions") { handleDecisions(call) }
+                extraRoutes?.invoke(this)
             }
         }
     }
