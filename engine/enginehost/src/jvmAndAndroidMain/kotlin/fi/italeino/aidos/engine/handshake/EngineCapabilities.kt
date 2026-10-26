@@ -5,6 +5,7 @@ import fi.italeino.aidos.engine.http.Capabilities
 import fi.italeino.aidos.engine.http.ModelInfo
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.http.deriveQuantization
+import fi.italeino.aidos.engine.inference.placementOf
 import fi.italeino.aidos.sdk.client.EngineCapabilities
 import fi.italeino.aidos.sdk.client.EngineHandshakeResult
 import fi.italeino.aidos.sdk.client.EngineHandshakeSource
@@ -12,20 +13,23 @@ import fi.italeino.aidos.sdk.client.EngineModel
 
 /** What the handshake advertises (RFC-0103): the `/v1/` endpoints and the runtime's catalog. */
 suspend fun ModelRuntime.handshakeCapabilities(): Capabilities = Capabilities(
-    endpoints = listOf("models", "chat.completions", "embeddings", "audio.transcriptions"),
+    // "locality" tells a client this Engine enforces X-Aidos-Locality (RFC-0104). A client that
+    // requires a limit must not send it to an Engine that does not advertise this: it would be ignored.
+    endpoints = listOf("models", "chat.completions", "embeddings", "audio.transcriptions", "locality"),
     models = catalog().map { descriptor ->
         ModelInfo(
             id = descriptor.id,
             kind = descriptor.kind.toString().lowercase(),
             context_window = descriptor.contextWindow,
-            quantization = deriveQuantization(descriptor.id)
+            quantization = deriveQuantization(descriptor.id),
+            placement = placementOf(descriptor).wire
         )
     }
 )
 
 internal fun Capabilities.toSdk() = EngineCapabilities(
     endpoints = endpoints,
-    models = models.map { EngineModel(it.id, it.kind, it.context_window, it.quantization) }
+    models = models.map { EngineModel(it.id, it.kind, it.context_window, it.quantization, it.placement) }
 )
 
 /**

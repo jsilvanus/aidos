@@ -12,6 +12,12 @@ import fi.italeino.aidos.engine.inference.EngineBusyException
 import fi.italeino.aidos.engine.inference.EngineModelBusyException
 import fi.italeino.aidos.engine.inference.EngineShuttingDownException
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
+import fi.italeino.aidos.engine.inference.LOCALITY_HEADER
+import fi.italeino.aidos.engine.inference.Locality
+import fi.italeino.aidos.engine.inference.LocalityViolationException
+import fi.italeino.aidos.engine.inference.PLACEMENT_HEADER
+import fi.italeino.aidos.engine.inference.Placement
+import fi.italeino.aidos.engine.inference.placementOf
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -42,6 +48,19 @@ class EngineHttpServer(
      * own in-process token ([TokenManager.ENGINE_SUBJECT]) is never subject to it.
      */
     private val isSubjectApproved: (suspend (subject: String) -> Boolean)? = null,
+    /**
+     * Engine-wide limit on where inference may run (RFC-0104), read per request so a settings
+     * change applies at once. A request's own [LOCALITY_HEADER], this and [subjectLocality]
+     * combine to the strictest; nothing a client sends can loosen the other two.
+     */
+    private val engineLocality: () -> Locality = { Locality.ANY },
+    /**
+     * What a request that states no [LOCALITY_HEADER] is held to (D47, decided by the owner
+     * 2026-10-26): local only. Going wider is something a caller asks for in words, per request.
+     */
+    private val defaultLocality: () -> Locality = { Locality.LOCAL_ONLY },
+    /** Per-app limit (the user's choice in Connected Apps), or null for none. Engine's own subject is exempt. */
+    private val subjectLocality: (suspend (subject: String) -> Locality?)? = null,
     /**
      * Extra routes a host mounts inside the authenticated block (same tokens and approval check),
      * e.g. the desktop host's the /v1/agent routes. Additive to API v1; null on hosts without any.
@@ -128,7 +147,28 @@ class EngineHttpServer(
         }
     }
 
+    /**
+     * The [Locality] this request runs under (RFC-0104): the strictest of the client's
+     * [LOCALITY_HEADER] (or [defaultLocality] when it is absent), the app's limit and Engine's. An unreadable header is a 400 (null result),
+     * never a silent "any": a client that asked for a limit must not lose it to a typo.
+     */
+    private suspend fun resolveLocality(call: ApplicationCall): Locality? {
+        val requested = call.request.headers[LOCALITY_HEADER]?.let { raw ->
+            Locality.parse(raw) ?: run {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail("$LOCALITY_HEADER must be local_only, trusted_cluster or any", "invalid_request_error", param = "locality"))
+                )
+                return null
+            }
+        } ?: defaultLocality()
+        val subject = call.principal<UserIdPrincipal>()?.name
+        val forSubject = if (subject == null || subject == TokenManager.ENGINE_SUBJECT) null else subjectLocality?.invoke(subject)
+        return listOfNotNull(requested, forSubject, engineLocality()).reduce(Locality::strictest)
+    }
+
     private suspend fun handleChatCompletions(call: ApplicationCall) {
+        val locality = resolveLocality(call) ?: return
         try {
             val request = call.receive<ChatCompletionRequest>()
             val turns = request.messages.map { msg ->
@@ -193,7 +233,8 @@ class EngineHttpServer(
             )
 
             if (request.stream) {
-                val streamResult = inferenceManager.execute(request.model) { adapter ->
+                val streamResult = inferenceManager.execute(request.model, locality) { adapter, placement ->
+                    call.response.header(PLACEMENT_HEADER, placement.wire)
                     streamChatCompletions(call, adapter, modelRequest, request.model)
                 }
                 if (streamResult.isFailure) {
@@ -202,7 +243,8 @@ class EngineHttpServer(
                 return
             }
 
-            val inferenceResult = inferenceManager.execute(request.model) { adapter ->
+            val inferenceResult = inferenceManager.execute(request.model, locality) { adapter, placement ->
+                call.response.header(PLACEMENT_HEADER, placement.wire)
                 adapter.invoke(modelRequest).getOrThrow()
             }
             if (inferenceResult.isFailure) {
@@ -321,6 +363,7 @@ class EngineHttpServer(
                     quantization = model.quantization,
                     installed = installedModel != null,
                     loaded = loadedIds.contains(model.id),
+                    placement = placementOf(model).wire,
                     metadata = buildMap {
                         putAll(model.metadata)
                         model.digest?.let { put("digest", it) }
@@ -352,6 +395,7 @@ class EngineHttpServer(
     }
 
     private suspend fun handleEmbeddings(call: ApplicationCall) {
+        val locality = resolveLocality(call) ?: return
         try {
             val request = call.receive<EmbeddingsRequest>()
             if (request.input.isEmpty()) {
@@ -369,7 +413,8 @@ class EngineHttpServer(
                 return
             }
 
-            val embeddingsResult = inferenceManager.execute(request.model) { adapter ->
+            val embeddingsResult = inferenceManager.execute(request.model, locality) { adapter, placement ->
+                call.response.header(PLACEMENT_HEADER, placement.wire)
                 val embeddingAdapter = adapter as? EmbeddingModelAdapter
                     ?: throw UnsupportedOperationException("Model ${request.model} does not support embeddings")
 
@@ -409,6 +454,7 @@ class EngineHttpServer(
     }
 
     private suspend fun handleDecisions(call: ApplicationCall) {
+        val locality = resolveLocality(call) ?: return
         val parsed = try {
             DecisionWire.parseRequest(call.receive<JsonObject>())
         } catch (e: DecisionRequestException) {
@@ -418,7 +464,8 @@ class EngineHttpServer(
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail("request body must be a JSON object", "invalid_request_error")))
             return
         }
-        val outcome = inferenceManager.execute(parsed.model) { adapter ->
+        val outcome = inferenceManager.execute(parsed.model, locality) { adapter, placement ->
+            call.response.header(PLACEMENT_HEADER, placement.wire)
             val decisionAdapter = adapter as? DecisionModelAdapter
                 ?: throw UnsupportedOperationException("Model ${parsed.model} is not a decision model")
             decisionAdapter.decide(parsed.request).getOrThrow()
@@ -438,10 +485,12 @@ class EngineHttpServer(
     }
 
     private suspend fun handleTranscriptions(call: ApplicationCall) {
+        val locality = resolveLocality(call) ?: return
         try {
             val request = call.receive<TranscriptionRequest>()
             val audioBytes = Base64.getDecoder().decode(request.file)
-            val result = inferenceManager.execute(request.model) { adapter ->
+            val result = inferenceManager.execute(request.model, locality) { adapter, placement ->
+                call.response.header(PLACEMENT_HEADER, placement.wire)
                 // A speech-to-text model (Whisper) transcribes directly. Any other model keeps the older
                 // path of handing the audio to the model as a chat turn (an audio-capable LLM, once one exists).
                 if (adapter is SttModelAdapter) {
@@ -483,6 +532,8 @@ class EngineHttpServer(
     private fun classifyError(error: Throwable?): Pair<HttpStatusCode, ErrorDetail> {
         val message = error?.message ?: "Inference failed"
         return when {
+            error is LocalityViolationException -> HttpStatusCode.Forbidden to
+                ErrorDetail(message, "locality_violation", code = "placement_${error.placement.wire}", param = "locality")
             error is EngineBusyException -> HttpStatusCode.ServiceUnavailable to
                 ErrorDetail("Engine is busy; retry later", "engine_busy", code = "queue_saturated")
             error is EngineShuttingDownException -> HttpStatusCode.ServiceUnavailable to

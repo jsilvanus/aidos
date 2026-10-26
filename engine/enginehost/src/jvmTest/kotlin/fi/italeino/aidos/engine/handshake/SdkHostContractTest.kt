@@ -16,6 +16,7 @@ import fi.italeino.aidos.sdk.client.EngineCapabilities
 import fi.italeino.aidos.sdk.client.EngineHandshakeResult
 import fi.italeino.aidos.sdk.client.EngineHandshakeSource
 import fi.italeino.aidos.sdk.client.EngineModel
+import fi.italeino.aidos.sdk.client.Locality
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
@@ -169,6 +170,20 @@ class SdkHostContractTest {
         store.approveApp(dictator)
         assertTrue(asCaller(dictator).also { c -> c.initialize() }.isAvailable())
 
+        assertNotNull(ask(own))
+    }
+
+    /** RFC-0104 end to end: the real SDK's limit reaches the real host, which advertises that it enforces it. */
+    @Test
+    fun localOnlyClient_isServedLocalAndSeesPlacement() = runBlocking<Unit> {
+        val own = AidosEngineClientFactory.create(
+            InProcessHandshakeSource(tokens, { server.getBoundPort() }, { runtime.handshakeCapabilities() }),
+            locality = Locality.LOCAL_ONLY
+        ).also { opened += it }
+        assertTrue(own.initialize())
+        assertEquals(Locality.LOCAL_ONLY, own.locality)
+        assertTrue(own.supportsEndpoint("locality"))
+        assertEquals("local", own.capabilities().models.single { it.id == "test-model" }.placement)
         assertNotNull(ask(own))
     }
 }
