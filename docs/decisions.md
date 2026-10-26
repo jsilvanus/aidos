@@ -597,6 +597,30 @@ On desktop, D48 already hosts both in one process behind the loopback API; that 
 
 **RFCs:** 0103, 0050, 0055; ARCHITECTURE.md.
 
+### D50 — Inference groups: delegation first, then layer split in supervised llama.cpp processes · `SETTLED`
+
+Aidos Engines near each other may form **inference groups** (RFC-0105, the first slice of
+`docs/aidin.md`). Settled by the owner 2026-10-26:
+
+1. **Split inference runs in child processes**, never in the Engine process: a pinned llama.cpp build
+   with `GGML_RPC=ON`, `llama-server` on the anchor and `ggml-rpc-server` on helpers, supervised by
+   the Engine. `de.kherud:llama` stays for every local model. Reason: the shipped binding has no RPC
+   backend, and upstream aborts the whole process when a helper drops.
+2. **Both trust mechanisms**: pairwise pairing (personal) and admin-issued, expiring group
+   membership certificates with a revocation list (workplace). Node keys are the Engine's
+   model-system identity and are kept separate from agent/installation keys.
+3. **Delegation and fallback before layer split.** Virtual model ids (`aidos:chat`) resolve to an
+   ordered candidate list filtered by locality first.
+4. **Local unless stated**: D47's `local_only` default applies unchanged; a group or peer model is
+   used only for requests that ask for `trusted_cluster`.
+
+With group identity defined, RFC-0105 replaces D47 item 3's interim rule: a trusted peer's `local`
+model, and a split model whose every node the origin itself trusts, count as `cluster`; anything else
+from a peer counts as `remote`. The RFC text is Proposed and awaits review; the open Android FGS type
+(D49) blocks phone hosting, not phases 1–3.
+
+**RFCs:** 0105, 0104, 0103, 0003.
+
 ---
 
 ## Revision history
@@ -614,3 +638,4 @@ On desktop, D48 already hosts both in one process behind the loopback API; that 
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
 | 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |
 | 2026-10-25 | D47 settled: Engine-enforced inference locality (RFC-0104); default local_only. |
+| 2026-10-26 | D50 settled: inference groups (RFC-0105); child-process layer split, pairing and group certificates, delegation first, local unless stated. |
