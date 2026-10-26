@@ -41,7 +41,12 @@ class EngineHttpServer(
      * handshake and so to the app's real state (PENDING / DENIED). Null skips the check; Engine's
      * own in-process token ([TokenManager.ENGINE_SUBJECT]) is never subject to it.
      */
-    private val isSubjectApproved: (suspend (subject: String) -> Boolean)? = null
+    private val isSubjectApproved: (suspend (subject: String) -> Boolean)? = null,
+    /**
+     * Extra routes a host mounts inside the authenticated block (same tokens and approval check),
+     * e.g. the desktop host's the /v1/agent routes. Additive to API v1; null on hosts without any.
+     */
+    private val extraRoutes: (Route.() -> Unit)? = null,
 ) {
     private var server: EmbeddedServer<*, *>? = null
 
@@ -118,6 +123,7 @@ class EngineHttpServer(
                 // is OpenJev's alias for the same handler.
                 post("/v1/systemone") { handleDecisions(call) }
                 post("/v1/decisions") { handleDecisions(call) }
+                extraRoutes?.invoke(this)
             }
         }
     }
