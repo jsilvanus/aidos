@@ -38,7 +38,7 @@ class ContractFreezeTest {
     fun clientInterfaceMethodsAreFrozen() {
         assertEquals(
             listOf(
-                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings",
+                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "getLocality",
                 "initialize", "isAvailable", "request", "streamChatCompletion", "supportsEndpoint", "transcribe"
             ),
             AidosEngineClient::class.java.methods.map { it.name }.filter { !it.contains("$") }.distinct().sorted()
@@ -89,9 +89,20 @@ class ContractFreezeTest {
     @Test
     fun capabilityFieldsAreFrozen() {
         assertEquals(listOf("endpoints", "models"), fields(EngineCapabilities::class.java))
-        assertEquals(listOf("id", "kind", "contextWindow", "quantization"), fields(EngineModel::class.java))
+        assertEquals(listOf("id", "kind", "contextWindow", "quantization", "placement"), fields(EngineModel::class.java))
         // The handshake's capabilitiesJson, which Engine serializes: snake_case keys.
         assertEquals(listOf("endpoints", "models"), fields(CapabilitiesResponse::class.java))
-        assertEquals(listOf("id", "kind", "context_window", "quantization"), fields(ModelInfoResponse::class.java))
+        assertEquals(listOf("id", "kind", "context_window", "quantization", "placement"), fields(ModelInfoResponse::class.java))
+    }
+
+    /** RFC-0104: the locality vocabulary is wire: renaming a value silently turns a limit into an error or nothing. */
+    @Test
+    fun localityVocabularyIsFrozen() {
+        assertEquals("X-Aidos-Locality", LOCALITY_HEADER)
+        assertEquals("locality", LOCALITY_CAPABILITY)
+        assertEquals(
+            listOf("local_only", "trusted_cluster", "any"),
+            Locality.entries.map { it.wire }
+        )
     }
 }

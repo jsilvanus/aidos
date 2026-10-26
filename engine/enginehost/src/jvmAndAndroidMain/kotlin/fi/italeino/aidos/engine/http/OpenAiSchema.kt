@@ -132,6 +132,8 @@ data class ModelCard(
     val quantization: String? = null,
     val installed: Boolean,
     val loaded: Boolean,
+    /** Where this model's requests are served: `local`, `cluster` or `remote` (RFC-0104). Additive within API v1. */
+    val placement: String? = null,
     val metadata: Map<String, String> = emptyMap()
 )
 
@@ -215,5 +217,7 @@ data class ModelInfo(
     val owned_by: String = "aidos-local",
     val kind: String,  // "llm", "embedding", "stt", "tts"
     val context_window: Int? = null,
-    val quantization: String? = null
+    val quantization: String? = null,
+    /** `local`, `cluster` or `remote` (RFC-0104). Additive within API v1; absent from older Engines. */
+    val placement: String? = null
 )

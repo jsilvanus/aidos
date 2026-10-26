@@ -552,7 +552,17 @@ See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_
 **Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator preserves single-source-of-truth ownership while enabling Aidos Desktop Generative UI to assemble interfaces reliably.
 **RFCs:** 0051 (Desktop), 0103.
 
----
+### D47 — Where a request may be served is Engine-enforced "locality", derived fail-closed · `SETTLED`
+
+Every model is served at a placement (`local` < `cluster` < `remote`), derived as the widest of all
+claims; a request, an app and Engine itself each may set a limit (`local_only` < `trusted_cluster`
+< `any`) and the strictest wins. Engine refuses (HTTP 403 `locality_violation`) rather than serving
+wider, and an SDK client with a limit sends nothing to an Engine that does not advertise enforcement.
+Settled by the owner 2026-10-26: (1) limits are layered; (2) a request that states no limit is held
+to **`local_only`** — cluster, remote, a specific provider or any must be explicit; (3) a peer's
+`cluster` placement counts as `remote` for the origin, **for now**: trusted inference groups need a
+group identity, which does not exist yet. Allowing a specific provider (rather than all `remote`)
+is wanted and not built. Details: RFC-0104.
 
 ### D48 — The desktop host serves the agent runtime beside the Engine, over the same loopback API · `PROPOSED`
 
@@ -603,3 +613,4 @@ On desktop, D48 already hosts both in one process behind the loopback API; that 
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
 | 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |
+| 2026-10-25 | D47 settled: Engine-enforced inference locality (RFC-0104); default local_only. |
