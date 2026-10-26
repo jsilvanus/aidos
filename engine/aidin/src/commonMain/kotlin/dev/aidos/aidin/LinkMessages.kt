@@ -19,6 +19,12 @@ sealed interface LinkMessage {
     data class Hello(
         val protocolVersion: Int,
         val certificates: List<WireCertificate> = emptyList(),
+        /**
+         * Only when connecting to pair with (or enrol) a device whose invite was scanned: an HMAC,
+         * keyed by the invite secret, over both public keys. Lets that device accept a link from a
+         * key it does not trust yet, for pairing messages only.
+         */
+        val pairingProof: String? = null,
     ) : LinkMessage
 
     @Serializable
@@ -28,6 +34,32 @@ sealed interface LinkMessage {
     @Serializable
     @SerialName("revocations")
     data class Revocations(val list: WireRevocationList) : LinkMessage
+
+    /**
+     * Pairing link only, first message from the side that scanned the invite: what it wants.
+     * [group] set means "I am the admin of this group and want to enrol you"; null means pairing.
+     * The scanned device shows this before its user confirms anything.
+     */
+    @Serializable
+    @SerialName("pair-offer")
+    data class PairOffer(val group: String? = null) : LinkMessage
+
+    /**
+     * Pairing link only: this side's user compared the six-digit code and confirmed. [scopes] is
+     * what this side grants the other (RFC-0105 pairing default: all). [group] is set when this
+     * side is a group admin enrolling the other side rather than pairing with it.
+     */
+    @Serializable
+    @SerialName("pair-confirm")
+    data class PairConfirm(val scopes: List<String>, val group: String? = null) : LinkMessage
+
+    /** Pairing link only, sent by a group admin after its user confirmed: the new member's certificate. */
+    @Serializable
+    @SerialName("enrolment")
+    data class Enrolment(
+        val certificate: WireCertificate,
+        val revocations: WireRevocationList? = null,
+    ) : LinkMessage
 
     /** Closing on purpose. [reason] is for logs, not for users. */
     @Serializable

@@ -122,3 +122,28 @@ data class PairRecord(
 
     override fun hashCode(): Int = publicKey.contentHashCode()
 }
+
+/**
+ * Proof that a connecting device scanned an invite (RFC-0105 "Pairing"): HMAC-SHA256 keyed by the
+ * invite secret over both public keys, so it cannot be replayed from another key or to another
+ * device. It only opens a pairing link; trust still needs both people to confirm the [Sas] code.
+ */
+object PairingProof {
+    fun of(secret: ByteArray, connectorPublicKey: ByteArray, acceptorPublicKey: ByteArray): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(mac(secret, connectorPublicKey, acceptorPublicKey))
+
+    fun matches(proof: String, secret: ByteArray, connectorPublicKey: ByteArray, acceptorPublicKey: ByteArray): Boolean {
+        val given = try {
+            Base64.getUrlDecoder().decode(proof)
+        } catch (e: IllegalArgumentException) {
+            return false
+        }
+        return java.security.MessageDigest.isEqual(given, mac(secret, connectorPublicKey, acceptorPublicKey))
+    }
+
+    private fun mac(secret: ByteArray, connector: ByteArray, acceptor: ByteArray): ByteArray =
+        javax.crypto.Mac.getInstance("HmacSHA256").run {
+            init(javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"))
+            doFinal(Canonical("aidin-pair-proof-v1").bytes(connector).bytes(acceptor).toByteArray())
+        }
+}
