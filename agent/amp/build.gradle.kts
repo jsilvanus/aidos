@@ -4,6 +4,9 @@ plugins {
 }
 
 kotlin {
+    // Pin the bytecode level like :kernel and the engine modules: without it the class files take the
+    // JDK that runs Gradle (65 on JDK 21) and the engine's JDK 17 test and app JVMs cannot load them.
+    jvmToolchain(17)
     jvm()
 
     sourceSets {

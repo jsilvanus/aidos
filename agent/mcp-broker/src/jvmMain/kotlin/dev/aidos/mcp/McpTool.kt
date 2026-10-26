@@ -10,7 +10,13 @@ import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
+import dev.aidos.mcp.core.McpCallResult
 import dev.aidos.mcp.core.McpClient
+import dev.aidos.mcp.core.McpContent
+import dev.aidos.mcp.core.McpTaskClient
+import dev.aidos.mcp.core.McpTaskStatus
+import dev.aidos.mcp.core.McpToolExecution
+import dev.aidos.mcp.core.awaitTask
 import dev.aidos.mcp.core.McpServerRegistration
 import kotlinx.serialization.json.JsonObject
 
@@ -33,6 +39,14 @@ import kotlinx.serialization.json.JsonObject
 class McpTool(
     private val registration: McpServerRegistration,
     private val client: McpClient,
+    /**
+     * How long to wait for a server-side task before giving up on it. 0 (the default) keeps every
+     * call synchronous. When positive and [client] is an [McpTaskClient] whose server advertised
+     * task-augmented `tools/call`, the call is made as a task and observed (poll with backoff,
+     * woken by notifications); otherwise it is an ordinary call, so a server without Tasks is
+     * unaffected.
+     */
+    private val taskWaitMillis: Long = 0,
 ) : Tool {
 
     override val id: String = registration.serverId
@@ -46,7 +60,7 @@ class McpTool(
         arguments: JsonObject,
     ): ToolCallResult {
         val toolName = operation.removePrefix("${registration.serverId}:")
-        return runCatching { client.callTool(toolName, arguments) }.fold(
+        return runCatching { call(toolName, arguments) }.fold(
             onSuccess = { result ->
                 val content = result.content.map { it.toContentBlock() }
                 ToolCallResult(
@@ -77,6 +91,29 @@ class McpTool(
                 )
             },
         )
+    }
+
+    private suspend fun call(toolName: String, arguments: JsonObject): McpCallResult {
+        val tasks = client as? McpTaskClient
+        if (taskWaitMillis <= 0 || tasks == null) return client.callTool(toolName, arguments)
+        val started = when (val run = tasks.callToolAsTask(toolName, arguments)) {
+            is McpToolExecution.Immediate -> return run.result
+            is McpToolExecution.Started -> run.task
+        }
+        val last = tasks.awaitTask(started.taskId, taskWaitMillis)
+        return when (last.status) {
+            McpTaskStatus.COMPLETED -> tasks.getTaskResult(started.taskId)
+            McpTaskStatus.FAILED -> McpCallResult(listOf(McpContent.Text(last.statusMessage ?: "task ${started.taskId} failed")), isError = true)
+            McpTaskStatus.CANCELLED -> McpCallResult(listOf(McpContent.Text("task ${started.taskId} was cancelled")), isError = true)
+            // Not finished, or it wants input Aidos cannot supply here: ask the server to stop, and
+            // say plainly that the outcome is unknown -- a side-effecting tool may still have run.
+            McpTaskStatus.WORKING, McpTaskStatus.INPUT_REQUIRED -> {
+                val cancel = runCatching { tasks.cancelTask(started.taskId) }.getOrNull()
+                val why = if (last.status == McpTaskStatus.INPUT_REQUIRED) "needs input" else "did not finish within ${taskWaitMillis}ms"
+                val confirmed = if (cancel?.confirmed == true) "Cancellation confirmed." else "Cancellation requested, not confirmed; the outcome is unknown."
+                McpCallResult(listOf(McpContent.Text("task ${started.taskId} $why. $confirmed")), isError = true)
+            }
+        }
     }
 
     override suspend fun preview(

@@ -5,6 +5,29 @@ import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import kotlin.time.Duration.Companion.milliseconds
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.RequestResult
+import io.modelcontextprotocol.kotlin.sdk.types.CancelTaskRequest
+import io.modelcontextprotocol.kotlin.sdk.types.CancelTaskRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.CreateTaskResult
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskPayloadRequest
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskPayloadRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskPayloadResult
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskRequest
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.GetTaskResult
+import io.modelcontextprotocol.kotlin.sdk.types.LoggingMessageNotification
+import io.modelcontextprotocol.kotlin.sdk.types.Method
+import io.modelcontextprotocol.kotlin.sdk.types.ProgressNotification
+import io.modelcontextprotocol.kotlin.sdk.types.TaskMetadata
+import io.modelcontextprotocol.kotlin.sdk.types.TaskStatus
+import io.modelcontextprotocol.kotlin.sdk.types.TaskStatusNotification
+import io.modelcontextprotocol.kotlin.sdk.types.ToolListChangedNotification
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import io.modelcontextprotocol.kotlin.sdk.types.McpException
 import io.modelcontextprotocol.kotlin.sdk.types.RPCError
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
@@ -13,6 +36,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.PaginatedRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -25,9 +49,108 @@ class SdkMcpClient(
     private val client: Client,
     private val transport: Transport,
     private val requestTimeoutMillis: Long = 30_000,
-) : McpClient {
+) : McpClient, McpTaskClient {
 
     private var initialized = false
+
+    private val _notifications = MutableSharedFlow<McpNotification>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val notifications: Flow<McpNotification> = _notifications.asSharedFlow()
+
+    /** Registered before connecting so nothing the server sends right after the handshake is lost. */
+    private fun observeNotifications() {
+        client.setNotificationHandler<ProgressNotification>(Method.Defined.NotificationsProgress) { n ->
+            val p = n.params
+            _notifications.tryEmit(McpNotification.Progress(tokenText(p.progressToken), p.progress, p.total, p.message))
+            CompletableDeferred(Unit)
+        }
+        client.setNotificationHandler<TaskStatusNotification>(Method.Defined.NotificationsTasksStatus) { n ->
+            // A status notification with no params carries nothing to act on; polling covers it.
+            n.params?.let { p ->
+                _notifications.tryEmit(McpNotification.TaskStatus(snapshot(p.taskId, p.status, p.statusMessage, p.pollInterval, p.ttl)))
+            }
+            CompletableDeferred(Unit)
+        }
+        client.setNotificationHandler<ToolListChangedNotification>(Method.Defined.NotificationsToolsListChanged) {
+            _notifications.tryEmit(McpNotification.ToolsListChanged)
+            CompletableDeferred(Unit)
+        }
+        client.setNotificationHandler<LoggingMessageNotification>(Method.Defined.NotificationsMessage) { n ->
+            _notifications.tryEmit(McpNotification.Log(n.params.level.toString(), n.params.logger, n.params.data))
+            CompletableDeferred(Unit)
+        }
+    }
+
+    private fun snapshot(id: String, status: TaskStatus, message: String?, pollInterval: Long?, ttl: Long?) =
+        McpTaskSnapshot(
+            taskId = id,
+            status = when (status) {
+                TaskStatus.Working -> McpTaskStatus.WORKING
+                TaskStatus.InputRequired -> McpTaskStatus.INPUT_REQUIRED
+                TaskStatus.Completed -> McpTaskStatus.COMPLETED
+                TaskStatus.Failed -> McpTaskStatus.FAILED
+                TaskStatus.Cancelled -> McpTaskStatus.CANCELLED
+            },
+            statusMessage = message,
+            pollIntervalMillis = pollInterval,
+            ttlMillis = ttl,
+        )
+
+    private fun tokenText(id: io.modelcontextprotocol.kotlin.sdk.types.RequestId): String = when (id) {
+        is io.modelcontextprotocol.kotlin.sdk.types.RequestId.StringId -> id.value
+        is io.modelcontextprotocol.kotlin.sdk.types.RequestId.NumberId -> id.value.toString()
+    }
+
+    private fun options() = RequestOptions(timeout = requestTimeoutMillis.milliseconds)
+
+    override suspend fun supportsTasks(): Boolean {
+        ensureConnected()
+        return client.serverCapabilities?.tasks?.requests?.tools?.call != null
+    }
+
+    override suspend fun callToolAsTask(name: String, arguments: JsonObject, ttlMillis: Long?): McpToolExecution {
+        if (!supportsTasks()) return McpToolExecution.Immediate(callTool(name, arguments))
+        val request = CallToolRequest(CallToolRequestParams(name = name, arguments = arguments, task = TaskMetadata(ttlMillis)))
+        // The SDK decodes the reply by method: a CreateTaskResult if the server made a task, or a
+        // plain CallToolResult if it chose to answer at once.
+        return when (val reply = client.request<RequestResult>(request, options())) {
+            is CreateTaskResult -> McpToolExecution.Started(reply.task.let { snapshot(it.taskId, it.status, it.statusMessage, it.pollInterval, it.ttl) })
+            is CallToolResult -> McpToolExecution.Immediate(reply.toMcpCallResult(name))
+            else -> error("MCP tool '$name' returned an unexpected reply: ${reply::class.simpleName}")
+        }
+    }
+
+    override suspend fun getTask(taskId: String): McpTaskSnapshot {
+        ensureConnected()
+        val r = client.request<GetTaskResult>(GetTaskRequest(GetTaskRequestParams(taskId)), options())
+        return snapshot(r.taskId, r.status, r.statusMessage, r.pollInterval, r.ttl)
+    }
+
+    override suspend fun getTaskResult(taskId: String): McpCallResult {
+        val status = getTask(taskId).status
+        if (status != McpTaskStatus.COMPLETED) throw McpTaskException("task $taskId is ${status.name.lowercase()}, not completed")
+        return when (val reply = client.request<RequestResult>(GetTaskPayloadRequest(GetTaskPayloadRequestParams(taskId)), options())) {
+            is CallToolResult -> reply.toMcpCallResult("task $taskId")
+            is GetTaskPayloadResult -> Json.decodeFromJsonElement(CallToolResult.serializer(), reply.json).toMcpCallResult("task $taskId")
+            else -> error("task $taskId returned an unexpected payload: ${reply::class.simpleName}")
+        }
+    }
+
+    override suspend fun cancelTask(taskId: String): McpCancelOutcome {
+        ensureConnected()
+        val r = client.request<GetTaskResult>(CancelTaskRequest(CancelTaskRequestParams(taskId)), options())
+        return McpCancelOutcome(snapshot(r.taskId, r.status, r.statusMessage, r.pollInterval, r.ttl))
+    }
+
+    private fun CallToolResult.toMcpCallResult(what: String): McpCallResult =
+        McpCallResult(
+            content = content.map { block ->
+                when (block) {
+                    is TextContent -> McpContent.Text(block.text)
+                    else -> error("MCP tool '$what' returned unsupported content block: ${block::class.simpleName}")
+                }
+            },
+            isError = isError == true,
+        )
 
     /**
      * Connects on first use, so callers cannot get an `IllegalStateException` for forgetting an
@@ -39,6 +162,7 @@ class SdkMcpClient(
      */
     private suspend fun ensureConnected() {
         if (!initialized) {
+            observeNotifications()
             client.connect(transport)
             initialized = true
         }
