@@ -14,7 +14,7 @@ class StdioMcpClient(
     args: List<String> = emptyList(),
     extraEnv: Map<String, String> = emptyMap(),
     requestTimeoutMillis: Long = 30_000,
-) : McpClient {
+) : McpClient, McpTaskClient {
     private val process = ProcessBuilder(listOf(command) + args).apply {
         redirectErrorStream(false)
         environment().clear()
@@ -35,6 +35,14 @@ class StdioMcpClient(
     override suspend fun listTools(): List<McpToolSpec> = delegate.listTools()
     override suspend fun callTool(name: String, arguments: JsonObject): McpCallResult =
         delegate.callTool(name, arguments)
+
+    override val notifications = delegate.notifications
+    override suspend fun supportsTasks(): Boolean = delegate.supportsTasks()
+    override suspend fun callToolAsTask(name: String, arguments: JsonObject, ttlMillis: Long?): McpToolExecution =
+        delegate.callToolAsTask(name, arguments, ttlMillis)
+    override suspend fun getTask(taskId: String): McpTaskSnapshot = delegate.getTask(taskId)
+    override suspend fun getTaskResult(taskId: String): McpCallResult = delegate.getTaskResult(taskId)
+    override suspend fun cancelTask(taskId: String): McpCancelOutcome = delegate.cancelTask(taskId)
 
     override fun close() {
         delegate.close()
