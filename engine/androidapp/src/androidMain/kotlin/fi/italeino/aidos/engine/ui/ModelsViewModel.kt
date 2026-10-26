@@ -662,7 +662,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
             fitVerdict = verdict.toUiVerdict(),
 
-            isRunnable = format == "gguf" || (format == "onnx" && (kind == dev.aidos.kernel.ModelKind.DECISION || kind == dev.aidos.kernel.ModelKind.STT || kind == dev.aidos.kernel.ModelKind.VISION)),
+            isRunnable = dev.aidos.models.PackageInstall.isRunnable(format, kind),
 
         )
 

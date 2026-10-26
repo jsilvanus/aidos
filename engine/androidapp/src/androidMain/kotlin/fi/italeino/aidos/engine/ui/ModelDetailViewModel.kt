@@ -6,8 +6,6 @@ import dev.aidos.cookbook.CookbookVerdict
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.models.DefaultModelInstallerWorkflow
 import dev.aidos.models.ModelDownloadRequest
-import dev.aidos.models.ModelPackageDownloadRequest
-import dev.aidos.models.PackageFileRequest
 import dev.aidos.decisions.LayaPackage
 import dev.aidos.stt.WhisperPackage
 import dev.aidos.vision.VisionPackage
@@ -180,7 +178,7 @@ class ModelDetailViewModel : ViewModel() {
                 val remote = hf.getModel(model.id).getOrThrow()
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
-                val onnxPackage = remote.packages.firstOrNull { it.isDecisionPackage } ?: remote.packages.firstOrNull { it.isSpeechPackage }
+                val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
                 if (remote.quantizations.isEmpty() && onnxPackage != null) {
                     installOnnxPackage(model.id, safeModelId, onnxPackage)
                     return@launch
@@ -287,20 +285,8 @@ class ModelDetailViewModel : ViewModel() {
         val downloader = service.downloadManager ?: return
         val catalog = service.catalogManager ?: return
         val modelsDir = File(service.filesDir, "models").apply { mkdirs() }
-        val ordered = pkg.files.sortedBy { it.path.endsWith(".onnx") }
         val result = DefaultModelInstallerWorkflow(downloader, catalog).installPackage(
-            ModelPackageDownloadRequest(
-                modelId = modelId,
-                files = ordered.map { PackageFileRequest(it.path.substringAfterLast('/'), pkg.downloadUrl(it), it.sha256Digest) },
-                destinationDir = File(modelsDir, safeId).absolutePath,
-                kind = when {
-                    pkg.isSpeechPackage -> dev.aidos.kernel.ModelKind.STT
-                    pkg.isVisionPackage -> dev.aidos.kernel.ModelKind.VISION
-                    else -> dev.aidos.kernel.ModelKind.DECISION
-                },
-                format = "onnx",
-                backend = "onnx-runtime",
-            )
+            dev.aidos.models.PackageInstall.toRequest(modelId, pkg, File(modelsDir, safeId).absolutePath)
         ) { event ->
             when (event) {
                 is dev.aidos.models.InstallerEvent.DownloadProgress -> {
@@ -481,7 +467,7 @@ class ModelDetailViewModel : ViewModel() {
                 ?: if (provider == "huggingface") "https://huggingface.co/$id" else null,
             sizeMB = ((sizeBytes ?: 0L) / (1024L * 1024L)).toInt(),
             contextFitTable = fitRows,
-            isRunnable = format == "gguf" || (format == "onnx" && (kind == dev.aidos.kernel.ModelKind.DECISION || kind == dev.aidos.kernel.ModelKind.STT || kind == dev.aidos.kernel.ModelKind.VISION)),
+            isRunnable = dev.aidos.models.PackageInstall.isRunnable(format, kind),
             format = format,
             deviceTotalRamMB = (device.totalRamBytes / (1024L * 1024L)).toInt(),
             deviceFreeRamMB = (device.availableRamBytes / (1024L * 1024L)).toInt(),
