@@ -54,6 +54,11 @@ class EngineHttpServer(
      * combine to the strictest; nothing a client sends can loosen the other two.
      */
     private val engineLocality: () -> Locality = { Locality.ANY },
+    /**
+     * What a request that states no [LOCALITY_HEADER] is held to (D47, decided by the owner
+     * 2026-10-26): local only. Going wider is something a caller asks for in words, per request.
+     */
+    private val defaultLocality: () -> Locality = { Locality.LOCAL_ONLY },
     /** Per-app limit (the user's choice in Connected Apps), or null for none. Engine's own subject is exempt. */
     private val subjectLocality: (suspend (subject: String) -> Locality?)? = null,
     /**
@@ -144,7 +149,7 @@ class EngineHttpServer(
 
     /**
      * The [Locality] this request runs under (RFC-0104): the strictest of the client's
-     * [LOCALITY_HEADER], the app's limit and Engine's. An unreadable header is a 400 (null result),
+     * [LOCALITY_HEADER] (or [defaultLocality] when it is absent), the app's limit and Engine's. An unreadable header is a 400 (null result),
      * never a silent "any": a client that asked for a limit must not lose it to a typo.
      */
     private suspend fun resolveLocality(call: ApplicationCall): Locality? {
@@ -156,7 +161,7 @@ class EngineHttpServer(
                 )
                 return null
             }
-        } ?: Locality.ANY
+        } ?: defaultLocality()
         val subject = call.principal<UserIdPrincipal>()?.name
         val forSubject = if (subject == null || subject == TokenManager.ENGINE_SUBJECT) null else subjectLocality?.invoke(subject)
         return listOfNotNull(requested, forSubject, engineLocality()).reduce(Locality::strictest)

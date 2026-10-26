@@ -194,8 +194,40 @@ class LocalityEnforcementTest {
     }
 
     @Test
-    fun noHeader_behavesAsBeforeAndStillReportsPlacement() = testApplication {
+    fun noHeader_isHeldToLocalOnly() = testApplication {
+        val runtime = PlacementRuntime(listOf(remote, local))
+        val (server, tokens) = server(runtime)
+        application { server.installInto(this) }
+        val token = tokens.generateNewToken().token
+        suspend fun ask(model: String) = client.post("/v1/chat/completions") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(chatBody(model))
+        }
+        assertEquals(HttpStatusCode.Forbidden, ask("remote-model").status)
+        val ok = ask("local-model")
+        assertEquals(HttpStatusCode.OK, ok.status)
+        assertEquals("local", ok.headers[PLACEMENT_HEADER])
+    }
+
+    @Test
+    fun explicitAny_reachesRemoteAndReportsIt() = testApplication {
         val (server, tokens) = server(PlacementRuntime(listOf(remote)))
+        application { server.installInto(this) }
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(tokens.generateNewToken().token)
+            header(LOCALITY_HEADER, "any")
+            contentType(ContentType.Application.Json)
+            setBody(chatBody("remote-model"))
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("remote", response.headers[PLACEMENT_HEADER])
+    }
+
+    @Test
+    fun hostCanChangeTheDefault() = testApplication {
+        val tokens = TokenManager()
+        val server = EngineHttpServer(tokens, PlacementRuntime(listOf(remote)), defaultLocality = { Locality.ANY })
         application { server.installInto(this) }
         val response = client.post("/v1/chat/completions") {
             bearerAuth(tokens.generateNewToken().token)
@@ -203,7 +235,6 @@ class LocalityEnforcementTest {
             setBody(chatBody("remote-model"))
         }
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("remote", response.headers[PLACEMENT_HEADER])
     }
 
     @Test
@@ -243,6 +274,7 @@ class LocalityEnforcementTest {
         val free = tokens.generateNewToken(subject = "org.example.other").token
         suspend fun ask(token: String) = client.post("/v1/chat/completions") {
             bearerAuth(token)
+            header(LOCALITY_HEADER, "any")
             contentType(ContentType.Application.Json)
             setBody(chatBody("remote-model"))
         }

@@ -87,7 +87,8 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   header `X-Aidos-Placement: local|cluster|remote`; optional `placement` on `/v1/models` cards and on
   handshake models (`EngineModel.placement`); refusal is HTTP 403 `error.type = "locality_violation"`;
   handshake `endpoints` contains `"locality"` when Engine enforces the header. SDK: `AidosEngineClient.locality`
-  (interface property with a default), `Locality`, and an optional `locality` argument on both factories.
+  (nullable interface property with a default), `Locality`, and an optional `locality` argument on both factories.
+  **A request without the header is held to `local_only` (D47).** Going wider is explicit: `trusted_cluster` or `any`.
   A client with a limit sends nothing to an Engine that does not advertise `"locality"`. Values in the
   `Locality` enum and the header/capability names are pinned in `ContractFreezeTest`.
 

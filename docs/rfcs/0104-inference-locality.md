@@ -1,7 +1,7 @@
 # RFC-0104: Inference Locality — Where a Request's Data May Go
 
-Status: Proposed 2026-10-25 (the Engine-side mechanism and SDK option below are implemented;
-decisions D47 are the owner's to settle)
+Status: Proposed 2026-10-25; layering, default and peer mapping settled by the owner 2026-10-26 (D47).
+The Engine-side mechanism and SDK option below are implemented.
 
 ## Abstract
 
@@ -50,12 +50,16 @@ every claim say so.
 ### Locality (what a request allows)
 
 `local_only` < `trusted_cluster` < `any` — the widest placement the caller accepts. A request is
-served only if its placement is permitted. Absent everywhere means `any`, which keeps today's
-behaviour for apps that say nothing (decision D47.2 revisits the default).
+served only if its placement is permitted. **A request that states no limit is held to
+`local_only`** (D47, owner's decision): going to a cluster or a remote provider is always something
+the caller asks for explicitly, per request, and can still be capped by the app and Engine limits
+below. A host may change the default (`EngineHttpServer.defaultLocality`). Allowing one *specific*
+provider rather than all of `remote` is wanted by the owner and not built: it needs provider ids on
+the request and in the app policy.
 
 Three sources combine to the **strictest**; none can loosen another:
 
-1. the request (`X-Aidos-Locality` header; the SDK sets it from its client option);
+1. the request (`X-Aidos-Locality` header, or the default above when absent; the SDK sets it from its client option, and sends nothing when the option is null);
 2. the app (the user's choice in Connected Apps; Engine's own in-process subject is exempt);
 3. Engine-wide (a setting, read per request).
 
@@ -93,7 +97,7 @@ means "unknown", and clients treat anything but `local` as leaving the device.
 
 ### SDK
 
-`AidosEngineClient.locality` (default `ANY`); `AidosEngineClientFactory.create(…, locality)` and
+`AidosEngineClient.locality` (nullable, default null: nothing is sent, Engine applies `local_only`); `AidosEngineClientFactory.create(…, locality)` and
 `AndroidAidosEngineClientFactory.createClient(context, …, locality)`. One client per limit — a
 handshake is cheap; a Dictator that dictates locally and offers an optional cloud rewrite holds two.
 

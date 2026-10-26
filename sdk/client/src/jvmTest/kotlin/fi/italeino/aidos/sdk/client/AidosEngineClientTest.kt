@@ -252,7 +252,7 @@ class AidosEngineClientTest {
 
     // --- RFC-0104: locality ---------------------------------------------------------------------
 
-    private fun localityClient(locality: Locality, enforcedByEngine: Boolean) = EngineClientImpl(locality = locality).apply {
+    private fun localityClient(locality: Locality?, enforcedByEngine: Boolean) = EngineClientImpl(locality = locality).apply {
         setHandshakeResult(
             approvedResponse(port = server.port).let { base ->
                 val endpoints = if (enforcedByEngine) base.capabilities.endpoints + LOCALITY_CAPABILITY else base.capabilities.endpoints
@@ -291,11 +291,21 @@ class AidosEngineClientTest {
     @Test
     fun noLocality_sendsNoHeaderAndNeedsNoCapability() = runTest {
         server.enqueue(MockResponse().setBody("{}"))
-        val client = localityClient(Locality.ANY, enforcedByEngine = false)
+        val client = localityClient(null, enforcedByEngine = false)
 
         client.request("chat/completions")
 
         assertEquals(null, server.takeRequest().getHeader(LOCALITY_HEADER))
+    }
+
+    @Test
+    fun explicitAny_isSentSoEngineDoesNotApplyItsLocalOnlyDefault() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
+        val client = localityClient(Locality.ANY, enforcedByEngine = false)
+
+        client.request("chat/completions")
+
+        assertEquals("any", server.takeRequest().getHeader(LOCALITY_HEADER))
     }
 
     @Test

@@ -96,12 +96,13 @@ interface AidosEngineClient {
     suspend fun decide(request: DecisionRequest): DecisionResponse? = null
 
     /**
-     * The limit on where inference may run that this client requires of Engine (RFC-0104). Not
-     * [Locality.ANY] means every request carries it and Engine refuses a model served wider
-     * (HTTP 403, `locality_violation`, surfaced here as a null result). The default is for
-     * implementers that cannot express a limit; they are honest about it by reporting [Locality.ANY].
+     * What this client tells Engine about where inference may run (RFC-0104), or null for "nothing":
+     * Engine then applies its own default, which is [Locality.LOCAL_ONLY] (D47). A value is sent
+     * with every request and Engine refuses a model served wider (HTTP 403, `locality_violation`,
+     * surfaced here as a null result). Going wider than local is therefore always an explicit
+     * choice of the caller: set [Locality.TRUSTED_CLUSTER] or [Locality.ANY].
      */
-    val locality: Locality get() = Locality.ANY
+    val locality: Locality? get() = null
 
     /** Release resources and forget the current handshake. */
     fun close()
@@ -110,7 +111,8 @@ interface AidosEngineClient {
 /**
  * The widest place a request's data may go (RFC-0104), sent as `X-Aidos-Locality`. [LOCAL_ONLY]:
  * Engine's own process on this device. [TRUSTED_CLUSTER]: also devices in an authorised Aidos group.
- * [ANY]: also third-party providers. Additive within API v1 (sdk/CONTRACT.md).
+ * [ANY]: also third-party providers. A client that sends none is held to [LOCAL_ONLY] by Engine
+ * (D47). Additive within API v1 (sdk/CONTRACT.md).
  */
 enum class Locality(val wire: String) {
     LOCAL_ONLY("local_only"),
@@ -464,10 +466,10 @@ internal class EngineClientImpl(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .readTimeout(java.time.Duration.ofMinutes(5))
         .build(),
-    // RFC-0104: the limit this client requires. Fail closed: if Engine does not advertise that it
-    // enforces limits, requests are not sent at all, because an Engine that ignores the header
-    // would serve them anywhere it likes.
-    override val locality: Locality = Locality.ANY
+    // RFC-0104: what this client tells Engine. Fail closed for a limit narrower than ANY: if Engine
+    // does not advertise that it enforces limits, requests are not sent at all, because an Engine
+    // that ignores the header would serve them anywhere it likes.
+    override val locality: Locality? = null
 ) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
@@ -581,12 +583,12 @@ internal class EngineClientImpl(
         }
     }
 
-    /** True when no limit is required, or Engine says it enforces them. */
+    /** True when this client requires no limit, or Engine says it enforces them. */
     private fun localityEnforceable(handshake: HandshakeResponse): Boolean =
-        locality == Locality.ANY || LOCALITY_CAPABILITY in handshake.capabilities.endpoints
+        locality == null || locality == Locality.ANY || LOCALITY_CAPABILITY in handshake.capabilities.endpoints
 
     private fun Request.Builder.withLocality(): Request.Builder =
-        if (locality == Locality.ANY) this else header(LOCALITY_HEADER, locality.wire)
+        locality?.let { header(LOCALITY_HEADER, it.wire) } ?: this
 
     override suspend fun supportsEndpoint(endpoint: String): Boolean =
         capabilities().endpoints.contains(endpoint)
@@ -727,7 +729,7 @@ object AidosEngineClientFactory {
     fun create(
         source: EngineHandshakeSource,
         requiredApiVersion: Int = 1,
-        locality: Locality = Locality.ANY
+        locality: Locality? = null
     ): AidosEngineClient =
         EngineClientImpl(
             handshakePerformer = { source.handshake().toOutcome() },
