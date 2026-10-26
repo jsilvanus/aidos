@@ -1,5 +1,6 @@
 package dev.aidos.providers
 
+import dev.aidos.amp.HttpTransport
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.StopReason

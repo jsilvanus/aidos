@@ -1,5 +1,7 @@
 package dev.aidos.providers
 
+import dev.aidos.amp.DefaultJavaHttpTransport
+import dev.aidos.amp.HttpTransport
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind

@@ -15,6 +15,7 @@ kotlin {
 
 dependencies {
     api(project(":kernel"))
+    api(project(":amp"))
     implementation(project(":modelruntime"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
