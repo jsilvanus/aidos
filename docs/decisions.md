@@ -570,6 +570,25 @@ Tools belong to the calling app. A run that needs one returns `status: "tool_cal
 
 ---
 
+### D49 — On Android, Engine and Agent Runtime share one host app and one foreground service; desktop stays joined · `PROPOSED`
+
+On Android the always-on host is **one app, initially Aidos Engine**, running **one coordinating foreground service** that hosts Engine Core and the Agent Runtime as separate modules. The second always-on app (Aidos Agent as a persistent host) is dropped as a starting point. Other apps remain clients: the Aidos SDK handshake still gives them inference, and an inference grant is **not** an agent or tool grant.
+
+On desktop, D48 already hosts both in one process behind the loopback API; that stays. Whether the agent runtime later moves into a separate Aidos Desktop app, with the Engine standing alone, is decided when that app is created.
+
+**Why:** two always-on apps mean two permanent notifications, two lifecycles to start, recover and explain, and two things the user can dismiss (Juha, 2026-10-26: "because of the foreground notification issue"). The Agent is postponed, so merging now costs nothing. The cost is real: RFC-0103's separate-app design gave an OS-enforced boundary between inference and agent authority; in one process that boundary is code. Hence the module split, explicit authorization at the module/API boundary, and tests that an inference-only client cannot start agent jobs or tools (RFC-0103-CHANGE-RATIONALE.md).
+
+**Open (must be settled before the Android host ships):**
+- Foreground service type. The Engine declares `FOREGROUND_SERVICE_TYPE_DATA_SYNC`; recent Android versions time that type out. Verify against the target API level and pick the type (or a different keep-alive design) accordingly; do not promise indefinite background execution.
+- Process death and recovery tests for interrupted agent jobs; inference-only-client authorization tests.
+- Whether the host app keeps the name and package `fi.italeino.aidos.engine`, or the pair is renamed.
+
+**Not decided here:** the signed invocation assertion and model attestation (IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md) stay proposals; Binder caller identity plus package/signature checks are enough for the first cross-app slice.
+
+**RFCs:** 0103, 0050, 0055; ARCHITECTURE.md.
+
+---
+
 ## Revision history
 
 | Date | Change |
@@ -583,3 +602,4 @@ Tools belong to the calling app. A run that needs one returns `status: "tool_cal
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
+| 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |

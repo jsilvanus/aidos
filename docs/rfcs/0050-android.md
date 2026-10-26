@@ -128,6 +128,13 @@ service is additionally required just to keep the app alive while awaiting Engin
 the open question RFC-0006's 2026-08-14 amendment raises; this sentence should be revisited once
 that's settled.)*
 
+**Amendment 2026-10-26 (D49, proposed):** the Agent Runtime is no longer assumed to live in a separate
+Aidos Agent app with its own foreground service. On Android it is hosted by the same app and the same
+foreground service as Engine Core, as a separate module behind its own contracts and authorization
+(RFC-0103 amendment). The "one frontend, in-process" description above still holds for the runtime's
+relationship to its UI; what changes is which app's service keeps it alive. The foreground service
+type must be verified for the target API level before background execution is promised (D49, open).
+
 ### Background execution
 
 This is where the previous version was wrong in a way worth stating precisely, because it

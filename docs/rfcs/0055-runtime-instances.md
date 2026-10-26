@@ -67,6 +67,12 @@ this note exists so a reader of this table alone, without also having read RFC-0
 by "MOBILE has exactly one frontend by construction" into thinking that's still true of the
 platform rather than of Aidos Agent specifically.
 
+**Amendment 2026-10-26 (D49, proposed):** on MOBILE the Agent Runtime is hosted in the same app and
+foreground service as Engine Core, as a separate module; the MOBILE row's in-process, one-frontend
+shape is unchanged for the runtime itself. On DESKTOP the Engine daemon already serves the agent
+runtime under `/v1/agent` (D48); whether it later moves to a separate Aidos Desktop app is decided when
+that app is created.
+
 ### Project locking
 
 A project is owned by at most one runtime instance at a time.
