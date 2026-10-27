@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
  * device by exchanging an invite, compare the six-digit code, and see linked peers. Peers are only
  * linked and tracked in this phase; nothing is served to them yet.
  *
- * Invites are shown as text to copy (no QR code on desktop yet); the other device pastes it.
+ * Invites are shown as a QR code (for a phone to scan) and as text (for another desktop to paste).
  */
 @Composable
 fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
@@ -168,14 +168,17 @@ private fun InviteSection(node: AidinNode, adminGroups: List<Pair<dev.aidos.aidi
 
     Text("Connect a device", fontWeight = FontWeight.SemiBold)
     Text(
-        "To pair or to be added to a group, show an invite here and paste it on the other device. " +
+        "To pair or to be added to a group, show an invite here and scan or paste it on the other device. " +
             "It works once and expires in five minutes.",
         fontSize = 12.sp,
     )
     OutlinedButton(onClick = { act { shown = node.createInvite(DesktopAidin.lanAddresses().ifEmpty { listOf("127.0.0.1") }).toUri() } }) {
         Text("Show invite")
     }
-    shown?.let { SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp) } }
+    shown?.let {
+        fi.italeino.aidos.engine.ui.QrCode(it)
+        SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp) }
+    }
 
     OutlinedTextField(pasted, { pasted = it }, label = { Text("Paste another device's invite") }, modifier = Modifier.fillMaxWidth())
     val invite = remember(pasted) { PairingInvite.parse(pasted.trim()) }
