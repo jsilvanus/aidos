@@ -16,6 +16,7 @@ kotlin {
                 // with the desktop debug app.
                 implementation(project(":enginehost"))
                 implementation(project(":engineui"))
+                implementation(project(":aidin"))
                 implementation(project(":modelruntime"))
                 implementation(project(":cookbook"))
                 implementation(project(":huggingface"))

@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.navigation.NavHostController
@@ -10,6 +11,8 @@ import androidx.navigation.navDeepLink
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.inference.InferenceTester
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
+import fi.italeino.aidos.engine.ui.GroupsScreen
+import fi.italeino.aidos.engine.ui.PendingInvite
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelDetailScreen
 import fi.italeino.aidos.engine.ui.ModelsScreen
@@ -95,5 +98,16 @@ fun EngineNavHost(
         composable(EngineRoute.Settings.route) {
             SettingsScreen()
         }
+
+        composable(EngineRoute.Groups.route) {
+            GroupsScreen()
+        }
+    }
+
+    // An opened `aidin:` invite link goes to the Groups screen, which consumes it. After NavHost,
+    // so the graph is set before navigating.
+    val pendingInvite by PendingInvite.value.collectAsState()
+    LaunchedEffect(pendingInvite) {
+        if (pendingInvite != null) navController.navigate(EngineRoute.Groups.route) { launchSingleTop = true }
     }
 }

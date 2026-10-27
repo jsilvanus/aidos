@@ -17,6 +17,10 @@
 
     <!-- Core permissions for model loading and inference -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Device groups (RFC-0105): mDNS discovery on the local network through NsdManager. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
@@ -43,6 +47,7 @@
         <activity
             android:name="fi.italeino.aidos.engine.MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.App.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -57,6 +62,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="aidosengine" android:host="model" />
+            </intent-filter>
+
+            <!-- Device-group invites (RFC-0105): an `aidin:pair?...` link, e.g. from a QR code
+                 scanned with the camera, opens the Groups screen with the invite filled in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aidin" />
             </intent-filter>
         </activity>
 

@@ -29,6 +29,7 @@ kotlin {
             dependsOn(commonMain.get())
             dependencies {
                 api(project(":enginehost"))
+                api(project(":aidin"))
                 api("org.jetbrains.compose.runtime:runtime:$composeMultiplatformVersion")
                 api("org.jetbrains.compose.foundation:foundation:$composeMultiplatformVersion")
                 api("org.jetbrains.compose.material3:material3:$composeMultiplatformVersion")

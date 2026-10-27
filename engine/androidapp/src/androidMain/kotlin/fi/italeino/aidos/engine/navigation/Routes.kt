@@ -27,4 +27,5 @@ sealed class EngineRoute(val route: String) {
     data object Models : EngineRoute("models")
     data object ConnectedApps : EngineRoute("connected_apps")
     data object Settings : EngineRoute("settings")
+    data object Groups : EngineRoute("groups")
 }

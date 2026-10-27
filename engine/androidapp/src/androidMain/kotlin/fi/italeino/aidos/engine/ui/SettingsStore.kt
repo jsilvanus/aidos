@@ -11,6 +11,7 @@ private const val KEY_PREFERRED_CONTEXT = "preferred_context_length"
 private const val KEY_RAM_BASELINE_USED_MB = "ram_baseline_used_mb"
 private const val KEY_HF_TOKEN = "hf_token"
 private const val KEY_HF_TOKEN_VALIDATED_MS = "hf_token_validated_ms"
+private const val KEY_GROUP_SHARING = "group_sharing_enabled"
 
 enum class ProviderConfigStatus {
     ENABLED,
@@ -35,6 +36,14 @@ data class ProviderDetail(
 )
 
 object SettingsStore {
+    /** Device groups (RFC-0105): discover and link to other Engines on this network. Off by default. */
+    fun isGroupSharingEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_GROUP_SHARING, false)
+
+    fun setGroupSharingEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_GROUP_SHARING, enabled).apply()
+    }
+
     /** Hugging Face API access token (RFC-0103 Phase D/E). */
     fun getHfToken(context: Context): String? {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

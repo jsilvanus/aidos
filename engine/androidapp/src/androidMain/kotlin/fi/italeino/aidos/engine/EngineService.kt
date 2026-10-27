@@ -53,6 +53,8 @@ import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.sdk.client.AidosEngineClient
 import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import kotlinx.coroutines.CompletableDeferred
+import dev.aidos.aidin.AidinNode
+import dev.aidos.aidin.AndroidAidin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -83,6 +85,14 @@ class EngineService : LifecycleService() {
 
         private val _state = MutableStateFlow(EngineState.STARTING)
         val state: StateFlow<EngineState> = _state.asStateFlow()
+
+        private val _aidin = MutableStateFlow<AidinNode?>(null)
+        /** The running device-group node (RFC-0105), or null when sharing is off or the Engine is down. */
+        val aidin: StateFlow<AidinNode?> = _aidin.asStateFlow()
+
+        private val _aidinError = MutableStateFlow<String?>(null)
+        /** Why device groups did not start; the Engine itself still runs. */
+        val aidinError: StateFlow<String?> = _aidinError.asStateFlow()
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -259,6 +269,7 @@ class EngineService : LifecycleService() {
                 _isRunning = true
                 _state.value = EngineState.READY
                 updateNotification("Engine running on port $boundPort")
+                if (SettingsStore.isGroupSharingEnabled(this@EngineService)) startAidin()
             } catch (e: Exception) {
                 boundPortReady.completeExceptionally(e)
                 runtimeReady.completeExceptionally(e)
@@ -266,6 +277,44 @@ class EngineService : LifecycleService() {
                 _state.value = EngineState.FAILED
                 updateNotification("Engine failed: Unable to start HTTP server or model runtime")
             }
+        }
+    }
+
+    /** Phase 1 only links and tracks peers; nothing is served to them yet (RFC-0105 phases 2-3). */
+    @Synchronized
+    private fun startAidin() {
+        if (_aidin.value != null) return
+        _aidinError.value = null
+        try {
+            val node = AndroidAidin.create(this, serviceScope, engineVersion = "android")
+            try {
+                // A fixed port lets paired peers find this phone after a restart; fall back if taken.
+                try {
+                    node.start(port = AndroidAidin.DEFAULT_PORT)
+                } catch (e: java.io.IOException) {
+                    node.start(port = 0)
+                }
+                _aidin.value = node
+            } catch (e: Exception) {
+                runCatching { node.stop() }
+                throw e
+            }
+        } catch (e: Exception) {
+            // TLS 1.3, which the peer link requires, needs Android 10 or newer.
+            _aidinError.value = e.message ?: e::class.simpleName
+        }
+    }
+
+    @Synchronized
+    private fun stopAidin() {
+        _aidin.value?.let { runCatching { it.stop() } }
+        _aidin.value = null
+    }
+
+    /** Turn device groups on or off while the Engine runs; at start the saved setting decides. */
+    fun setGroupSharing(enabled: Boolean) {
+        serviceScope.launch {
+            if (enabled && _isRunning) startAidin() else if (!enabled) stopAidin()
         }
     }
 
@@ -305,6 +354,7 @@ class EngineService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        stopAidin()
         runBlocking {
             withTimeoutOrNull(3_000L) {
                 try {
