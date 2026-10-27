@@ -14,3 +14,15 @@ plugins {
     id("com.android.library") version "8.5.2" apply false
     id("com.android.application") version "8.5.2" apply false
 }
+
+// RFC-0022: de.kherud:llama extracts its native library into `de.kherud.llama.tmpdir` (default
+// java.io.tmpdir) and, on load, deletes libraries it takes for stale leftovers. Test JVMs of
+// different modules run in parallel, so one could delete the library another was loading
+// (ExceptionInInitializerError at LlamaLoader). Give every test task its own directory.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        val dir = layout.buildDirectory.dir("tmp/$name/llama-native")
+        doFirst { dir.get().asFile.mkdirs() }
+        systemProperty("de.kherud.llama.tmpdir", dir.get().asFile.absolutePath)
+    }
+}
