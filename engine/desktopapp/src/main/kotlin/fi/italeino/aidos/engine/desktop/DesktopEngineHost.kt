@@ -12,6 +12,8 @@ import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
+import dev.aidos.aidin.AidinNode
+import dev.aidos.aidin.DesktopAidin
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.providers.ProviderBackend
@@ -80,6 +82,13 @@ class DesktopEngineHost(
     private val serverPort: () -> Int = { 18080 },
     /** Path to write active connection info (port, token, etc.). Null skips discovery write. */
     private val discoveryFile: File? = DesktopPaths.discoveryFile,
+    /** Whether inference groups (RFC-0105) run with the Engine; read at each [start]. */
+    private val groupSharing: () -> Boolean = { false },
+    /** Builds the group node; tests replace it to avoid real mDNS and fixed ports. */
+    private val aidinFactory: (CoroutineScope) -> AidinNode = { scope ->
+        DesktopAidin.create(File(stateDir, "aidin"), scope, engineVersion = "desktop")
+    },
+    private val aidinPort: Int = DesktopAidin.DEFAULT_PORT,
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -94,6 +103,14 @@ class DesktopEngineHost(
     private val _lastError = MutableStateFlow<String?>(null)
     /** Why the last start failed, shown in the window; Android only has the notification. */
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    private val _aidin = MutableStateFlow<AidinNode?>(null)
+    /** The running group node, or null when group sharing is off or the Engine is stopped. */
+    val aidin: StateFlow<AidinNode?> = _aidin.asStateFlow()
+
+    private val _aidinError = MutableStateFlow<String?>(null)
+    /** Why group sharing did not start; the Engine itself still runs. */
+    val aidinError: StateFlow<String?> = _aidinError.asStateFlow()
 
     private val lifecycle = Mutex()
 
@@ -201,11 +218,47 @@ class DesktopEngineHost(
             _state.value = EngineState.READY
 
             writeDiscoveryFile(port, localTokenInfo.token)
+            if (groupSharing()) startAidin(scope)
         } catch (e: Exception) {
             _lastError.value = e.message ?: e::class.simpleName
             _state.value = EngineState.FAILED
             removeDiscoveryFile()
         }
+    }
+
+    /** Phase 1 only links and tracks peers; nothing is served to them yet (RFC-0105 phases 2-3). */
+    private fun startAidin(scope: CoroutineScope) {
+        _aidinError.value = null
+        val node = try {
+            aidinFactory(scope)
+        } catch (e: Exception) {
+            _aidinError.value = e.message ?: e::class.simpleName
+            return
+        }
+        try {
+            // A fixed port lets paired peers find us after a restart; fall back if it is taken.
+            try {
+                node.start(port = aidinPort)
+            } catch (e: java.io.IOException) {
+                node.start(port = 0)
+            }
+            _aidin.value = node
+        } catch (e: Exception) {
+            runCatching { node.stop() }
+            _aidinError.value = e.message ?: e::class.simpleName
+        }
+    }
+
+    /** Turn group sharing on or off while the Engine runs; when stopped, [start] reads [groupSharing]. */
+    suspend fun setGroupSharing(enabled: Boolean) = lifecycle.withLock {
+        val scope = agentScope ?: return@withLock
+        if (enabled && _aidin.value == null) startAidin(scope)
+        if (!enabled) stopAidin()
+    }
+
+    private fun stopAidin() {
+        _aidin.value?.let { runCatching { it.stop() } }
+        _aidin.value = null
     }
 
     private fun writeDiscoveryFile(port: Int, token: String) {
@@ -262,6 +315,7 @@ class DesktopEngineHost(
         val server = httpServer
         val runtime = modelRuntime
         removeDiscoveryFile()
+        stopAidin()
         agentScope?.cancel()
         agentScope = null
         try {

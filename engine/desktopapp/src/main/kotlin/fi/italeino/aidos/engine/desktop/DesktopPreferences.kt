@@ -23,6 +23,11 @@ data class DesktopPreferencesData(
     val serverPort: Int = 18080,
     /** Automatically start the engine on application launch. */
     val autoStartEngine: Boolean = true,
+    /**
+     * Inference groups (RFC-0105): discover, pair with and link to other Engines on the local
+     * network. Off by default; nothing listens or advertises until the user turns it on.
+     */
+    val groupSharingEnabled: Boolean = false,
 )
 
 /** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
@@ -71,6 +76,8 @@ class DesktopPreferences(private val file: File) {
     fun setServerPort(port: Int) = update { it.copy(serverPort = port) }
 
     fun setAutoStartEngine(enabled: Boolean) = update { it.copy(autoStartEngine = enabled) }
+
+    fun setGroupSharingEnabled(enabled: Boolean) = update { it.copy(groupSharingEnabled = enabled) }
 
     /** What the runtime reads at load time; a model never configured runs with the defaults. */
     val runSettingsSource = RunSettingsSource { id -> runSettingsFor(id) }

@@ -1,5 +1,8 @@
 package fi.italeino.aidos.engine.desktop
 
+import dev.aidos.aidin.AidinNode
+import dev.aidos.aidin.FileAidinStateStore
+import dev.aidos.aidin.FileNodeKeyStore
 import fi.italeino.aidos.engine.EngineState
 import kotlinx.coroutines.runBlocking
 import java.net.URI
@@ -103,5 +106,43 @@ class DesktopEngineHostTest {
         val ok = get(auth = true)
         assertEquals(200, ok.statusCode())
         assertTrue("maxConcurrentRuns" in ok.body())
+    }
+
+    @Test
+    fun groupSharingIsOffUnlessTurnedOn() = runBlocking {
+        host.start()
+        assertNull(host.aidin.value)
+    }
+
+    @Test
+    fun groupSharingStartsAndStopsWithTheEngine() = runBlocking {
+        val dir = root.resolve("aidin")
+        val shared = DesktopEngineHost(
+            modelsDir = root.resolve("models").apply { mkdirs() },
+            stateDir = root,
+            serverPort = { 0 },
+            discoveryFile = null,
+            groupSharing = { true },
+            // No mDNS in tests; any free port.
+            aidinFactory = { scope ->
+                AidinNode(FileNodeKeyStore(dir.resolve("node-key")).loadOrCreate(), FileAidinStateStore(dir.resolve("state.json")), scope, "test")
+            },
+            aidinPort = 0,
+        )
+        try {
+            shared.start()
+            val node = assertNotNull(shared.aidin.value, "group sharing failed: ${shared.aidinError.value}")
+            assertNotNull(node.port)
+            shared.setGroupSharing(false)
+            assertNull(shared.aidin.value)
+            shared.setGroupSharing(true)
+            val again = assertNotNull(shared.aidin.value)
+            // Same identity across restarts: paired peers still recognise this machine.
+            assertEquals(node.nodeId, again.nodeId)
+            shared.stop()
+            assertNull(shared.aidin.value)
+        } finally {
+            shared.close()
+        }
     }
 }

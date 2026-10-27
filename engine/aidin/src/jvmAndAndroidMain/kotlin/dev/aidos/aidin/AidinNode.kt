@@ -417,7 +417,7 @@ class AidinNode(
     }
 
     private fun publishPairings() {
-        _pairings.value = synchronized(lock) { pairings.values.map { it.view() } }
+        _pairings.value = synchronized(lock) { pairings.values.filter { it.offerReceived }.map { it.view() } }
     }
 
     private inner class PairingSession(
@@ -430,6 +430,13 @@ class AidinNode(
         /** Set on the side that scanned: where to open the normal link once trust exists. */
         val invite: PairingInvite?,
     ) {
+        /**
+         * The scanned side learns from the first message whether this is a pairing or an
+         * enrolment. Until then the session is hidden and cannot be confirmed, so nobody confirms
+         * one thing while the other device asks for another.
+         */
+        var offerReceived = invite != null
+            private set
         private var label: String? = null
         private var confirmedHere = false
         private var confirmedThere = false
@@ -440,7 +447,7 @@ class AidinNode(
 
         fun confirmHere(label: String) {
             synchronized(lock) {
-                if (status != PairingStatus.WAITING_FOR_CONFIRMATION || confirmedHere) return
+                if (status != PairingStatus.WAITING_FOR_CONFIRMATION || confirmedHere || !offerReceived) return
                 confirmedHere = true
                 this.label = label
             }
@@ -459,9 +466,12 @@ class AidinNode(
                     }
                     is LinkMessage.PairOffer -> {
                         synchronized(lock) {
-                            if (invite == null && !confirmedHere && m.group != null) {
-                                kind = PairingKind.ENROLLED_BY_OTHER
-                                groupId = runCatching { GroupId(m.group) }.getOrNull()
+                            if (invite == null && !offerReceived) {
+                                if (m.group != null) {
+                                    kind = PairingKind.ENROLLED_BY_OTHER
+                                    groupId = runCatching { GroupId(m.group) }.getOrNull()
+                                }
+                                offerReceived = true
                             }
                         }
                         publishPairings()

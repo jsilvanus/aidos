@@ -31,6 +31,7 @@ fun main(args: Array<String>) {
         ramBaselineUsedBytes = { prefs.data.value.ramBaselineUsedMb?.let { it * 1024L * 1024L } },
         serverPort = { effectivePort },
         discoveryFile = DesktopPaths.discoveryFile,
+        groupSharing = { prefs.data.value.groupSharingEnabled },
     )
 
     if (isHeadless) {

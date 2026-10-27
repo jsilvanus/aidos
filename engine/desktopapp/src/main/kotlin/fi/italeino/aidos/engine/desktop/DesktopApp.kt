@@ -7,6 +7,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ class DesktopModels(val host: DesktopEngineHost, val prefs: DesktopPreferences, 
 @Composable
 fun DesktopApp(models: DesktopModels) {
     var showSettings by remember { mutableStateOf(false) }
+    var showGroups by remember { mutableStateOf(false) }
     var selectedModelId by remember { mutableStateOf<String?>(null) }
     val errorMessage by models.models.errorMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -54,6 +56,9 @@ fun DesktopApp(models: DesktopModels) {
             TopAppBar(
                 title = { Text("Aidos Engine · debug") },
                 actions = {
+                    IconButton(onClick = { showGroups = true }) {
+                        Icon(Icons.Default.Share, contentDescription = "Device groups")
+                    }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -84,6 +89,9 @@ fun DesktopApp(models: DesktopModels) {
 
     if (showSettings) {
         SettingsDialog(models.prefs, onClose = { showSettings = false })
+    }
+    if (showGroups) {
+        GroupsDialog(models, onClose = { showGroups = false })
     }
 }
 
