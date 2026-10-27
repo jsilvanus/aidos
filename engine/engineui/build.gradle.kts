@@ -33,7 +33,13 @@ kotlin {
                 api("org.jetbrains.compose.foundation:foundation:$composeMultiplatformVersion")
                 api("org.jetbrains.compose.material3:material3:$composeMultiplatformVersion")
                 api("org.jetbrains.compose.material:material-icons-extended:$composeMultiplatformVersion")
+                // QR encoding for device-group invites (RFC-0105); pure Java, so both targets share it.
+                implementation("com.google.zxing:core:3.5.3")
             }
+        }
+
+        jvmTest.dependencies {
+            implementation(kotlin("test-junit"))
         }
 
         androidMain.get().dependsOn(jvmAndAndroidMain)
