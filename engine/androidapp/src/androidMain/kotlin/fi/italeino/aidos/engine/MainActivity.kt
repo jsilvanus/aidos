@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -9,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -26,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import fi.italeino.aidos.engine.navigation.EngineNavHost
 import fi.italeino.aidos.engine.navigation.EngineRoute
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
+import fi.italeino.aidos.engine.ui.PendingInvite
 import java.io.File
 
 /**
@@ -67,6 +70,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        PendingInvite.offer(intent)
+
         setContent {
             AidosEngineTheme {
                 val navController = rememberNavController()
@@ -77,6 +82,7 @@ class MainActivity : ComponentActivity() {
                     EngineRoute.Home to (Icons.Default.Home to "Home"),
                     EngineRoute.Models to (Icons.Default.Storage to "Models"),
                     EngineRoute.ConnectedApps to (Icons.Default.Share to "Apps"),
+                    EngineRoute.Groups to (Icons.Default.Devices to "Groups"),
                     EngineRoute.Settings to (Icons.Default.Settings to "Settings"),
                 )
 
@@ -122,4 +128,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        PendingInvite.offer(intent)
+    }
 }

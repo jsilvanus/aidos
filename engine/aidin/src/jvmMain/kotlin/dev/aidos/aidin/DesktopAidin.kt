@@ -2,13 +2,10 @@ package dev.aidos.aidin
 
 import kotlinx.coroutines.CoroutineScope
 import java.io.File
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 /**
  * Desktop wiring for [AidinNode] (RFC-0105 phase 1): node key and trust state as owner-only files
- * under [directory], mDNS discovery through JmDNS. The Android host builds its own (Keystore,
- * NsdManager).
+ * under [directory], mDNS discovery through JmDNS. Android has its own in `AndroidAidin`.
  */
 object DesktopAidin {
     /** Fixed so a paired peer finds this machine at the same port after a restart; 0 picks any. */
@@ -30,17 +27,4 @@ object DesktopAidin {
             AidinNode(key, store, scope, engineVersion, discovery, heartbeatContent = heartbeatContent)
         }
     }
-
-    /**
-     * IPv4 addresses on this machine's up, non-loopback, non-virtual-looking interfaces, for an
-     * invite: the scanning device tries them in order.
-     */
-    fun lanAddresses(): List<String> =
-        NetworkInterface.getNetworkInterfaces().toList()
-            .filter { runCatching { it.isUp && !it.isLoopback && !it.isVirtual }.getOrDefault(false) }
-            .flatMap { it.inetAddresses.toList() }
-            .filterIsInstance<Inet4Address>()
-            .filter { !it.isLinkLocalAddress }
-            .map { it.hostAddress }
-            .distinct()
 }

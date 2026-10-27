@@ -16,6 +16,7 @@ kotlin {
                 // with the desktop debug app.
                 implementation(project(":enginehost"))
                 implementation(project(":engineui"))
+                implementation(project(":aidin"))
                 implementation(project(":modelruntime"))
                 implementation(project(":cookbook"))
                 implementation(project(":huggingface"))
@@ -75,6 +76,13 @@ android {
 
     buildFeatures {
         aidl = true
+    }
+
+    packaging {
+        resources {
+            // Bouncy Castle (aidin, RFC-0105) ships the same license files in each of its jars.
+            excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+        }
     }
 
     buildTypes {
