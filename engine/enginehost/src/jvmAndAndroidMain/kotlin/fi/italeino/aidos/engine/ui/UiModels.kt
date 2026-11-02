@@ -66,6 +66,39 @@ data class CookbookModel(
     val estimatedVramMB: Int? = null,
 )
 
+/**
+ * Client-side filters for Hugging Face results, shared by the desktop and Android Models tabs.
+ * The Hub query itself only takes text, kind and context; size and fit are known only after the
+ * per-result metadata fetch, so they are applied here. A model with an unknown size never passes
+ * a size bound, because it cannot be shown to satisfy it.
+ */
+data class ModelSearchFilters(
+    val minSizeMb: Int? = null,
+    val maxSizeMb: Int? = null,
+    /** Hide models the cookbook says will not fit this device. */
+    val fitsDeviceOnly: Boolean = false,
+    /** Hide models this Engine build has no backend for. */
+    val runnableOnly: Boolean = false,
+) {
+    val isActive: Boolean get() = minSizeMb != null || maxSizeMb != null || fitsDeviceOnly || runnableOnly
+
+    fun accepts(model: CookbookModel): Boolean {
+        if (minSizeMb != null || maxSizeMb != null) {
+            val size = model.sizeBytes
+            if (size == null || size <= 0) return false
+            if (minSizeMb != null && size < minSizeMb * MB) return false
+            if (maxSizeMb != null && size > maxSizeMb * MB) return false
+        }
+        if (fitsDeviceOnly && model.fitVerdict == ModelFitVerdict.WILL_NOT_FIT) return false
+        if (runnableOnly && !model.isRunnable) return false
+        return true
+    }
+
+    private companion object {
+        const val MB = 1024L * 1024L
+    }
+}
+
 /** Human-readable artifact size: "258 KB", "2.3 MB", "4.1 GB", or "size unknown". */
 fun formatSize(bytes: Long?): String = when {
     bytes == null || bytes <= 0 -> "size unknown"

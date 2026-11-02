@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import fi.italeino.aidos.engine.ui.GroupsPane
@@ -30,7 +31,7 @@ fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
         state = rememberDialogState(size = DpSize(640.dp, 760.dp)),
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
-            GroupsPane(
+            SelectionContainer { GroupsPane(
                 sharingEnabled = prefs.groupSharingEnabled,
                 onSharingChange = { on ->
                     models.prefs.setGroupSharingEnabled(on)
@@ -41,7 +42,7 @@ fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
                 error = error,
                 scope = models.scope,
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            )
+            ) }
         }
     }
 }

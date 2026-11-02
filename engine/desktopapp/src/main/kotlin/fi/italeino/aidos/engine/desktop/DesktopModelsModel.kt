@@ -9,6 +9,7 @@ import dev.aidos.models.ModelDownloadRequest
 import fi.italeino.aidos.engine.suggestions.SuggestedModels
 import fi.italeino.aidos.engine.ui.CookbookModel
 import fi.italeino.aidos.engine.ui.ModelFitVerdict
+import fi.italeino.aidos.engine.ui.ModelSearchFilters
 import fi.italeino.aidos.engine.ui.ModelsPaneState
 import fi.italeino.aidos.engine.ui.SuggestionUi
 import kotlinx.coroutines.CancellationException
@@ -105,7 +106,7 @@ class DesktopModelsModel(
         }
     }
 
-    fun searchRemote(query: String, kind: ModelKind?, minContext: Int?, maxSizeMb: Int?) {
+    fun searchRemote(query: String, kind: ModelKind?, minContext: Int?, filters: ModelSearchFilters) {
         searchJob?.cancel()
         searchJob = scope.launch {
             if (query.isNotEmpty()) delay(500)
@@ -114,13 +115,8 @@ class DesktopModelsModel(
                 val results = withContext(Dispatchers.IO) {
                     host.modelBrowser.searchRemote(query.ifBlank { null }, kind, minContext).getOrThrow()
                 }
-                val maxBytes = maxSizeMb?.toLong()?.times(1024L * 1024L)
-                val filtered = if (maxBytes == null) results else results.filter { model ->
-                    val size = model.sizeBytes
-                    size != null && size > 0 && size <= maxBytes
-                }
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
-                raw.value = raw.value.copy(cookbookModels = filtered.map { it.toUiModel() }.distinctBy { it.id })
+                raw.value = raw.value.copy(cookbookModels = results.map { it.toUiModel() }.filter(filters::accepts).distinctBy { it.id })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

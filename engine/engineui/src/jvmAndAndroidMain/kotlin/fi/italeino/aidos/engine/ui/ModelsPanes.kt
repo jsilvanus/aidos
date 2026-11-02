@@ -102,7 +102,7 @@ class ModelsPaneActions(
 
     val onDeleteModel: (String) -> Unit,
 
-    val onSearch: (query: String, kind: ModelKind?, minContext: Int?, maxSizeMb: Int?) -> Unit,
+    val onSearch: (query: String, kind: ModelKind?, minContext: Int?, filters: ModelSearchFilters) -> Unit,
 
     val onInstallSuggestion: (String) -> Unit,
 
@@ -510,13 +510,13 @@ private fun CookbookPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
     var minContext by remember { mutableStateOf<Int?>(null) }
 
-    var sizeFilterMb by remember { mutableStateOf<Int?>(null) }
+    var filters by remember { mutableStateOf(ModelSearchFilters()) }
 
     var showSizeDialog by remember { mutableStateOf(false) }
 
 
 
-    LaunchedEffect(searchQuery, selectedKind, isCodingOnly, minContext, sizeFilterMb) {
+    LaunchedEffect(searchQuery, selectedKind, isCodingOnly, minContext, filters) {
 
         val effectiveQuery = if (isCodingOnly) {
 
@@ -528,7 +528,7 @@ private fun CookbookPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
         }
 
-        actions.onSearch(effectiveQuery, selectedKind, minContext, sizeFilterMb)
+        actions.onSearch(effectiveQuery, selectedKind, minContext, filters)
 
     }
 
@@ -636,58 +636,55 @@ private fun CookbookPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
                         onClick = { showSizeDialog = true },
 
-                        selected = sizeFilterMb != null
+                        selected = filters.minSizeMb != null || filters.maxSizeMb != null
 
                     )
 
                     if (showSizeDialog) {
-
-                        var sliderValueState = remember { mutableStateOf((sizeFilterMb ?: 100).toFloat()) }
-
+                        var minText by remember { mutableStateOf(filters.minSizeMb?.toString().orEmpty()) }
+                        var maxText by remember { mutableStateOf(filters.maxSizeMb?.toString().orEmpty()) }
                         AlertDialog(
-
                             onDismissRequest = { showSizeDialog = false },
-
                             title = { Text("Filter by size (MB)") },
-
                             text = {
-
-                                Column {
-
-                                    Slider(
-
-                                        value = sliderValueState.value,
-
-                                        onValueChange = { sliderValueState.value = it },
-
-                                        valueRange = 1f..20000f,
-
-                                        steps = 100
-
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = minText,
+                                        onValueChange = { t -> if (t.all(Char::isDigit)) minText = t },
+                                        label = { Text("Min size (MB)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
-
-                                    Text("Max size: ${sliderValueState.value.toInt()} MB", fontSize = 12.sp)
-
+                                    OutlinedTextField(
+                                        value = maxText,
+                                        onValueChange = { t -> if (t.all(Char::isDigit)) maxText = t },
+                                        label = { Text("Max size (MB)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Text("Blank means no bound. Models with unknown size are hidden while a bound is set.", fontSize = 11.sp)
                                 }
-
                             },
-
                             confirmButton = {
-
                                 TextButton(onClick = {
-
-                                    sizeFilterMb = sliderValueState.value.toInt()
-
+                                    val lo = minText.toIntOrNull()
+                                    val hi = maxText.toIntOrNull()
+                                    // Swap a reversed pair instead of silently matching nothing.
+                                    val (min, max) = if (lo != null && hi != null && lo > hi) hi to lo else lo to hi
+                                    filters = filters.copy(minSizeMb = min, maxSizeMb = max)
                                     showSizeDialog = false
-
                                 }) { Text("Apply") }
-
                             },
-
-                            dismissButton = { TextButton(onClick = { showSizeDialog = false }) { Text("Cancel") } }
-
+                            dismissButton = {
+                                Row {
+                                    TextButton(onClick = {
+                                        filters = filters.copy(minSizeMb = null, maxSizeMb = null)
+                                        showSizeDialog = false
+                                    }) { Text("Clear") }
+                                    TextButton(onClick = { showSizeDialog = false }) { Text("Cancel") }
+                                }
+                            }
                         )
-
                     }
 
                     Icon(
@@ -718,9 +715,11 @@ private fun CookbookPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
                             isCodingOnly = false
 
+                            filters = ModelSearchFilters()
+
                         },
 
-                        selected = (selectedKind == null && minContext == null && !isCodingOnly)
+                        selected = (selectedKind == null && minContext == null && !isCodingOnly && !filters.isActive)
 
                     )
 
@@ -800,6 +799,22 @@ private fun CookbookPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
                     )
 
+                }
+
+                item {
+                    FilterChip(
+                        label = { Text("Fits this device", fontSize = 10.sp) },
+                        onClick = { filters = filters.copy(fitsDeviceOnly = !filters.fitsDeviceOnly) },
+                        selected = filters.fitsDeviceOnly
+                    )
+                }
+
+                item {
+                    FilterChip(
+                        label = { Text("Runnable here", fontSize = 10.sp) },
+                        onClick = { filters = filters.copy(runnableOnly = !filters.runnableOnly) },
+                        selected = filters.runnableOnly
+                    )
                 }
 
             }
