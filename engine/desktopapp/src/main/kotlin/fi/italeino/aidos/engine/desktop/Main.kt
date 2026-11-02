@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.desktop
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
@@ -78,7 +79,8 @@ fun main(args: Array<String>) {
             state = rememberWindowState(size = DpSize(1400.dp, 900.dp)),
         ) {
             AidosEngineTheme {
-                DesktopApp(models)
+                // Make text selectable/copyable throughout the main window.
+                SelectionContainer { DesktopApp(models) }
             }
         }
     }
