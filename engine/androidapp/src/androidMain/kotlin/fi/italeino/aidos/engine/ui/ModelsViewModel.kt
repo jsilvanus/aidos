@@ -128,7 +128,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
         val minContext: Int?,
 
-        val maxSizeMb: Int?,
+        val filters: ModelSearchFilters,
 
     )
 
@@ -216,7 +216,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
     private var searchJob: Job? = null
 
-    private var lastSearch = SearchParams(query = "", kind = null, minContext = null, maxSizeMb = null)
+    private var lastSearch = SearchParams(query = "", kind = null, minContext = null, filters = ModelSearchFilters())
 
 
 
@@ -330,9 +330,9 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
 
 
-    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null, maxSizeMb: Int? = null) {
+    fun searchRemote(query: String, kind: ModelKind? = null, minContext: Int? = null, filters: ModelSearchFilters = ModelSearchFilters()) {
 
-        val search = SearchParams(query = query, kind = kind, minContext = minContext, maxSizeMb = maxSizeMb)
+        val search = SearchParams(query = query, kind = kind, minContext = minContext, filters = filters)
 
         lastSearch = search
 
@@ -414,7 +414,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
             try {
 
-                val (query, kind, minContext, maxSizeMb) = search
+                val (query, kind, minContext, filters) = search
 
                 // Hub search plus one metadata fetch per result, and JSON parsing: keep it off
 
@@ -426,19 +426,9 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
                 }
 
-                val maxBytes = maxSizeMb?.toLong()?.times(1024L * 1024L)
-
-                val filtered = if (maxBytes == null) results else results.filter { model ->
-
-                    val size = model.sizeBytes
-
-                    size != null && size > 0 && size <= maxBytes
-
-                }
-
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
 
-                _cookbookModels.value = filtered.map { it.toUiModel() }.distinctBy { it.id }
+                _cookbookModels.value = results.map { it.toUiModel() }.filter(filters::accepts).distinctBy { it.id }
 
             } catch (e: CancellationException) {
 

@@ -552,6 +552,8 @@ private fun NumberField(label: String, value: Int?, hint: String, onValue: (Int?
         onValueChange = { text -> if (text.isBlank()) onValue(null) else text.toIntOrNull()?.let(onValue) },
         label = { Text(label) },
         placeholder = { Text(hint) },
+        // The placeholder hides behind the label until focus; show the default permanently.
+        supportingText = { Text("Default: $hint") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -569,6 +571,8 @@ private fun DecimalField(label: String, value: Float?, hint: String, onValue: (F
         },
         label = { Text(label) },
         placeholder = { Text(hint) },
+        // The placeholder hides behind the label until focus; show the default permanently.
+        supportingText = { Text("Default: $hint") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
