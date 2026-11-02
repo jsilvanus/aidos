@@ -50,4 +50,12 @@ class PackageInstallPlanTest {
     fun directoryNameIsFilesystemSafe() {
         assertEquals("HuggingFaceTB_SmolVLM-256M", PackageInstall.directoryName("HuggingFaceTB/SmolVLM-256M"))
     }
+
+    @Test
+    fun ggufFileNameRestoresTheExtensionTheHubClientStrips() {
+        // Regression: a dotted repo name like Qwen2.5 made the format "5b-instruct-q4_k_m", not gguf.
+        val name = PackageInstall.ggufFileName("Qwen_Qwen2.5-Coder-1.5B-Instruct-GGUF", "qwen2.5-coder-1.5b-instruct-q4_k_m")
+        assertEquals("Qwen_Qwen2.5-Coder-1.5B-Instruct-GGUF_qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", name)
+        assertEquals(name, PackageInstall.ggufFileName("Qwen_Qwen2.5-Coder-1.5B-Instruct-GGUF", "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"))
+    }
 }

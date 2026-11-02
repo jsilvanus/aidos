@@ -159,7 +159,7 @@ class DesktopModelDetailModel(
                     Triple(q.name, q.downloadUrl, q.sha256Digest)
                 }
 
-                val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
+                val artifactName = dev.aidos.models.PackageInstall.ggufFileName(safeModelId, artifactBaseName)
                 val destination = File(host.artifactDir, artifactName).absolutePath
                 val format = if (artifactName.lowercase().endsWith(".gguf")) "gguf" else artifactName.substringAfterLast('.', "bin").lowercase()
 
