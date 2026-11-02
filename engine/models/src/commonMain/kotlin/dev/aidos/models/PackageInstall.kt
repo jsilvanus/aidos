@@ -39,6 +39,15 @@ object PackageInstall {
             backend = "onnx-runtime",
         )
 
+    /**
+     * File name for a GGUF installed from a Hugging Face [quantName]. The Hub client strips ".gguf" from
+     * quantization names, so the name must be given the extension back: without it the format derived
+     * from the file name was the tail after the last dot of a name like "...1.5b-instruct-q4_k_m", the
+     * catalog recorded that as the format, and [isRunnable] said "No runtime for this format yet".
+     */
+    fun ggufFileName(safeModelId: String, quantName: String): String =
+        "${safeModelId}_${quantName.removeSuffix(".gguf")}.gguf"
+
     /** Whether the Engine has a backend for an installed artifact of [format] and [kind]. */
     fun isRunnable(format: String, kind: ModelKind): Boolean =
         format == "gguf" || (format == "onnx" && kind in onnxKinds)

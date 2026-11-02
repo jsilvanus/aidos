@@ -214,7 +214,11 @@ class ModelDetailViewModel : ViewModel() {
                 val modelsDir = File(service.filesDir, "models")
                 modelsDir.mkdirs()
                 val (artifactBaseName, downloadUrl, expectedDigest) = chosenArtifact
-                val artifactName = if (artifactBaseName.endsWith(".gguf")) artifactBaseName else "${safeModelId}_$artifactBaseName"
+                val artifactName = when {
+                    remote.quantizations.isNotEmpty() -> dev.aidos.models.PackageInstall.ggufFileName(safeModelId, artifactBaseName)
+                    artifactBaseName.endsWith(".gguf") -> artifactBaseName
+                    else -> "${safeModelId}_$artifactBaseName"
+                }
                 val destination = File(modelsDir, artifactName).absolutePath
                 val installer = DefaultModelInstallerWorkflow(downloader, catalog)
 
