@@ -33,8 +33,8 @@ object SuggestedModels {
         SuggestedModel(
             id = "jsilvanus/aidos-echo-gguf",
             name = "Echo (GGUF)",
-            description = "2.3 MB llama-architecture smoke-test model that repeats its input byte for byte. " +
-                "Runs on llama.cpp.",
+            description = "2.3 MB llama-architecture smoke-test model that repeats the last character of " +
+                "its input (\"Hello\" gives \"oooo\"). Runs on llama.cpp.",
             repoId = "jsilvanus/aidos-echo-gguf",
             filename = "echo.gguf",
             format = "gguf",
@@ -45,7 +45,8 @@ object SuggestedModels {
         SuggestedModel(
             id = "jsilvanus/aidos-rot13-gguf",
             name = "ROT13 (GGUF)",
-            description = "2.3 MB GGUF ROT13 smoke-test model. Installs and can be run with llama.cpp.",
+            description = "2.3 MB GGUF ROT13 smoke-test model that alternates the last character of its " +
+                "input with its ROT13 (\"Hello\" gives \"bobo\"). Runs on llama.cpp.",
             repoId = "jsilvanus/aidos-rot13-gguf",
             filename = "rot13.gguf",
             format = "gguf",

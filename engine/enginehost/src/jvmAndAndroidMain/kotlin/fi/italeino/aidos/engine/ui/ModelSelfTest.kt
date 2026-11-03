@@ -37,6 +37,62 @@ fun ModelKind.selfTestKind(): ModelTestKind? = when (this) {
     else -> null
 }
 
+/** The prompt the card suggests (and sends when the field is empty) for [modelId]. */
+fun ModelTestKind.defaultTextFor(modelId: String?): String =
+    if (this == ModelTestKind.CHAT && modelId != null && SmokeFixture.forModel(modelId) != null) SmokeFixture.PROMPT
+    else defaultText
+
+/**
+ * The smoke-test fixtures from `models/` (models/README.md). Each predicts the next byte from the
+ * last byte only, so free-running generation repeats the prompt's last character (echo) or
+ * alternates it with its ROT13 (rot13): "Hello" gives "oooo" and "bobo". The generic chat prompt
+ * ends in ".", which both map to ".", so both printed dots and looked broken. Knowing the rule,
+ * the test can ask for the exact answer instead of "something came back".
+ */
+enum class SmokeFixture(val label: String, val rule: String) {
+    ECHO("echo", "repeats the last character of the prompt") {
+        override fun next(c: Char) = c
+    },
+    ROT13("ROT13", "alternates the last character of the prompt with its ROT13") {
+        override fun next(c: Char) = when (c) {
+            in 'a'..'z' -> 'a' + (c - 'a' + 13) % 26
+            in 'A'..'Z' -> 'A' + (c - 'A' + 13) % 26
+            else -> c
+        }
+    };
+
+    /** The byte the fixture predicts after [c]. */
+    abstract fun next(c: Char): Char
+
+    /** What greedy generation of [length] tokens after [prompt] must produce. */
+    fun expected(prompt: String, length: Int): String = buildString {
+        var c = prompt.last()
+        repeat(length) {
+            c = next(c)
+            append(c)
+        }
+    }
+
+    companion object {
+        /** Ends in a letter, so the answer shows the rule; one that ends in "." would only print dots. */
+        const val PROMPT = "Hello"
+        const val TOKENS = 8
+
+        private val ROT13_ID = Regex("(^|[^a-z0-9])rot13([^a-z0-9]|$)")
+        private val ECHO_ID = Regex("(^|[^a-z0-9])echo([^a-z0-9]|$)")
+
+        /** Recognised by id, e.g. `jsilvanus/aidos-rot13-gguf` or an `echo.gguf` file installed by hand. */
+        fun forModel(modelId: String): SmokeFixture? {
+            val id = modelId.lowercase()
+            return when {
+                ROT13_ID.containsMatchIn(id) -> ROT13
+                ECHO_ID.containsMatchIn(id) -> ECHO
+                else -> null
+            }
+        }
+    }
+}
+
 /** What the card shows after a run: a verdict line and the evidence behind it. */
 data class SelfTestOutcome(
     val passed: Boolean,
@@ -92,7 +148,9 @@ suspend fun runModelSelfTest(
 ): SelfTestOutcome {
     val started = TimeSource.Monotonic.markNow()
     val outcome = when (kind) {
-        ModelTestKind.CHAT -> chatTest(client, modelId, text.ifBlank { kind.defaultText })
+        ModelTestKind.CHAT -> SmokeFixture.forModel(modelId)
+            ?.let { fixtureChatTest(client, modelId, it, text.ifBlank { SmokeFixture.PROMPT }) }
+            ?: chatTest(client, modelId, text.ifBlank { kind.defaultText })
         ModelTestKind.DECISION -> decisionTest(client, modelId, text.ifBlank { kind.defaultText })
         ModelTestKind.TRANSCRIPTION -> transcriptionTest(client, modelId, text.trim(), filePath.trim())
         ModelTestKind.VISION -> visionTest(client, modelId, text.ifBlank { kind.defaultText }, filePath.trim())
@@ -109,6 +167,35 @@ private suspend fun chatTest(client: AidosEngineClient, modelId: String, prompt:
         SelfTestOutcome(false, "The model answered with nothing")
     } else {
         SelfTestOutcome(true, "Chat works", listOf(reply), generatedTokens = response.usage.completion_tokens)
+    }
+}
+
+private suspend fun fixtureChatTest(
+    client: AidosEngineClient,
+    modelId: String,
+    fixture: SmokeFixture,
+    prompt: String,
+): SelfTestOutcome {
+    // The fixture's vocabulary is one token per byte, so a non-ASCII last character spans several
+    // tokens and the one-character rule no longer says what comes next.
+    if (prompt.last().code > 127) return chatTest(client, modelId, prompt)
+    val response = client.chatCompletion(
+        ChatCompletionRequest(modelId, listOf(ChatMessage("user", prompt)), temperature = 0f, max_tokens = SmokeFixture.TOKENS)
+    ) ?: return SelfTestOutcome(false, "Engine returned no answer")
+    // Not trimmed: a space is a real answer from these models when the prompt ends in one.
+    val reply = response.choices.firstOrNull()?.message?.content.orEmpty()
+    val expected = fixture.expected(prompt, SmokeFixture.TOKENS)
+    val lines = listOf(
+        "Prompt: $prompt",
+        "Expected: $expected",
+        "Got: $reply",
+        "This ${fixture.label} test model ${fixture.rule}, so this is the right answer when they match.",
+    )
+    val generated = response.usage.completion_tokens
+    return if (reply.isNotEmpty() && expected.startsWith(reply)) {
+        SelfTestOutcome(true, "Chat works: the ${fixture.label} model answered exactly as expected", lines, generatedTokens = generated)
+    } else {
+        SelfTestOutcome(false, "Wrong answer from the ${fixture.label} test model", lines, generatedTokens = generated)
     }
 }
 

@@ -383,7 +383,7 @@ private fun SelfTestPanel(
             value = state.selfTestText,
             onValueChange = actions.onSelfTestTextChange,
             label = { Text(kind.inputLabel) },
-            placeholder = { Text(kind.defaultText) },
+            placeholder = { Text(kind.defaultTextFor(state.model?.id)) },
             modifier = Modifier.fillMaxWidth(),
         )
         Button(
