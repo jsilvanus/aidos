@@ -12,12 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.ui.window.DialogWindow
-import androidx.compose.ui.window.rememberDialogState
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.rememberWindowState
 import fi.italeino.aidos.engine.ui.GroupsPane
 import kotlinx.coroutines.launch
 
-/** Device groups (RFC-0105 phase 1) in a dialog; the pane itself is shared with Android. */
+/** Device groups (RFC-0105 phase 1) in its own non-modal window; the pane itself is shared with Android. */
 @Composable
 fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
     val prefs by models.prefs.data.collectAsState()
@@ -25,10 +25,12 @@ fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
     val isRunning by models.host.isRunning.collectAsState()
     val error by models.host.aidinError.collectAsState()
 
-    DialogWindow(
+    // A plain Window, not a DialogWindow: a dialog is modal on Windows and blocks the main window
+    // for as long as the sharing window is open.
+    Window(
         onCloseRequest = onClose,
         title = "Device groups",
-        state = rememberDialogState(size = DpSize(640.dp, 760.dp)),
+        state = rememberWindowState(size = DpSize(640.dp, 760.dp)),
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
             SelectionContainer { GroupsPane(

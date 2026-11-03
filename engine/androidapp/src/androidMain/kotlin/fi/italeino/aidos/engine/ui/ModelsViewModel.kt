@@ -422,13 +422,16 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
                 val results = withContext(Dispatchers.IO) {
 
-                    browser.searchRemote(query.ifBlank { null }, kind, minContext).getOrThrow()
+                    browser.searchRemote(
+                        query.ifBlank { null }, kind, minContext,
+                        accept = { filters.accepts(it.toUiModel()) },
+                    ).getOrThrow()
 
                 }
 
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
 
-                _cookbookModels.value = results.map { it.toUiModel() }.filter(filters::accepts).distinctBy { it.id }
+                _cookbookModels.value = results.map { it.toUiModel() }.distinctBy { it.id }
 
             } catch (e: CancellationException) {
 
