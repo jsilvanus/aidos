@@ -57,6 +57,36 @@ class ModelSelfTestTest {
     }
 
     @Test
+    fun smokeFixturesAreRecognisedByIdAndPredictFromTheLastCharacter() {
+        assertEquals(SmokeFixture.ROT13, SmokeFixture.forModel("jsilvanus/aidos-rot13-gguf"))
+        assertEquals(SmokeFixture.ECHO, SmokeFixture.forModel("jsilvanus/aidos-echo-gguf"))
+        assertEquals(SmokeFixture.ECHO, SmokeFixture.forModel("echo"))
+        assertNull(SmokeFixture.forModel("Qwen/Qwen2.5-0.5B-Instruct-GGUF"))
+        assertNull(SmokeFixture.forModel("someone/echoes-of-time"))
+        assertEquals("bobobobo", SmokeFixture.ROT13.expected("Hello", 8))
+        assertEquals("pcpc", SmokeFixture.ROT13.expected("abc", 4))
+        assertEquals("oooo", SmokeFixture.ECHO.expected("Hello", 4))
+        assertEquals("Hello", ModelTestKind.CHAT.defaultTextFor("jsilvanus/aidos-rot13-gguf"))
+        assertEquals(ModelTestKind.CHAT.defaultText, ModelTestKind.CHAT.defaultTextFor("qwen"))
+        assertEquals(ModelTestKind.DECISION.defaultText, ModelTestKind.DECISION.defaultTextFor("echo"))
+    }
+
+    @Test
+    fun aSmokeFixtureChatPassesOnlyOnTheExactAnswer() = runBlocking {
+        val client = FakeClient(chat = "bobobobo")
+        val ok = runModelSelfTest(client, ModelTestKind.CHAT, "jsilvanus/aidos-rot13-gguf", "", "")
+        assertTrue(ok.passed, ok.title)
+        assertTrue("Expected: bobobobo" in ok.lines)
+        // An empty field sends a prompt ending in a letter, greedily.
+        assertEquals("Hello", client.lastChat!!.messages.single().content)
+        assertEquals(0f, client.lastChat!!.temperature)
+        // Dots are what the generic prompt produced; for this model they are a wrong answer.
+        assertFalse(runModelSelfTest(FakeClient(chat = "........"), ModelTestKind.CHAT, "jsilvanus/aidos-rot13-gguf", "", "").passed)
+        assertFalse(runModelSelfTest(FakeClient(chat = "bobobobo"), ModelTestKind.CHAT, "echo", "", "").passed)
+        assertTrue(runModelSelfTest(FakeClient(chat = "cccc"), ModelTestKind.CHAT, "echo", "abc", "").passed)
+    }
+
+    @Test
     fun decisionsPassOnlyWhenAllThreeAnswerTypesAreWellFormed() = runBlocking {
         val good = FakeClient(decision = mapOf(
             "is_command" to DecisionAnswerWire("noul", noul = 0.9),

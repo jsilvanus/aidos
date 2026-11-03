@@ -168,6 +168,47 @@ class GgufRot13FixtureTest {
     }
 
     /**
+     * What the Engine's Test Chat sees: free-running generation alternates the last byte with its
+     * ROT13, and the usage counts the tokens generated rather than estimating them from words
+     * (which reported 1 for "bobobobo").
+     */
+    @Test
+    fun `adapter alternates the last byte and counts the tokens it generated`() = runTest {
+        val file = requireFixture()
+        val metadata = assertNotNull(GgufLoader.loadMetadata(file))
+
+        val adapter = try {
+            LlamaCppAdapter("rot13", file, metadata, contextSize = 512, threads = 2)
+        } catch (e: UnsatisfiedLinkError) {
+            println("skipping usage check: ${e.message}")
+            return@runTest
+        }
+
+        try {
+            val response = adapter.invoke(
+                ModelRequest(
+                    messages = listOf(
+                        Turn.User(
+                            content = listOf(ContentBlock.Text("Hello")),
+                            trustLevel = TrustLevel.TRUSTED,
+                        )
+                    ),
+                    tools = emptyList(),
+                    toolChoice = ToolChoice.Auto,
+                    maxOutputTokens = 8,
+                )
+            ).getOrThrow()
+
+            assertEquals("bobobobo", response.outputs.filterIsInstance<TextOutput>().single().text)
+            val usage = assertNotNull(response.usage)
+            assertEquals(8, usage.outputTokens)
+            assertEquals(5, usage.inputTokens, "one token per byte of \"Hello\"")
+        } finally {
+            adapter.close()
+        }
+    }
+
+    /**
      * [LlamaCppAdapter.invoke] is now implemented in terms of [LlamaCppAdapter.invokeStreaming]
      * (RFC-0021 "Streaming"; Dictator plan S4) — this exercises that streaming path directly,
      * against the same real llama.cpp binding and fixture the previous test proves `invoke()`

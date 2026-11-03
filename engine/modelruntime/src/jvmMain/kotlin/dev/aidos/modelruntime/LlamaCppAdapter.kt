@@ -162,14 +162,16 @@ class LlamaCppAdapter(
             }
 
             val stopReason = when {
-                estimateTokens(finalText) >= request.maxOutputTokens -> StopReason.MAX_TOKENS
+                tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
                 shouldStop(finalText, request.stopConditions) -> StopReason.STOP_SEQUENCE
                 toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                 else -> StopReason.END_TURN
             }
 
-            val inputTokens = estimateTokens(prompt)
-            val outputTokens = estimateTokens(finalText)
+            // Counted, not estimated: a word-count estimate reported 1 token for "oooooooo"
+            // and made the self-test's tokens/s meaningless for anything without spaces.
+            val inputTokens = runCatching { model.encode(prompt).size }.getOrElse { estimateTokens(prompt) }
+            val outputTokens = tokenCount
             val usage = Usage(
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
