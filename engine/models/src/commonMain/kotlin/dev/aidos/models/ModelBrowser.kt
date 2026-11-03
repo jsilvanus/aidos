@@ -8,9 +8,15 @@ import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.huggingface.HuggingFaceModel
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+
+/** Hub candidates whose metadata is fetched concurrently per round. */
+private const val DETAIL_CHUNK = 10
 
 /**
  * Model discovery and browser service (RFC-0022, RFC-0021, RFC-0020).
@@ -85,6 +91,12 @@ class ModelBrowser(
         query: String? = null,
         kind: ModelKind? = null,
         minContext: Int? = null,
+        /** Caller-side filter for what the Hub cannot filter (file size, fit); see [scanLimit]. */
+        accept: (BrowsableModel) -> Boolean = { true },
+        /** Results to return. */
+        limit: Int = 10,
+        /** Hub listings fetched to find [limit] matches; each candidate costs one metadata request. */
+        scanLimit: Int = 60,
     ): Result<List<BrowsableModel>> = runCatching {
         val hfFilter = mutableListOf("gguf")
         
@@ -108,65 +120,74 @@ class ModelBrowser(
             query = query,
             filter = hfFilter.joinToString(","),
             sort = if (query.isNullOrBlank()) "trendingScore" else "downloads",
-            limit = 10, // Reduced limit for parallel detail fetching
+            limit = scanLimit,
         ).getOrThrow()
 
         val installed = catalogManager.listInstalled().getOrThrow()
         val installedMap = installed.associateBy { it.modelId }
         
-        // Fetch full metadata for each result to get sizes and context windows (RFC-0022)
-        val fullModels = searchResult.models.map { hfModel ->
-            hfClient.getModel(hfModel.modelId).getOrDefault(hfModel)
-        }
-
-        fullModels
-            .asSequence()
-            .map { hfModel ->
-                // Pick best quantization (Q4_K_M or first available)
-                val quant = hfModel.quantizations.find { it.name.contains("Q4_K_M") }
-                    ?: hfModel.quantizations.firstOrNull { it.sizeBytes > 0 }
-                
-                val modelKind = hfClient.inferModelKind(hfModel.tags, hfModel.pipeline)
-                val contextWindow = hfModel.contextLength ?: defaultContextWindow
-                val sizeBytes = hfModel.modelSize ?: quant?.sizeBytes
-                
-                val descriptor = ModelDescriptor(
+        fun build(hfModel: HuggingFaceModel): BrowsableModel {
+            // Pick best quantization (Q4_K_M or first available)
+            val quant = hfModel.quantizations.find { it.name.contains("Q4_K_M") }
+                ?: hfModel.quantizations.firstOrNull { it.sizeBytes > 0 }
+            
+            val modelKind = hfClient.inferModelKind(hfModel.tags, hfModel.pipeline)
+            val contextWindow = hfModel.contextLength ?: defaultContextWindow
+            val sizeBytes = hfModel.modelSize ?: quant?.sizeBytes
+            
+            val descriptor = ModelDescriptor(
+                id = hfModel.modelId,
+                name = hfModel.displayName ?: hfModel.modelId,
+                kind = modelKind,
+                providerId = "huggingface",
+                isLocal = false,
+                contextWindow = contextWindow,
+                sizeBytes = sizeBytes,
+                digest = quant?.sha256Digest,
+            )
+            
+            val verdict = cookbookEngine.verdict(descriptor, deviceProfile, contextWindow)
+            val installedModel = installedMap[hfModel.modelId]
+            
+            return BrowsableModel(
+                catalogEntry = CatalogEntry(
                     id = hfModel.modelId,
                     name = hfModel.displayName ?: hfModel.modelId,
                     kind = modelKind,
-                    providerId = "huggingface",
-                    isLocal = false,
-                    contextWindow = contextWindow,
-                    sizeBytes = sizeBytes,
-                    digest = quant?.sha256Digest,
-                )
-                
-                val verdict = cookbookEngine.verdict(descriptor, deviceProfile, contextWindow)
-                val installedModel = installedMap[hfModel.modelId]
-                
-                BrowsableModel(
-                    catalogEntry = CatalogEntry(
-                        id = hfModel.modelId,
-                        name = hfModel.displayName ?: hfModel.modelId,
-                        kind = modelKind,
-                        provider = "huggingface",
-                        remoteUrl = "https://huggingface.co/${hfModel.modelId}",
-                        discoveredAt = "", // Transient
-                    ),
-                    verdict = verdict,
-                    installedModel = installedModel,
-                    readableVerdict = verdict.humanReadable(),
-                    contextWindow = contextWindow,
-                    sizeBytes = sizeBytes,
-                )
+                    provider = "huggingface",
+                    remoteUrl = "https://huggingface.co/${hfModel.modelId}",
+                    discoveredAt = "", // Transient
+                ),
+                verdict = verdict,
+                installedModel = installedModel,
+                readableVerdict = verdict.humanReadable(),
+                contextWindow = contextWindow,
+                sizeBytes = sizeBytes,
+            )
+        }
+
+        // The Hub can't filter by file size or device fit, and kind/context are checked after the
+        // metadata fetch, so scan more candidates than we show: fetch details a chunk at a time
+        // (in parallel) and stop as soon as [limit] of them pass every filter.
+        val matches = mutableListOf<BrowsableModel>()
+        for (chunk in searchResult.models.chunked(DETAIL_CHUNK)) {
+            val details = coroutineScope {
+                chunk.map { hfModel -> async { hfClient.getModel(hfModel.modelId).getOrDefault(hfModel) } }.awaitAll()
             }
-            .filter { kind == null || it.kind == kind }
-            .filter { minContext == null || it.contextWindow >= minContext }
+            details.map(::build)
+                .filter { kind == null || it.kind == kind }
+                .filter { minContext == null || it.contextWindow >= minContext }
+                .filter(accept)
+                .forEach { matches.add(it) }
+            if (matches.size >= limit) break
+        }
+
+        matches
+            .take(limit)
             .sortedWith(compareBy(
                 { it.verdict.ordinal },
                 { it.catalogEntry.name },
             ))
-            .toList()
     }
 
     /**
