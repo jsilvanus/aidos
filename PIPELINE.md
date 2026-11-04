@@ -62,13 +62,7 @@ Ordered by what blocks the product, not by milestone number.
 These are live defects in code that is wired into the production path, not missing features.
 Nothing below is waiting on hardware or on a decision.
 
-- **RFC-0042 (Networking and Egress) has no enforcement anywhere.** There is no centralized egress
-  chokepoint: no host allowlist, no private/loopback-address rejection, no `egress_records` written
-  by any path. `CapabilityScope.Network` exists in the kernel with the RFC's field shape and is
-  never consulted. At least three HTTP clients were built independently with inconsistent
-  protection — `HttpTool`, a general-purpose tool exposed to the model, calls whatever URL it is
-  given, which is a live SSRF exposure against the exact target the RFC names by example
-  (`http://169.254.169.254/`). `HttpMcpClient` has real protections, but bespoke to itself.
+- **RFC-0042 (Networking and Egress) — ✅ Complete.** Implemented centralized egress chokepoint (DefaultEgressClient and EgressSecurityPolicy) in :agent:http enforcing the four-point destination scoping rules of RFC-0042: pre-DNS IP literal rejection (blocking instance metadata 169.254.169.254 and loopback literals unless explicitly granted in CapabilityScope.Network), post-DNS SSRF blocklist (loopback, link-local, private RFC-1918, and multicast), same-host redirect enforcement, and EgressRecord audit trail with SHA-256 payload hashing without raw payload leaks. Updated HttpTool to route all operations through the mediated egress client and updated SqliteCapabilityManager.openHandle to support network capabilities.
 - **RFC-0046: actor attribution collapses to hardcoded literals.** `ActorRef` and its schema
   columns are real and correctly designed, but nearly every audit-writing call site hardcodes
   `actorKind = "SESSION"` regardless of who acted, and `device_id` is always the literal

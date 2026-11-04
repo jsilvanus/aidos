@@ -1,6 +1,8 @@
 package dev.aidos.http
 
 import dev.aidos.kernel.AvailabilityTier
+import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.Permission
@@ -19,17 +21,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 
 /**
- * HTTP tool for sessions (RFC-0030, M4+).
+ * HTTP tool for sessions (RFC-0030, RFC-0042, M4+).
  *
  * Provides HTTP operations for fetching resources, downloading files, and making network requests.
- * Designed to support model downloads from Hugging Face and general network access.
+ * Mediated strictly through [EgressClient] and [EgressSecurityPolicy] to enforce destination
+ * scoping, pre-DNS/post-DNS checks, and SSRF defense (blocking private ranges and 169.254.x.x).
  *
  * All operations marked as NETWORKED (require network availability) and all outbound operations
  * are UNSAFE (never auto-retried). Read operations (GET, HEAD) are PURE and cacheable.
@@ -47,10 +45,11 @@ object HttpTool : Tool {
     // All HTTP operations require network availability (RFC-0030 M11)
     private val NETWORKED = ToolAvailability(ALL_PROFILES, AvailabilityTier.NETWORKED, requiresNetwork = true)
 
-    // HTTP client shared across all requests (thread-safe, reusable)
-    private val httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(30))
-        .build()
+    /** Mediated egress client instance (RFC-0042: One client, no exceptions). */
+    var egressClient: EgressClient = DefaultEgressClient()
+
+    /** Optional resolver to map capability IDs to granted NetworkScope. */
+    var scopeResolver: ((CapabilityId) -> CapabilityScope.Network?)? = null
 
     override fun operations(): List<ToolDescriptor> = listOf(
         // Read operations (PURE, cacheable, retryable)
@@ -218,17 +217,21 @@ object HttpTool : Tool {
         handle: ResourceHandle,
         operation: String,
         arguments: JsonObject,
-    ): ToolCallResult =
-        when (operation) {
-            "http:get" -> runCatching { httpGet(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:head" -> runCatching { httpHead(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:post" -> runCatching { httpPost(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:put" -> runCatching { httpPut(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:patch" -> runCatching { httpPatch(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:delete" -> runCatching { httpDelete(arguments) }.fold({ ok(it) }, { err(operation, it) })
-            "http:download" -> runCatching { httpDownload(arguments) }.fold({ ok(it) }, { err(operation, it) })
+    ): ToolCallResult {
+        val capId = handle.capabilityId
+        val scope = scopeResolver?.invoke(capId)
+
+        return when (operation) {
+            "http:get" -> runCatching { httpGet(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:head" -> runCatching { httpHead(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:post" -> runCatching { httpPost(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:put" -> runCatching { httpPut(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:patch" -> runCatching { httpPatch(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:delete" -> runCatching { httpDelete(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "http:download" -> runCatching { httpDownload(capId, scope, arguments) }.fold({ ok(it) }, { err(operation, it) })
             else -> err(operation, IllegalArgumentException("unknown operation: $operation"))
         }
+    }
 
     override suspend fun preview(
         handle: ResourceHandle,
@@ -242,145 +245,197 @@ object HttpTool : Tool {
 
     override suspend fun cancel(operationId: String) = Unit
 
-    // ── HTTP Operations ────────────────────────────────────────────────────────
+    // ── HTTP Operations Mediated Through EgressClient (RFC-0042) ───────────────
 
-    private fun httpGet(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpGet(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
         val headers = parseHeaders(arguments["headers"])
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .GET()
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "GET",
+                headers = headers,
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n${response.body()}"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n${response.bodyString}"),
         )
     }
 
-    private fun httpHead(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpHead(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .method("HEAD", HttpRequest.BodyPublishers.noBody())
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "HEAD",
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.discarding())
-        val headerText = response.headers().map().entries.joinToString("\n") { (k, v) ->
+        val headerText = response.headers.entries.joinToString("\n") { (k, v) ->
             "$k: ${v.joinToString(", ")}"
         }
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n$headerText"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n$headerText"),
         )
     }
 
-    private fun httpPost(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpPost(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val body = (arguments["body"] as? JsonPrimitive)?.content ?: ""
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
         val headers = parseHeaders(arguments["headers"])
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "POST",
+                headers = headers,
+                body = body.toByteArray(Charsets.UTF_8),
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n${response.body()}"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n${response.bodyString}"),
         )
     }
 
-    private fun httpPut(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpPut(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val body = (arguments["body"] as? JsonPrimitive)?.content ?: ""
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
         val headers = parseHeaders(arguments["headers"])
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .PUT(HttpRequest.BodyPublishers.ofString(body))
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "PUT",
+                headers = headers,
+                body = body.toByteArray(Charsets.UTF_8),
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n${response.body()}"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n${response.bodyString}"),
         )
     }
 
-    private fun httpPatch(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpPatch(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val body = (arguments["body"] as? JsonPrimitive)?.content ?: ""
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
         val headers = parseHeaders(arguments["headers"])
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "PATCH",
+                headers = headers,
+                body = body.toByteArray(Charsets.UTF_8),
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n${response.body()}"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n${response.bodyString}"),
         )
     }
 
-    private fun httpDelete(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpDelete(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
         val headers = parseHeaders(arguments["headers"])
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .DELETE()
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "DELETE",
+                headers = headers,
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         return listOf(
-            ContentBlock.Text("HTTP ${response.statusCode()}\n\n${response.body()}"),
+            ContentBlock.Text("HTTP ${response.statusCode}\n\n${response.bodyString}"),
         )
     }
 
-    private fun httpDownload(arguments: JsonObject): List<ContentBlock> {
+    private suspend fun httpDownload(
+        capabilityId: CapabilityId,
+        scope: CapabilityScope.Network?,
+        arguments: JsonObject
+    ): List<ContentBlock> {
         val url = (arguments["url"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("url parameter required")
         val path = (arguments["path"] as? JsonPrimitive)?.content
             ?: throw IllegalArgumentException("path parameter required")
         val timeoutSeconds = ((arguments["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 30).toLong()
 
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
-            .GET()
-            .build()
+        val response = egressClient.request(
+            EgressRequest(
+                capabilityId = capabilityId,
+                url = url,
+                method = "GET",
+                timeoutSeconds = timeoutSeconds
+            ),
+            scope = scope
+        ).getOrThrow()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray())
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException("HTTP ${response.statusCode()}: ${String(response.body())}")
+        if (response.statusCode !in 200..299) {
+            throw IllegalStateException("HTTP ${response.statusCode}: ${response.bodyString}")
         }
 
-        val contentLength = response.headers().firstValueAsLong("content-length").orElse(response.body().size.toLong())
+        val contentLength = response.headers["content-length"]?.firstOrNull()?.toLongOrNull() ?: response.body.size.toLong()
         return listOf(
             ContentBlock.Text("Will download ${formatBytes(contentLength)} to '$path' from $url"),
         )
@@ -425,17 +480,19 @@ object HttpTool : Tool {
             trustLevel = TrustLevel.UNTRUSTED, // Network response is untrusted (RFC-0027)
         )
 
-    private fun err(operation: String, error: Throwable): ToolCallResult =
-        ToolCallResult(
+    private fun err(operation: String, error: Throwable): ToolCallResult {
+        val isSecurity = error is SecurityException || error.cause is SecurityException
+        return ToolCallResult(
             callId = "",
             outcome = ToolOutcome.Failed(
                 dev.aidos.kernel.AidosError(
-                    code = "http.error",
-                    errorClass = dev.aidos.kernel.ErrorClass.TRANSIENT,
+                    code = if (isSecurity) "http.security_violation" else "http.error",
+                    errorClass = if (isSecurity) dev.aidos.kernel.ErrorClass.DENIED else dev.aidos.kernel.ErrorClass.TRANSIENT,
                     message = "${error.javaClass.simpleName}: ${error.message ?: "unknown"}"
                 )
             ),
             content = listOf(ContentBlock.Text(error.message ?: "unknown error")),
             trustLevel = TrustLevel.TRUSTED,
         )
+    }
 }

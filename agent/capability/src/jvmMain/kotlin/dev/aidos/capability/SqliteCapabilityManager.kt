@@ -213,12 +213,12 @@ class SqliteCapabilityManager(
             return Result.failure(RuntimeException("capability ${capabilityId.value} is revoked"))
         }
         val scope = cap.scope
-        if (scope !is CapabilityScope.Filesystem) {
-            return Result.failure(RuntimeException("openHandle only supported for Filesystem capabilities in MVP"))
+        if (scope is CapabilityScope.Filesystem) {
+            return Result.success(
+                SqliteDirHandle(capabilityId, scope.rootRelativePath, this)
+            )
         }
-        return Result.success(
-            SqliteDirHandle(capabilityId, scope.rootRelativePath, this)
-        )
+        return Result.success(dev.aidos.kernel.BasicResourceHandle(capabilityId))
     }
 
     override suspend fun validate(
