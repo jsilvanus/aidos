@@ -149,6 +149,8 @@ class DesktopEngineHost(
     private var tokenManager: TokenManager? = null
     private var httpServer: EngineHttpServer? = null
     private var agentScope: CoroutineScope? = null
+    private var _agentRuntime: AgentRuntime? = null
+    val agentRuntime: AgentRuntime? get() = _agentRuntime
 
     suspend fun start() = lifecycle.withLock {
         if (_isRunning.value) return@withLock
@@ -186,14 +188,27 @@ class DesktopEngineHost(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = InferenceRequestManager(runtime)
             lateinit var server: EngineHttpServer
-            val agent = AgentRuntime(scope, { req ->
-                ManagedModelAdapter(
-                    manager,
-                    req.model,
-                    Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
-                    req.contextWindow ?: 8192,
-                )
-            })
+            val agent = AgentRuntime(
+                scope = scope,
+                adapterFor = { req ->
+                    ManagedModelAdapter(
+                        manager,
+                        req.model,
+                        Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
+                        req.contextWindow ?: 8192,
+                    )
+                },
+                adapterWithPlacement = { req, onPlacement ->
+                    ManagedModelAdapter(
+                        manager,
+                        req.model,
+                        Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
+                        req.contextWindow ?: 8192,
+                        onPlacementObserved = onPlacement,
+                    )
+                }
+            )
+            _agentRuntime = agent
             server = EngineHttpServer(
                 tokens,
                 runtime,
@@ -318,6 +333,7 @@ class DesktopEngineHost(
         stopAidin()
         agentScope?.cancel()
         agentScope = null
+        _agentRuntime = null
         try {
             if (server != null) {
                 server.stop()

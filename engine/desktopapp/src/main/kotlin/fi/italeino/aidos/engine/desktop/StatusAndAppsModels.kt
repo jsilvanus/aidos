@@ -3,6 +3,8 @@ package fi.italeino.aidos.engine.desktop
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.approval.AppApprovalRecord
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.ui.AgentFilterTab
+import fi.italeino.aidos.engine.ui.AgentOverviewUiState
 import fi.italeino.aidos.engine.ui.ResidentModel
 import fi.italeino.aidos.engine.ui.StatusUiState
 import kotlinx.coroutines.CoroutineScope
@@ -102,5 +104,122 @@ class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: C
 
     private fun act(action: suspend (fi.italeino.aidos.engine.approval.AppApprovalStore) -> Unit) {
         scope.launch { action(host.approvalStore) }
+    }
+}
+
+/**
+ * Desktop ViewModel managing state for [AgentsPane].
+ * Reactive telemetry for active runs, tool waits, model placement, and RFC-0042 egress.
+ */
+class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope: CoroutineScope) {
+    private val _state = MutableStateFlow(AgentOverviewUiState())
+    val state: StateFlow<AgentOverviewUiState> = _state.asStateFlow()
+
+    init {
+        scope.launch {
+            while (true) {
+                refresh()
+                delay(1_500)
+            }
+        }
+    }
+
+    fun selectAppFilter(app: String?) {
+        _state.value = _state.value.copy(selectedAppFilter = app)
+    }
+
+    fun selectStatusFilter(status: AgentFilterTab) {
+        _state.value = _state.value.copy(selectedStatusFilter = status)
+    }
+
+    fun selectRunDetail(runId: String?) {
+        _state.value = _state.value.copy(selectedRunId = runId)
+    }
+
+    fun cancelRun(runId: String) {
+        host.agentRuntime?.cancelAny(runId)
+        refresh()
+    }
+
+    fun refresh() {
+        val runtime = host.agentRuntime
+        if (runtime == null) {
+            _state.value = _state.value.copy(
+                isEngineRunning = host.isRunning.value,
+                stats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(),
+                runs = emptyList()
+            )
+            return
+        }
+
+        val rawStats = runtime.stats()
+        val rawRuns = runtime.listAll()
+
+        val uiStats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(
+            activeRuns = rawStats.activeRuns,
+            maxConcurrentRuns = rawStats.maxConcurrentRuns,
+            waitingToolCalls = rawStats.waitingToolCalls,
+            completedRuns = rawStats.completedRuns,
+            failedRuns = rawStats.failedRuns,
+            totalRetainedRuns = rawStats.totalRetainedRuns,
+            appsCount = rawStats.appsCount,
+            runsByApp = rawStats.runsByApp,
+            totalEgressCalls = rawStats.totalEgressCalls,
+        )
+
+        val uiRuns = rawRuns.map { r ->
+            dev.aidos.tcr.agent.AgentRunUiModel(
+                runId = r.runId,
+                ownerApp = r.owner,
+                modelId = r.model,
+                placement = dev.aidos.tcr.agent.AgentPlacement.fromWire(r.placement),
+                locality = dev.aidos.tcr.agent.AgentLocality.fromWire(r.locality),
+                status = when (r.status) {
+                    "running" -> dev.aidos.tcr.agent.AgentRunStatus.RUNNING
+                    "tool_calls" -> dev.aidos.tcr.agent.AgentRunStatus.TOOL_CALLS
+                    "completed" -> dev.aidos.tcr.agent.AgentRunStatus.COMPLETED
+                    "failed" -> dev.aidos.tcr.agent.AgentRunStatus.FAILED
+                    "cancelled" -> dev.aidos.tcr.agent.AgentRunStatus.CANCELLED
+                    else -> dev.aidos.tcr.agent.AgentRunStatus.RUNNING
+                },
+                seq = r.seq,
+                steps = r.steps,
+                maxSteps = r.maxSteps,
+                promptPreview = r.promptPreview,
+                replyText = r.replyText,
+                errorMessage = r.error,
+                pendingToolCall = r.pendingToolCall?.let {
+                    dev.aidos.tcr.agent.PendingToolCallUi(it.callId, it.name, it.arguments.toString())
+                },
+                executedTools = r.executedTools.map {
+                    dev.aidos.tcr.agent.ExecutedToolCallUi(it.toolName, it.argumentsJson, it.resultText)
+                },
+                egressSummary = dev.aidos.tcr.agent.AgentEgressSummaryUi(
+                    totalCalls = r.egressRecords.size,
+                    totalBytesOut = r.egressRecords.sumOf { it.requestBytes },
+                    totalBytesIn = r.egressRecords.sumOf { it.responseBytes },
+                    records = r.egressRecords.map {
+                        dev.aidos.tcr.agent.AgentEgressRecordUi(
+                            destinationHost = it.destinationHost,
+                            method = it.method,
+                            requestBytes = it.requestBytes,
+                            responseBytes = it.responseBytes,
+                            payloadHash = it.payloadHash,
+                            durationMs = it.durationMs,
+                            outcome = it.outcome,
+                            timestamp = it.timestamp
+                        )
+                    }
+                ),
+                startedAt = r.startedAt,
+                finishedAt = r.finishedAt
+            )
+        }
+
+        _state.value = _state.value.copy(
+            isEngineRunning = host.isRunning.value,
+            stats = uiStats,
+            runs = uiRuns
+        )
     }
 }

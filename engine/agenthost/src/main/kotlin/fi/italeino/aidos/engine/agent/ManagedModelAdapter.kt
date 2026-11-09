@@ -5,6 +5,7 @@ import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import fi.italeino.aidos.engine.inference.Locality
+import fi.italeino.aidos.engine.inference.Placement
 
 /**
  * A model of this Engine, called in-process through [InferenceRequestManager] (admission, load
@@ -21,6 +22,7 @@ class ManagedModelAdapter(
     override val modelId: String,
     private val locality: Locality,
     override val contextWindow: Int = 8192,
+    private val onPlacementObserved: ((Placement) -> Unit)? = null,
 ) : ModelAdapter {
     override val providerId: String = "aidos-engine"
     override val modelVersion: String = "1.0"
@@ -29,5 +31,8 @@ class ManagedModelAdapter(
     override fun supportsNativeToolCalls(): Boolean = true
 
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> =
-        manager.execute(modelId, locality) { adapter, _ -> adapter.invoke(request).getOrThrow() }
+        manager.execute(modelId, locality) { adapter, placement ->
+            onPlacementObserved?.invoke(placement)
+            adapter.invoke(request).getOrThrow()
+        }
 }

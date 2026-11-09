@@ -52,6 +52,52 @@ data class ToolResultsRequest(val results: List<ClientToolResult>, val async: Bo
 @Serializable
 data class ExecutedToolCallDto(val toolName: String, val argumentsJson: String, val resultText: String)
 
+@Serializable
+data class EgressRecordDto(
+    val destinationHost: String,
+    val method: String = "GET",
+    val requestBytes: Long = 0L,
+    val responseBytes: Long = 0L,
+    val payloadHash: String = "",
+    val durationMs: Long = 0L,
+    val outcome: String = "ALLOWED",
+    val timestamp: String = "",
+)
+
+@Serializable
+data class AgentRunSummaryDto(
+    val runId: String,
+    val owner: String,
+    val model: String,
+    val placement: String = "local",
+    val locality: String = "local_only",
+    val status: String,
+    val steps: Int = 0,
+    val maxSteps: Int = 8,
+    val promptPreview: String = "",
+    val replyText: String = "",
+    val error: String? = null,
+    val seq: Int = 0,
+    val pendingToolCall: PendingToolCall? = null,
+    val executedTools: List<ExecutedToolCallDto> = emptyList(),
+    val egressRecords: List<EgressRecordDto> = emptyList(),
+    val startedAt: Long = 0L,
+    val finishedAt: Long = 0L,
+)
+
+@Serializable
+data class AgentOverviewStatsDto(
+    val activeRuns: Int,
+    val maxConcurrentRuns: Int,
+    val waitingToolCalls: Int,
+    val completedRuns: Int,
+    val failedRuns: Int,
+    val totalRetainedRuns: Int,
+    val appsCount: Int,
+    val runsByApp: Map<String, Int>,
+    val totalEgressCalls: Int,
+)
+
 /**
  * Snapshot of a run (a task). [status]: `running`; `tool_calls` (input required: execute [toolCalls]
  * and send the results to `/v1/agent/runs/{runId}/tool-results`); or terminal `completed`, `failed`,
