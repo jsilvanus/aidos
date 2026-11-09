@@ -12,6 +12,10 @@ Each RFC progresses through the following statuses:
 - **Deprecated**: The system or design approach is no longer used or recommended.
 - **Superseded**: A newer RFC has replaced this one.
 
+### Accepted is not implemented
+
+No RFC carries the status Implemented. Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, one (0046) is fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.
+
 ### Accepted is not frozen
 
 These are two different claims and conflating them causes real damage.
