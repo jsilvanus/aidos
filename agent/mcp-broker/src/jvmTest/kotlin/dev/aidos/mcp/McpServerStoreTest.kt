@@ -38,13 +38,17 @@ class McpServerStoreTest {
         profilesJson: String = "[\"DESKTOP\"]",
         secretRefsJson: String = "{}",
         autoRestart: Boolean = true,
+        binderPackage: String? = null,
+        binderService: String? = null,
+        binderCertsJson: String? = null,
     ) {
         driver.execute(
             identifier = null,
             sql = "INSERT INTO mcp_servers " +
                 "(name, transport, command, args_json, endpoint_url, profiles_json, secret_refs_json, " +
-                "auto_restart, registered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            parameters = 9,
+                "auto_restart, registered_at, binder_package, binder_service, binder_certs_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 12,
         ) {
             bindString(0, name)
             bindString(1, transport)
@@ -55,6 +59,9 @@ class McpServerStoreTest {
             bindString(6, secretRefsJson)
             bindLong(7, if (autoRestart) 1L else 0L)
             bindString(8, "2026-08-17T00:00:00Z")
+            bindString(9, binderPackage)
+            bindString(10, binderService)
+            bindString(11, binderCertsJson)
         }.value
     }
 
@@ -65,6 +72,58 @@ class McpServerStoreTest {
         val driver = openUserDriver()
         val outcomes = McpServerStore(driver).loadAll(PlatformProfile.DESKTOP)
         assertTrue(outcomes.isEmpty())
+    }
+
+    // ─── binder row ─────────────────────────────────────────────────────────
+
+    private val cert = "ab".repeat(32)
+
+    private fun insertBinder(driver: SqlDriver, name: String = "amp", certs: String? = "[\"$cert\"]", profiles: String = "[\"MOBILE\"]") =
+        insertServer(
+            driver, name = name, transport = "binder", profilesJson = profiles,
+            binderPackage = "com.agenticmessenger", binderService = "com.agenticmessenger.mcp.AmpMcpBinderService",
+            binderCertsJson = certs,
+        )
+
+    @Test
+    fun `a binder row loads on MOBILE with its pinned certificate`() {
+        val driver = openUserDriver()
+        insertBinder(driver)
+        val loaded = assertIs<McpServerLoadOutcome.Loaded>(McpServerStore(driver).loadAll(PlatformProfile.MOBILE).single())
+        val transport = assertIs<McpTransport.Binder>(loaded.load.registration.transport)
+        assertEquals("com.agenticmessenger", transport.packageName)
+        assertEquals(setOf(cert), transport.signingCertSha256)
+    }
+
+    @Test
+    fun `a binder row is rejected on a device that is not MOBILE`() {
+        val driver = openUserDriver()
+        insertBinder(driver, profiles = "[\"MOBILE\", \"DESKTOP\"]")
+        assertIs<McpServerLoadOutcome.Rejected>(McpServerStore(driver).loadAll(PlatformProfile.DESKTOP).single())
+    }
+
+    @Test
+    fun `a binder row without a usable pin is rejected, never defaulted`() {
+        for (bad in listOf("[]", "[\"not-hex\"]", "{}", "[\"$cert\", 5]", "[\"${"AB".repeat(32)}\", \"short\"]")) {
+            val driver = openUserDriver()
+            insertBinder(driver, certs = bad)
+            assertIs<McpServerLoadOutcome.Rejected>(McpServerStore(driver).loadAll(PlatformProfile.MOBILE).single(), "certs=$bad")
+        }
+    }
+
+    @Test
+    fun `the schema itself refuses a binder row without a pin column`() {
+        val driver = openUserDriver()
+        val failed = runCatching { insertBinder(driver, certs = null) }.isFailure
+        assertTrue(failed, "CHECK constraint must reject a binder row with no binder_certs_json")
+    }
+
+    @Test
+    fun `an uppercase pin is normalised to lower case`() {
+        val driver = openUserDriver()
+        insertBinder(driver, certs = "[\"${"AB".repeat(32)}\"]")
+        val loaded = assertIs<McpServerLoadOutcome.Loaded>(McpServerStore(driver).loadAll(PlatformProfile.MOBILE).single())
+        assertEquals(setOf(cert), assertIs<McpTransport.Binder>(loaded.load.registration.transport).signingCertSha256)
     }
 
     // ─── stdio row ──────────────────────────────────────────────────────────

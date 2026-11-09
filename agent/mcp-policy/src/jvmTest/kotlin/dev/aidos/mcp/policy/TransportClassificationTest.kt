@@ -40,6 +40,26 @@ class TransportClassificationTest {
     }
 
     @Test
+    fun `Binder classifies as local READ behind APP_IPC, MOBILE only, no network`() {
+        val classification = McpTransportPolicy.classify(
+            McpTransport.Binder("com.example.app", "com.example.app.McpService", setOf("ab".repeat(32))),
+        )
+        assertEquals(McpEffect.READ, classification.effect)
+        assertNull(classification.egressDestination)
+        assertEquals(McpPermission.APP_IPC, classification.permission)
+        assertEquals(McpTier.PLATFORM, classification.tier)
+        assertFalse(classification.requiresNetwork)
+        assertEquals(setOf(McpProfile.MOBILE), classification.profiles)
+    }
+
+    @Test
+    fun `a Binder registration cannot be built without a pinned certificate`() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            McpTransport.Binder("com.example.app", "com.example.app.McpService", emptySet())
+        }
+    }
+
+    @Test
     fun `HTTP classifies as EGRESS to the endpoint with NETWORKED tier on every profile`() {
         val classification = McpTransportPolicy.classify(http)
         assertEquals(McpEffect.EGRESS, classification.effect)

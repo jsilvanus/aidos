@@ -15,6 +15,7 @@ import kotlinx.serialization.json.buildJsonObject
  * Transport differences:
  * - **stdio**: spawns a subprocess; DESKTOP/HEADLESS_SERVER only; `Read` effect possible
  * - **HTTP**: every call is `Egress`; available on every profile; HTTPS enforced except loopback
+ * - **Binder**: another app on the device; MOBILE only; no network; provider pinned by signing certificate
  *
  * Nothing spawns or connects on project open (D30, lazy start).
  */
@@ -50,6 +51,25 @@ sealed interface McpTransport {
         /** Header name → vault reference. Never values, never logged. */
         val secretRefs: Map<String, String> = emptyMap(),
     ) : McpTransport
+
+    /**
+     * Another app on this device, reached over Android Binder (MOBILE only). The provider is
+     * identified by [packageName] **and** [signingCertSha256]: a package name alone can be claimed
+     * by any app installed first, so a registration without a pinned certificate is invalid.
+     * There are no secrets: authentication is the OS-verified package and signature on both sides.
+     */
+    data class Binder(
+        val packageName: String,
+        /** Fully qualified class name of the provider's exported MCP service. */
+        val serviceClass: String,
+        /** Lower-case hex SHA-256 digests of acceptable signing certificates. Never empty. */
+        val signingCertSha256: Set<String>,
+    ) : McpTransport {
+        init {
+            require(packageName.isNotBlank() && serviceClass.isNotBlank()) { "binder transport needs a package and a service class" }
+            require(signingCertSha256.isNotEmpty()) { "binder transport requires a pinned signing certificate" }
+        }
+    }
 }
 
 /**

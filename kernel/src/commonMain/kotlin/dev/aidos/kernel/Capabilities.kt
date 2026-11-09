@@ -59,6 +59,10 @@ enum class Permission {
     TTS_QUERY,
     
     NETWORK_EGRESS,
+
+    /** Talk to another app on this device over Android Binder (MCP Binder transport). MOBILE only; no network. */
+    APP_IPC,
+
     SECRETS_READ,
     WORKER_CREATE,
 
