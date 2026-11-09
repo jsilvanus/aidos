@@ -1,16 +1,23 @@
 package dev.aidos.aidin
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /** One peer as the UI shows it. Labels are local; peers never learn them. */
 data class PeerView(
@@ -47,9 +54,10 @@ data class PairingView(
 )
 
 /**
- * One Engine's AIDIN presence (RFC-0105 phase 1): the peer link server, discovery, heartbeats,
- * liveness, trust state and pairing/enrolment flows. Off until [start]; the host starts it only when
- * the user turned group sharing on.
+ * One Engine's AIDIN presence (RFC-0105 phases 1–3): the peer link server, discovery, heartbeats,
+ * liveness, trust state, pairing/enrolment flows, certificate renewal, peer delegation, and
+ * layer-split tunnel multiplexing. Off until [start]; the host starts it only when the user turned
+ * group sharing on.
  *
  * Threads: each link has a blocking reader thread; the heartbeat loop runs in [scope]. All trust and
  * link state is guarded by [lock].
@@ -65,6 +73,8 @@ class AidinNode(
     /** Fills the variable part of each heartbeat (models, RAM budget, battery…). */
     private val heartbeatContent: () -> Heartbeat = { Heartbeat(AIDIN_PROTOCOL_VERSION, engineVersion) },
     private val inviteLifetimeMillis: Long = 5 * 60_000,
+    /** Renew group certificates when remaining validity drops below this threshold (default 7 days). */
+    private val certificateRenewalThresholdMillis: Long = 7L * 24 * 60 * 60 * 1000,
 ) {
     val nodeId: NodeId = key.nodeId
 
@@ -72,9 +82,30 @@ class AidinNode(
     private var state: AidinState = stateStore.load()
     private val trust = TrustStore(nodeId)
     private val links = ConcurrentHashMap<NodeId, PeerLink>()
+    private val knownPeers = ConcurrentHashMap<NodeId, PeerCredentials>()
     private val lastBeats = ConcurrentHashMap<NodeId, Heartbeat>()
     private val invites = mutableListOf<Pair<PairingInvite, Long>>()
     private val pairings = LinkedHashMap<String, PairingSession>()
+
+    // Phase 2 Delegation state
+    private val pendingDelegations = ConcurrentHashMap<String, CompletableDeferred<LinkMessage.DelegateResponse>>()
+    private val pendingStreams = ConcurrentHashMap<String, Channel<LinkMessage>>()
+
+    /**
+     * Handler invoked when a trusted peer sends a [LinkMessage.DelegateRequest] (`/aidin/v1/` endpoints)
+     * over the peer link. Set by the Engine HTTP host (`EngineHttpServer`).
+     */
+    @Volatile
+    var delegationHandler: (suspend (
+        fromPeer: NodeId,
+        request: LinkMessage.DelegateRequest,
+        emitStream: suspend (LinkMessage.DelegateStreamEvent) -> Unit,
+    ) -> LinkMessage.DelegateResponse)? = null
+
+    // Phase 3 Split-inference supervision state
+    @Volatile private var helperSupervisor: HelperProcessSupervisor? = null
+    @Volatile private var anchorSupervisor: AnchorProcessSupervisor? = null
+    private val pendingPlanAcks = ConcurrentHashMap<String, CompletableFuture<LinkMessage.PlanAck>>()
 
     private val _peers = MutableStateFlow<List<PeerView>>(emptyList())
     val peers: StateFlow<List<PeerView>> = _peers.asStateFlow()
@@ -121,11 +152,14 @@ class AidinNode(
     fun stop() {
         ticker?.cancel()
         ticker = null
+        helperSupervisor?.close()
+        anchorSupervisor?.close()
         discovery?.close()
         server?.close()
         server = null
         links.values.forEach { it.close() }
         links.clear()
+        failAllPendingDelegations("node stopped")
     }
 
     // ---- trust management -------------------------------------------------------------------
@@ -178,6 +212,36 @@ class AidinNode(
         admin.groupId
     }
 
+    /**
+     * As admin of [groupId]: issue a renewed [MembershipCertificate] for [member] while it is seen
+     * and push it over the authenticated peer link (RFC-0105: "default validity 30 days, renewed
+     * while the device is seen").
+     */
+    fun renewMemberCertificate(
+        groupId: GroupId,
+        member: NodeId,
+        roles: Set<Scope>? = null,
+        validityMillis: Long = GroupAuthority.DEFAULT_VALIDITY_MILLIS,
+    ): MembershipCertificate? {
+        val link = links[member]
+        val peerCreds = link?.peer ?: knownPeers[member] ?: return null
+        val cert = synchronized(lock) {
+            val admin = state.administered.firstOrNull { it.groupId == groupId } ?: return null
+            if (member in admin.revoked) return null
+            val existingRoles = peerCreds.certificates.firstOrNull { it.groupId == groupId }?.roles ?: Scope.ALL
+            admin.authority.issue(peerCreds.publicKey, roles ?: existingRoles, clock(), validityMillis)
+        }
+        val updatedCerts = peerCreds.certificates.filterNot { it.groupId == groupId } + cert
+        knownPeers[member] = PeerCredentials(peerCreds.publicKey, updatedCerts)
+        link?.let { runCatching { it.send(LinkMessage.CertificateRenewal(cert.toWire())) } }
+        return cert
+    }
+
+    /** Own current certificate for [groupId], if this node is a member. */
+    fun ownCertificate(groupId: GroupId): MembershipCertificate? = synchronized(lock) {
+        state.memberships.firstOrNull { it.groupId == groupId }?.ownCertificate
+    }
+
     /** As admin: revoke [member] in [groupId] and push the new list to every connected member. */
     fun revoke(groupId: GroupId, member: NodeId) {
         val list = synchronized(lock) {
@@ -208,11 +272,79 @@ class AidinNode(
 
     fun isAdmin(groupId: GroupId): Boolean = synchronized(lock) { state.administered.any { it.groupId == groupId } }
 
-    /** For callers that check a scope before an action (phase 2 delegation, phase 3 plans). */
+    /** Record a peer's credentials (e.g. from a group certificate directory or peer link handshake). */
+    fun recordPeerCredentials(credentials: PeerCredentials) {
+        knownPeers[credentials.nodeId] = credentials
+    }
+
+    /** For callers that check a scope before an action on an active link (phase 2 delegation, phase 3 plans). */
     fun authorize(nodeId: NodeId, scope: Scope): TrustDecision {
         val link = links[nodeId] ?: return TrustDecision.Denied(listOf("not connected"))
         if (link.isPairing) return TrustDecision.Denied(listOf("pairing link"))
-        return synchronized(lock) { trust.authorize(link.peer, scope, clock()) }
+        val creds = knownPeers[nodeId] ?: link.peer
+        return synchronized(lock) { trust.authorize(creds, scope, clock()) }
+    }
+
+    /**
+     * Checks whether [peerNodeId] is trusted for [scope] using its active link, known group
+     * credentials, or pair record. Used when verifying all nodes in a `POST /aidin/v1/route`
+     * split plan (RFC-0105 "Placement mapping for peers").
+     */
+    fun authorizeKnownPeer(peerNodeId: NodeId, scope: Scope): TrustDecision = synchronized(lock) {
+        if (peerNodeId == nodeId) return@synchronized TrustDecision.Allowed(
+            setOf(TrustDomain.Pairing) + trust.memberships.map { TrustDomain.Group(it.groupId) }
+        )
+        val creds = knownPeers[peerNodeId]
+            ?: links[peerNodeId]?.takeIf { !it.isPairing }?.peer
+            ?: state.pairs.firstOrNull { it.nodeId == peerNodeId }?.let { PairCredentials(it.publicKey) }
+            ?: return@synchronized TrustDecision.Denied(listOf("unknown peer $peerNodeId"))
+        trust.authorize(creds, scope, clock())
+    }
+
+    private fun PairCredentials(publicKey: ByteArray) = PeerCredentials(publicKey, emptyList())
+
+    /**
+     * RFC-0105 "Placement mapping for peers":
+     * Checks whether the origin trusts [anchorNodeId] (for [Scope.SERVE]) and every helper in
+     * [helperNodeIds] (for [Scope.HELP] or group membership) within a common trust domain
+     * (either the same group, or the origin's own pair records).
+     */
+    fun isSplitRouteTrustedByOrigin(anchorNodeId: NodeId, helperNodeIds: Collection<NodeId>): Boolean {
+        val anchorDecision = authorizeKnownPeer(anchorNodeId, Scope.SERVE)
+        if (anchorDecision !is TrustDecision.Allowed) return false
+        if (helperNodeIds.isEmpty()) return true
+
+        var sharedDomains: Set<TrustDomain> = anchorDecision.domains
+        for (helperId in helperNodeIds) {
+            if (helperId == nodeId) continue
+            // A helper is trusted by the origin if the origin authorizes it in the same group or by pairing.
+            val helperDecision = authorizeKnownPeer(helperId, Scope.HELP).let { d ->
+                if (d is TrustDecision.Allowed) d else authorizeKnownPeer(helperId, Scope.SERVE)
+            }
+            if (helperDecision !is TrustDecision.Allowed) return false
+            sharedDomains = sharedDomains intersect helperDecision.domains
+            if (sharedDomains.isEmpty()) return false
+        }
+        return sharedDomains.isNotEmpty()
+    }
+
+    /** Marks a peer as `ACTIVE` (or back to `READY`) in [PeerTracker] when used for delegation or a split plan. */
+    fun markPeerActive(peerNodeId: NodeId, active: Boolean) {
+        synchronized(lock) { tracker.markActive(peerNodeId, active, clock()) }
+        publishPeers()
+    }
+
+    /** Marks a peer as suspected/disconnected when a mid-request failure occurs. */
+    fun markPeerLost(peerNodeId: NodeId) {
+        links.remove(peerNodeId)?.close()
+        synchronized(lock) { tracker.onDisconnected(peerNodeId, clock()) }
+        publishPeers()
+    }
+
+    /** Marks a peer as suspected without closing its TCP link so the next heartbeat can recover it. */
+    fun markPeerSuspected(peerNodeId: NodeId) {
+        synchronized(lock) { tracker.onDisconnected(peerNodeId, clock()) }
+        publishPeers()
     }
 
     /** Connect to a known peer directly (no mDNS on the network, or a typed address). */
@@ -220,6 +352,176 @@ class AidinNode(
         val link = endpoint.connect(host, port)
         onLink(link)
         return link.nodeId
+    }
+
+    // ---- Phase 2 Delegation over PeerLink --------------------------------------------------
+
+    /**
+     * Sends a non-streaming `/aidin/v1/` request to [peerNodeId] over the authenticated peer link.
+     * Enforces caller-side `Scope.SERVE` authorization before sending any content.
+     */
+    suspend fun delegate(
+        peerNodeId: NodeId,
+        endpoint: String,
+        bodyJson: String,
+        locality: String,
+        planVersion: Long? = null,
+        timeoutMillis: Long = 30_000L,
+    ): LinkMessage.DelegateResponse {
+        val auth = authorize(peerNodeId, Scope.SERVE)
+        if (!auth.isAllowed) {
+            return LinkMessage.DelegateResponse(
+                requestId = "",
+                status = 403,
+                bodyJson = """{"error":{"message":"Peer $peerNodeId is not authorized for scope serve","type":"permission_error","code":"untrusted_peer"}}""",
+            )
+        }
+        val link = links[peerNodeId]
+            ?: return LinkMessage.DelegateResponse(
+                requestId = "",
+                status = 503,
+                bodyJson = """{"error":{"message":"Peer $peerNodeId is not connected","type":"peer_lost","code":"peer_unreachable"}}""",
+            )
+
+        val requestId = UUID.randomUUID().toString()
+        val deferred = CompletableDeferred<LinkMessage.DelegateResponse>()
+        pendingDelegations[requestId] = deferred
+        try {
+            link.send(
+                LinkMessage.DelegateRequest(
+                    requestId = requestId,
+                    endpoint = endpoint,
+                    bodyJson = bodyJson,
+                    locality = locality,
+                    hop = 1,
+                    planVersion = planVersion,
+                    stream = false,
+                )
+            )
+            return withTimeoutOrNull(timeoutMillis) { deferred.await() }
+                ?: LinkMessage.DelegateResponse(
+                    requestId = requestId,
+                    status = 504,
+                    bodyJson = """{"error":{"message":"Peer $peerNodeId timed out","type":"peer_lost","code":"peer_timeout"}}""",
+                )
+        } catch (e: IOException) {
+            return LinkMessage.DelegateResponse(
+                requestId = requestId,
+                status = 503,
+                bodyJson = """{"error":{"message":"Peer link closed: ${e.message}","type":"peer_lost","code":"peer_lost"}}""",
+            )
+        } finally {
+            pendingDelegations.remove(requestId)
+        }
+    }
+
+    /**
+     * Streams a delegated `/aidin/v1/chat/completions` request from [peerNodeId].
+     * If the peer link drops mid-stream, emits `LinkMessage.DelegateStreamEvent` with
+     * `{"type":"peer_lost","retryable":true}` and terminates (RFC-0105).
+     */
+    fun delegateStreaming(
+        peerNodeId: NodeId,
+        endpoint: String,
+        bodyJson: String,
+        locality: String,
+        planVersion: Long? = null,
+    ): Flow<LinkMessage> = flow {
+        val auth = authorize(peerNodeId, Scope.SERVE)
+        if (!auth.isAllowed) {
+            emit(
+                LinkMessage.DelegateResponse(
+                    requestId = "",
+                    status = 403,
+                    bodyJson = """{"error":{"message":"Peer $peerNodeId is not authorized for scope serve","type":"permission_error","code":"untrusted_peer"}}""",
+                )
+            )
+            return@flow
+        }
+        val link = links[peerNodeId]
+        if (link == null) {
+            emit(
+                LinkMessage.DelegateResponse(
+                    requestId = "",
+                    status = 503,
+                    bodyJson = """{"error":{"message":"Peer $peerNodeId is not connected","type":"peer_lost","code":"peer_unreachable"}}""",
+                )
+            )
+            return@flow
+        }
+
+        val requestId = UUID.randomUUID().toString()
+        val channel = Channel<LinkMessage>(Channel.UNLIMITED)
+        pendingStreams[requestId] = channel
+        try {
+            link.send(
+                LinkMessage.DelegateRequest(
+                    requestId = requestId,
+                    endpoint = endpoint,
+                    bodyJson = bodyJson,
+                    locality = locality,
+                    hop = 1,
+                    planVersion = planVersion,
+                    stream = true,
+                )
+            )
+            for (msg in channel) {
+                emit(msg)
+                when (msg) {
+                    is LinkMessage.DelegateResponse -> break
+                    is LinkMessage.DelegateStreamEvent -> if (msg.done) break
+                    else -> Unit
+                }
+            }
+        } catch (_: IOException) {
+            emit(
+                LinkMessage.DelegateStreamEvent(
+                    requestId = requestId,
+                    sseData = """{"type":"peer_lost","retryable":true}""",
+                    done = true,
+                )
+            )
+        } finally {
+            pendingStreams.remove(requestId)?.close()
+        }
+    }
+
+    // ---- Phase 3 Split-plan & Tunnel hooks -------------------------------------------------
+
+    internal fun attachHelperSupervisor(supervisor: HelperProcessSupervisor) {
+        helperSupervisor = supervisor
+    }
+
+    internal fun attachAnchorSupervisor(supervisor: AnchorProcessSupervisor) {
+        anchorSupervisor = supervisor
+    }
+
+    val activeAnchorSupervisor: AnchorProcessSupervisor? get() = anchorSupervisor
+    val activeHelperSupervisor: HelperProcessSupervisor? get() = helperSupervisor
+
+    internal fun sendPlanAssignAndAwaitAck(helperId: NodeId, plan: SplitPlan, timeoutMillis: Long = 5_000L): LinkMessage.PlanAck? {
+        val link = links[helperId] ?: return null
+        val key = "${plan.planId}:${plan.version}:${helperId.value}"
+        val future = CompletableFuture<LinkMessage.PlanAck>()
+        pendingPlanAcks[key] = future
+        return try {
+            link.send(LinkMessage.PlanAssign(plan.toWire()))
+            future.get(timeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {
+            null
+        } finally {
+            pendingPlanAcks.remove(key)
+        }
+    }
+
+    internal fun sendTunnelMessage(peerNodeId: NodeId, message: LinkMessage): Boolean {
+        val link = links[peerNodeId] ?: return false
+        return try {
+            link.send(message)
+            true
+        } catch (_: IOException) {
+            false
+        }
     }
 
     // ---- links ----------------------------------------------------------------------------
@@ -236,7 +538,7 @@ class AidinNode(
         if (!known) return
         try {
             onLink(endpoint.connect(found.host, advert.port))
-        } catch (e: IOException) {
+        } catch (_: IOException) {
             // Not reachable or not trusting us (yet); the next advert retries.
         }
     }
@@ -246,8 +548,10 @@ class AidinNode(
             startPairingSession(link, initiatedHere = false, kind = PairingKind.PAIR, groupId = null, roles = emptySet())
             return
         }
+        knownPeers[link.nodeId] = link.peer
         links.put(link.nodeId, link)?.takeIf { it !== link }?.close()
         synchronized(lock) { tracker.onConnected(link.nodeId, clock()) }
+        renewPeerCertificatesIfAdmin(link)
         link.send(LinkMessage.Beat(heartbeat()))
         Thread({ readLoop(link) }, "aidin-read-${link.nodeId}").apply { isDaemon = true }.start()
         publishPeers()
@@ -259,6 +563,32 @@ class AidinNode(
                 null, is LinkMessage.Bye -> break
                 is LinkMessage.Beat -> onHeartbeat(link, message.heartbeat)
                 is LinkMessage.Revocations -> onRevocations(message.list)
+                is LinkMessage.CertificateRenewal -> onCertificateRenewal(message.certificate)
+                is LinkMessage.DelegateRequest -> onDelegateRequest(link, message)
+                is LinkMessage.DelegateResponse -> onDelegateResponse(message)
+                is LinkMessage.DelegateStreamEvent -> onDelegateStreamEvent(message)
+                is LinkMessage.PlanAssign -> {
+                    val ack = helperSupervisor?.onPlanAssign(link.nodeId, message.plan)
+                        ?: LinkMessage.PlanAck(message.plan.planId, message.plan.version, accepted = false, reason = "no helper supervisor")
+                    runCatching { link.send(ack) }
+                }
+                is LinkMessage.PlanAck -> {
+                    val key = "${message.planId}:${message.version}:${link.nodeId.value}"
+                    pendingPlanAcks.remove(key)?.complete(message)
+                }
+                is LinkMessage.TunnelOpen -> {
+                    helperSupervisor?.onTunnelOpen(link.nodeId, message) { reply ->
+                        runCatching { link.send(reply) }
+                    } ?: runCatching { link.send(LinkMessage.TunnelClose(message.streamId, "no helper supervisor")) }
+                }
+                is LinkMessage.TunnelData -> {
+                    helperSupervisor?.onTunnelData(link.nodeId, message)
+                    anchorSupervisor?.onTunnelData(link.nodeId, message)
+                }
+                is LinkMessage.TunnelClose -> {
+                    helperSupervisor?.onTunnelClose(message)
+                    anchorSupervisor?.onTunnelClose(message)
+                }
                 // Pairing messages are only valid on pairing links.
                 else -> Unit
             }
@@ -266,8 +596,113 @@ class AidinNode(
         link.close()
         if (links.remove(link.nodeId, link)) {
             synchronized(lock) { tracker.onDisconnected(link.nodeId, clock()) }
+            failPeerDelegations(link.nodeId)
             publishPeers()
         }
+    }
+
+    private fun onDelegateRequest(link: PeerLink, request: LinkMessage.DelegateRequest) {
+        scope.launch {
+            // Serving side requires Scope.DELEGATE ("The peer may send me requests").
+            val auth = authorize(link.nodeId, Scope.DELEGATE)
+            if (!auth.isAllowed) {
+                runCatching {
+                    link.send(
+                        LinkMessage.DelegateResponse(
+                            requestId = request.requestId,
+                            status = 403,
+                            bodyJson = """{"error":{"message":"Caller ${link.nodeId} is not authorized for scope delegate","type":"permission_error","code":"unauthorized_peer"}}""",
+                        )
+                    )
+                }
+                return@launch
+            }
+            // Hop limit 1 (RFC-0104 / RFC-0105): a delegated request is never delegated again.
+            if (request.hop > 1) {
+                runCatching {
+                    link.send(
+                        LinkMessage.DelegateResponse(
+                            requestId = request.requestId,
+                            status = 403,
+                            bodyJson = """{"error":{"message":"Delegation hop limit (1) exceeded","type":"locality_violation","code":"hop_limit_exceeded"}}""",
+                        )
+                    )
+                }
+                return@launch
+            }
+            val handler = delegationHandler
+            if (handler == null) {
+                runCatching {
+                    link.send(
+                        LinkMessage.DelegateResponse(
+                            requestId = request.requestId,
+                            status = 503,
+                            bodyJson = """{"error":{"message":"Peer delegation handler is not mounted","type":"peer_busy","code":"peer_busy"}}""",
+                        )
+                    )
+                }
+                return@launch
+            }
+
+            markPeerActive(link.nodeId, true)
+            try {
+                var streamedAny = false
+                val response = handler(link.nodeId, request) { streamEvent ->
+                    streamedAny = true
+                    runCatching { link.send(streamEvent) }
+                }
+                if (!request.stream || !streamedAny) {
+                    runCatching { link.send(response) }
+                }
+            } finally {
+                markPeerActive(link.nodeId, false)
+            }
+        }
+    }
+
+    private fun onDelegateResponse(response: LinkMessage.DelegateResponse) {
+        pendingDelegations.remove(response.requestId)?.complete(response)
+        pendingStreams[response.requestId]?.trySend(response)
+    }
+
+    private fun onDelegateStreamEvent(event: LinkMessage.DelegateStreamEvent) {
+        pendingStreams[event.requestId]?.trySend(event)
+    }
+
+    private fun failPeerDelegations(peerNodeId: NodeId) {
+        // Any active streaming channels receive a peer_lost event when a link drops mid-stream.
+        val lostEvent = """{"type":"peer_lost","retryable":true}"""
+        pendingStreams.forEach { (reqId, ch) ->
+            ch.trySend(LinkMessage.DelegateStreamEvent(reqId, lostEvent, done = true))
+            ch.close()
+        }
+        pendingDelegations.forEach { (reqId, def) ->
+            def.complete(
+                LinkMessage.DelegateResponse(
+                    requestId = reqId,
+                    status = 503,
+                    bodyJson = """{"error":{"message":"Peer $peerNodeId disconnected mid-request","type":"peer_lost","code":"peer_lost"}}""",
+                )
+            )
+        }
+    }
+
+    private fun failAllPendingDelegations(reason: String) {
+        pendingStreams.forEach { (reqId, ch) ->
+            ch.trySend(LinkMessage.DelegateStreamEvent(reqId, """{"type":"peer_lost","retryable":true}""", done = true))
+            ch.close()
+        }
+        pendingStreams.clear()
+        pendingDelegations.forEach { (reqId, def) ->
+            def.complete(
+                LinkMessage.DelegateResponse(
+                    requestId = reqId,
+                    status = 503,
+                    bodyJson = """{"error":{"message":"$reason","type":"peer_lost","code":"peer_lost"}}""",
+                )
+            )
+        }
+        pendingDelegations.clear()
     }
 
     private fun onHeartbeat(link: PeerLink, beat: Heartbeat) {
@@ -282,7 +717,36 @@ class AidinNode(
             }
         }
         newer.forEach { link.send(LinkMessage.Revocations(it.toWire())) }
+        renewPeerCertificatesIfAdmin(link)
         publishPeers()
+    }
+
+    private fun renewPeerCertificatesIfAdmin(link: PeerLink) {
+        val now = clock()
+        val creds = knownPeers[link.nodeId] ?: link.peer
+        for (cert in creds.certificates) {
+            val remaining = cert.notAfterMillis - now
+            if (remaining in 1..certificateRenewalThresholdMillis && isAdmin(cert.groupId)) {
+                renewMemberCertificate(cert.groupId, link.nodeId, cert.roles)
+            }
+        }
+    }
+
+    private fun onCertificateRenewal(wire: WireCertificate) {
+        val cert = wire.toCertificate() ?: return
+        synchronized(lock) {
+            val now = clock()
+            if (cert.nodeId != nodeId || !cert.isValidAt(now)) return
+            val existing = state.memberships.firstOrNull { it.groupId == cert.groupId } ?: return
+            if (!cert.groupPublicKey.contentEquals(existing.groupPublicKey)) return
+            if (cert.notAfterMillis <= existing.ownCertificate.notAfterMillis) return
+            val renewedMembership = GroupMembership(existing.groupPublicKey, cert, existing.revocations)
+            update(
+                state.copy(
+                    memberships = state.memberships.map { if (it.groupId == cert.groupId) renewedMembership else it },
+                )
+            )
+        }
     }
 
     private fun onRevocations(wire: WireRevocationList) {
@@ -297,17 +761,37 @@ class AidinNode(
     }
 
     private fun beatAndTick() {
+        renewOwnAdminCertificatesIfNeeded()
         val beat = heartbeat()
         links.values.forEach { link ->
             try {
                 link.send(LinkMessage.Beat(beat))
-            } catch (e: IOException) {
+            } catch (_: IOException) {
                 link.close()
             }
         }
         val left = synchronized(lock) { tracker.tick(clock()) }.filter { it.to == PeerState.LEFT }
         left.forEach { links.remove(it.nodeId)?.close() }
         publishPeers()
+    }
+
+    private fun renewOwnAdminCertificatesIfNeeded() = synchronized(lock) {
+        val now = clock()
+        var changed = false
+        val updatedMemberships = state.memberships.map { m ->
+            val admin = state.administered.firstOrNull { it.groupId == m.groupId }
+            val remaining = m.ownCertificate.notAfterMillis - now
+            if (admin != null && remaining <= certificateRenewalThresholdMillis) {
+                changed = true
+                val freshCert = admin.authority.issue(key.publicKey, m.ownCertificate.roles, now)
+                m.copy(ownCertificate = freshCert)
+            } else {
+                m
+            }
+        }
+        if (changed) {
+            update(state.copy(memberships = updatedMemberships))
+        }
     }
 
     private fun broadcast(message: LinkMessage) {
@@ -317,7 +801,10 @@ class AidinNode(
     /** After trust shrank (revocation, unpairing, leaving): close links that are no longer admitted. */
     private fun dropUntrustedLinks() {
         val now = clock()
-        links.values.filter { link -> synchronized(lock) { !trust.authorizeAny(link.peer, now).isAllowed } }.forEach {
+        links.values.filter { link ->
+            val creds = knownPeers[link.nodeId] ?: link.peer
+            synchronized(lock) { !trust.authorizeAny(creds, now).isAllowed }
+        }.forEach {
             links.remove(it.nodeId, it)
             it.close()
         }
@@ -326,7 +813,19 @@ class AidinNode(
 
     private fun heartbeat(): Heartbeat {
         val serials = synchronized(lock) { trust.memberships.mapNotNull { m -> m.revocations?.let { m.groupId.value to it.serial } }.toMap() }
-        return heartbeatContent().copy(protocolVersion = AIDIN_PROTOCOL_VERSION, revocationSerials = serials)
+        val base = heartbeatContent()
+        val splitAdvert = anchorSupervisor?.activePlan?.let { plan ->
+            if (anchorSupervisor?.isAvailable == true && base.models.none { it.id == plan.modelId }) {
+                listOf(ModelAdvert(id = plan.modelId, kind = "llm", digest = plan.modelDigest, placement = "cluster", loaded = true))
+            } else {
+                emptyList()
+            }
+        }.orEmpty()
+        return base.copy(
+            protocolVersion = AIDIN_PROTOCOL_VERSION,
+            models = base.models + splitAdvert,
+            revocationSerials = serials,
+        )
     }
 
     private fun advert(port: Int): DiscoveryAdvert {
@@ -342,11 +841,16 @@ class AidinNode(
             val ids = (states.keys + state.pairs.map { it.nodeId }).distinct()
             ids.map { id ->
                 val link = links[id]
+                val creds = knownPeers[id] ?: link?.peer
                 PeerView(
                     nodeId = id,
                     label = state.pairs.firstOrNull { it.nodeId == id }?.label,
                     state = states[id] ?: PeerState.LEFT,
-                    domains = link?.let { trust.authorizeAny(it.peer, now) as? TrustDecision.Allowed }?.domains.orEmpty(),
+                    domains = if (link != null && creds != null) {
+                        (trust.authorizeAny(creds, now) as? TrustDecision.Allowed)?.domains.orEmpty()
+                    } else {
+                        emptySet()
+                    },
                     connected = link != null,
                     lastHeartbeat = lastBeats[id],
                 )
@@ -504,7 +1008,7 @@ class AidinNode(
                 try {
                     if (!links.containsKey(link.nodeId)) onLink(endpoint.connect(host, target.port))
                     return
-                } catch (e: IOException) {
+                } catch (_: IOException) {
                     // Try the next address; discovery retries later anyway.
                 }
             }
@@ -528,6 +1032,7 @@ class AidinNode(
                         admin.authority.issue(link.peer.publicKey, roles, now) to
                             admin.authority.revocations(admin.revocationSerial, admin.revoked, now)
                     }
+                    knownPeers[link.nodeId] = PeerCredentials(link.peer.publicKey, listOf(cert))
                     send(LinkMessage.Enrolment(cert.toWire(), list.toWire()))
                     finish {}
                 }
@@ -577,7 +1082,7 @@ class AidinNode(
         private fun send(message: LinkMessage) {
             try {
                 link.send(message)
-            } catch (e: IOException) {
+            } catch (_: IOException) {
                 fail("other device left")
             }
         }
