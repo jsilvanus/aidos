@@ -112,6 +112,7 @@ Finish and verify it:
   filename convention.
 - Verify that a missing, corrupt, unsupported, or incompatible GGUF produces a useful classified
   error rather than a generic crash.
+  - **2026-11-09 update:** Real native ARM64 llama.cpp binding extracted into `src/androidMain/jniLibs/arm64-v8a/libjllama.so`. Configured AGP packaging (`useLegacyPackaging = false`, ABI filter `arm64-v8a`) and ProGuard keep rules for JNI entry points. Verified `:engine:androidapp:assembleDebug` builds and packages `lib/arm64-v8a/libjllama.so` uncompressed with 16KB/4KB page alignment. Serialized generation with `Mutex` in `AndroidLlamaCppAdapter.kt` while preserving lazy streaming delta emissions and deterministic `AutoCloseable` disposal. Connected `InferenceTester.Result` and `TestChatScreen` to surface token count, generation time, tok/s, and `StopReason`.
   - **2026-09-04 update:** Engine HTTP now classifies model-load failures into explicit API outcomes
     (`model_not_installed` 404, `invalid_model` 400, `incompatible_model` 422, `model_load_failed`
     500) instead of a generic inference failure; keep extending this mapping as native error causes
@@ -133,6 +134,7 @@ After real inference works, make it safe to run continuously in a phone process.
 - Introduce explicit request states: queued, loading, running, completed, cancelled, failed.
 - Add bounded request queueing. A full/busy Engine must return a defined `503`-style condition rather
   than hanging callers or spawning unbounded coroutines.
+- **2026-11-09 update:** Implemented LRU context eviction in `GlobalModelRuntime` with active model protection (`isModelActive`) and `memoryAdmissionCheck` hook before loading, deterministically disposing evicted models via `backend.unload(evictId)`. Added `isModelActive(modelId)` in `InferenceRequestManager` tracking admitted and running requests. Verified with 138 passing unit/concurrency tests across `:engine:enginehost:jvmTest` and `:engine:modelruntime:jvmTest`.
 - **2026-09-04 update:** Engine HTTP inference now runs through a bounded request manager with
   explicit busy/shutdown `503` outcomes, per-model generation serialization, and lifecycle metrics
   counters (queued/running/completed/cancelled/failed). Keep extending it with deeper native-cancel
@@ -192,6 +194,7 @@ The current embedding implementation is not acceptable as the knowledge-index ru
 - Add a small real-device validation against the model used for G3/M22.
 - Keep embedding models from silently consuming the same chat-model slot unless the resource manager
   explicitly permits it.
+- **2026-11-09 update:** Replaced placeholder/zero-vector embedding stub in `ModelAdapterEmbeddingProvider` with actual native delegation to `EmbeddingModelAdapter.embed(text).getOrThrow()`. Added vector non-emptiness validation and dimension matching assertions, returning typed failures for unsupported adapters. Tested in `KnowledgeIndexTest`.
 
 **Done when:** the knowledge index can obtain real vectors from the Engine and the vector dimension
 and model capability are explicit and tested.
@@ -231,6 +234,7 @@ Android implementations.
 - Verify a real project can be opened, queried, edited, and committed from Android rather than only
   through the in-memory client.
 - Add instrumentation coverage for persistence and restart behavior.
+- **2026-11-09 update:** Added `androidMain` source set to `:agent:storage` with `app.cash.sqldelight:android-driver:2.0.2` and `androidx.sqlite:sqlite-framework:2.4.0`. Implemented `AndroidPaths` (using `Context.filesDir`) and `AndroidStorage` with WAL mode and foreign key pragmas. Created `AndroidRuntimeClientFactory` and wired `userDriver`, `projectDbFactory`, `runtimeManagedProjectsRoot = AndroidPaths.projectsDir`, and `projectLocker = null` into `MainActivity` and `AidosService`. Verified with `:agent:androidapp:assembleDebug`.
 
 **Done when:** the Android app's sessions and runs are backed by the real project database and survive
 process restart, with no accidental fallback to the in-memory maps.
@@ -422,7 +426,10 @@ The design was worked out and is the plan; start from it rather than re-deriving
 - **`Permission.WORKER_CREATE`** exists in the kernel and is granted and checked nowhere.
   `WorkerSpawner` must check the driver session holds it before spawning.
 
-### 5. `RealRuntimeClient` is still in-memory — sessions/runs now hydrate; Android isn't wired
+### 5. `RealRuntimeClient` persistence wired to Android SQLite (`app.cash.sqldelight:android-driver`)
+
+**2026-11-09 update:** Real persistence wiring for Android is complete. Added `androidMain` source set to `:agent:storage` with `app.cash.sqldelight:android-driver:2.0.2` and `androidx.sqlite:sqlite-framework:2.4.0`. Implemented `AndroidStorage` and `AndroidPaths` to manage `userDriver` and `projectDbFactory` under `Context.filesDir`. Created `AndroidRuntimeClientFactory` and wired it into `MainActivity` and `AidosService`, replacing the bare in-memory mock client. `projectLocker` remains `null` as mandated pending physical device file-locking verification. Verified with `:agent:androidapp:assembleDebug` and `:agent:androidapp:compileDebugKotlinAndroid`.
+
 
 Project persistence and locking are wired through optional injection seams, and `daemon`'s factory
 is the one consumer wired end to end. **2026-08-25:** `sessions.list()`/`get()` now hydrate from the

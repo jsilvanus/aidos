@@ -10,6 +10,7 @@ import androidx.lifecycle.LifecycleService
 import dev.aidos.androidapp.notification.NotificationManager as AidosNotificationManager
 import dev.aidos.androidapp.service.RuntimeServiceHost
 import dev.aidos.api.RealRuntimeClient
+import fi.italeino.aidos.AndroidRuntimeClientFactory
 import fi.italeino.aidos.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,23 +33,20 @@ import kotlinx.coroutines.runBlocking
  * Android `NotificationManager`/`NotificationChannel` calls RFC-0050 says belong to the service
  * wrapper.
  *
- * Owns its own [RealRuntimeClient] for now, separate from [MainActivity]'s — binding the two so
- * they share one client (and its state survives activity recreation) is the next step, tracked
- * in PIPELINE.md's Group 2 checklist.
- *
- * The Cancel action and the wake lock RFC-0050's D24(a) calls for are not wired yet — this link
- * covers the service lifecycle and the ongoing notification itself; both are flagged as
- * follow-up in PIPELINE.md rather than guessed at here.
+ * Backed by persistent SQLite storage via [AndroidRuntimeClientFactory]
+ * (PIPELINE.md §2.6 & §5).
  */
 class AidosService : LifecycleService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val runtimeClient = RealRuntimeClient()
-    private val runtimeServiceHost = RuntimeServiceHost(client = runtimeClient, scope = serviceScope)
+    private lateinit var runtimeClient: RealRuntimeClient
+    private lateinit var runtimeServiceHost: RuntimeServiceHost
     private val notificationDecisions = AidosNotificationManager()
 
     override fun onCreate() {
         super.onCreate()
+        runtimeClient = AndroidRuntimeClientFactory.createRuntimeClient(this)
+        runtimeServiceHost = RuntimeServiceHost(client = runtimeClient, scope = serviceScope)
         createNotificationChannel()
 
         serviceScope.launch {
@@ -79,7 +77,9 @@ class AidosService : LifecycleService() {
         // recovery checkpoint (RFC-0009) is the one actually written, not whatever was in
         // flight — serviceScope is cancelled separately below rather than racing this suspend
         // call against Service teardown.
-        runBlocking { runtimeServiceHost.shutdown() }
+        if (::runtimeServiceHost.isInitialized) {
+            runBlocking { runtimeServiceHost.shutdown() }
+        }
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -100,8 +100,6 @@ class AidosService : LifecycleService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(content.title)
             .setContentText(content.body)
-            // TODO: real app icon (no drawable resources exist in this module yet — tracked
-            // separately from the service wiring, not blocking it).
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(openAppIntent)
             .setOngoing(true)
@@ -111,18 +109,19 @@ class AidosService : LifecycleService() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Aidos runtime",
+            "Aidos Runtime",
             AndroidNotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Shows what Aidos is doing while a run is in progress"
+            description = "Shows when Aidos is working on a task"
         }
-        getSystemService(AndroidNotificationManager::class.java).createNotificationChannel(channel)
+        val manager = getSystemService(AndroidNotificationManager::class.java)
+        manager.createNotificationChannel(channel)
     }
 
     companion object {
-        const val EXTRA_RUN_ID = "dev.aidos.EXTRA_RUN_ID"
-        const val EXTRA_RUN_DESCRIPTION = "dev.aidos.EXTRA_RUN_DESCRIPTION"
-        private const val CHANNEL_ID = "aidos_runtime"
-        private const val NOTIFICATION_ID = 1
+        const val CHANNEL_ID = "aidos_runtime"
+        const val NOTIFICATION_ID = 1
+        const val EXTRA_RUN_ID = "extra_run_id"
+        const val EXTRA_RUN_DESCRIPTION = "extra_run_description"
     }
 }

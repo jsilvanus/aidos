@@ -7,24 +7,33 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Global model runtime with admission queue (RFC-0022, M20).
+ * Global model runtime with admission queue and LRU eviction (RFC-0022, M20, PIPELINE.md §2.2).
  *
- * Invariants enforced here (RFC-0022):
+ * Invariants enforced here:
  * - Weights are user-scope, not per-project. This runtime is a singleton per process.
  * - Loading is globally serialized through a single admission queue.
  * - Digest is verified before a normal model-id load is returned.
- * - Unload is explicit; the runtime never evicts weights automatically.
+ * - LRU context eviction bounds simultaneously resident models while protecting active requests.
+ * - Deterministic native disposal: evicted models are unloaded immediately.
  */
 class GlobalModelRuntime(
     private val backend: InferenceBackend,
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
     private val runSettings: RunSettingsSource = RunSettingsSource.Defaults,
+    private val maxResidentModels: Int = Int.MAX_VALUE,
+    private val isModelActive: (String) -> Boolean = { false },
+    private val memoryAdmissionCheck: (suspend (modelId: String, descriptor: ModelDescriptor?) -> Result<Unit>)? = null,
 ) : ModelRuntime {
 
     private val admissionQueue = Mutex()
     @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
 
-    private data class LoadedModel(val adapter: ModelAdapter, val loadedAtMillis: Long, val settings: ModelRunSettings)
+    private data class LoadedModel(
+        val adapter: ModelAdapter,
+        val loadedAtMillis: Long,
+        val settings: ModelRunSettings,
+        val lastAccessedAtMillis: Long = loadedAtMillis,
+    )
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
@@ -42,16 +51,29 @@ class GlobalModelRuntime(
      * logical id would reject a valid catalog entry before the backend gets the exact path.
      */
     suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
-        loadedModels[modelId]?.let { return Result.success(it.adapter) }
+        loadedModels[modelId]?.let {
+            val updated = it.copy(lastAccessedAtMillis = nowMillis())
+            loadedModels = loadedModels + (modelId to updated)
+            return Result.success(it.adapter)
+        }
 
         return admissionQueue.withLock {
-            loadedModels[modelId]?.let { return@withLock Result.success(it.adapter) }
+            loadedModels[modelId]?.let {
+                val updated = it.copy(lastAccessedAtMillis = nowMillis())
+                loadedModels = loadedModels + (modelId to updated)
+                return@withLock Result.success(it.adapter)
+            }
+
+            val installedList = backend.installed()
+            val descriptor = installedList.find { it.id == modelId }
+                ?: backend.catalog().find { it.id == modelId }
 
             if (artifactPath == null) {
-                backend.installed().find { it.id == modelId }
-                    ?: return@withLock Result.failure(
+                if (descriptor == null || installedList.none { it.id == modelId }) {
+                    return@withLock Result.failure(
                         IllegalStateException("Model $modelId is not installed")
                     )
+                }
 
                 val catalogDigest = backend.catalog().find { it.id == modelId }?.digest
                 if (catalogDigest != null) {
@@ -69,12 +91,39 @@ class GlobalModelRuntime(
                 }
             }
 
+            // Admission memory check (available RAM vs model requirements)
+            if (memoryAdmissionCheck != null) {
+                val admission = memoryAdmissionCheck.invoke(modelId, descriptor)
+                if (admission.isFailure) {
+                    val error = admission.exceptionOrNull() ?: IllegalStateException("INSUFFICIENT_MEMORY: admission check failed")
+                    return@withLock Result.failure(error)
+                }
+            }
+
+            // LRU eviction if resident limit reached
+            if (loadedModels.size >= maxResidentModels && !loadedModels.containsKey(modelId)) {
+                val evictCandidate = loadedModels.entries
+                    .sortedBy { it.value.lastAccessedAtMillis }
+                    .firstOrNull { !isModelActive(it.key) }
+
+                if (evictCandidate != null) {
+                    val evictId = evictCandidate.key
+                    loadedModels = loadedModels - evictId
+                    backend.unload(evictId)
+                } else {
+                    return@withLock Result.failure(
+                        IllegalStateException("ENGINE_BUSY: Cannot evict resident models; active requests in progress")
+                    )
+                }
+            }
+
             // Settings are read once, here, so what the card shows as "loaded with" is what the backend got.
             val settings = runSettings.settingsFor(modelId).coerced()
             val adapter = backend.load(modelId, artifactPath, settings).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
-            loadedModels = loadedModels + (modelId to LoadedModel(adapter, nowMillis(), settings))
+            val now = nowMillis()
+            loadedModels = loadedModels + (modelId to LoadedModel(adapter, now, settings, now))
             Result.success(adapter)
         }
     }

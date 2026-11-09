@@ -119,6 +119,7 @@ fun TestChatScreen(
                                         content = metrics.text,
                                         tokensUsed = metrics.outputTokens,
                                         generationTimeMs = metrics.generationMillis,
+                                        stopReason = metrics.stopReason,
                                     )
                                 } else message
                             },
@@ -280,8 +281,9 @@ private fun ChatMessageBubble(message: UiChatMessage) {
                 )
 
                 if (message.role == "assistant" && message.tokensUsed != null) {
+                    val stopText = message.stopReason?.name?.lowercase()?.let { " | stop: $it" } ?: ""
                     Text(
-                        "${message.tokensUsed} tokens | ${message.generationTimeMs ?: 0}ms",
+                        "${message.tokensUsed} tokens | ${message.generationTimeMs ?: 0}ms$stopText",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),

@@ -42,6 +42,15 @@ kotlin {
                 implementation(kotlin("test-junit"))
             }
         }
+
+        val androidMain by getting {
+            resources.srcDir(rootProject.projectDir.resolve("../schema"))
+            resources.include("*.sql")
+            dependencies {
+                implementation("app.cash.sqldelight:android-driver:2.0.2")
+                implementation("androidx.sqlite:sqlite-framework:2.4.0")
+            }
+        }
     }
 
     compilerOptions {

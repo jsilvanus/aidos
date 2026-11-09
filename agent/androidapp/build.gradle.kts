@@ -56,6 +56,8 @@ kotlin {
             dependencies {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
+                implementation(project(":storage"))
+                implementation("app.cash.sqldelight:android-driver:2.0.2")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 

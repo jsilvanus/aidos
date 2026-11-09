@@ -1,5 +1,10 @@
 package dev.aidos.knowledge
 
+import dev.aidos.kernel.EmbeddingModelAdapter
+import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.ModelStreamEvent
 import io.github.jsilvanus.gitsema.SemanticIndex
 import io.github.jsilvanus.gitsema.GitsemaSemanticIndex
 import io.github.jsilvanus.gitsema.model.IndexCoverage as GitsemaCoverage
@@ -12,14 +17,17 @@ import io.github.jsilvanus.gitsema.model.BlobHash
 import io.github.jsilvanus.gitsema.model.RepoPath
 import io.github.jsilvanus.gitsema.model.Query
 import io.github.jsilvanus.gitsema.model.SearchResult
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * M22 knowledge index tests (RFC-0015).
+ * M22 knowledge index tests (RFC-0015, PIPELINE.md §2.4).
  *
  * Uses a fake [SemanticIndex] to test the adapter without a real model or repository.
  * Real end-to-end indexing on a real repository is verified at M26 (G3 on device).
@@ -79,6 +87,60 @@ class KnowledgeIndexTest {
         val result = p.embed(listOf("hello", "world"))
         assertEquals(2, result.size)
         assertEquals(4, result[0].size)
+    }
+
+    // ── ModelAdapterEmbeddingProvider (PIPELINE.md §2.4) ──────────────────────
+
+    @Test
+    fun `ModelAdapterEmbeddingProvider delegates to native embed and verifies dimension`() = runTest {
+        val fakeAdapter = FakeEmbeddingAdapter("nomic-embed-text-v1.5", 768) { text ->
+            FloatArray(768) { (it + text.length).toFloat() }
+        }
+        val provider = ModelAdapterEmbeddingProvider(fakeAdapter, dimensions = 768)
+        val vectors = provider.embed(listOf("fun main() {}", "class Aidos"))
+        assertEquals(2, vectors.size)
+        assertEquals(768, vectors[0].size)
+        assertEquals(768, vectors[1].size)
+        assertTrue(vectors[0].any { it != 0f }, "Must return real non-zero vectors")
+    }
+
+    @Test
+    fun `ModelAdapterEmbeddingProvider throws when adapter lacks native embedding capability`() = runTest {
+        val fakePlainAdapter = object : ModelAdapter {
+            override val modelId = "chat-model"
+            override val providerId = "test"
+            override val modelVersion = "1.0"
+            override val contextWindow = 2048
+            override val isLocal = true
+            override fun supportsNativeToolCalls(): Boolean = false
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = Result.failure(NotImplementedError())
+            override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = emptyFlow()
+        }
+        val provider = ModelAdapterEmbeddingProvider(fakePlainAdapter)
+        assertFailsWith<UnsupportedOperationException> {
+            provider.embed(listOf("test"))
+        }
+    }
+
+    @Test
+    fun `ModelAdapterEmbeddingProvider throws on dimension mismatch`() = runTest {
+        val fakeAdapter = FakeEmbeddingAdapter("embed-384", 384) { FloatArray(384) { 1.0f } }
+        val provider = ModelAdapterEmbeddingProvider(fakeAdapter, dimensions = 768)
+        assertFailsWith<IllegalStateException> {
+            provider.embed(listOf("test"))
+        }
+    }
+
+    @Test
+    fun `ModelAdapterEmbeddingProvider wires into LocalOnlyEmbeddingProvider`() = runTest {
+        val fakeAdapter = FakeEmbeddingAdapter("nomic-embed-text-v1.5", 768) { FloatArray(768) { 0.42f } }
+        val adapterProvider = ModelAdapterEmbeddingProvider.fromModelAdapter(fakeAdapter, dimensions = 768)
+        val localProvider = LocalOnlyEmbeddingProvider.withDelegate { texts -> adapterProvider.embed(texts) }
+
+        val result = localProvider.embed(listOf("document snippet"))
+        assertEquals(1, result.size)
+        assertEquals(768, result[0].size)
+        assertEquals(0.42f, result[0][0])
     }
 
     // ── GitsemaKnowledgeIndex adapter ─────────────────────────────────────────
@@ -156,6 +218,21 @@ class KnowledgeIndexTest {
         assertEquals(1000L, cov.blobsKnown)
         assertEquals(0.75, cov.fraction)
     }
+}
+
+private class FakeEmbeddingAdapter(
+    override val modelId: String,
+    val vectorDimension: Int,
+    val embedFunc: (String) -> FloatArray,
+) : EmbeddingModelAdapter {
+    override val providerId = "test"
+    override val modelVersion = "1.0"
+    override val contextWindow = 2048
+    override val isLocal = true
+    override fun supportsNativeToolCalls(): Boolean = false
+    override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = Result.failure(NotImplementedError())
+    override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = emptyFlow()
+    override suspend fun embed(text: String): Result<FloatArray> = Result.success(embedFunc(text))
 }
 
 /**

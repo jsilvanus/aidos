@@ -182,6 +182,10 @@ class InferenceRequestManager(
         }
     }
 
+    suspend fun isModelActive(modelId: String): Boolean = stateMutex.withLock {
+        (activeByModel[modelId] ?: 0) > 0 || (admittedByModel[modelId] ?: 0) > 0
+    }
+
     suspend fun snapshotMetrics(): InferenceLifecycleMetrics = stateMutex.withLock {
         InferenceLifecycleMetrics(queueDepth, runningRequests, totalRequests, completedRequests, cancelledRequests, failedRequests)
     }

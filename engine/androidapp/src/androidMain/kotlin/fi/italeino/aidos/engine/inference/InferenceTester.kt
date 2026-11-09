@@ -4,6 +4,7 @@ import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.ToolChoice
+import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.Turn
 import dev.aidos.modelruntime.GlobalModelRuntime
 import kotlinx.coroutines.CancellationException
@@ -30,6 +31,7 @@ class InferenceTester(
         val timeToFirstTokenMillis: Long?,
         val generationMillis: Long,
         val tokensPerSecond: Double?,
+        val stopReason: StopReason? = null,
     )
 
     suspend fun run(
@@ -87,6 +89,7 @@ class InferenceTester(
                     generationMillis = generationMillis,
                     tokensPerSecond = outputTokens.takeIf { it > 0 && generationMillis > 0 }
                         ?.let { it * 1000.0 / generationMillis },
+                    stopReason = completed.stopReason,
                 )
             )
         } catch (e: CancellationException) {

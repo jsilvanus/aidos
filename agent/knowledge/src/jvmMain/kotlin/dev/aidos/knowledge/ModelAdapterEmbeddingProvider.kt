@@ -1,55 +1,54 @@
 package dev.aidos.knowledge
 
-import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelAdapter
-import dev.aidos.kernel.ModelRequest
-import dev.aidos.kernel.ToolChoice
 import io.github.jsilvanus.gitsema.embedding.EmbeddingProvider
 
 /**
- * Adapter from [ModelAdapter] to [EmbeddingProvider] (Phase 3: Embedding model wiring).
+ * Adapter from [ModelAdapter] to [EmbeddingProvider] (RFC-0015, RFC-0022, PIPELINE.md §2.4).
  *
- * Converts ModelAdapter (used for LLM inference in agent loop) to EmbeddingProvider
- * (used for semantic indexing in knowledge engine). Wraps embedding model calls through
- * the standard ModelAdapter interface.
+ * Converts a native embedding-capable [EmbeddingModelAdapter] (such as llama.cpp's native embedding backend)
+ * to [EmbeddingProvider] used for semantic indexing in gitsema-kotlin.
  *
- * Wired by external infrastructure (M21 integration):
- * - When GlobalModelRuntime loads an embedding model, create this adapter
- * - Pass to LocalOnlyEmbeddingProvider.withDelegate() to enable real indexing
- * - Coverage improves from 0% to 100% as blobs are embedded
+ * Replaces placeholder/zero vectors with actual native llama.cpp embedding generation so the
+ * knowledge index operates with valid vector dimensions and non-zero representations.
  */
 class ModelAdapterEmbeddingProvider(
     private val adapter: ModelAdapter,
-    override val modelId: String = "nomic-embed-text-v1.5",
+    override val modelId: String = adapter.modelId,
     override val dimensions: Int = 768,
 ) : EmbeddingProvider {
 
     /**
-     * Embed texts using the ModelAdapter (Phase 3).
-     *
-     * Constructs a prompt that asks the model to generate embeddings (JSON array format),
-     * then parses the response. Production implementation would use the model's native
-     * embedding capability (e.g., llama.cpp's embedding endpoint).
-     *
-     * For Phase 3 MVP:
-     * - Sends a structured prompt to the model
-     * - Expects JSON array response with embedding values
-     * - Parses and validates dimensions match
+     * Embed texts using the native [EmbeddingModelAdapter] (llama.cpp backend).
      */
     override suspend fun embed(texts: List<String>): List<FloatArray> {
+        val embeddingAdapter = adapter as? EmbeddingModelAdapter
+            ?: throw UnsupportedOperationException("Model $modelId does not support native embeddings (expected EmbeddingModelAdapter)")
+
         return texts.map { text ->
-            // TODO: Phase 3 - wire to real embedding model when M21 has embedding support
-            // For now, return placeholder embeddings (all zeros) so indexing doesn't crash
-            FloatArray(dimensions) // placeholder: zero vector
+            val vector = embeddingAdapter.embed(text).getOrThrow()
+            if (vector.isEmpty()) {
+                throw IllegalStateException("Embedding model $modelId returned an empty vector")
+            }
+            if (dimensions > 0 && vector.size != dimensions) {
+                throw IllegalStateException(
+                    "Embedding dimension mismatch for model $modelId: expected $dimensions, got ${vector.size}"
+                )
+            }
+            vector
         }
     }
 
     companion object {
         /**
-         * Create an embedding provider from a loaded ModelAdapter (Phase 3).
-         * Called when GlobalModelRuntime.load() completes for an embedding model.
+         * Create an embedding provider from a loaded ModelAdapter.
+         * Resolves modelId and dimensions from the adapter if known.
          */
-        fun fromModelAdapter(adapter: ModelAdapter): ModelAdapterEmbeddingProvider =
-            ModelAdapterEmbeddingProvider(adapter)
+        fun fromModelAdapter(
+            adapter: ModelAdapter,
+            dimensions: Int = 768,
+        ): ModelAdapterEmbeddingProvider =
+            ModelAdapterEmbeddingProvider(adapter, modelId = adapter.modelId, dimensions = dimensions)
     }
 }

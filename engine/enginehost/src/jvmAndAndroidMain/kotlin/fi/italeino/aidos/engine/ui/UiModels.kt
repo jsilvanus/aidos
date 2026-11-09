@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.ui
 
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.StopReason
 import fi.italeino.aidos.engine.suggestions.SuggestedModel
 
 /**
@@ -236,6 +237,7 @@ data class UiChatMessage(
     val content: String,
     val tokensUsed: Int? = null,
     val generationTimeMs: Long? = null,
+    val stopReason: StopReason? = null,
 )
 
 data class TestChatState(

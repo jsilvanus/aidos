@@ -2,9 +2,6 @@ package dev.aidos.storage
 
 import app.cash.sqldelight.db.SqlDriver
 
-/** An opened database and what `MigrationRunner` found when it opened. */
-data class OpenDatabase(val driver: SqlDriver, val result: OpenResult)
-
 /**
  * Fresh-install entry points for the three databases RFC-0040 defines. Desktop paths only --
  * mobile's app-private paths need an Android `Context` and arrive with the app (RFC-0099 Phase 4),

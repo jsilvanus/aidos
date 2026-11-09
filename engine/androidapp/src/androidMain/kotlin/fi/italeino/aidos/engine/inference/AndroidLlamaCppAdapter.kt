@@ -20,6 +20,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /** Real on-device llama.cpp adapter used by the Android engine. */
@@ -30,13 +32,14 @@ class AndroidLlamaCppAdapter(
     private val threads: Int = 4,
     private val embeddingMode: Boolean = false,
     private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
-) : CancellableModelAdapter, EmbeddingModelAdapter {
+) : CancellableModelAdapter, EmbeddingModelAdapter, AutoCloseable {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
     override val isLocal: Boolean = true
 
     private val model: LlamaModel
     private val inferenceLock = Any()
+    private val generationMutex = Mutex()
     @Volatile private var activeIterator: LlamaIterator? = null
     @Volatile private var closed = false
 
@@ -56,13 +59,15 @@ class AndroidLlamaCppAdapter(
     override fun supportsNativeToolCalls(): Boolean = false
 
     override suspend fun embed(text: String): Result<FloatArray> = try {
-        if (closed) return Result.failure(IllegalStateException("Model $modelId is unloaded"))
-        if (!embeddingMode) return Result.failure(
+        if (closed) Result.failure(IllegalStateException("Model $modelId is unloaded"))
+        else if (!embeddingMode) Result.failure(
             UnsupportedOperationException("Model $modelId is not configured for embeddings")
         )
-        val vector = model.embed(text)
-        if (vector.isEmpty()) Result.failure(IllegalStateException("Embedding model returned an empty vector"))
-        else Result.success(vector)
+        else {
+            val vector = model.embed(text)
+            if (vector.isEmpty()) Result.failure(IllegalStateException("Embedding model returned an empty vector"))
+            else Result.success(vector)
+        }
     } catch (e: Throwable) {
         Result.failure(e)
     }
@@ -77,7 +82,8 @@ class AndroidLlamaCppAdapter(
                     is ModelStreamEvent.Delta -> Unit
                 }
             }
-            if (response != null) Result.success(response!!) else Result.failure(
+            val completed = response
+            if (completed != null) Result.success(completed) else Result.failure(
                 IllegalStateException("Inference ended without a response")
             )
         } catch (e: CancellationException) {
@@ -101,56 +107,63 @@ class AndroidLlamaCppAdapter(
             return@flow
         }
 
-        try {
-            val prompt = formatPrompt(request.messages)
-            val parameters = InferenceParameters(prompt)
-                .setNPredict(request.maxOutputTokens)
-                .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
-                .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
-                .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
-            val output = StringBuilder()
-            var tokenCount = 0
-            // `generate` is lazy: emitting as the iterator advances keeps the UI and the
-            // loopback SSE endpoint genuinely token-streaming rather than buffering a native
-            // completion first. `maxOutputTokens` remains the authoritative output bound.
-            val iterator = model.generate(parameters).iterator()
-            synchronized(inferenceLock) { activeIterator = iterator }
-            try {
-                while (iterator.hasNext()) {
-                    if (tokenCount++ >= request.maxOutputTokens) break
-                    val token = iterator.next()
-                    output.append(token.text)
-                    emit(ModelStreamEvent.Delta(token.text))
-                    if (request.stopConditions.any(output::contains)) break
-                }
-            } finally {
-                synchronized(inferenceLock) {
-                    if (activeIterator === iterator) activeIterator = null
-                }
+        generationMutex.withLock {
+            if (closed) {
+                emit(ModelStreamEvent.Failed(IllegalStateException("Model $modelId is unloaded")))
+                return@withLock
             }
 
-            val text = output.toString()
-            val inputTokens = model.encode(prompt).size
-            val outputTokens = model.encode(text).size
-            emit(ModelStreamEvent.Done(
-                ModelResponse(
-                    outputs = if (text.isEmpty()) emptyList() else listOf(TextOutput(text)),
-                    stopReason = when {
-                        outputTokens >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                        request.stopConditions.any(text::contains) -> StopReason.STOP_SEQUENCE
-                        else -> StopReason.END_TURN
-                    },
-                    usage = Usage(inputTokens, outputTokens, inputTokens + outputTokens),
-                    model = ModelRef(modelId, modelVersion),
-                )
-            ))
-        } catch (e: CancellationException) {
-            // Flow cancellation is the stop-generation signal. Do not convert it into a terminal
-            // failure event: the caller owns the generation Job and expects cancellation to stop
-            // the stream without replacing it with an error bubble.
-            throw e
-        } catch (e: Throwable) {
-            emit(ModelStreamEvent.Failed(e))
+            try {
+                val prompt = formatPrompt(request.messages)
+                val parameters = InferenceParameters(prompt)
+                    .setNPredict(request.maxOutputTokens)
+                    .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                    .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                    .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                val output = StringBuilder()
+                var tokenCount = 0
+                // `generate` is lazy: emitting as the iterator advances keeps the UI and the
+                // loopback SSE endpoint genuinely token-streaming rather than buffering a native
+                // completion first. `maxOutputTokens` remains the authoritative output bound.
+                val iterator = model.generate(parameters).iterator()
+                synchronized(inferenceLock) { activeIterator = iterator }
+                try {
+                    while (iterator.hasNext()) {
+                        if (tokenCount++ >= request.maxOutputTokens) break
+                        val token = iterator.next()
+                        output.append(token.text)
+                        emit(ModelStreamEvent.Delta(token.text))
+                        if (request.stopConditions.any(output::contains)) break
+                    }
+                } finally {
+                    synchronized(inferenceLock) {
+                        if (activeIterator === iterator) activeIterator = null
+                    }
+                }
+
+                val text = output.toString()
+                val inputTokens = model.encode(prompt).size
+                val outputTokens = model.encode(text).size
+                emit(ModelStreamEvent.Done(
+                    ModelResponse(
+                        outputs = if (text.isEmpty()) emptyList() else listOf(TextOutput(text)),
+                        stopReason = when {
+                            outputTokens >= request.maxOutputTokens -> StopReason.MAX_TOKENS
+                            request.stopConditions.any(text::contains) -> StopReason.STOP_SEQUENCE
+                            else -> StopReason.END_TURN
+                        },
+                        usage = Usage(inputTokens, outputTokens, inputTokens + outputTokens),
+                        model = ModelRef(modelId, modelVersion),
+                    )
+                ))
+            } catch (e: CancellationException) {
+                // Flow cancellation is the stop-generation signal. Do not convert it into a terminal
+                // failure event: the caller owns the generation Job and expects cancellation to stop
+                // the stream without replacing it with an error bubble.
+                throw e
+            } catch (e: Throwable) {
+                emit(ModelStreamEvent.Failed(e))
+            }
         }
     }
 
@@ -160,7 +173,7 @@ class AndroidLlamaCppAdapter(
         }
     }
 
-    fun close() {
+    override fun close() {
         if (closed) return
         closed = true
         cancelCurrentInference()

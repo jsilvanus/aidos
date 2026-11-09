@@ -67,6 +67,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        ndk {
+            abiFilters += setOf("arm64-v8a")
+        }
     }
 
     compileOptions {
@@ -78,7 +81,17 @@ android {
         aidl = true
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/androidMain/jniLibs")
+        }
+    }
+
     packaging {
+        jniLibs {
+            useLegacyPackaging = false
+            keepDebugSymbols += "**/*.so"
+        }
         resources {
             // Bouncy Castle (aidin, RFC-0105) ships the same license files in each of its jars.
             excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
