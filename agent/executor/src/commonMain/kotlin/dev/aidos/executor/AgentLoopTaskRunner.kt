@@ -281,6 +281,7 @@ class AgentLoopTaskRunner(
      */
     private val resolveRemoteAdapter: (modelId: String) -> ModelAdapter? = { null },
     private val workerSpawner: WorkerSpawner? = null,
+    private val resolveToolCapability: (suspend (subjectId: String, toolName: String, permission: Permission) -> CapabilityId?)? = null,
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
@@ -340,13 +341,14 @@ class AgentLoopTaskRunner(
 
         // ask_user is not registered with the broker (RFC-0006 USER_PROMPT: no FS/git/shell
         // authority to gate), so it is appended here rather than sourced from descriptorsFor().
-        val tools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + askUserToolDescriptor
+        val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + askUserToolDescriptor
         val history = reconstructHistory(task.runId, task.ordinal)
         val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = run.userMessageSummary,
-            tools = tools,
+            tools = availableTools,
+
             conversationHistory = history,
             instructionSet = instructionSet,
         )
@@ -377,7 +379,8 @@ class AgentLoopTaskRunner(
 
         val modelReq = ModelRequest(
             messages = pkg.request.messages,
-            tools = tools,
+            tools = pkg.request.tools,
+
             toolChoice = ToolChoice.Auto,
             maxOutputTokens = pkg.model.contextWindow / 8,
         )
@@ -490,7 +493,10 @@ class AgentLoopTaskRunner(
         // to no capability, same as today's unconditional null -- ToolBroker denies it either way.
         val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
             .firstOrNull { it.name == callRow.toolName }
-        val capabilityId = descriptor?.let { resolveCapability(subjectId, it.requiredPermission) }
+        val capabilityId = descriptor?.let {
+            resolveToolCapability?.invoke(subjectId, callRow.toolName, it.requiredPermission)
+                ?: resolveCapability(subjectId, it.requiredPermission)
+        }
 
         val call = ToolCall(
             callId = callRow.callId,

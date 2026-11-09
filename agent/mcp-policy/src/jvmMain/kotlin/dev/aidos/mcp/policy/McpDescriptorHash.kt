@@ -53,6 +53,21 @@ object McpDescriptorHash {
 
     private val json = Json { encodeDefaults = true }
 
+    private val jsonSchemaIndicators = setOf(
+        "\$schema",
+        "type",
+        "properties",
+        "required",
+        "\$defs",
+        "additionalProperties",
+        "patternProperties",
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "title",
+        "\$id",
+    )
+
     /** Hashes `(spec.name, spec.description, spec.inputSchema)`. */
     fun hash(spec: McpToolSpec): String = hash(spec.name, spec.description, spec.inputSchema)
 
@@ -66,6 +81,32 @@ object McpDescriptorHash {
         val canonical = canonicalize(wrapper)
         val text = json.encodeToString(JsonElement.serializer(), canonical)
         return sha256Hex(text)
+    }
+
+    /**
+     * Projects a pre-SDK [schema] onto the five top-level keys the official Kotlin MCP SDK's
+     * `ToolSchema` preserves (`$schema`, `type = "object"`, `properties`, `required`, `$defs`),
+     * matching `SdkMcpClient.mapSchema` (RFC-0031, "Protocol layer: the official Kotlin MCP SDK").
+     *
+     * Used during adoption-hash migration so rows persisted before the SDK migration (or carrying
+     * unmodeled top-level keywords such as `additionalProperties` or `title`) are recomputed from
+     * their persisted `input_schema_json` rather than causing mass un-adoption. Flat non-schema
+     * maps (e.g. arbitrary key/value pairs in unit tests) are returned unchanged.
+     */
+    fun normalizeSdkInputSchema(schema: JsonObject): JsonObject {
+        if (schema.isEmpty()) {
+            return buildJsonObject { put("type", "object") }
+        }
+        if (schema.keys.none { it in jsonSchemaIndicators }) {
+            return schema
+        }
+        return buildJsonObject {
+            schema["\$schema"]?.let { put("\$schema", it) }
+            put("type", "object")
+            schema["properties"]?.let { put("properties", it) }
+            schema["required"]?.let { put("required", it) }
+            schema["\$defs"]?.let { put("\$defs", it) }
+        }
     }
 
     /**

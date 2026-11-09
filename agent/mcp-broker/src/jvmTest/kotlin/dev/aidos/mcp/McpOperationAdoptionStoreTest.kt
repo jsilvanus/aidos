@@ -243,4 +243,85 @@ class McpOperationAdoptionStoreTest {
         assertEquals(listOf(adoptedOp), resolution.adopted)
         assertEquals(listOf(newOp), resolution.unadopted)
     }
+
+    // ─── Task 3: Adoption-hash migration across canonical / SDK upgrades ───
+
+    @Test
+    fun `migrateAdoptionHashes updates legacy non-canonical descriptor_hash from stored columns`() {
+        val driver = openProjectDb()
+        driver.insertProject("proj-1")
+        val store = McpOperationAdoptionStore(driver)
+
+        // Simulate a legacy row written before canonical sorted-key hashing or before SDK
+        // ToolSchema projection (with top-level additionalProperties / title that SDK ToolSchema
+        // omits, plus a stale/legacy descriptor_hash).
+        val rawSchemaJson = """{"title":"EchoArgs","type":"object","additionalProperties":false,"properties":{"z":{"type":"string"},"a":{"type":"integer"}},"required":["a"]}"""
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO mcp_operation_adoptions " +
+                "(project_id, server_name, operation_name, descriptor_hash, description, input_schema_json, adopted_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            parameters = 7,
+        ) {
+            bindString(0, "proj-1")
+            bindString(1, "legacy-mcp")
+            bindString(2, "echo")
+            bindString(3, "legacy-pre-canonical-hash")
+            bindString(4, "Echoes structured args")
+            bindString(5, rawSchemaJson)
+            bindString(6, "2026-08-17T00:00:00Z")
+        }
+
+        val migratedCount = store.migrateAdoptionHashes("proj-1")
+        assertEquals(1, migratedCount, "legacy row should be migrated in place")
+        assertEquals(0, store.migrateAdoptionHashes("proj-1"), "second migration pass is idempotent")
+
+        // When the Kotlin MCP SDK connects to the same server, its ToolSchema representation
+        // contains only type/properties/required. It must resolve as adopted without mass un-adoption!
+        val sdkLiveSpec = McpToolSpec(
+            name = "echo",
+            description = "Echoes structured args",
+            inputSchema = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"type":"object","properties":{"a":{"type":"integer"},"z":{"type":"string"}},"required":["a"]}"""
+            ) as kotlinx.serialization.json.JsonObject,
+        )
+        val resolution = store.resolve("proj-1", "legacy-mcp", listOf(sdkLiveSpec))
+        assertEquals(listOf(sdkLiveSpec), resolution.adopted)
+        assertTrue(resolution.unadopted.isEmpty())
+    }
+
+    @Test
+    fun `resolve migrates legacy row in place even if migrateAdoptionHashes was not called upfront`() {
+        val driver = openProjectDb()
+        driver.insertProject("proj-1")
+        val store = McpOperationAdoptionStore(driver)
+
+        val rawSchemaJson = """{"title":"SearchArgs","type":"object","properties":{"query":{"type":"string"}}}"""
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO mcp_operation_adoptions " +
+                "(project_id, server_name, operation_name, descriptor_hash, description, input_schema_json, adopted_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            parameters = 7,
+        ) {
+            bindString(0, "proj-1")
+            bindString(1, "legacy-mcp")
+            bindString(2, "search")
+            bindString(3, "stale-pre-upgrade-hash")
+            bindString(4, "Searches items")
+            bindString(5, rawSchemaJson)
+            bindString(6, "2026-08-17T00:00:00Z")
+        }
+
+        val sdkLiveSpec = McpToolSpec(
+            name = "search",
+            description = "Searches items",
+            inputSchema = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"type":"object","properties":{"query":{"type":"string"}}}"""
+            ) as kotlinx.serialization.json.JsonObject,
+        )
+        val resolution = store.resolve("proj-1", "legacy-mcp", listOf(sdkLiveSpec))
+        assertEquals(listOf(sdkLiveSpec), resolution.adopted)
+        assertTrue(resolution.unadopted.isEmpty())
+    }
 }

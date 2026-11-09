@@ -6,6 +6,7 @@ import dev.aidos.broker.AuditLog
 import dev.aidos.broker.ToolBroker
 import dev.aidos.mcp.LazyMcpTool
 import dev.aidos.mcp.McpClientFactory
+import dev.aidos.mcp.McpLifecycleManager
 import dev.aidos.mcp.McpOperationAdoptionStore
 import dev.aidos.mcp.McpSecretResolver
 import dev.aidos.mcp.McpServerActivator
@@ -93,6 +94,7 @@ class RuntimeCompositionRoot(
             ?: Result.failure(NoSuchElementException("Secret not found: $ref"))
     },
     private val mcpClientFactory: McpClientFactory = McpClientFactory.Default,
+    val mcpLifecycleManager: McpLifecycleManager = McpLifecycleManager(),
 ) {
 
     /**
@@ -314,37 +316,44 @@ class RuntimeCompositionRoot(
         broker.register(FilesystemTool())
         broker.register(GitTool(File(rootPath)))
 
+        // RFC-0035: registered before any adapter or MCP server ever sees a secret, so any
+        // output_snapshot or log that could echo it back is already covered.
+        val redactor = Redactor()
+        val redactingMcpSecretResolver = McpSecretResolver { ref ->
+            mcpSecretResolver.resolve(ref).onSuccess { secret ->
+                redactor.register(id = "mcp-secret-$ref", name = ref, value = secret.copyOf())
+            }
+        }
+
         if (userDriver != null) {
             val serverStore = McpServerStore(userDriver)
             val adoptionStore = McpOperationAdoptionStore(projectDriver)
+            adoptionStore.migrateAdoptionHashes(projectId.value)
             val activator = McpServerActivator(
                 serverStore = serverStore,
                 adoptionStore = adoptionStore,
-                secretResolver = mcpSecretResolver,
+                secretResolver = redactingMcpSecretResolver,
                 clientFactory = mcpClientFactory,
             )
             for (outcome in serverStore.loadAll(platformProfile)) {
-                if (outcome is McpServerLoadOutcome.Loaded) {
+                if (outcome is McpServerLoadOutcome.Loaded && platformProfile in outcome.load.profiles) {
                     val serverId = outcome.load.registration.serverId
                     val adoptedSpecs = adoptionStore.adoptedCatalog(projectId.value, serverId)
                     if (adoptedSpecs.isNotEmpty()) {
-                        broker.register(
-                            LazyMcpTool(
-                                serverId = serverId,
-                                projectId = projectId.value,
-                                initialAdoptedSpecs = adoptedSpecs,
-                                transport = outcome.load.registration.transport,
-                                activator = { activator.activate(projectId.value, serverId, platformProfile) }
-                            )
+                        val lazyTool = LazyMcpTool(
+                            serverId = serverId,
+                            projectId = projectId.value,
+                            initialAdoptedSpecs = adoptedSpecs,
+                            transport = outcome.load.registration.transport,
+                            activator = { activator.activate(projectId.value, serverId, platformProfile) }
                         )
+                        mcpLifecycleManager.register(lazyTool)
+                        broker.register(lazyTool)
                     }
                 }
             }
         }
 
-        // RFC-0035: registered before the adapter ever sees the key, so the very first
-        // output_snapshot that could echo it back is already covered.
-        val redactor = Redactor()
         val remoteAdapters = anthropicApiKey()?.let { key ->
             redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
             listOf(AnthropicAdapter(key))
@@ -384,6 +393,7 @@ class RuntimeCompositionRoot(
             resolveCapability = capabilityResolver::resolve,
             resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
             workerSpawner = workerSpawner,
+            resolveToolCapability = capabilityResolver::resolveForTool,
         )
         return SqliteExecutor(
             driver = projectDriver,

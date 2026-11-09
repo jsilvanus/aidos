@@ -4,7 +4,7 @@ import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.mcp.core.McpCallResult
 import dev.aidos.mcp.core.McpClient
-import dev.aidos.mcp.core.McpRpcException
+
 import dev.aidos.mcp.core.McpServerInfo
 import dev.aidos.mcp.core.McpToolSpec
 import dev.aidos.storage.AidosStorage
@@ -90,7 +90,7 @@ class McpServerActivatorTest {
             private set
 
         override suspend fun initialize(): McpServerInfo {
-            if (failInitialize) throw McpRpcException("fake initialize failure")
+            if (failInitialize) throw IllegalStateException("fake initialize failure")
             return McpServerInfo(name = "fake", version = "1")
         }
 

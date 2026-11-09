@@ -92,7 +92,7 @@ class AgentLoop(
             checkpoint(StepEvent.StepStarted(step = steps))
             val modelReq = ModelRequest(
                 messages = transcript.toList(),
-                tools = request.tools,
+                tools = pkg.request.tools,
                 toolChoice = ToolChoice.Auto,
                 maxOutputTokens = adapter.contextWindow / 8,
             )

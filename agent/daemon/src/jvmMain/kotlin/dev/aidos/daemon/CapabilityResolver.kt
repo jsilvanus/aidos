@@ -46,4 +46,17 @@ class CapabilityResolver(
             .maxWithOrNull(compareBy({ it.issuedAt }, { it.id.value }))
             ?.id
     }
+
+    /**
+     * Resolves a capability for [toolName]: for namespaced MCP operations (`<serverId>:<op>`),
+     * checks grants issued directly to `serverId` (`SubjectKind.MCP_SERVER`) before falling back
+     * to the calling [subjectId].
+     */
+    suspend fun resolveForTool(subjectId: String, toolName: String, permission: Permission): CapabilityId? {
+        if (':' in toolName) {
+            val serverId = toolName.substringBefore(':')
+            resolve(serverId, permission)?.let { return it }
+        }
+        return resolve(subjectId, permission)
+    }
 }

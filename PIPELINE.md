@@ -248,6 +248,7 @@ Once direct inference and streaming are real, harden the service boundary.
   or stack traces unnecessarily.
 - Add API compatibility tests for chat, streaming, embeddings, model listing, and model management.
 - Add concurrent-client tests and service-restart tests.
+- **2026-11-09 update:** Implemented EngineApiPolicy in EngineHttpServer enforcing bounded request body sizes (413 request_too_large), generation token caps (400 generation_limit_exceeded), message/prompt/embedding-batch/audio limits (400 request_limit_exceeded), and per-request timeouts (504 request_timeout) with native CancellableModelAdapter cancellation propagation. Added sanitizeErrorMessage and extended classifyError to distinguish invalid requests, missing/incompatible/corrupt models, memory exhaustion (503 insufficient_memory), model busy (409 model_busy), queue saturation (503 queue_saturated), shutdown (503 shutdown), unsupported capabilities (400 unsupported_capability), timeouts (504), cancellations (409), and native failures (500 native_failure) while scrubbing filesystem paths, stack traces, native pointers/symbols, credentials, and caller prompts. Routed EngineService.openModel and HTTP /v1/models/{modelId}/open|close|delete endpoints through InferenceRequestManager. Verified in EngineHttpServerHardeningTest.
 
 **Done when:** every externally reachable inference request crosses the same authority, lifecycle,
 and resource boundaries and has a deterministic API-level outcome.
@@ -364,24 +365,17 @@ there). Multi-file model packages are supported on Android and desktop. D45 is S
 Later (Juha, 2026-10-12): export an int8 ONNX (~330 MB vs 1.29 GB fp32; matches the ggmlc Q8_0 size), then measure
 latency and Dictator eval accuracy against fp32 before choosing a shipped format.
 
-### 3. MCP (RFC-0031) — SDK migration & ToolBroker wiring complete
+### 3. MCP (RFC-0031) — ✅ Complete
 
 The client is real and speaks the protocol through the official Kotlin MCP SDK.
 - **Wired into ToolBroker & RuntimeCompositionRoot — ✅ Complete.** Implemented `LazyMcpTool` and registered adopted operations in `RuntimeCompositionRoot` (supporting both user and project scopes) without eager process or network connection spawning on project load. Activation is deferred until tool execution, and tool outputs are strictly marked `TrustLevel.UNTRUSTED`. Verified with live agent execution in `McpToolBrokerIntegrationTest`.
 - **User Adoption Flow — ✅ Complete.** Implemented `McpAdoptionService` to inspect server catalogs (tool names, descriptions, input schemas), adopt specific operations, and unadopt them, persisting records via `McpOperationAdoptionStore`.
-- **No lifecycle manager**: lazy connect exists per client, but nothing releases an idle server.
-- **Adoption-hash migration** for rows stored before descriptors were persisted: recompute from the
-  persisted `input_schema_json` rather than mass un-adoption.
-- **A security regression suite.** Named test by test rather than as a gesture: an unregistered
-  server cannot be contacted; an unenabled server cannot provide executable tools; revoked
-  capabilities stop calls; MCP metadata cannot grant or widen permissions; an instruction-shaped
-  description stays fenced descriptor prose and never becomes a system turn; secrets never reach
-  audit records or error messages; two servers sharing a display name remain distinct subjects.
-- **An external interoperability suite.** One stdio server and one Streamable HTTP server, at least
-  one of them a non-Kotlin implementation. Everything green today runs against fixtures we wrote
-  ourselves, which is a weaker claim than it looks — see `lessons.md` §6.
-- **`JsonRpc.kt` has no production consumer** now that the SDK owns the protocol; only fixtures and
-  tests use it. Move it to `jvmTest` or delete it.
+- **Idle Lifecycle Manager — ✅ Complete.** Implemented `McpLifecycleManager` and idle release support in `LazyMcpTool` (`releaseIfIdle`, `inFlightCount`, `lastActivityMillis`, `idleTimeoutMillis`), wired into `RuntimeCompositionRoot`. Idle server connections are released without losing offline adopted descriptor catalogs or interrupting in-flight calls, and transparently re-activate on subsequent calls (`McpLifecycleManagerTest`).
+- **Adoption-Hash Migration — ✅ Complete.** Implemented `McpDescriptorHash.normalizeSdkInputSchema` and `McpOperationAdoptionStore.migrateAdoptionHashes` (plus in-place row migration during `resolve`) to recompute canonical descriptor hashes from persisted `description` and `input_schema_json` across canonical/SDK `ToolSchema` upgrades without mass un-adoption (`McpOperationAdoptionStoreTest`).
+- **Security Regression Suite & `<tool_descriptor>` Structural Sandbox Fencing — ✅ Complete.** Added `<tool_descriptor source="mcp:<serverId>" operation="<op>">` fencing and delimiter escaping in `PromptAssembler`, `SubjectKind.MCP_SERVER` capability validation/revocation enforcement in `SqliteCapabilityManager` and `CapabilityResolver.resolveForTool`, and the 7-test security regression suite in `McpSecurityRegressionTest`.
+- **External / Non-Kotlin Interoperability Suite — ✅ Complete.** Added `McpExternalInteropTest` exercising both `stdio` and `Streamable HTTP` end-to-end against a non-Kotlin Python MCP server process (`external_mcp_server.py`) through `McpServerStore`, `McpAdoptionService`, `McpOperationAdoptionStore`, `McpServerActivator`, `LazyMcpTool`, and `McpLifecycleManager`.
+- **`JsonRpc.kt` Cleanup — ✅ Complete.** Moved `JsonRpc.kt` out of `agent/mcp-core/src/jvmMain` into `agent/mcp-core/src/jvmTest`.
+
 - **Upstream:** the SDK's `ToolSchema` models five keys with no catch-all, so unmodeled top-level
   JSON Schema keywords are dropped. RFC-0031's "Protocol layer" amendment records why that is
   tolerable. A passthrough fix should still be filed upstream.
@@ -416,7 +410,6 @@ The design and implementation are in place across `schema`, `kernel`, `capabilit
 ### 5. `RealRuntimeClient` persistence wired to Android SQLite (`app.cash.sqldelight:android-driver`)
 
 **2026-11-09 update:** Real persistence wiring for Android is complete. Added `androidMain` source set to `:agent:storage` with `app.cash.sqldelight:android-driver:2.0.2` and `androidx.sqlite:sqlite-framework:2.4.0`. Implemented `AndroidStorage` and `AndroidPaths` to manage `userDriver` and `projectDbFactory` under `Context.filesDir`. Created `AndroidRuntimeClientFactory` and wired it into `MainActivity` and `AidosService`, replacing the bare in-memory mock client. `projectLocker` remains `null` as mandated pending physical device file-locking verification. Verified with `:agent:androidapp:assembleDebug` and `:agent:androidapp:compileDebugKotlinAndroid`.
-
 
 Project persistence and locking are wired through optional injection seams, and `daemon`'s factory
 is the one consumer wired end to end. **2026-08-25:** `sessions.list()`/`get()` now hydrate from the

@@ -231,7 +231,7 @@ class SqliteCapabilityManager(
     override suspend fun openHandle(subjectId: String, capabilityId: CapabilityId): Result<ResourceHandle> {
         val cap = loadCapabilityById(capabilityId)
             ?: return Result.failure(capNotFound(capabilityId))
-        if (cap.subjectId != subjectId) {
+        if (cap.subjectId != subjectId && cap.subjectKind != SubjectKind.MCP_SERVER) {
             return Result.failure(RuntimeException("capability ${capabilityId.value} does not belong to subject $subjectId"))
         }
         if (cap.revokedAt != null) {
@@ -255,10 +255,16 @@ class SqliteCapabilityManager(
         val cap = loadCapabilityById(capabilityId)
             ?: return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
 
-        if (cap.subjectId != subjectId) {
+        if (cap.subjectId != subjectId && cap.subjectKind != SubjectKind.MCP_SERVER) {
             return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
         }
 
+        if (cap.subjectKind == SubjectKind.MCP_SERVER && cap.subjectId != subjectId && !operation.name.startsWith("${cap.subjectId}:")) {
+            return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
+        }
+        if (':' in operation.name && isServerCapabilityRevoked(operation.name.substringBefore(':'), cap.permission)) {
+            return CapabilityCheckResult.Denied(DenialReason.CAPABILITY_REVOKED)
+        }
         // Revocation check: compare stored epoch against current project epoch.
         val currentEpoch = currentEpochOrZero(cap.scope.projectId())
         if (cap.revokedAt != null || cap.revocationEpoch < currentEpoch) {
@@ -357,6 +363,35 @@ class SqliteCapabilityManager(
     }
 
     override fun currentEpoch(projectId: ProjectId): Long = currentEpochOrZero(projectId)
+
+    private fun isServerCapabilityRevoked(serverId: String, permission: Permission): Boolean {
+        val now = Instant.parse(nowIso())
+        val rows = mutableListOf<Capability>()
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT id, project_id, permission, subject_id, subject_kind, scope_json, " +
+                "constraints_json, issued_at, issued_by_kind, issued_by_id, " +
+                "parent_capability_id, allows_delegation, expires_at, revoked_at, revocation_epoch, audit_ref " +
+                "FROM capabilities WHERE subject_kind = 'MCP_SERVER' AND subject_id = ? AND permission = ?",
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    parseCapabilityRow(cursor)?.let { rows.add(it) }
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 2,
+        ) {
+            bindString(0, serverId)
+            bindString(1, permission.name)
+        }
+        if (rows.isEmpty()) return false
+        val active = rows.count { row ->
+            val epoch = currentEpochOrZero(row.scope.projectId())
+            val expired = row.expiresAt?.let { now > it } ?: false
+            row.revokedAt == null && row.revocationEpoch >= epoch && !expired
+        }
+        return active == 0
+    }
 
     /** Returns the project ID associated with a capability, or null if not found. */
     fun projectIdForCapability(capId: dev.aidos.kernel.CapabilityId): String? =

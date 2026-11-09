@@ -5,9 +5,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 /**
- * JSON-RPC 2.0 wire types (RFC-0031, M18): MCP's own transport-level envelope, spoken
- * identically over stdio (newline-delimited) and streamable HTTP (POST body / SSE `data:`
- * frames).
+ * JSON-RPC 2.0 wire types used by test fixtures (RFC-0031, M18).
+ *
+ * Production protocol handling lives in the official Kotlin MCP SDK (`SdkMcpClient`);
+ * these types remain in `jvmTest` to drive wire-level test servers and codec tests.
  */
 internal val mcpJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
