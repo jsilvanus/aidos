@@ -14,10 +14,13 @@ fun validateHttpEndpoint(
     url: String,
     profile: McpProfile,
 ): McpValidationResult {
-    if (url.startsWith("http://")) {
-        val isLoopback = url.startsWith("http://localhost") ||
-                url.startsWith("http://127.0.0.1") ||
-                url.startsWith("http://[::1]")
+    val uri = runCatching { java.net.URI(url.trim()) }.getOrNull()
+    if (uri == null) return McpValidationResult.Rejected("Malformed endpoint URL.")
+    if (uri.scheme.equals("http", ignoreCase = true)) {
+        // The host is parsed, not prefix-matched: `http://localhost.evil.example` and
+        // `http://localhost@evil.example` must not count as loopback (RFC-0031).
+        val host = uri.host?.lowercase()
+        val isLoopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]"
         val allowPlain = isLoopback &&
                 profile in setOf(McpProfile.DESKTOP, McpProfile.HEADLESS_SERVER)
         if (!allowPlain) {
