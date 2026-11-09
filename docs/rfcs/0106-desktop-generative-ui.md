@@ -1,4 +1,4 @@
-# RFC-0104: Aidos Desktop — Spatial Canvas & Generative UI Architecture
+# RFC-0106: Aidos Desktop — Spatial Canvas & Generative UI Architecture
 
 Status: Draft  
 Date: 2026-10-22  
@@ -280,7 +280,7 @@ Orchestrators communicate strictly via typed, blinded queries:
 ## Amendments to Existing RFCs
 
 ### RFC-0051 (Desktop)
-* **Section 5.3 (Core View Modes):** Deprecated in favor of RFC-0104's **2D Spatial Intent Canvas (Macro)** and **Unified Living Document (Micro)**.
+* **Section 5.3 (Core View Modes):** Deprecated in favor of RFC-0106's **2D Spatial Intent Canvas (Macro)** and **Unified Living Document (Micro)**.
 * **Runtime Hosting:** Replaced with loopback client connection to Aidos Engine (`~/.aidos/engine.json`) per RFC-0103.
 
 ---
