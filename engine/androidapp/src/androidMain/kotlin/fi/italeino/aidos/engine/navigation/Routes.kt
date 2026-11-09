@@ -29,4 +29,5 @@ sealed class EngineRoute(val route: String) {
     data object Agents : EngineRoute("agents")
     data object Settings : EngineRoute("settings")
     data object Groups : EngineRoute("groups")
+    data object McpTools : EngineRoute("mcp_tools")
 }

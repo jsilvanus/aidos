@@ -13,6 +13,7 @@ import fi.italeino.aidos.engine.inference.InferenceTester
 import fi.italeino.aidos.engine.ui.AgentsScreen
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.GroupsScreen
+import fi.italeino.aidos.engine.ui.McpToolsScreen
 import fi.italeino.aidos.engine.ui.PendingInvite
 import fi.italeino.aidos.engine.ui.HomeScreen
 import fi.italeino.aidos.engine.ui.ModelDetailScreen
@@ -106,6 +107,10 @@ fun EngineNavHost(
 
         composable(EngineRoute.Groups.route) {
             GroupsScreen()
+        }
+
+        composable(EngineRoute.McpTools.route) {
+            McpToolsScreen()
         }
     }
 
