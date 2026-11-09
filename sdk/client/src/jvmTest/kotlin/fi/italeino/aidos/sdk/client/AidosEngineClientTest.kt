@@ -336,6 +336,20 @@ class AidosEngineClientTest {
     }
 
     @Test
+    fun chatCompletion_enrichesAidinPhase2ErrorHints() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setBody("""{"error":{"message":"No candidate models available in inference group for aidos:chat","type":"model_unavailable","code":"model_unavailable"}}""")
+        )
+        val client = clientPointedAtServer()
+        assertNull(client.chatCompletion(hi))
+        val err = client.lastError
+        assertEquals("model_unavailable", err?.code)
+        assertTrue(err?.userActionableMessage()?.contains("Check connected devices in Groups") == true)
+    }
+
+    @Test
     fun streamChatCompletion_propagatesMidStreamErrorPayload() = runTest {
         server.enqueue(
             MockResponse()

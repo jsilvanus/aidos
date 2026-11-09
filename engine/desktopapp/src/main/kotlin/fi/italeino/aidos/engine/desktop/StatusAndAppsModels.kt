@@ -75,6 +75,7 @@ class DesktopStatusModel(private val host: DesktopEngineHost, private val scope:
             freeStorageGb = DesktopDevice.freeStorageGb(),
             approvedApps = approvals.filter { it.status == AppApprovalStatus.APPROVED }.map { it.displayName },
             pendingAppCount = approvals.count { it.status == AppApprovalStatus.PENDING },
+            linkedPeerCount = host.aidin.value?.peers?.value?.count { it.connected } ?: 0,
         )
     }
 }

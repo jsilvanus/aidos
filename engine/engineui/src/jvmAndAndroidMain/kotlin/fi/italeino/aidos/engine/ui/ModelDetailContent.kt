@@ -460,14 +460,23 @@ private fun ModelHeader(model: ModelDetail, state: ModelDetailState, loadingStat
         if (model.description.isNotBlank()) {
             Text(model.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (model.format == "virtual" || model.id.startsWith("aidos:")) {
+            Text(
+                "Virtual model resolved dynamically across trusted inference group peers with warm local fallback.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         model.kind.engineEndpoint()?.let {
             Text("Serves $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(
-            "Size on disk: ${formatSize(state.installedSizeBytes ?: model.sizeMB.toLong() * 1024 * 1024)}",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
+        if (model.format != "virtual") {
+            Text(
+                "Size on disk: ${formatSize(state.installedSizeBytes ?: model.sizeMB.toLong() * 1024 * 1024)}",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }
 

@@ -1,11 +1,13 @@
 package fi.italeino.aidos.engine.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -25,10 +27,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Inference groups (RFC-0105 phase 1), shared by the desktop window and the Android screen: turn
+ * Inference groups (RFC-0105 Phase 1-3), shared by the desktop window and the Android screen: turn
  * sharing on, pair with or enrol another device by exchanging an invite, compare the six-digit
- * code, and see linked peers. Peers are only linked and tracked in this phase; nothing is served
- * to them yet.
+ * code, and inspect linked peers. Linked peers participate in virtual model routing (`aidos:chat`),
+ * peer delegation, and cooperative child-process layer splitting.
  *
  * Invites are shown as a QR code (for a phone to scan) and as text (for another device to paste).
  * Node calls that touch the network run on [scope] off the main thread.
@@ -51,7 +53,7 @@ fun GroupsPane(
             Column(Modifier.weight(1f)) {
                 Text("Share with devices on this network", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Lets paired devices and group members find and link to this Engine. Off by default.",
+                    "Lets paired devices and group members find and link to this Engine for virtual model resolution (aidos:chat) and cooperative split inference. Off by default.",
                     fontSize = 12.sp,
                 )
             }
@@ -183,18 +185,58 @@ private fun InviteSection(node: AidinNode, adminGroups: List<Pair<GroupId, Strin
 @Composable
 private fun PeerRow(peer: PeerView, adminGroups: List<GroupId>, act: (() -> Unit) -> Unit, node: AidinNode) {
     val via = peer.domains.joinToString { if (it is TrustDomain.Group) "group" else "paired" }
+    val hb = peer.lastHeartbeat
+    val batteryInfo = hb?.batteryPercent?.let { pct ->
+        "$pct%" + if (hb.charging == true) " ⚡" else ""
+    }
+    val ramContributed = hb?.contributionRamBytes?.takeIf { it > 0 }?.let { bytes ->
+        "${bytes / (1024 * 1024)} MB RAM offered"
+    }
+    val draining = if (hb?.draining == true) "draining" else null
+    val modelsSummary = hb?.models?.takeIf { it.isNotEmpty() }?.let { models ->
+        "${models.size} model${if (models.size == 1) "" else "s"}: " +
+            models.joinToString(", ") { it.id.substringAfterLast('/') }
+    }
+
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(peer.label?.ifBlank { null } ?: peer.nodeId.value.take(10))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(peer.label?.ifBlank { null } ?: peer.nodeId.value.take(10), fontWeight = FontWeight.SemiBold)
+                if (peer.connected) {
+                    Surface(
+                        color = Color(0xFF22C55E).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "LINKED",
+                            color = Color(0xFF16A34A),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
             Text(
                 listOfNotNull(
                     peer.state.name.lowercase(),
-                    if (peer.connected) "linked" else "not linked",
+                    if (!peer.connected) "not linked" else null,
                     via.ifBlank { null },
-                    peer.lastHeartbeat?.engineVersion,
+                    draining,
+                    batteryInfo,
+                    peer.lastHeartbeat?.engineVersion?.let { "v$it" },
                 ).joinToString(" · "),
                 fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (ramContributed != null || modelsSummary != null) {
+                Text(
+                    listOfNotNull(ramContributed, modelsSummary).joinToString(" · "),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
         if (peer.label != null) TextButton(onClick = { act { node.removePair(peer.nodeId) } }) { Text("Unpair") }
         // Peer domains only show while linked; a group admin removes members it can see.

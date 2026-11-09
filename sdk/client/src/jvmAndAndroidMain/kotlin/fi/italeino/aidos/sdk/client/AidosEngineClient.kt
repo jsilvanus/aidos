@@ -138,6 +138,12 @@ data class EngineError(
     fun userActionableMessage(): String {
         val hint = when (code) {
             "locality_violation" -> "Placement restricted: model cannot be served under requested locality"
+            "model_unavailable" -> "No candidate models available in inference group. Check connected devices in Groups"
+            "peer_busy" -> "Group peers are busy with other requests. Try again shortly"
+            "plan_changed" -> "Inference group topology changed during execution. Please retry"
+            "peer_lost" -> "A peer device disconnected during streaming generation. Retrying on local fallback"
+            "split_failed" -> "Split layer execution failed across peers. Check device resources"
+            "supervisor_failed" -> "Layer supervisor process failed. Please restart Engine"
             "insufficient_memory" -> "Device RAM full: close background apps or unload other models"
             "queue_saturated" -> "Engine busy: too many queued requests. Retry in a moment"
             "shutdown" -> "Engine is restarting or shutting down"

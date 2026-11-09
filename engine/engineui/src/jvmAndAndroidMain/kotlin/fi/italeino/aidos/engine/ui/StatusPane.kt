@@ -25,6 +25,7 @@ data class StatusUiState(
     /** Display names of apps the user has approved to use the Engine. */
     val approvedApps: List<String> = emptyList(),
     val pendingAppCount: Int = 0,
+    val linkedPeerCount: Int = 0,
 )
 
 /**
@@ -83,6 +84,28 @@ fun StatusPane(
                 Text("Device Space: $freeGb GB free", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
             }
             MemoryBudgetIndicator(state.memory, modifier = Modifier.padding(vertical = 4.dp))
+        }
+
+        item {
+            Column {
+                Text(
+                    "Inference Groups",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                Text(
+                    when {
+                        !state.isEngineRunning -> "Start the Engine to see linked devices"
+                        state.linkedPeerCount == 0 -> "No peer devices linked (local inference only)"
+                        state.linkedPeerCount == 1 -> "1 peer device linked for virtual model delegation"
+                        else -> "${state.linkedPeerCount} peer devices linked for cluster inference"
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         item {

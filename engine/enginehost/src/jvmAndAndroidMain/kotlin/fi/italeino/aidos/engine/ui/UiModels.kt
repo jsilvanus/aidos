@@ -238,6 +238,7 @@ data class UiChatMessage(
     val tokensUsed: Int? = null,
     val generationTimeMs: Long? = null,
     val stopReason: StopReason? = null,
+    val route: String? = null,
 )
 
 data class TestChatState(
@@ -280,6 +281,16 @@ fun formatActionableErrorMessage(error: String?): String {
     if (error.isNullOrBlank()) return "Inference failed"
     val lower = error.lowercase()
     return when {
+        lower.contains("model_unavailable") || lower.contains("no candidate") ->
+            "No candidate models available in inference group. Check connected devices in Groups or install a local model."
+        lower.contains("peer_busy") ->
+            "Group peers are busy with other requests. Try again in a moment."
+        lower.contains("plan_changed") || lower.contains("split plan") ->
+            "Inference group topology changed (a peer joined, left, or disconnected). Please retry."
+        lower.contains("peer_lost") ->
+            "A peer disconnected during generation. Retrying on local fallback."
+        lower.contains("split_failed") || lower.contains("helper process") || lower.contains("supervisor") ->
+            "Split layer execution failed across peers. Check device resources and peer connectivity."
         lower.contains("out of memory") || lower.contains("insufficient_memory") || lower.contains("failed to allocate") ->
             "Out of memory: device RAM is full. Close background apps or choose a smaller context window."
         lower.contains("locality") || lower.contains("locality_violation") ->
