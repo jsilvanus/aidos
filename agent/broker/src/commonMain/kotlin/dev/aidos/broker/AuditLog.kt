@@ -2,9 +2,12 @@ package dev.aidos.broker
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.identity.DeviceIdentity
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 
 /**
- * Writes rows to the audit_log table (RFC-0003, RFC-0037, M4).
+ * Writes rows to the audit_log table (RFC-0003, RFC-0037, RFC-0046, M4).
  *
  * The audit log is not a log level — it cannot be turned down, sampled, or dropped under
  * pressure (RFC-0037, §Durability). Every validate call and every effect invocation that
@@ -14,7 +17,33 @@ import app.cash.sqldelight.db.SqlDriver
  *   id, project_id, sequence, occurred_at, kind, actor_kind, actor_id, device_id,
  *   subject_ref, capability_id, detail_json
  */
-class AuditLog(private val driver: SqlDriver, private val deviceId: String = "runtime") {
+class AuditLog(private val driver: SqlDriver, val deviceId: String = "runtime") {
+
+    constructor(driver: SqlDriver, deviceIdentity: DeviceIdentity) : this(driver, deviceIdentity.deviceIdString)
+
+    /**
+     * Writes one audit row using a typed [ActorRef] (RFC-0046).
+     */
+    fun write(
+        id: String,
+        projectId: String,
+        kind: String,
+        actor: ActorRef,
+        capabilityId: String? = null,
+        subjectRef: String? = null,
+        detailJson: String = "{}",
+        nowIso: String,
+    ): String = write(
+        id = id,
+        projectId = projectId,
+        kind = kind,
+        actorKind = actor.kind.name,
+        actorId = actor.id,
+        capabilityId = capabilityId,
+        subjectRef = subjectRef,
+        detailJson = detailJson,
+        nowIso = nowIso,
+    )
 
     /**
      * Writes one audit row. Returns the row ID.
@@ -72,7 +101,7 @@ class AuditLog(private val driver: SqlDriver, private val deviceId: String = "ru
         val rows = mutableListOf<AuditRow>()
         driver.executeQuery(
             identifier = null,
-            sql = "SELECT id, sequence, kind, actor_kind, actor_id, capability_id, subject_ref " +
+            sql = "SELECT id, sequence, kind, actor_kind, actor_id, capability_id, subject_ref, device_id " +
                 "FROM audit_log WHERE project_id = ? ORDER BY sequence",
             mapper = { cursor ->
                 while (cursor.next().value) {
@@ -85,6 +114,7 @@ class AuditLog(private val driver: SqlDriver, private val deviceId: String = "ru
                             actorId = cursor.getString(4)!!,
                             capabilityId = cursor.getString(5),
                             subjectRef = cursor.getString(6),
+                            deviceId = cursor.getString(7) ?: "runtime",
                         )
                     )
                 }
@@ -112,4 +142,10 @@ data class AuditRow(
     val actorId: String,
     val capabilityId: String?,
     val subjectRef: String?,
-)
+    val deviceId: String = "runtime",
+) {
+    val actor: ActorRef get() = ActorRef(
+        try { ActorKind.valueOf(actorKind) } catch (_: Exception) { ActorKind.SESSION },
+        actorId,
+    )
+}

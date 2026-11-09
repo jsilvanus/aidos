@@ -63,12 +63,7 @@ These are live defects in code that is wired into the production path, not missi
 Nothing below is waiting on hardware or on a decision.
 
 - **RFC-0042 (Networking and Egress) — ✅ Complete.** Implemented centralized egress chokepoint (DefaultEgressClient and EgressSecurityPolicy) in :agent:http enforcing the four-point destination scoping rules of RFC-0042: pre-DNS IP literal rejection (blocking instance metadata 169.254.169.254 and loopback literals unless explicitly granted in CapabilityScope.Network), post-DNS SSRF blocklist (loopback, link-local, private RFC-1918, and multicast), same-host redirect enforcement, and EgressRecord audit trail with SHA-256 payload hashing without raw payload leaks. Updated HttpTool to route all operations through the mediated egress client and updated SqliteCapabilityManager.openHandle to support network capabilities.
-- **RFC-0046: actor attribution collapses to hardcoded literals.** `ActorRef` and its schema
-  columns are real and correctly designed, but nearly every audit-writing call site hardcodes
-  `actorKind = "SESSION"` regardless of who acted, and `device_id` is always the literal
-  `"runtime"`. `DeviceIdentity` has no implementation. This degrades forensic precision rather than
-  an authority boundary, so it ranks below the two above — but the audit trail is the product's
-  accountability claim.
+- **RFC-0046: actor attribution collapses to hardcoded literals — ✅ Complete.** Implemented `DeviceIdentity` and SQLite-backed `DeviceIdentityStore` (persisting to `device_identity` in `user.db` with Ed25519 device key generation and platform fingerprinting). Replaced hardcoded `"runtime"` literals across `AuditLog`, `SqliteCapabilityManager`, `GitRunReconciler`, and `RealRuntimeClient` with authentic device IDs. Dynamically resolved authentic actor kinds (`WORKER`, `SESSION`, `MCP_SERVER`, `PLUGIN`, `USER`, and `RUNTIME`) across capability delegation, tool invocations, session task executions, continuation runs, scheduler depth refutations, and crash recovery routines.
 
 ### Immediate next five items for the engine app
 

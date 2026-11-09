@@ -38,9 +38,15 @@ object RuntimeClientFactory {
     fun createRuntimeClient(home: String = System.getProperty("user.home")): RuntimeClient {
         val nowIso = { Clock.System.now().toString() }
         val userDb = AidosStorage.openUser(DesktopPaths.userDb(home), RUNTIME_VERSION, nowIso)
+        val deviceIdentityStore = dev.aidos.identity.DeviceIdentityStore(userDb.driver, dev.aidos.identity.UuidV7Generator(), nowIso)
+        val deviceIdentity = deviceIdentityStore.getOrRegister(
+            platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
+            defaultDisplayName = "Desktop",
+        )
 
         return RealRuntimeClient().apply {
             userDriver = userDb.driver
+            this.deviceIdentity = deviceIdentity
             projectDbFactory = { projectRoot ->
                 AidosStorage.openProject(DesktopPaths.stateDb(projectRoot), RUNTIME_VERSION, nowIso).driver
             }

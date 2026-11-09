@@ -1,8 +1,11 @@
 package dev.aidos.executor
 
 import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.EventId
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
@@ -84,12 +87,12 @@ class Scheduler(
         // RFC-0037) -- this is a decision, and "why did my subscription never fire" needs an
         // answer source the same way a causal-depth refusal does, below.
         for (sessionId in match.selfWakeRefused) {
+            val actor = resolveSessionActor(sessionId)
             audit.write(
                 id = idGen(),
                 projectId = projectId.value,
                 kind = "WakeRefused",
-                actorKind = "SESSION",
-                actorId = sessionId,
+                actor = actor,
                 subjectRef = event.type,
                 detailJson = buildJsonObject {
                     put("reason", "self_wake_not_opted_in")
@@ -124,12 +127,12 @@ class Scheduler(
                     id = idGen(),
                     projectId = projectId.value,
                     kind = "WakeRefused",
-                    actorKind = "SESSION",
-                    actorId = sessionId,
+                    actor = ActorRef(ActorKind.RUNTIME, "scheduler"),
                     subjectRef = event.type,
                     detailJson = buildJsonObject {
                         put("reason", "causal_depth_ceiling")
                         put("event_id", event.id)
+                        put("session_id", sessionId)
                     }.toString(),
                     nowIso = nowIso(),
                 )
@@ -177,4 +180,19 @@ class Scheduler(
             bindString(1, nowIso())
             bindString(2, sessionId)
         }.value
+
+    private fun resolveSessionActor(sessionId: String): ActorRef {
+        val role = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT role FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
+        val kind = if (role.equals("WORKER", ignoreCase = true) || sessionId.startsWith("worker")) {
+            ActorKind.WORKER
+        } else {
+            ActorKind.SESSION
+        }
+        return ActorRef(kind, sessionId)
+    }
 }

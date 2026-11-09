@@ -430,4 +430,59 @@ class CapabilityTest {
         assertEquals("src", scope.rootRelativePath)
         assertEquals(splitBudget, reloadedWorkerCap.constraints.budget)
     }
+
+    @Test
+    fun `delegation attributes actorKind to parent subjectKind and persists real deviceId in audit log`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val ids = UuidV7Generator()
+        val realDeviceId = "device-pixel-fold-1"
+        val mgr = SqliteCapabilityManager(driver, ids, deviceId = realDeviceId) { "2026-08-05T00:00:00Z" }
+        val projectId = "01234567-89ab-7def-8abc-000000000300"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val parentWorkerCap = mgr.grant(
+            subjectId = "worker-lead-1",
+            subjectKind = dev.aidos.kernel.SubjectKind.WORKER,
+            permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "/"),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-admin"),
+        ).getOrThrow()
+
+        driver.execute(null, "UPDATE capabilities SET allows_delegation = 1 WHERE id = ?", 1) {
+            bindString(0, parentWorkerCap.id.value)
+        }
+
+        mgr.delegate(
+            parent = parentWorkerCap.id,
+            toSubjectId = "worker-sub-2",
+            toSubjectKind = dev.aidos.kernel.SubjectKind.WORKER,
+            attenuatedScope = parentWorkerCap.scope,
+            attenuatedConstraints = parentWorkerCap.constraints,
+        ).getOrThrow()
+
+        var delegatedActorKind: String? = null
+        var delegatedActorId: String? = null
+        var delegatedDeviceId: String? = null
+        driver.executeQuery(
+            null,
+            "SELECT actor_kind, actor_id, device_id FROM audit_log WHERE project_id = ? AND kind = 'CapabilityDelegated'",
+            { cursor ->
+                app.cash.sqldelight.db.QueryResult.Value(
+                    if (cursor.next().value) {
+                        delegatedActorKind = cursor.getString(0)
+                        delegatedActorId = cursor.getString(1)
+                        delegatedDeviceId = cursor.getString(2)
+                    } else null
+                )
+            },
+            1,
+        ) { bindString(0, projectId) }
+
+        assertEquals(dev.aidos.kernel.ActorKind.WORKER.name, delegatedActorKind)
+        assertEquals("worker-lead-1", delegatedActorId)
+        assertEquals(realDeviceId, delegatedDeviceId)
+    }
 }
