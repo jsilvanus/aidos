@@ -51,6 +51,10 @@ class SqliteExecutor(
     private val taskRunner: TaskRunner,
     /** RFC-0053's before-a-Run-starts gate. Unset preserves the pre-reconciliation behavior. */
     private val reconciler: RunReconciler? = null,
+    /** RFC-0011's worker spawner for COMPOSITE tasks. */
+    private val workerSpawner: WorkerSpawner? = null,
+    /** RFC-0011's worker committer seam. */
+    private val workerCommitter: WorkerCommitter? = null,
 ) : Executor {
 
     /**
@@ -91,6 +95,7 @@ class SqliteExecutor(
                 updateRunState(runId, RunState.FAILED,
                     AidosError("run.max_steps_exceeded", ErrorClass.EXHAUSTED,
                         "Run exceeded max steps (${currentRun.maxSteps})"))
+                resumeAwaitingParent(runId)
                 break
             }
 
@@ -99,6 +104,9 @@ class SqliteExecutor(
                 // No pending tasks → Run is done.
                 val allDone = allTasksTerminal(runId)
                 updateRunState(runId, if (allDone) RunState.COMPLETED else RunState.YIELDED)
+                if (allDone) {
+                    resumeAwaitingParent(runId)
+                }
                 break
             }
 
@@ -108,7 +116,11 @@ class SqliteExecutor(
                 updateTaskState(task.id, TaskState.RUNNING)
                 incrementStepIndex(runId, stepIndex)
 
-                val result = taskRunner.execute(task)
+                val result = if (task.kind == TaskKind.COMPOSITE && workerSpawner != null) {
+                    workerSpawner.spawn(task)
+                } else {
+                    taskRunner.execute(task)
+                }
 
                 // RFC-0008 step 8d: park rather than complete/fail. The task row and the
                 // continuations row land in the same transaction as the RUNNING→parked
@@ -147,6 +159,11 @@ class SqliteExecutor(
                         causalDepth = 1,
                         nowIso = nowIso(),
                     )
+
+                    if (park.suspendedOperation is SuspendedOperation.ChildRun) {
+                        // RFC-0011: Drive the child Run synchronously on the same executor instance.
+                        drive(park.suspendedOperation.childRunId)
+                    }
                     return
                 }
 
@@ -215,6 +232,7 @@ class SqliteExecutor(
                     // Task failed — fail the Run.
                     updateRunState(runId, RunState.FAILED,
                         AidosError("task.failed", ErrorClass.TRANSIENT, "Task ${task.id.value} failed: ${result.errorMessage}"))
+                    resumeAwaitingParent(runId)
                     return
                 }
             }
@@ -400,6 +418,9 @@ class SqliteExecutor(
             // statement ago (AgentLoopTaskRunner's tool_calls.tool_task_id is exactly this: it
             // cannot be written at MODEL_CALL execution time because the TOOL_CALL task it
             // references is only created here).
+            spec.dependsOnTaskIds.forEach { depId ->
+                addDependency(run.projectId, TaskId(spec.id), depId)
+            }
             spec.afterInsert()
         }
     }
@@ -426,15 +447,15 @@ class SqliteExecutor(
         ) { bindString(0, runId.value) }.value
 
     private fun pendingTasksFor(runId: RunId): List<Task> {
-        val rows = mutableListOf<Task>()
+        val candidates = mutableListOf<Task>()
         driver.executeQuery(
             identifier = null,
             sql = "SELECT t.id, t.run_id, t.session_id, r.project_id, t.ordinal, t.kind, t.description, " +
                 "t.tool_name, t.state FROM tasks t JOIN runs r ON r.id = t.run_id " +
-                "WHERE t.run_id = ? AND t.state = 'PENDING' ORDER BY t.ordinal LIMIT 1",
+                "WHERE t.run_id = ? AND t.state = 'PENDING' ORDER BY t.ordinal",
             mapper = { cursor ->
                 while (cursor.next().value) {
-                    rows.add(
+                    candidates.add(
                         Task(
                             id = TaskId(cursor.getString(0)!!),
                             runId = RunId(cursor.getString(1)!!),
@@ -464,7 +485,149 @@ class SqliteExecutor(
             },
             parameters = 1,
         ) { bindString(0, runId.value) }
-        return rows
+
+        for (candidate in candidates) {
+            val depStates = dependencyStatesFor(candidate.id)
+            val anyFailedOrSkipped = depStates.any { it == TaskState.FAILED || it == TaskState.SKIPPED }
+            if (anyFailedOrSkipped) {
+                // Dependency failed or was skipped -> cascade to SKIPPED (RFC-0019, PIPELINE.md §4)
+                updateTaskState(candidate.id, TaskState.SKIPPED)
+                val auditId = idGen()
+                audit.write(
+                    id = auditId,
+                    projectId = candidate.projectId.value,
+                    kind = "TaskSkipped",
+                    actorKind = "SESSION",
+                    actorId = candidate.sessionId.value,
+                    subjectRef = candidate.toolName ?: candidate.kind.name,
+                    nowIso = nowIso(),
+                )
+                events.publish(
+                    id = idGen(),
+                    projectId = candidate.projectId.value,
+                    type = "RunStepCompleted",
+                    source = "executor",
+                    payload = buildJsonObject {
+                        put("run_id", runId.value)
+                        put("task_id", candidate.id.value)
+                        put("state", TaskState.SKIPPED.name)
+                        put("reason", "dependency_failed_or_skipped")
+                    }.toString(),
+                    causedBy = candidate.runId.value,
+                    causalDepth = 1,
+                    nowIso = nowIso(),
+                )
+                continue
+            }
+
+            val allCompleted = depStates.all { it == TaskState.COMPLETED }
+            if (allCompleted) {
+                // Either no dependencies or all dependencies completed -> runnable!
+                return listOf(candidate)
+            }
+            // Otherwise, non-terminal dependency: keep scanning later siblings
+        }
+
+        return emptyList()
+    }
+
+    private fun dependencyStatesFor(taskId: TaskId): List<TaskState> {
+        val states = mutableListOf<TaskState>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT t.state FROM tasks t " +
+                "JOIN execution_edges e ON e.to_node_id = t.id " +
+                "WHERE e.from_node_id = ? AND e.from_node_kind = 'TASK' " +
+                "AND e.to_node_kind = 'TASK' AND e.edge_kind = 'DEPENDS_ON'",
+            mapper = { c ->
+                while (c.next().value) {
+                    states.add(TaskState.valueOf(c.getString(0)!!))
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, taskId.value) }
+        return states
+    }
+
+    fun addDependency(projectId: ProjectId, taskId: TaskId, dependsOnTaskId: TaskId) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO execution_edges (id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind) " +
+                "VALUES (?, ?, ?, 'TASK', ?, 'TASK', 'DEPENDS_ON')",
+            parameters = 5,
+        ) {
+            bindString(0, idGen())
+            bindString(1, projectId.value)
+            bindString(2, taskId.value)
+            bindString(3, dependsOnTaskId.value)
+        }
+    }
+
+    suspend fun resumeAwaitingParent(childRunId: RunId): Boolean {
+        var parentRunId: RunId? = null
+        var parentTaskId: TaskId? = null
+
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT run_id, task_id FROM continuations " +
+                "WHERE correlation_id = ? AND suspended_operation = 'CHILD_RUN'",
+            mapper = { c ->
+                if (c.next().value) {
+                    parentRunId = RunId(c.getString(0)!!)
+                    parentTaskId = TaskId(c.getString(1)!!)
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, childRunId.value) }
+
+        val pRunId = parentRunId ?: return false
+        val pTaskId = parentTaskId ?: return false
+
+        val childRun = loadRun(childRunId) ?: return false
+        val workerSessionId = childRun.sessionId
+
+        workerCommitter?.let { committer ->
+            try {
+                committer.commitWorkerOutcome(
+                    projectId = childRun.projectId,
+                    workerSessionId = workerSessionId,
+                    childRunId = childRunId,
+                    outcomeSummary = "Child run ${childRunId.value} finished with state ${childRun.state}",
+                )
+            } catch (_: Exception) {
+            }
+        }
+
+        val childSucceeded = childRun.state == RunState.COMPLETED
+
+        inTransaction {
+            deleteContinuation(pRunId)
+            if (childSucceeded) {
+                updateTaskState(pTaskId, TaskState.COMPLETED)
+                updateRunState(pRunId, RunState.RUNNING)
+            } else {
+                updateTaskState(pTaskId, TaskState.FAILED)
+                updateRunState(
+                    pRunId,
+                    RunState.FAILED,
+                    AidosError(
+                        "child_run.failed",
+                        ErrorClass.TRANSIENT,
+                        "Child run ${childRunId.value} failed with state ${childRun.state}",
+                    ),
+                )
+            }
+        }
+
+        if (childSucceeded) {
+            drive(pRunId)
+        } else {
+            resumeAwaitingParent(pRunId)
+        }
+
+        return true
     }
 
     private fun allTasksTerminal(runId: RunId): Boolean {
@@ -885,6 +1048,7 @@ data class NewTaskSpec(
     val kind: TaskKind,
     val description: String,
     val toolName: String? = null,
+    val dependsOnTaskIds: List<TaskId> = emptyList(),
     /**
      * Runs immediately after this task's row is inserted, still inside `appendTasks`'s
      * transaction. For a runner that needs to write a row referencing the new task's id via a
