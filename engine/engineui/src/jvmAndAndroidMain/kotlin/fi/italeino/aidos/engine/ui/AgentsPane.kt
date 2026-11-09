@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,12 +37,21 @@ enum class AgentViewLayout(val label: String) {
     FLAT("📋 Flat Feed")
 }
 
+enum class PlacementFilterOption(val label: String, val placement: AgentPlacement?) {
+    ALL("All Placements", null),
+    LOCAL("🟢 Local (Device)", AgentPlacement.LOCAL),
+    CLUSTER("🔵 Cluster (Peer)", AgentPlacement.CLUSTER),
+    REMOTE("🟣 Remote (Cloud)", AgentPlacement.REMOTE)
+}
+
 data class AgentOverviewUiState(
     val stats: AgentRuntimeOverviewStats = AgentRuntimeOverviewStats(),
     val runs: List<AgentRunUiModel> = emptyList(),
     val selectedAppFilter: String? = null,
     val selectedStatusFilter: AgentFilterTab = AgentFilterTab.ALL,
+    val selectedPlacementFilter: AgentPlacement? = null,
     val selectedViewLayout: AgentViewLayout = AgentViewLayout.HIERARCHY,
+    val searchQuery: String = "",
     val isEngineRunning: Boolean = true,
     val selectedRunId: String? = null,
 )
@@ -55,6 +65,9 @@ fun AgentsPane(
     state: AgentOverviewUiState,
     onAppFilterSelected: (String?) -> Unit,
     onStatusFilterSelected: (AgentFilterTab) -> Unit,
+    onPlacementFilterSelected: (AgentPlacement?) -> Unit = {},
+    onSearchQueryChanged: (String) -> Unit = {},
+    onResetFilters: () -> Unit = {},
     onViewLayoutSelected: (AgentViewLayout) -> Unit = {},
     onCancelRun: (String) -> Unit,
     onInspectRun: (String?) -> Unit,
@@ -71,12 +84,19 @@ fun AgentsPane(
             AgentFilterTab.COMPLETED -> run.status == AgentRunStatus.COMPLETED
             AgentFilterTab.FAILED -> run.status == AgentRunStatus.FAILED || run.status == AgentRunStatus.CANCELLED
         }
-        appMatches && statusMatches
+        val placementMatches = state.selectedPlacementFilter == null || run.placement == state.selectedPlacementFilter
+        val searchMatches = state.searchQuery.isBlank() || run.matchesSearch(state.searchQuery)
+        appMatches && statusMatches && placementMatches && searchMatches
     }
 
     val availableApps = remember(state.runs) {
         state.runs.map { it.ownerApp }.distinct().sorted()
     }
+
+    val isFilterActive = state.selectedAppFilter != null ||
+        state.selectedStatusFilter != AgentFilterTab.ALL ||
+        state.selectedPlacementFilter != null ||
+        state.searchQuery.isNotBlank()
 
     LazyColumn(
         modifier = modifier
@@ -89,7 +109,31 @@ fun AgentsPane(
             AgentStatsBanner(stats = state.stats)
         }
 
-        // 2. Filter Bar: Apps
+        // 2. Search Field
+        item {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = onSearchQueryChanged,
+                placeholder = { Text("Search by run ID, prompt, tool, or brief...", fontSize = 12.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(18.dp)) },
+                trailingIcon = {
+                    if (state.searchQuery.isNotBlank()) {
+                        IconButton(onClick = { onSearchQueryChanged("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = Color.LightGray.copy(alpha = 0.5f),
+                )
+            )
+        }
+
+        // 3. Filter Bar: Apps
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -118,7 +162,28 @@ fun AgentsPane(
             }
         }
 
-        // 3. Filter Bar: Execution Status & Topology Layout Tabs
+        // 4. Filter Bar: Model Placement (RFC-0104)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Model Placement (RFC-0104)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(PlacementFilterOption.entries) { option ->
+                        FilterChip(
+                            selected = state.selectedPlacementFilter == option.placement,
+                            onClick = { onPlacementFilterSelected(option.placement) },
+                            label = { Text(option.label, fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Filter Bar: Execution Status & Topology Layout Tabs
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -165,7 +230,33 @@ fun AgentsPane(
             }
         }
 
-        // 4. Runs Feed Header
+        // 6. Active Filter Reset Bar (when filtering)
+        if (isFilterActive) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Showing ${filteredRuns.size} of ${state.runs.size} agent runs (Filtered)",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    TextButton(
+                        onClick = onResetFilters,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Reset Filters", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 7. Runs Feed Header
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -190,7 +281,7 @@ fun AgentsPane(
             }
         }
 
-        // 5. Empty State or Runs List
+        // 8. Empty State or Runs List
         if (filteredRuns.isEmpty()) {
             item {
                 Box(
@@ -201,20 +292,29 @@ fun AgentsPane(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(text = "🤖", fontSize = 28.sp)
                         Text(
-                            text = if (state.runs.isEmpty()) "No agent runs recorded yet" else "No agent runs match the selected filters",
+                            text = if (state.runs.isEmpty()) "No agent runs recorded yet" else "No agent runs match the selected filters or search",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.Gray
                         )
-                        Text(
-                            text = "Connected apps starting turns via /v1/agent will appear here in real-time.",
-                            fontSize = 11.sp,
-                            color = Color.LightGray
-                        )
+                        if (isFilterActive) {
+                            Button(
+                                onClick = onResetFilters,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("Reset All Filters", fontSize = 12.sp)
+                            }
+                        } else {
+                            Text(
+                                text = "Connected apps starting turns via /v1/agent will appear here in real-time.",
+                                fontSize = 11.sp,
+                                color = Color.LightGray
+                            )
+                        }
                     }
                 }
             }
@@ -312,6 +412,31 @@ fun AgentsPane(
     }
 }
 
+private fun AgentRunUiModel.matchesSearch(query: String): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    return runId.contains(q, ignoreCase = true) ||
+        ownerApp.contains(q, ignoreCase = true) ||
+        (modelId?.contains(q, ignoreCase = true) == true) ||
+        promptPreview.contains(q, ignoreCase = true) ||
+        replyText.contains(q, ignoreCase = true) ||
+        (workerBrief?.contains(q, ignoreCase = true) == true) ||
+        executedTools.any { it.toolName.contains(q, ignoreCase = true) || it.argumentsJson.contains(q, ignoreCase = true) } ||
+        tasks.any { it.description.contains(q, ignoreCase = true) || (it.toolName?.contains(q, ignoreCase = true) == true) }
+}
+
+private fun formatDuration(startedAt: Long?, finishedAt: Long?): String {
+    if (startedAt == null) return "Unknown"
+    val end = finishedAt ?: System.currentTimeMillis()
+    val millis = (end - startedAt).coerceAtLeast(0)
+    val seconds = millis / 1000
+    return when {
+        seconds < 1 -> "${millis}ms"
+        seconds < 60 -> "${seconds}s"
+        else -> "${seconds / 60}m ${seconds % 60}s"
+    }
+}
+
 @Composable
 private fun AgentInspectionDialog(
     run: AgentRunUiModel,
@@ -323,7 +448,7 @@ private fun AgentInspectionDialog(
         Card(
             modifier = Modifier
                 .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.90f),
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White)
         ) {
@@ -333,20 +458,49 @@ private fun AgentInspectionDialog(
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Header
+                // Header with Status Chip
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Agent Run Telemetry & Execution Graph",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val statusBg = when (run.status) {
+                                AgentRunStatus.RUNNING -> TcrColors.ElectricBlue.copy(alpha = 0.15f)
+                                AgentRunStatus.TOOL_CALLS -> TcrColors.AmberWarning.copy(alpha = 0.15f)
+                                AgentRunStatus.COMPLETED -> TcrColors.EmeraldGreen.copy(alpha = 0.15f)
+                                AgentRunStatus.FAILED, AgentRunStatus.CANCELLED -> TcrColors.EmberRed.copy(alpha = 0.15f)
+                            }
+                            val statusFg = when (run.status) {
+                                AgentRunStatus.RUNNING -> TcrColors.ElectricBlue
+                                AgentRunStatus.TOOL_CALLS -> TcrColors.AmberWarning
+                                AgentRunStatus.COMPLETED -> TcrColors.EmeraldGreen
+                                AgentRunStatus.FAILED, AgentRunStatus.CANCELLED -> TcrColors.EmberRed
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(statusBg, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = run.status.name,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusFg
+                                )
+                            }
+                        }
                         Text(
-                            text = "Agent Run Telemetry & Execution Graph",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Run ID: ${run.runId}",
+                            text = "Run ID: ${run.runId} · Owner: ${run.ownerApp}",
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             color = Color.Gray
@@ -363,6 +517,72 @@ private fun AgentInspectionDialog(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    // Quick Orchestration Tree Navigation Jump Buttons
+                    val parentRunId = run.parentRunId
+                    if (run.role == AgentRoleUi.WORKER && parentRunId != null) {
+                        item {
+                            OutlinedButton(
+                                onClick = { onInspectRun?.invoke(parentRunId) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("⬆ Jump to Parent Driver ($parentRunId)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    val awaitingChildRunId = run.awaitingChildRunId
+                    if (run.isParkedOnChild && awaitingChildRunId != null) {
+                        item {
+                            FilledTonalButton(
+                                onClick = { onInspectRun?.invoke(awaitingChildRunId) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("⬇ Jump to Delegated Worker ($awaitingChildRunId)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    // Execution Cadence & Timings Card
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF9FAFB))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Execution Lifecycle", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                                    Text("Duration: ${formatDuration(run.startedAt, run.finishedAt)}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Step Progress", fontSize = 10.sp, color = Color.DarkGray)
+                                    Text("${run.steps} / ${run.maxSteps} steps", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                LinearProgressIndicator(
+                                    progress = { (run.steps.toFloat() / run.maxSteps.coerceAtLeast(1)).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                                    color = when (run.status) {
+                                        AgentRunStatus.COMPLETED -> TcrColors.EmeraldGreen
+                                        AgentRunStatus.FAILED, AgentRunStatus.CANCELLED -> TcrColors.EmberRed
+                                        else -> TcrColors.ElectricBlue
+                                    },
+                                    trackColor = Color.LightGray.copy(alpha = 0.3f),
+                                )
+                            }
+                        }
+                    }
+
                     // 1. Role & Subagent Hierarchy Section
                     item {
                         Text(text = "Orchestration Topology (RFC-0011)", fontSize = 12.sp, fontWeight = FontWeight.Bold)

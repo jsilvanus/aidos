@@ -6,6 +6,7 @@ import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.ui.AgentFilterTab
 import fi.italeino.aidos.engine.ui.AgentOverviewUiState
 import fi.italeino.aidos.engine.ui.ResidentModel
+import fi.italeino.aidos.engine.ui.SampleAgentRuns
 import fi.italeino.aidos.engine.ui.StatusUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +131,23 @@ class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope:
 
     fun selectStatusFilter(status: AgentFilterTab) {
         _state.value = _state.value.copy(selectedStatusFilter = status)
+    }
+
+    fun selectPlacementFilter(placement: dev.aidos.tcr.agent.AgentPlacement?) {
+        _state.value = _state.value.copy(selectedPlacementFilter = placement)
+    }
+
+    fun search(query: String) {
+        _state.value = _state.value.copy(searchQuery = query)
+    }
+
+    fun resetFilters() {
+        _state.value = _state.value.copy(
+            selectedAppFilter = null,
+            selectedStatusFilter = AgentFilterTab.ALL,
+            selectedPlacementFilter = null,
+            searchQuery = "",
+        )
     }
 
     fun selectViewLayout(layout: fi.italeino.aidos.engine.ui.AgentViewLayout) {
@@ -269,7 +287,7 @@ class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope:
             }
         } else {
             // Demonstration data showcasing RFC-0011 Driver/Worker Topology, DAG dependencies, budget splits & treeless commits
-            sampleOrchestrationRuns()
+            SampleAgentRuns.create()
         }
 
         _state.value = _state.value.copy(

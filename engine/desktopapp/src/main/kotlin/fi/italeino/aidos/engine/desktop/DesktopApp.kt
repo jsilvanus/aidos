@@ -115,6 +115,9 @@ fun DesktopApp(models: DesktopModels) {
                             state = agentStats,
                             onAppFilterSelected = { models.agents.selectAppFilter(it) },
                             onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
+                            onPlacementFilterSelected = { models.agents.selectPlacementFilter(it) },
+                            onSearchQueryChanged = { models.agents.search(it) },
+                            onResetFilters = { models.agents.resetFilters() },
                             onViewLayoutSelected = { models.agents.selectViewLayout(it) },
                             onCancelRun = { models.agents.cancelRun(it) },
                             onInspectRun = { models.agents.selectRunDetail(it) }
