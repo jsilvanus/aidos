@@ -2,8 +2,8 @@
 
 **Status:** Ecosystem Architecture Standard · Settled  
 **Authority:** Aidos Architecture Council · Decision D46 & RFC-0051  
-**Scope:** `aidos`, `dictator`, `agentic-messenger` (AMP), and ecosystem consumers  
-**Last Updated:** October 2026  
+**Scope:** `aidos-tcr`, `aidos`, `dictator`, `agentic-messenger` (AMP), and ecosystem consumers  
+**Last Updated:** November 2026  
 
 ---
 
@@ -18,41 +18,40 @@ However, **Generative UI must not generate raw, untrusted, or unstandardized UI 
 Doing so creates visual chaos, inconsistent interaction grammars, hallucinated action loops, and severe accessibility/security regressions. Instead, Generative UI operates by assembling, configuring, and binding **pre-existing, cryptographically safe, and human-tested components** registered in the **Trusted Component Registry (TCR)**.
 
 ### Architectural Rules of the TCR:
-1. **The Generative UI Consumer Contract**:
-   - The Desktop Generative UI uses components from the TCR to materialize solutions, dashboards, workflows, conversation threads, and editor sessions.
-2. **Domain Ownership by Originating Apps**:
-   - Other projects in the ecosystem are not Generative UI hosts themselves. However, **they create, author, and authoritatively own their domain-specific UI components**.
-   - UI components remain owned and maintained by the domain owners that originated them.
-3. **Dedicated TCR Multiplatform Repository (`aidos-tcr`)**:
-   - The TCR lives in a dedicated, unified Multiplatform repository: `aidos-tcr` (`dev.aidos.tcr:aidos-tcr:0.1.0`).
-   - Domain owners author their components in accordance with D46, consolidating the canonical implementations into `aidos-tcr` for shared, multiplatform consumption.
-4. **No Component Re-invention**:
-   - If an application needs a capability outside its domain (e.g., if **Aidos Messenger** or **AMP** needs document editing or Red Pill voice dictation), it **must consume those canonical components from TCR / Dictator** rather than re-implementing them.
+1. **The TCR Repository is the Sole Owner of Shared UI Components**:
+   - The dedicated Multiplatform repository **`aidos-tcr`** (`dev.aidos.tcr:aidos-tcr:0.1.0`) is the **canonical owner, registry, and publisher of all shared UI components across the ecosystem**.
+   - No application repository (`dictator`, `agentic-messenger`, `aidos`) maintains parallel, duplicate, or fork implementations of shared UI components. All shared Compose Multiplatform UI elements reside directly in `aidos-tcr`.
+2. **Domain Specification by Originating Apps**:
+   - Applications act as functional domain specification authorities (e.g. Dictator defines the behavioral specs for text editing and caret pills; AMP defines the behavioral specs for 4-party messaging and UAE disclosure).
+   - However, once specified, **components are implemented, tested, and maintained authoritatively in `aidos-tcr`**.
+3. **Strict Downstream Consumption**:
+   - All client applications (`dictator-desktop`, `dictator-android`, `amp-ui`, `aidos-desktop`) are **pure consumers** of `dev.aidos.tcr.*`.
+   - Any enhancements, bug fixes, animation physics (e.g., hover cones, autonomous snapping), or telemetry hooks must be made directly within `aidos-tcr` so every consumer benefits immediately without code divergence.
 
 ---
 
 ## 2. Component Domain Ownership Matrix
 
-The Trusted Component Registry maps each functional domain to its authoritative owner, source repository, and canonical TCR package (`dev.aidos.tcr.*`):
+The Trusted Component Registry maps each functional domain to its authoritative UI owner (`aidos-tcr`), package namespace (`dev.aidos.tcr.*`), and originating domain specification:
 
-| Domain | Authoritative Owner | Canonical TCR Package | Source / Upstream | Canonical TCR Components & Primitives |
+| Domain | Authoritative Component Owner | Canonical TCR Package | Originating Domain Spec | Canonical TCR Components & Primitives |
 |---|---|---|---|---|
-| **Text Editing & Document Composition** | **Dictator** | `dev.aidos.tcr.document` | `jsilvanus/aidos-tcr`<br>`jsilvanus/dictator` | • `DocumentInputSection`<br>• Context Target Indicators<br>• Active Document Tail & Demarcation Line<br>• Ember Cursor Brushes |
-| **Actor Pills & Caret Staging (The Red Pill)** | **Dictator** | `dev.aidos.tcr.pill`<br>`dev.aidos.tcr.actor` | `jsilvanus/aidos-tcr`<br>`jsilvanus/dictator` | • `PersistentRedPill` (Ember Caret Actor `0xFFEF4444`)<br>• `FloatingActorPill`<br>• `PillConstellationOverlay`<br>• `ActorPillBadge`<br>• `RadialCountdownRing` (with radar sweep)<br>• `ActionGlyph`<br>• `HappeningsHUD` (1-click telemetry HUD)<br>• `TranscriptSplitDrawer` (2-click split drawer)<br>• `CadenceEngine` (calibrated fuse timers)<br>• `ActorSelectionHolder` ("holding shelf")<br>• Fast-Go / Fast-Stop relocation & Volumetric Projection Cones |
-| **Conversation Mesh & Timelines** | **Agentic Messenger (AMP)** | `dev.aidos.tcr.mesh` | `jsilvanus/aidos-tcr`<br>`jsilvanus/agentic-messenger` | • `MessageBubble`<br>• `ContactRow`<br>• `DualViewToggle` (Natural vs Cue ticker)<br>• `CueTickerRow`<br>• `ConversationInputBar` |
-| **Universal Envelopes & Cryptographic Badges** | **Agentic Messenger (AMP)** | `dev.aidos.tcr.mesh`<br>`dev.aidos.tcr.model` | `jsilvanus/aidos-tcr`<br>`jsilvanus/agentic-messenger` | • `ProvenanceBadge` (Human Direct vs Delegated Runner)<br>• `PrivacySealBadge` (E2EE vs Local Inference)<br>• `IdentityCard`<br>• `PresenceIndicator`<br>• `UniversalEnvelope` & `UiModels` |
-| **Progressive Disclosure & Co-Pilots** | **Agentic Messenger (AMP)** | `dev.aidos.tcr.mesh` | `jsilvanus/aidos-tcr`<br>`jsilvanus/agentic-messenger` | • `ApprovalCard` (Escrowed Topic Requests)<br>• `CalendarCopilotCard`<br>• `WaveformVisualizer` (Voice Playback) |
-| **Generative UI Registry & Timeline Dispatcher** | **Agentic Messenger (AMP)** | `dev.aidos.tcr.generative` | `jsilvanus/aidos-tcr`<br>`jsilvanus/agentic-messenger` | • `GenerativeUiRegistry`<br>• Timeline Model mappers (`UniversalEnvelope` → Compose) |
-| **Generative UI Host & Desktop Spatial Canvas** | **Aidos** | `dev.aidos.desktop` | `jsilvanus/aidos` | • Infinite Canvas Viewport & Node Coordinator<br>• Execution Graph Visualizer & Inspection Trees<br>• Spatial Node Frames & Presence Waves |
-| **Core Agent Loop & Runtime Execution** | **Aidos** | `dev.aidos.kernel`<br>`dev.aidos.engine` | `jsilvanus/aidos` | • `AgentRuntime`, `ToolBroker`<br>• Model Adapters (`llama.cpp`, `ONNX Runtime`)<br>• `SystemOne` Decision Routing<br>• STT Transcribe Endpoint |
+| **Text Editing & Document Composition** | **aidos-tcr** | `dev.aidos.tcr.document` | Dictator (D46) | • `DocumentInputSection`<br>• `DocumentChatFlow`<br>• Context Target Indicators<br>• Active Document Tail & Demarcation Line<br>• Ember Cursor Brushes |
+| **Actor Pills & Caret Staging (The Red Pill)** | **aidos-tcr** | `dev.aidos.tcr.pill`<br>`dev.aidos.tcr.actor` | Dictator (D46) / AMP | • `PersistentRedPill` (Ember Caret Actor `0xFFEF4444`)<br>• `FloatingActorPill`<br>• `PillConstellationOverlay`<br>• `ActorPillBadge`<br>• `RadialCountdownRing` (with radar sweep)<br>• `ActionGlyph`<br>• `HappeningsHUD` (1-click telemetry HUD)<br>• `TranscriptSplitDrawer` (2-click split drawer)<br>• `CadenceEngine` (calibrated fuse timers)<br>• `ActorSelectionHolder` ("holding shelf")<br>• Fast-Go / Fast-Stop relocation & Volumetric Projection Cones |
+| **Conversation Mesh & Timelines** | **aidos-tcr** | `dev.aidos.tcr.mesh` | Agentic Messenger (AMP) | • `MessageBubble`<br>• `ContactRow`<br>• `DualViewToggle` (Natural vs Cue ticker)<br>• `CueTickerRow`<br>• `ConversationInputBar` |
+| **Universal Envelopes & Cryptographic Badges** | **aidos-tcr** | `dev.aidos.tcr.mesh`<br>`dev.aidos.tcr.model` | Agentic Messenger (AMP) | • `ProvenanceBadge` (Human Direct vs Delegated Runner)<br>• `PrivacySealBadge` (E2EE vs Local Inference)<br>• `IdentityCard`<br>• `PresenceIndicator`<br>• `UniversalEnvelope` & `UiModels` |
+| **Progressive Disclosure & Co-Pilots** | **aidos-tcr** | `dev.aidos.tcr.mesh` | Agentic Messenger (AMP) | • `ApprovalCard` (Escrowed Topic Requests)<br>• `CalendarCopilotCard`<br>• `WaveformVisualizer` (Voice Playback) |
+| **Generative UI Registry & Timeline Dispatcher** | **aidos-tcr** | `dev.aidos.tcr.generative` | Agentic Messenger / Aidos | • `GenerativeUiRegistry`<br>• Timeline Model mappers (`UniversalEnvelope` → Compose) |
+| **Generative UI Host & Desktop Spatial Canvas** | **Aidos Desktop** | `dev.aidos.desktop` | Aidos (RFC-0051) | • Infinite Canvas Viewport & Node Coordinator<br>• Execution Graph Visualizer & Inspection Trees<br>• Spatial Node Frames & Presence Waves |
+| **Core Agent Loop & Runtime Execution** | **Aidos Engine** | `dev.aidos.kernel`<br>`dev.aidos.engine` | Aidos (RFC-0103) | • `AgentRuntime`, `ToolBroker`<br>• Model Adapters (`llama.cpp`, `ONNX Runtime`)<br>• `SystemOne` Decision Routing<br>• STT Transcribe Endpoint |
 
 ---
 
 ## 3. Deep-Dive: Domain Specifications & TCR Components
 
-### 3.1. Dictator: Text Editing, Document Flow & The Red Pill
+### 3.1. Text Editing, Document Flow & The Red Pill (Spec: Dictator)
 
-Dictator (`jsilvanus/dictator`) is the ecosystem's dedicated voice-first, cursor-aware document editor. It owns all text-editing interfaces, continuous document flows, and caret-anchored actor pills.
+Dictator (`jsilvanus/dictator`) specifies the requirements for voice-first, cursor-aware document editing. Its components have been consolidated into `aidos-tcr`:
 
 #### 1. The Red Pill (`PersistentRedPill` / `FloatingActorPill` / Ember Caret Actor)
 - **Role:** Voice dictation orchestrator and primary STT cursor anchor.
@@ -61,6 +60,7 @@ Dictator (`jsilvanus/dictator`) is the ecosystem's dedicated voice-first, cursor
   - **Single Click / Tap:** Starts/stops voice dictation or triggers the user-level AI orchestrator. Toggles the **Happenings HUD** to inspect live actions.
   - **Double Click / Long Press:** Opens the **50% Split Transcript Drawer**, displaying real-time transcribed utterances, confidence scores, and multi-speaker breakdowns.
   - **Drag-to-Move:** Moves the caret smoothly across lines, or drags context onto a specific prior document block (`attachedTargetLabel`).
+  - **Autonomous Relocation & Projections:** Projects volumetric translucent cones (`TargetConeHighlight`) to active edit targets, supports Fast-Go / Fast-Stop physics, and snaps autonomously into place.
 
 #### 2. Worker Pill Constellation (`PillConstellationOverlay`)
 - **Blue Pill (`DETERMINISTIC_EDITOR` - `0xFF3B82F6`):** Executes deterministic text edits, paragraph restructuring, and holds active text ranges in the `ActorSelectionHolder` ("holding shelf").
@@ -74,14 +74,14 @@ Dictator (`jsilvanus/dictator`) is the ecosystem's dedicated voice-first, cursor
   - **Destructive Deletion:** 900ms – 1200ms
 - **Spring & Freeze Gesture:** Dragging an active worker pill 20dp pauses the countdown ring; dragging 80dp tears and aborts the action.
 
-#### 4. Document Input Section (`DocumentInputSection`)
-- Molecular Compose component featuring a soft-elevation active document tail, horizontal demarcation line, inline Ember cursor brush (`SolidColor(0xFFEF4444)`), and context target indicator.
+#### 4. Document Components (`DocumentInputSection` & `DocumentChatFlow`)
+- Molecular Compose components featuring a soft-elevation active document tail, horizontal demarcation line, inline Ember cursor brush (`SolidColor(0xFFEF4444)`), and context target indicator.
 
 ---
 
-### 3.2. Agentic Messenger (AMP): 4-Party Conversation Mesh & UAE
+### 3.2. 4-Party Conversation Mesh & UAE (Spec: Agentic Messenger)
 
-Agentic Messenger (`jsilvanus/agentic-messenger`) owns all collaborative and protocol-level messaging interfaces where humans and autonomous agents communicate over Universal Agentic Envelopes (UAE).
+Agentic Messenger (`jsilvanus/agentic-messenger`) specifies collaborative messaging protocols over Universal Agentic Envelopes (UAE). Its components have been consolidated into `aidos-tcr`:
 
 #### 1. The 4-Party Mesh & Cryptographic Provenance
 - Displays multi-party interaction:
@@ -100,60 +100,49 @@ Agentic Messenger (`jsilvanus/agentic-messenger`) owns all collaborative and pro
 
 ---
 
-### 3.3. Aidos: Generative UI Host, Engine & Canvas
+### 3.3. Generative UI Host, Engine & Canvas (Aidos)
 
 Aidos (`jsilvanus/aidos`) provides the foundational runtime, local inference models, and the desktop spatial canvas:
 
 - **Host Canvas:** Arranges chat nodes, document nodes, and terminal sessions as spatial cards on an infinite zoomable surface.
 - **Engine Connectors:** Provides local inference over `llama.cpp` (GGUF LLMs), `ONNX Runtime` (embeddings, audio, System One typed decisions), and local STT audio pipelines.
-- **TCR Consumer:** In Aidos Desktop, the Generative UI engine dynamically instantiates Dictator's `DocumentInputSection` and `PillConstellationOverlay` for document/code tasks, and AMP's `MessageBubble` and `ApprovalCard` for communication tasks.
+- **TCR Consumer:** In Aidos Desktop, the Generative UI engine dynamically instantiates TCR's `DocumentInputSection` and `PillConstellationOverlay` for document/code tasks, and TCR's `MessageBubble` and `ApprovalCard` for communication tasks.
 
 ---
 
 ## 4. Cross-Repository Consumption Model
 
-### How Ecosystem Apps Fetch & Share Components
+### Architecture: `aidos-tcr` as Authoritative UI Foundation
 
-When an application in the ecosystem needs UI components outside its core domain, it **fetches the canonical implementation from the owning repository**:
+All client applications in the ecosystem fetch their UI components directly from `aidos-tcr`:
 
 ```
-                       ┌────────────────────────────────────────┐
-                       │          Aidos Host Runtime            │
-                       │    (Infinite Canvas, Engine, SDK)      │
-                       └──────────────────┬─────────────────────┘
-                                          │
-                  ┌───────────────────────┴────────────────────────┐
-                  ▼                                                ▼
-     ┌────────────────────────┐                       ┌────────────────────────┐
-     │   Dictator (Owner)     │                       │ Agentic Messenger (AMP)│
-     │  • DocumentInputSection│                       │  • MessageBubble       │
-     │  • PersistentRedPill   │                       │  • 4-Party Mesh Cards  │
-     │  • CadenceEngine       │                       │  • ApprovalCard        │
-     └───────────┬────────────┘                       └───────────┬────────────┘
-                 │                                                │
-                 │   AMP consumes Document Editing & Red Pill     │
-                 └───────────────────────►────────────────────────┘
+                      ┌────────────────────────────────────────────────────────┐
+                      │                 aidos-tcr (TCR Repo)                   │
+                      │         Authoritative Owner of All UI Components       │
+                      │                                                        │
+                      │  • dev.aidos.tcr.pill (PersistentRedPill, HUD, etc.)   │
+                      │  • dev.aidos.tcr.document (DocumentInputSection, Flow) │
+                      │  • dev.aidos.tcr.actor (CadenceEngine, Constellation)  │
+                      │  • dev.aidos.tcr.mesh (MessageBubble, Cards, Badges)   │
+                      │  • dev.aidos.tcr.generative (GenerativeUiRegistry)     │
+                      │  • dev.aidos.tcr.theme (TcrTheme tokens & colors)      │
+                      └───────────────────────────┬────────────────────────────┘
+                                                  │
+                 ┌────────────────────────────────┼────────────────────────────────┐
+                 ▼                                ▼                                ▼
+   ┌───────────────────────────┐    ┌───────────────────────────┐    ┌───────────────────────────┐
+   │         Dictator          │    │  Agentic Messenger (AMP)  │    │       Aidos Desktop       │
+   │  Consumes dev.aidos.tcr   │    │  Consumes dev.aidos.tcr   │    │  Consumes dev.aidos.tcr   │
+   │  (Pill, Document, Actor)  │    │  (Mesh, Document, Pill)   │    │  (Spatial Canvas, UAE)    │
+   └───────────────────────────┘    └───────────────────────────┘    └───────────────────────────┘
 ```
-
-### Concrete Consumer Scenarios:
-
-#### 1. Aidos Messenger / AMP Standalone Consuming Dictator Components
-- **Requirement:** Aidos Messenger requires a document composition panel or voice dictation trigger inside its active chat timeline or document view mode.
-- **Implementation:** AMP does **not** create its own voice recorder pill or text input box. Instead, AMP imports:
-  - `DocumentInputSection` from `dictator` for the document tail and demarcation flow.
-  - `PersistentRedPill` / `FloatingActorPill` from `dictator` for the Ember Caret voice recording capsule, audio dispatch, and Happenings telemetry.
-
-#### 2. Aidos Desktop Consuming Dictator & AMP Components
-- **Requirement:** Aidos Desktop renders an IDE-style code/markdown editor card and a collaborative messenger card on the Infinite Canvas (RFC-0051).
-- **Implementation:**
-  - Dictator's `PillConstellationOverlay` and `CadenceEngine` are layered directly over the editor canvas.
-  - AMP's `GenerativeUiRegistry.RenderItem()` is invoked directly to display incoming envelope turns and progressive disclosure approvals on spatial nodes.
 
 ---
 
 ## 5. Design System Tokens & Vocabulary
 
-All repositories adhere to shared TCR Design Tokens to guarantee visual consistency:
+All repositories adhere to shared TCR Design Tokens defined in `dev.aidos.tcr.theme.TcrTheme`:
 
 ### 5.1. Color Roles
 - **Ember Red Orchestrator:** `0xFFEF4444` — Voice dictation cursor, Red Pill, immediate cancel actions.
@@ -173,8 +162,7 @@ All repositories adhere to shared TCR Design Tokens to guarantee visual consiste
 
 Every repository in the ecosystem references this canonical document in its top-level documentation:
 
+- **TCR (`aidos-tcr`)**: [aidos-tcr](file:///c:/Users/jsilv/Code/aidos-tcr) · Authoritative repository for all shared Compose Multiplatform UI components.
 - **Aidos (`aidos`)**: [docs/TCR_COMPONENT_DOMAIN_OWNERS.md](file:///c:/Users/jsilv/Code/aidos/docs/TCR_COMPONENT_DOMAIN_OWNERS.md) · [docs/decisions.md#d46](file:///c:/Users/jsilv/Code/aidos/docs/decisions.md) · [docs/rfcs/0051-desktop.md](file:///c:/Users/jsilv/Code/aidos/docs/rfcs/0051-desktop.md)
 - **Dictator (`dictator`)**: [README.md - UI Component Ownership & Design Vocabulary (D46)](file:///c:/Users/jsilv/Code/dictator/README.md)
 - **Agentic Messenger (`agentic-messenger`)**: [README.md - UI Component Domain Ownership](file:///c:/Users/jsilv/Code/agentic-messenger/README.md) · [docs/aidos-joint-app-ux.md](file:///c:/Users/jsilv/Code/agentic-messenger/docs/aidos-joint-app-ux.md)
-
-When components are extracted into a dedicated `aidos-tcr` repository in the future, this document will serve as the initial manifest and governance specification.
