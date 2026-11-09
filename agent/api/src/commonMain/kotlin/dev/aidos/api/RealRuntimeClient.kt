@@ -110,6 +110,14 @@ class RealRuntimeClient : RuntimeClient {
     /** No network-reachability detection exists here; callers wire this once one does. */
     var networkAvailable: Boolean = false
 
+    /** Real DeviceIdentity (RFC-0046). When unset, resolved from userDriver or falls back to instanceId. */
+    var deviceIdentity: dev.aidos.identity.DeviceIdentity? = null
+
+    val resolvedDeviceId: String
+        get() = deviceIdentity?.deviceId?.value ?: userDriver?.let {
+            dev.aidos.identity.DeviceIdentityStore(it).getOrRegister(platformProfile).deviceId.value
+        } ?: instanceId
+
     private val instanceId: String by lazy { UuidV7Generator().next() }
 
     // Project and session ids are persisted (once userDriver/projectDbFactory are wired) and must
@@ -436,10 +444,8 @@ class RealRuntimeClient : RuntimeClient {
                     sessionId = sessionId,
                     message = message,
                     platformProfile = platformProfile,
-                    // instanceId already identifies this runtime instance for project locking
-                    // (RFC-0055); reusing it for RFC-0046 "which machine ran this" provenance
-                    // avoids inventing a second identifier for the same concept.
-                    deviceId = instanceId,
+                    // Real DeviceIdentity (RFC-0046) maintains authentic forensic fidelity
+                    deviceId = resolvedDeviceId,
                     networkAvailable = networkAvailable,
                 )
             } else if (driver != null) {
@@ -468,7 +474,7 @@ class RealRuntimeClient : RuntimeClient {
                     bindString(5, message.content)
                     bindLong(6, 24)
                     bindString(7, platformProfile.name)
-                    bindString(8, instanceId)
+                    bindString(8, resolvedDeviceId)
                     bindLong(9, if (networkAvailable) 1L else 0L)
                 }
                 driver.execute(

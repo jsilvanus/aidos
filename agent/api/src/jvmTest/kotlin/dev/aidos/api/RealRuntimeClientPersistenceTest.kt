@@ -7,6 +7,7 @@ import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -150,5 +151,35 @@ class RealRuntimeClientPersistenceTest {
         assertIs<ProjectResult.Success>(b)
 
         assertTrue(a.project.id != b.project.id)
+    }
+
+    @Test
+    fun `DeviceIdentity is persisted in user db and used on created runs`() = runTest {
+        val client = persistentClient()
+        val created = client.projects.create(projectRequest("proj-device-identity"))
+        assertIs<ProjectResult.Success>(created)
+
+        val sessionRes = client.sessions.create(CreateSessionRequest(created.project.id, "driver-1"))
+        assertIs<SessionResult.Success>(sessionRes)
+
+        val runRes = client.sessions.send(sessionRes.session.id, UserMessage("hello"))
+        assertIs<RunResult.Accepted>(runRes)
+
+        // DeviceIdentity is stored in user.db
+        val userDb = AidosStorage.openUser(DesktopPaths.userDb(home.path), "test", nowIso)
+        val devIdStore = dev.aidos.identity.DeviceIdentityStore(userDb.driver)
+        val deviceIdentity = devIdStore.load()
+        assertNotNull(deviceIdentity)
+        assertEquals(client.resolvedDeviceId, deviceIdentity.deviceId.value)
+
+        // The run row recorded this authentic device_id
+        val projectDriver = AidosStorage.openProject(DesktopPaths.stateDb("${home.path}/.aidos/projects/proj-device-identity"), "test", nowIso).driver
+        var runDeviceId: String? = null
+        projectDriver.executeQuery(null, "SELECT device_id FROM runs WHERE id = ?", { c ->
+            app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) runDeviceId = c.getString(0) else null)
+        }, 1) { bindString(0, runRes.runId) }
+
+        assertEquals(deviceIdentity.deviceId.value, runDeviceId)
+        assertFalse(runDeviceId == "runtime", "device_id must not be literal 'runtime'")
     }
 }

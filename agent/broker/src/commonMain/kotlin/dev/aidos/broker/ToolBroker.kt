@@ -1,5 +1,7 @@
 package dev.aidos.broker
 
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.CapabilityCheckResult
 import dev.aidos.kernel.CapabilityId
@@ -10,6 +12,7 @@ import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.ResourceHandle
+import dev.aidos.kernel.SubjectKind
 import dev.aidos.kernel.Tool
 import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallResult
@@ -19,7 +22,7 @@ import dev.aidos.kernel.TrustLevel
 import kotlinx.serialization.json.JsonObject
 
 /**
- * The sole invocation path for tools (RFC-0030, M4).
+ * The sole invocation path for tools (RFC-0030, RFC-0046, M4).
  *
  * Enforces the fixed 8-step sequence from RFC-0030:
  *   1. validate arguments against the operation's JSON Schema
@@ -27,7 +30,7 @@ import kotlinx.serialization.json.JsonObject
  *   3. apply taint attenuation (validate() returns Denied or Allowed)
  *   4. reserve budget (stub in MVP — full ledger arrives with M5)
  *   5. preview, if the effect is Mutate
- *   6. write the audit row  ← M4: every effect writes one row
+ *   6. write the audit row  ← M4: every effect writes one row (attributed per RFC-0046)
  *   7. execute
  *   8. taint the Run from the result's trust level (returned to caller)
  *
@@ -42,6 +45,7 @@ class ToolBroker(
     private val nowIso: () -> String,
     /** Resolves a project ID from a capability ID for audit row context. */
     private val projectIdResolver: (CapabilityId) -> String = { "" },
+    private val actorResolver: ((subjectId: String, capabilityId: CapabilityId?) -> ActorRef)? = null,
 ) : EffectBroker {
 
     private val tools = mutableMapOf<String, Tool>()
@@ -54,41 +58,51 @@ class ToolBroker(
         subjectId: String,
         profile: PlatformProfile,
         networkAvailable: Boolean,
-    ): List<ToolDescriptor> = tools.values.flatMap { tool ->
-        // M11: unavailable tools are absent, never offered and then failed (RFC-0030).
-        tool.operations().filter { it.availability.availableOn(profile, networkAvailable) }
-    }
+    ): List<ToolDescriptor> =
+        tools.values
+            .flatMap { it.operations() }
+            .filter { it.availability.availableOn(profile, networkAvailable) }
 
     override suspend fun invoke(
         subjectId: String,
         call: ToolCall,
         runTaint: TrustLevel,
     ): ToolCallResult {
-        // Step 1: resolve tool and find the matching operation descriptor.
-        val tool = tools.values.firstOrNull { t ->
-            t.operations().any { it.name == call.toolName }
-        } ?: return denied(call, "tool.not_found", "No tool registered for '${call.toolName}'")
-
+        // Step 1: operation exists.
+        val tool = tools.values.firstOrNull { t -> t.operations().any { it.name == call.toolName } }
+            ?: return auditAndReturn(
+                subjectId = subjectId,
+                call = call,
+                kind = "ToolFailed",
+                capabilityId = call.capabilityId,
+                result = denied(call, "tool.not_found", "No registered tool offers operation '${call.toolName}'"),
+            )
         val descriptor = tool.operations().first { it.name == call.toolName }
 
-        // Step 2: capability must be named — no search.
+        // Step 2: capability is named in the call.
         val capId = call.capabilityId
             ?: return auditAndReturn(
                 subjectId = subjectId,
                 call = call,
                 kind = "CapabilityDenied",
                 capabilityId = null,
-                result = denied(call, "capability.missing", "No capability named in call to '${call.toolName}'"),
+                result = denied(call, "capability.missing", "ToolCall does not name a capability"),
             )
 
-        // Step 3: taint attenuation. validate() checks revocation, expiry, and RFC-0027 rules.
+        // Step 3: validate through the capability manager.
         val operation = object : dev.aidos.kernel.Operation<Unit> {
             override val name = descriptor.name
             override val effect = descriptor.effect
             override val recoveryClass = descriptor.recoveryClass
         }
-        val checkResult = capabilityManager.validate(subjectId, capId, operation, runTaint)
-        if (checkResult is CapabilityCheckResult.Denied) {
+        val check = capabilityManager.validate(
+            subjectId = subjectId,
+            capabilityId = capId,
+            operation = operation,
+            runTaint = runTaint,
+        )
+        if (check is CapabilityCheckResult.Denied) {
+            val reason = check.reason
             return auditAndReturn(
                 subjectId = subjectId,
                 call = call,
@@ -96,17 +110,14 @@ class ToolBroker(
                 capabilityId = capId,
                 result = ToolCallResult(
                     callId = call.callId,
-                    outcome = ToolOutcome.Denied(checkResult.reason),
-                    content = listOf(ContentBlock.Text("denied: ${checkResult.reason}")),
+                    outcome = ToolOutcome.Denied(reason),
+                    content = listOf(ContentBlock.Text("denied: $reason")),
                     trustLevel = TrustLevel.TRUSTED,
                 ),
             )
         }
 
-        // Step 4: budget reservation (stub — full ledger in M5).
-        // Nothing to do in MVP; budget ceilings are enforced at grant time (RFC-0028).
-
-        // Step 5: preview for Mutate effects.
+        // Step 4: preview, if the effect is Mutate.
         if (descriptor.effect is EffectKind.Mutate) {
             val handle = capabilityManager.openHandle(subjectId, capId).getOrElse {
                 return denied(call, "capability.open_failed", it.message ?: "handle open failed")
@@ -123,13 +134,14 @@ class ToolBroker(
             }
         }
 
+        val actor = resolveActor(subjectId, capId)
+
         // Step 6: audit row before execution.
         audit.write(
             id = idGen(),
             projectId = resolveProjectId(capId),
             kind = "ToolInvoked",
-            actorKind = "SESSION",
-            actorId = subjectId,
+            actor = actor,
             capabilityId = capId.value,
             subjectRef = call.toolName,
             nowIso = nowIso(),
@@ -152,8 +164,7 @@ class ToolBroker(
             id = idGen(),
             projectId = resolveProjectId(capId),
             kind = completionKind,
-            actorKind = "SESSION",
-            actorId = subjectId,
+            actor = actor,
             capabilityId = capId.value,
             subjectRef = call.toolName,
             nowIso = nowIso(),
@@ -179,19 +190,44 @@ class ToolBroker(
 
     private fun resolveProjectId(capId: CapabilityId): String = projectIdResolver(capId)
 
-    private fun auditAndReturn(
+    private suspend fun resolveActor(subjectId: String, capId: CapabilityId?): ActorRef {
+        actorResolver?.invoke(subjectId, capId)?.let { return it }
+        val caps = runCatching { capabilityManager.loadForSubject(subjectId) }.getOrDefault(emptyList())
+        val cap = if (capId != null) caps.firstOrNull { it.id == capId } else caps.firstOrNull()
+        if (cap != null) {
+            val kind = when (cap.subjectKind) {
+                SubjectKind.SESSION -> ActorKind.SESSION
+                SubjectKind.WORKER -> ActorKind.WORKER
+                SubjectKind.PLUGIN -> ActorKind.PLUGIN
+                SubjectKind.MCP_SERVER -> ActorKind.MCP_SERVER
+                SubjectKind.FRONTEND -> ActorKind.USER
+            }
+            return ActorRef(kind, subjectId)
+        }
+        val kind = when {
+            subjectId.startsWith("worker") -> ActorKind.WORKER
+            subjectId.startsWith("mcp") -> ActorKind.MCP_SERVER
+            subjectId.startsWith("plugin") -> ActorKind.PLUGIN
+            subjectId.startsWith("user") -> ActorKind.USER
+            subjectId == "reconciler" || subjectId == "recovery" || subjectId == "runtime" -> ActorKind.RUNTIME
+            else -> ActorKind.SESSION
+        }
+        return ActorRef(kind, subjectId)
+    }
+
+    private suspend fun auditAndReturn(
         subjectId: String,
         call: ToolCall,
         kind: String,
         capabilityId: CapabilityId?,
         result: ToolCallResult,
     ): ToolCallResult {
+        val actor = resolveActor(subjectId, capabilityId)
         audit.write(
             id = idGen(),
             projectId = "",
             kind = kind,
-            actorKind = "SESSION",
-            actorId = subjectId,
+            actor = actor,
             capabilityId = capabilityId?.value,
             subjectRef = call.toolName,
             nowIso = nowIso(),
@@ -210,8 +246,8 @@ class ToolBroker(
     private fun failed(call: ToolCall, error: Throwable): ToolCallResult =
         ToolCallResult(
             callId = call.callId,
-            outcome = ToolOutcome.Failed(AidosError(code = "tool.error", errorClass = dev.aidos.kernel.ErrorClass.TRANSIENT, message = error.message ?: "unknown")),
-            content = listOf(ContentBlock.Text(error.message ?: "unknown")),
+            outcome = ToolOutcome.Failed(AidosError(code = "tool.failed", errorClass = dev.aidos.kernel.ErrorClass.TRANSIENT, message = error.message ?: "tool execution failed")),
+            content = listOf(ContentBlock.Text("Tool execution failed: ${error.message}")),
             trustLevel = TrustLevel.TRUSTED,
         )
 }

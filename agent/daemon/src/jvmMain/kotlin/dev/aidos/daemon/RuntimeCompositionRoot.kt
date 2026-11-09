@@ -301,7 +301,7 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
-        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
+        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
         val broker = ToolBroker(
             capabilityManager = capabilityManager,
             audit = audit,
@@ -381,7 +381,7 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,
-            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
+            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso, deviceId = deviceId),
         )
     }
 

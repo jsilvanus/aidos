@@ -2,6 +2,7 @@ package dev.aidos.broker
 
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.CapabilityConstraints
 import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.ContentBlock
@@ -168,6 +169,91 @@ class AuditTest {
         assertEquals(cap.id.value, toolRow.capabilityId, "audit row must name the capability")
         assertTrue(rows.any { it.kind == "ToolCompleted" || it.kind == "ToolFailed" },
             "audit row must name the outcome (ToolCompleted or ToolFailed)")
+    }
+
+    @Test
+    fun `worker invoking a tool is attributed to ActorKind WORKER with authentic deviceId`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val ids = UuidV7Generator()
+        val realDeviceId = "device-pixel-pro-7"
+        val mgr = SqliteCapabilityManager(driver, ids, { nowIso }, deviceId = realDeviceId)
+        val audit = AuditLog(driver, realDeviceId)
+        val broker = ToolBroker(mgr, audit, { nextId() }, { nowIso },
+            projectIdResolver = { capId -> mgr.projectIdForCapability(capId) ?: "" }
+        )
+        val projectId = "01234567-89ab-7def-8abc-000000000202"
+        seedProject(driver, projectId)
+
+        val cap = mgr.grant(
+            subjectId = "worker-subtask-1",
+            subjectKind = dev.aidos.kernel.SubjectKind.WORKER,
+            permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "/"),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        broker.register(EchoTool)
+        broker.invoke(
+            subjectId = "worker-subtask-1",
+            call = ToolCall("call-worker", "echo", kotlinx.serialization.json.buildJsonObject { }, cap.id),
+            runTaint = TrustLevel.TRUSTED,
+        )
+
+        val rows = audit.rowsForProject(projectId)
+        val toolInvokedRow = rows.first { it.kind == "ToolInvoked" }
+        assertEquals(ActorKind.WORKER.name, toolInvokedRow.actorKind)
+        assertEquals(ActorKind.WORKER, toolInvokedRow.actor.kind)
+        assertEquals("worker-subtask-1", toolInvokedRow.actorId)
+        assertEquals(realDeviceId, toolInvokedRow.deviceId)
+
+        val toolCompletedRow = rows.first { it.kind == "ToolCompleted" }
+        assertEquals(ActorKind.WORKER.name, toolCompletedRow.actorKind)
+        assertEquals(realDeviceId, toolCompletedRow.deviceId)
+
+        // Grant audit row also records authentic deviceId
+        val grantRow = rows.first { it.kind == "CapabilityGranted" }
+        assertEquals(realDeviceId, grantRow.deviceId)
+        assertEquals("USER", grantRow.actorKind)
+    }
+
+    @Test
+    fun `mcp server subject is attributed to ActorKind MCP_SERVER`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val ids = UuidV7Generator()
+        val realDeviceId = "device-desktop-workstation"
+        val mgr = SqliteCapabilityManager(driver, ids, { nowIso }, deviceId = realDeviceId)
+        val audit = AuditLog(driver, realDeviceId)
+        val broker = ToolBroker(mgr, audit, { nextId() }, { nowIso },
+            projectIdResolver = { capId -> mgr.projectIdForCapability(capId) ?: "" }
+        )
+        val projectId = "01234567-89ab-7def-8abc-000000000203"
+        seedProject(driver, projectId)
+
+        val cap = mgr.grant(
+            subjectId = "mcp:filesystem-server",
+            subjectKind = dev.aidos.kernel.SubjectKind.MCP_SERVER,
+            permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "/"),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        broker.register(EchoTool)
+        broker.invoke(
+            subjectId = "mcp:filesystem-server",
+            call = ToolCall("call-mcp", "echo", kotlinx.serialization.json.buildJsonObject { }, cap.id),
+            runTaint = TrustLevel.TRUSTED,
+        )
+
+        val rows = audit.rowsForProject(projectId)
+        val toolInvokedRow = rows.first { it.kind == "ToolInvoked" }
+        assertEquals(ActorKind.MCP_SERVER.name, toolInvokedRow.actorKind)
+        assertEquals(ActorKind.MCP_SERVER, toolInvokedRow.actor.kind)
+        assertEquals("mcp:filesystem-server", toolInvokedRow.actorId)
+        assertEquals(realDeviceId, toolInvokedRow.deviceId)
     }
 }
 

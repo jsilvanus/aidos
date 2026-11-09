@@ -4,6 +4,8 @@ import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.BackoffStrategy
 import dev.aidos.kernel.ErrorClass
@@ -123,12 +125,12 @@ class SqliteExecutor(
                     updateRunState(runId, RunState.YIELDED)
 
                     val auditId = idGen()
+                    val actor = resolveSessionActor(task.sessionId.value)
                     audit.write(
                         id = auditId,
                         projectId = currentRun.projectId.value,
                         kind = EventTypes.PERMISSION_REQUESTED,
-                        actorKind = "SESSION",
-                        actorId = task.sessionId.value,
+                        actor = actor,
                         subjectRef = task.toolName ?: task.kind.name,
                         nowIso = nowIso(),
                     )
@@ -286,6 +288,22 @@ class SqliteExecutor(
         // task state update and attempt insert). These are PURE by default — re-execute.
         resetOrphanRunningTasks(projectId.value)
 
+        if (runningAttempts.isNotEmpty() || interruptedRuns > 0) {
+            val auditId = idGen()
+            audit.write(
+                id = auditId,
+                projectId = projectId.value,
+                kind = "CrashRecoveryExecuted",
+                actor = ActorRef(ActorKind.RUNTIME, "crash-recovery"),
+                detailJson = buildJsonObject {
+                    put("runs_examined", runningAttempts.size)
+                    put("runs_resumed", runsResumed)
+                    put("runs_interrupted", interruptedRuns)
+                }.toString(),
+                nowIso = nowIso(),
+            )
+        }
+
         return RecoveryReport(
             runsExamined = runningAttempts.size,
             runsResumed = runsResumed,
@@ -293,6 +311,21 @@ class SqliteExecutor(
             indeterminateEffects = indeterminateEffects,
             reservationsReleased = reservationsReleased,
         )
+    }
+
+    private fun resolveSessionActor(sessionId: String): ActorRef {
+        val role = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT role FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
+        val kind = if (role.equals("WORKER", ignoreCase = true) || sessionId.startsWith("worker")) {
+            ActorKind.WORKER
+        } else {
+            ActorKind.SESSION
+        }
+        return ActorRef(kind, sessionId)
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────
@@ -479,12 +512,12 @@ class SqliteExecutor(
 
     private fun writeAuditRow(auditId: String, projectId: String, task: Task, result: TaskResult) {
         val kind = if (result.success) "ToolCompleted" else "ToolFailed"
+        val actor = resolveSessionActor(task.sessionId.value)
         audit.write(
             id = auditId,
             projectId = projectId,
             kind = kind,
-            actorKind = "SESSION",
-            actorId = task.sessionId.value,
+            actor = actor,
             subjectRef = task.toolName ?: task.kind.name,
             nowIso = nowIso(),
         )
