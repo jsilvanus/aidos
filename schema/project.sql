@@ -480,6 +480,22 @@ CREATE TABLE tool_calls (
 
 CREATE INDEX idx_tool_calls_run ON tool_calls(run_id, step_index);
 
+-- RFC-0011 Driver/Worker composite task spawn requests.
+CREATE TABLE worker_spawn_requests (
+    task_id               TEXT PRIMARY KEY,
+    brief                 TEXT NOT NULL,
+    capabilities_json     TEXT NOT NULL,                -- JSON array of capability IDs to delegate; '[]' for all delegatable
+    budget_split_ways     INTEGER NOT NULL DEFAULT 1,
+    worker_session_id     TEXT,                         -- populated once spawned
+    child_run_id          TEXT,                         -- populated once spawned
+    created_at            TEXT NOT NULL,
+    FOREIGN KEY (task_id)           REFERENCES tasks(id),
+    FOREIGN KEY (worker_session_id) REFERENCES sessions(id),
+    FOREIGN KEY (child_run_id)      REFERENCES runs(id)
+);
+
+CREATE INDEX idx_worker_spawn_task ON worker_spawn_requests(task_id);
+
 -- What a parked Run is waiting for. Not a resumable handle (RFC-0006).
 CREATE TABLE continuations (
     run_id                TEXT PRIMARY KEY,

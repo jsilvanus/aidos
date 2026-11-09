@@ -92,8 +92,11 @@ class SqliteCapabilityManager(
         val id = CapabilityId(ids.next())
         val auditId = AuditId(ids.next())
         val now = nowIso()
-        val epoch = currentEpochOrZero(scope.projectId())
-        val projectIdStr = scope.projectId()?.value ?: ""
+        val resolvedProj = scope.projectId()
+            ?: findProjectIdForSubject(subjectId)?.let { ProjectId(it) }
+            ?: findSingleProjectId()?.let { ProjectId(it) }
+        val epoch = currentEpochOrZero(resolvedProj)
+        val projectIdStr = resolvedProj?.value ?: ""
 
         insertAuditRow(auditId.value, projectIdStr, grantedBy.value, now)
 
@@ -124,7 +127,7 @@ class SqliteCapabilityManager(
         return Result.success(
             Capability(
                 id = id,
-                projectId = scope.projectId() ?: ProjectId(""),
+                projectId = resolvedProj ?: ProjectId(""),
                 permission = permission,
                 subjectId = subjectId,
                 subjectKind = subjectKind,
@@ -363,6 +366,24 @@ class SqliteCapabilityManager(
             mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
             parameters = 1,
         ) { bindString(0, capId.value) }.value
+
+    private fun findProjectIdForSubject(subjectId: String): String? {
+        return projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, subjectId) }.value
+    }
+
+    private fun findSingleProjectId(): String? {
+        return projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM projects LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 0,
+        ).value
+    }
 
     // ─── Internal helpers ────────────────────────────────────────────────────
 

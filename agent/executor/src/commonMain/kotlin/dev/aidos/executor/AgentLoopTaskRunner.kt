@@ -280,11 +280,14 @@ class AgentLoopTaskRunner(
      * task then fails with a clear "no longer available" message instead of hanging.
      */
     private val resolveRemoteAdapter: (modelId: String) -> ModelAdapter? = { null },
+    private val workerSpawner: WorkerSpawner? = null,
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
         TaskKind.MODEL_CALL -> executeModelCall(task)
         TaskKind.TOOL_CALL -> executeToolCall(task)
+        TaskKind.COMPOSITE -> workerSpawner?.spawn(task)
+            ?: TaskResult(success = false, errorMessage = "AgentLoopTaskRunner does not handle ${task.kind}")
         else -> TaskResult(success = false, errorMessage = "AgentLoopTaskRunner does not handle ${task.kind}")
     }
 

@@ -382,40 +382,32 @@ The client is real and speaks the protocol through the official Kotlin MCP SDK.
   JSON Schema keywords are dropped. RFC-0031's "Protocol layer" amendment records why that is
   tolerable. A passthrough fix should still be filed upstream.
 
-### 4. RFC-0011 driver/worker orchestration — designed, not built
+### 4. RFC-0011 driver/worker orchestration — ✅ Complete
 
-The design was worked out and is the plan; start from it rather than re-deriving it.
+The design and implementation are in place across `schema`, `kernel`, `capability`, `executor`, and `daemon`.
 
-- **Spawning**: a `COMPOSITE` task creates a worker session (`role = WORKER`, `parent_session_id` =
-  the driver's), delegates a caller-selected subset of the driver's capabilities via
-  `CapabilityManager.delegate()` with `Budget.split(ways)`, creates a child Run via
-  `RunCreator.createForUserMessage` (the brief as the child's first user message), and returns
-  `TaskResult.park(SuspendedOperation.ChildRun(...), AWAITING_INPUT)` — reusing the existing
-  generic park primitive, not a new mechanism.
-- **Driving the child and resuming the parent**: there is no background scheduler; every Run today
-  is driven synchronously by whoever created it. Write the parent's continuation row *first*, then
-  recursively `drive(childRunId)` on the same executor instance. Add a
-  `resumeAwaitingParent(childRunId)` hook at every point `drive()` reaches a terminal state: find
-  the `continuations` row by `correlation_id`/`suspended_operation = 'CHILD_RUN'`, record the
-  outcome on the parent's task, set the parent back to `RUNNING`, re-drive. The ordering is what
-  makes it correct when the child finishes synchronously inside that same call.
-- **`DEPENDS_ON` / `SKIPPED`**: `pendingTasksFor` today returns the lowest-ordinal `PENDING` task
-  with no dependency awareness. Scan in ordinal order and consult `execution_edges`: a
-  `FAILED`/`SKIPPED` dependency marks this task `SKIPPED` and the scan continues (it cascades); a
-  non-terminal dependency means keep scanning, since a later sibling may be runnable; all-completed
-  or no edges means runnable. A task with zero edges stays vacuously runnable, so this is additive.
-- **What a `COMPOSITE` task needs before it can spawn** — a brief, which capabilities to delegate,
-  how many ways to split the budget — fits no `tasks` column. Plan is a small
-  `worker_spawn_requests` table populated via `NewTaskSpec.afterInsert`, the way `tool_calls` rows
-  are written today. **Not yet in `schema/`.**
-- **Treeless isolation**: `TreelessWorker` is real and has zero callers. Plan is a `WorkerCommitter`
-  seam in `executor` mirroring `RunReconciler` (interface in commonMain, JGit implementation
-  composed in `daemon`), called from `resumeAwaitingParent`, writing to
-  `refs/aidos/workers/<workerSessionId>`. Scoped down deliberately even in the original plan: the
-  filesystem and git tools are real-working-tree tools with no treeless-aware variant, so a first
-  cut commits an outcome summary, not real code diffs — and should say so.
-- **`Permission.WORKER_CREATE`** exists in the kernel and is granted and checked nowhere.
-  `WorkerSpawner` must check the driver session holds it before spawning.
+- **Spawning (`WorkerSpawner`)**: a `COMPOSITE` task creates a worker session (`role = WORKER`,
+  `parent_session_id` = driver's session ID), verifies driver holds `Permission.WORKER_CREATE`,
+  delegates requested capabilities via `CapabilityManager.delegate()` with `Budget.split(ways)`, creates
+  a child Run via `RunCreator.createForUserMessage` (brief as initial user message), and parks the composite
+  task with `TaskResult.park(SuspendedOperation.ChildRun(childRunId, childSessionId), AWAITING_INPUT)`.
+- **Driving the child and resuming the parent (`SqliteExecutor`)**: writing parent's continuation row
+  precedes recursive synchronous child driving (`drive(childRunId)`). On child reaching any terminal state
+  (normal completion, budget ceiling, or error), `resumeAwaitingParent(childRunId)` removes continuation,
+  commits worker outcome summary via `WorkerCommitter`, sets composite parent task to `COMPLETED` (or cascades
+  `FAILED`), transitions parent run back to `RUNNING` (or `FAILED`), and resumes parent execution.
+- **`DEPENDS_ON` / `SKIPPED` traversal**: `pendingTasksFor` scans `tasks` in ordinal order and traverses
+  `execution_edges`. A `FAILED` or `SKIPPED` prerequisite cascades `SKIPPED` to downstream tasks in the database;
+  non-terminal prerequisites are skipped over to find later runnable independent siblings; tasks with zero or all
+  completed prerequisites execute.
+- **`worker_spawn_requests` schema**: Added table and index (`idx_worker_spawn_task`) to `schema/project.sql`
+  recording spawn briefs, capability delegation lists, budget split ways, and linked worker session/child run IDs.
+- **Treeless isolation (`WorkerCommitter`)**: Added `WorkerCommitter` seam in `commonMain` and JGit
+  `GitWorkerCommitter` in `:agent:daemon` using `TreelessWorker` to commit outcome summaries under
+  `refs/aidos/workers/<workerSessionId>` without checking out working trees.
+- **Automated Verification**: End-to-end unit and integration test suite in `DriverWorkerOrchestrationTest`
+  verifies permission gates, delegation with budget division, DAG dependency resolution, cascading skip states,
+  and recursive child execution with parent resumption.
 
 ### 5. `RealRuntimeClient` is still in-memory — sessions/runs now hydrate; Android isn't wired
 
