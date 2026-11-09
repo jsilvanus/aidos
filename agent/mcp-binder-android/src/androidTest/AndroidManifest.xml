@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android 11+ package visibility: the provider app under test. -->
+    <queries>
+        <package android:name="com.agenticmessenger.mcp.host" />
+    </queries>
+</manifest>
