@@ -19,6 +19,8 @@ object GgufLoader {
     private const val MAX_STRING_BYTES = 1_048_576uL
     private const val MAX_ARRAY_ELEMENTS = 1_000_000uL
 
+    private val LAYER_TENSOR_REGEX = Regex("""^blk\.(\d+)\.""")
+
     fun loadMetadata(file: File): GgufMetadata? {
         if (!file.exists() || !file.isFile || file.length() < 24) return null
 
@@ -49,6 +51,10 @@ object GgufLoader {
                 // keys and resolve against the architecture once it is known, since
                 // key order within the metadata block is not guaranteed.
                 val contextLengths = mutableMapOf<String, Long>()
+                val blockCounts = mutableMapOf<String, Long>()
+                val embeddingLengths = mutableMapOf<String, Long>()
+                val headCounts = mutableMapOf<String, Long>()
+                val headCountsKv = mutableMapOf<String, Long>()
 
                 repeat(kvCount.toInt()) {
                     val key = readString(stream) ?: throw GgufParseException("Invalid metadata key")
@@ -62,17 +68,39 @@ object GgufLoader {
                         key == "tokenizer.chat_template" -> chatTemplate = value as? String
                         key.endsWith(".context_length") ->
                             value.asLong()?.let { contextLengths[key] = it }
+                        key.endsWith(".block_count") ->
+                            value.asLong()?.let { blockCounts[key] = it }
+                        key.endsWith(".embedding_length") ->
+                            value.asLong()?.let { embeddingLengths[key] = it }
+                        key.endsWith(".attention.head_count") ->
+                            value.asLong()?.let { headCounts[key] = it }
+                        key.endsWith(".attention.head_count_kv") ->
+                            value.asLong()?.let { headCountsKv[key] = it }
                     }
                 }
 
                 val contextWindow = architecture?.let { contextLengths["$it.context_length"] }
                     ?: contextLengths.values.firstOrNull()
+                val declaredBlocks = (architecture?.let { blockCounts["$it.block_count"] }
+                    ?: blockCounts.values.firstOrNull())?.toIntSafely() ?: 0
+                val embeddingLength = (architecture?.let { embeddingLengths["$it.embedding_length"] }
+                    ?: embeddingLengths.values.firstOrNull())?.toIntSafely() ?: 0
+                val headCount = (architecture?.let { headCounts["$it.attention.head_count"] }
+                    ?: headCounts.values.firstOrNull())?.toIntSafely() ?: 0
+                val headCountKv = (architecture?.let { headCountsKv["$it.attention.head_count_kv"] }
+                    ?: headCountsKv.values.firstOrNull())?.toIntSafely() ?: headCount
 
                 // Tensor descriptors follow the KV metadata. Summing tensor element
-                // counts gives a useful parameter-count value without touching tensor data.
+                // counts gives a useful parameter-count value without touching tensor data,
+                // and grouping `blk.<N>.*` descriptors gives per-layer weight distribution
+                // for RFC-0105 layer-split planning.
                 var parameterCount: ULong = 0u
+                val elementsByLayer = mutableMapOf<Int, ULong>()
+                var nonLayerElements: ULong = 0u
+                var maxLayerIndex = -1
+
                 repeat(tensorCount.toInt()) {
-                    readString(stream) ?: throw GgufParseException("Invalid tensor name")
+                    val tensorName = readString(stream) ?: throw GgufParseException("Invalid tensor name")
                     val dimensions = readU32LE(stream).toInt()
                     if (dimensions < 0 || dimensions > 64) throw GgufParseException("Invalid tensor rank")
                     var elements = 1uL
@@ -84,6 +112,36 @@ object GgufLoader {
                     readU64LE(stream) // tensor data offset
                     readU32LE(stream) // GGML tensor type
                     parameterCount = parameterCount.saturatingAdd(elements)
+
+                    val layerMatch = LAYER_TENSOR_REGEX.find(tensorName)
+                    if (layerMatch != null) {
+                        val idx = layerMatch.groupValues[1].toIntOrNull() ?: -1
+                        if (idx >= 0) {
+                            maxLayerIndex = maxOf(maxLayerIndex, idx)
+                            elementsByLayer[idx] = (elementsByLayer[idx] ?: 0uL).saturatingAdd(elements)
+                        } else {
+                            nonLayerElements = nonLayerElements.saturatingAdd(elements)
+                        }
+                    } else {
+                        nonLayerElements = nonLayerElements.saturatingAdd(elements)
+                    }
+                }
+
+                val totalParams = parameterCount.toLongSafely()
+                val effectiveBlockCount = maxOf(declaredBlocks, if (maxLayerIndex >= 0) maxLayerIndex + 1 else 0)
+                val fileBytes = file.length().coerceAtLeast(1L)
+                val layerBytes = if (effectiveBlockCount > 0 && totalParams > 0L) {
+                    List(effectiveBlockCount) { layerIdx ->
+                        val layerEls = (elementsByLayer[layerIdx] ?: 0uL).toLongSafely()
+                        ((fileBytes.toDouble() * layerEls.toDouble()) / totalParams.toDouble()).toLong().coerceAtLeast(1L)
+                    }
+                } else {
+                    emptyList()
+                }
+                val nonLayerBytes = if (totalParams > 0L) {
+                    ((fileBytes.toDouble() * nonLayerElements.toLongSafely().toDouble()) / totalParams.toDouble()).toLong()
+                } else {
+                    0L
                 }
 
                 GgufMetadata(
@@ -97,7 +155,13 @@ object GgufLoader {
                     quantization = fileType?.let(::quantizationName) ?: "unknown",
                     sizeLabel = sizeLabel ?: "unknown",
                     chatTemplate = chatTemplate,
-                    parameterCount = parameterCount.toLongSafely(),
+                    parameterCount = totalParams,
+                    blockCount = effectiveBlockCount,
+                    embeddingLength = embeddingLength,
+                    headCount = headCount,
+                    headCountKv = headCountKv,
+                    layerTensorBytes = layerBytes,
+                    nonLayerBytes = nonLayerBytes,
                 )
             }
         } catch (_: Exception) {
@@ -263,4 +327,28 @@ data class GgufMetadata(
     val parameterCount: Long,
     /** The model's own chat template, or null if it declares none. */
     val chatTemplate: String? = null,
-)
+    /** Number of transformer blocks/layers (`<arch>.block_count`), used by RFC-0105 layer-split planner. */
+    val blockCount: Int = 0,
+    /** Embedding dimension (`<arch>.embedding_length`), used to size KV cache per token. */
+    val embeddingLength: Int = 0,
+    /** Attention head count (`<arch>.attention.head_count`). */
+    val headCount: Int = 0,
+    /** KV head count (`<arch>.attention.head_count_kv`). */
+    val headCountKv: Int = 0,
+    /** Estimated byte footprint per layer `0 until blockCount`. */
+    val layerTensorBytes: List<Long> = emptyList(),
+    /** Estimated byte footprint of non-block tensors (token embeddings, output projection, norms). */
+    val nonLayerBytes: Long = 0L,
+) {
+    /**
+     * Estimates FP16 KV cache byte footprint across all layers for [contextTokens]:
+     * `2 (K + V) * 2 bytes (FP16) * blockCount * kvDim * contextTokens`.
+     */
+    fun estimateKvCacheBytes(contextTokens: Int = contextWindow): Long {
+        if (blockCount <= 0 || contextTokens <= 0) return 0L
+        val headDim = if (headCount > 0 && embeddingLength > 0) embeddingLength / headCount else 128
+        val kvHeads = if (headCountKv > 0) headCountKv else if (headCount > 0) headCount else 8
+        val kvDim = (kvHeads * headDim).coerceAtLeast(64)
+        return 4L * blockCount.toLong() * kvDim.toLong() * contextTokens.toLong()
+    }
+}

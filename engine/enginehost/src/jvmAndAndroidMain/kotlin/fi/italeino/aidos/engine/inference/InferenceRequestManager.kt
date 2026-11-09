@@ -82,9 +82,15 @@ class InferenceRequestManager(
 
         try {
             updateState(InferenceRequestState.LOADING)
-            val adapter = modelRuntime.load(modelId).getOrElse { return Result.failure(it) }
+            val adapter = modelRuntime.load(modelId).getOrElse {
+                updateState(InferenceRequestState.FAILED)
+                return Result.failure(it)
+            }
             val placement = placementOf(descriptor ?: describe(modelId), adapter)
-            if (!locality.permits(placement)) return Result.failure(LocalityViolationException(modelId, locality, placement))
+            if (!locality.permits(placement)) {
+                updateState(InferenceRequestState.FAILED)
+                return Result.failure(LocalityViolationException(modelId, locality, placement))
+            }
             val modelMutex = stateMutex.withLock { modelLocks.getOrPut(modelId) { Mutex() } }
             return modelMutex.withLock {
                 markActive(modelId, +1, adapter)

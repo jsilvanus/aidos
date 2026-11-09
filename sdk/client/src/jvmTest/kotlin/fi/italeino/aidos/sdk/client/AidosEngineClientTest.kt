@@ -310,10 +310,71 @@ class AidosEngineClientTest {
 
     @Test
     fun locality_refusalFrom403IsANullResult() = runTest {
-        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":{"message":"m","type":"locality_violation"}}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":{"message":"m","type":"locality_violation","code":"locality_violation"}}"""))
         val client = localityClient(Locality.LOCAL_ONLY, enforcedByEngine = true)
 
         assertEquals(null, client.chatCompletion(hi))
+        assertEquals("locality_violation", client.lastError?.code)
+        assertEquals(403, client.lastError?.statusCode)
+    }
+
+    @Test
+    fun lastError_isCapturedFromErrorResponseBodyOnHttpFailure() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setBody("""{"error":{"message":"Not enough RAM","type":"insufficient_memory","code":"insufficient_memory"}}""")
+        )
+        val client = clientPointedAtServer()
+
+        val result = client.chatCompletion(hi)
+        assertNull(result)
+        val err = client.lastError
+        assertEquals("insufficient_memory", err?.code)
+        assertEquals(503, err?.statusCode)
+        assertTrue(err?.userActionableMessage()?.contains("Device RAM full") == true)
+    }
+
+    @Test
+    fun streamChatCompletion_propagatesMidStreamErrorPayload() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    "data: {\"id\":\"1\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"start\"},\"finish_reason\":null}]}\n\n" +
+                        "data: {\"error\":{\"message\":\"Inference request timed out\",\"type\":\"timeout_error\",\"code\":\"request_timeout\"}}\n\n" +
+                        "data: [DONE]\n\n"
+                )
+        )
+        val client = clientPointedAtServer()
+
+        try {
+            client.streamChatCompletion(hi).toList()
+            kotlin.test.fail("Expected EngineApiException on mid-stream error")
+        } catch (e: EngineApiException) {
+            assertEquals("request_timeout", e.error.code)
+            assertEquals("request_timeout", client.lastError?.code)
+            assertTrue(e.error.userActionableMessage().contains("timed out"))
+        }
+    }
+
+    @Test
+    fun streamChatCompletion_throwsOnHttpFailure() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(413)
+                .setBody("""{"error":{"message":"Payload too large","type":"invalid_request_error","code":"request_too_large"}}""")
+        )
+        val client = clientPointedAtServer()
+
+        try {
+            client.streamChatCompletion(hi).toList()
+            kotlin.test.fail("Expected EngineApiException on HTTP 413")
+        } catch (e: EngineApiException) {
+            assertEquals(413, e.statusCode)
+            assertEquals("request_too_large", e.error.code)
+            assertEquals("request_too_large", client.lastError?.code)
+        }
     }
 
     // --- Version negotiation (sdk/CONTRACT.md) -----------------------------------------------------

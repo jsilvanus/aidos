@@ -109,6 +109,12 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
     numbers: a version marks a breaking change only. Pinned in `ContractFreezeTest` and both
     `HandshakeWireContractTest`s.
 
+- `val lastError: EngineError?` on `AidosEngineClient` (additive default method, `null`). Reports the
+  most recent classified error (§2.7) from Engine (`insufficient_memory`, `request_timeout`,
+  `locality_violation`, etc.) along with `userActionableMessage()`, avoiding opaque `null` results.
+- `EngineApiException`: thrown on HTTP non-2xx failure or mid-stream SSE error payload during
+  `streamChatCompletion`, carrying status code and structured `EngineError`.
+
 ## Not covered
 
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).

@@ -42,7 +42,7 @@ class ContractFreezeTest {
     fun clientInterfaceMethodsAreFrozen() {
         assertEquals(
             listOf(
-                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "engineVersion", "getLocality",
+                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "engineVersion", "getLastError", "getLocality",
                 "initialize", "isAvailable", "request", "streamChatCompletion", "supportsEndpoint", "transcribe"
             ),
             AidosEngineClient::class.java.methods.map { it.name }.filter { !it.contains("$") }.distinct().sorted()

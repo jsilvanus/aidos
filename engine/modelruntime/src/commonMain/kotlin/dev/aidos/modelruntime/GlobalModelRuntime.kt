@@ -13,7 +13,8 @@ import kotlinx.coroutines.sync.withLock
  * - Weights are user-scope, not per-project. This runtime is a singleton per process.
  * - Loading is globally serialized through a single admission queue.
  * - Digest is verified before a normal model-id load is returned.
- * - LRU context eviction bounds simultaneously resident models while protecting active requests.
+ * - LRU context eviction bounds simultaneously resident models while protecting active requests
+ *   and warm fallback candidates (RFC-0105).
  * - Deterministic native disposal: evicted models are unloaded immediately.
  */
 class GlobalModelRuntime(
@@ -27,6 +28,7 @@ class GlobalModelRuntime(
 
     private val admissionQueue = Mutex()
     @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
+    @Volatile private var warmPinnedModels: Set<String> = emptySet()
 
     private data class LoadedModel(
         val adapter: ModelAdapter,
@@ -38,6 +40,29 @@ class GlobalModelRuntime(
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
     override suspend fun installed(): List<ModelDescriptor> = backend.installed()
+
+    /**
+     * Marks [modelId] as a warm local fallback candidate (RFC-0105) so LRU eviction prefers
+     * evicting non-pinned models while a group/peer candidate is active, unless no other inactive
+     * resident model can be evicted.
+     */
+    fun setWarmFallbackPinned(modelId: String, pinned: Boolean) {
+        warmPinnedModels = if (pinned) warmPinnedModels + modelId else warmPinnedModels - modelId
+    }
+
+    fun isWarmFallbackPinned(modelId: String): Boolean = modelId in warmPinnedModels
+
+    /**
+     * Ensures [modelId] is loaded and pinned as a warm local fallback if memory admission allows it.
+     */
+    suspend fun ensureWarmFallback(modelId: String): Result<ModelAdapter> {
+        setWarmFallbackPinned(modelId, true)
+        val res = load(modelId)
+        if (res.isFailure) {
+            setWarmFallbackPinned(modelId, false)
+        }
+        return res
+    }
 
     /** Loads a model using the backend's normal model-id resolution and digest verification. */
     override suspend fun load(modelId: String): Result<ModelAdapter> =
@@ -100,11 +125,14 @@ class GlobalModelRuntime(
                 }
             }
 
-            // LRU eviction if resident limit reached
+            // LRU eviction if resident limit reached (prefer non-pinned models first; only evict a
+            // warm-pinned model if no other inactive resident model exists).
             if (loadedModels.size >= maxResidentModels && !loadedModels.containsKey(modelId)) {
-                val evictCandidate = loadedModels.entries
+                val inactiveSorted = loadedModels.entries
                     .sortedBy { it.value.lastAccessedAtMillis }
-                    .firstOrNull { !isModelActive(it.key) }
+                    .filter { !isModelActive(it.key) }
+                val evictCandidate = inactiveSorted.firstOrNull { it.key !in warmPinnedModels }
+                    ?: inactiveSorted.firstOrNull()
 
                 if (evictCandidate != null) {
                     val evictId = evictCandidate.key
@@ -130,6 +158,7 @@ class GlobalModelRuntime(
 
     override suspend fun unload(modelId: String) {
         admissionQueue.withLock {
+            warmPinnedModels = warmPinnedModels - modelId
             loadedModels = loadedModels - modelId
             backend.unload(modelId)
         }
@@ -142,6 +171,7 @@ class GlobalModelRuntime(
 
     override suspend fun delete(modelId: String) {
         admissionQueue.withLock {
+            warmPinnedModels = warmPinnedModels - modelId
             if (loadedModels.containsKey(modelId)) {
                 loadedModels = loadedModels - modelId
                 backend.unload(modelId)

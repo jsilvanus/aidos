@@ -436,13 +436,23 @@ what it imports"). Writing the SqlDriver/factory/`MainActivity` wiring blind, wi
 compile-check it, is the wrong tradeoff until there's a real Android build available to verify
 against — flagged here rather than guessed at.
 
-### 6. A mapping test is owed
+### 6. Kernel ↔ Schema Mapping Test (PIPELINE.md §6) — ✅ Complete
 
-A test asserting every non-derived kernel field has a schema column. Noted when the kernel was
-written, deferred because there was nothing to map to yet. It is the third leg of the CI that keeps
-design and code together, alongside `schema/check.py` and the module test suites.
+**2026-11-09 update:** Implemented automated JVM contract test `KernelSchemaMapTest` in `:agent:storage` asserting that every non-derived persisted kernel data class (`Run`, `Task` including `approvalChannel`/`approvalPhrase`, `Attempt`, `Capability`, `ContentNode`, `ProvenanceEdge`, `DegradationEvent`, `ScheduledJob`, `Budget`, `ContextItem`, `ProjectSummary`, `SessionSummary`, `ModelDescriptor`, `ProviderRetention`, `ToolCall`) maps to a canonical column in `schema/` (`project.sql`, `user.sql`, and `vault.sql`). Forms the third leg of CI alongside `schema/check.py` and module test suites. Verified with `$env:PYTHONUTF8=1; python schema/check.py` and `gradle :storage:jvmTest`.
 
-### 7. Blocked on real hardware — not on code
+### 7. Inference Groups / AIDIN Phase 2 & 3 (RFC-0105 & decisions.md D50) — ✅ Complete
+
+**2026-11-09 update:** Implemented virtual model resolution (`aidos:chat`, `aidos:embed`, `aidos:stt`), locality-first filtering, group certificate renewal, and supervised child-process layer splitting across trusted peers:
+- **Virtual Model Resolution & Routing (`VirtualModelRouter`)**: Filters configured and peer-advertised candidate models by request locality before any network contact. Queries `POST /aidin/v1/route` on candidate peers, verifies origin placement against origin's trust store (origin verifies anchor and every helper in a split route), maps placements (`cluster` for trusted peers/helpers, `remote` if untrusted helper or remote peer, 403 `locality_violation` if locality excludes candidates, 503 `model_unavailable` if permitted candidates are offline), and enforces warm local fallback pinning in `GlobalModelRuntime` against LRU eviction while peer candidates are active.
+- **Peer Delegation RPC & Mid-Request Recovery**: Mounted `/aidin/v1/` endpoints (`/route`, `/chat/completions`, `/embeddings`, `/audio/transcriptions`, `/systemone`) over mTLS `PeerLink` in `AidinNode` and `EngineHttpServer`. Enforces hop limit 1 (delegated requests never re-delegate). Non-streaming requests retry once on local fallback upon peer loss or `409 plan_changed` / `503 peer_busy`; streaming requests emit SSE `{"type":"peer_lost","retryable":true}` and next request resolves locally without waiting for heartbeat timeout.
+- **Group Certificate Renewal (`AidinNode`)**: Group admins renew member certificates over `PeerLink` when validity drops below threshold (default 7 days) and push `CertificateRenewal` wire frames without re-pairing.
+- **Supervised Child-Process Layer Splitting (`SplitProcessSupervisors`)**:
+  - `HelperProcessSupervisor` runs `ggml-rpc-server -H 127.0.0.1 -p <port> -c <cache>` as an isolated child OS process, exposes it only via authenticated tunnel to the active plan's anchor, and drains/stops on `ContributionPolicy` triggers (unplug, low battery, severe thermal).
+  - `AnchorProcessSupervisor` generates versioned plans (`SplitModelPlanner`), opens loopback `127.0.0.1:<port>` tunnel listeners to each helper, supervises `llama-server` with `--rpc` and `--tensor-split`, and handles child aborts or helper drops by stopping `llama-server`, marking the split model unavailable for immediate virtual model fallback, and triggering `RESTART` re-planning with remaining healthy group members.
+- **Dictator Integration**: Dictator's `AidosProvider` updated to resolve chat via `aidos:chat` while keeping dictation `local_only`.
+- **Verification**: Verified with 51 unit/integration tests in `:engine:aidin:jvmTest` (`SplitInferenceTest`, `AidinNodeTest`), 153 unit/integration tests in `:engine:enginehost:jvmTest` (`VirtualModelAndDelegationTest`, `LocalityEnforcementTest`, etc.), and `:engine:modelruntime:jvmTest`.
+
+### 8. Blocked on real hardware — not on code
 
 State these as blocked rather than letting a checkmark imply otherwise. G3 once carried a PASSED
 mark that no device had earned.

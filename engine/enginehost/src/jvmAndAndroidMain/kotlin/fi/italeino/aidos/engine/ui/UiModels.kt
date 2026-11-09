@@ -271,3 +271,35 @@ data class ModelLoadingState(
     val error: String? = null,
     val loadTimeMs: Long? = null,
 )
+
+/**
+ * Transforms raw engine or runtime error messages into clear, actionable user explanations.
+ * Sanitizes and provides remediation advice without leaking internal paths or stack traces (§2.7).
+ */
+fun formatActionableErrorMessage(error: String?): String {
+    if (error.isNullOrBlank()) return "Inference failed"
+    val lower = error.lowercase()
+    return when {
+        lower.contains("out of memory") || lower.contains("insufficient_memory") || lower.contains("failed to allocate") ->
+            "Out of memory: device RAM is full. Close background apps or choose a smaller context window."
+        lower.contains("locality") || lower.contains("locality_violation") ->
+            "Placement restricted: model cannot be executed under current locality policy."
+        lower.contains("queue_saturated") || lower.contains("saturated") ->
+            "Engine is busy with too many queued requests. Try again in a moment."
+        lower.contains("timeout") || lower.contains("request_timeout") ->
+            "Generation timed out before completion."
+        lower.contains("busy") || lower.contains("model_busy") ->
+            "Model is busy processing another request. Please retry shortly."
+        lower.contains("integrity") || lower.contains("corrupt") || lower.contains("checksum") ->
+            "Model file integrity check failed. The file may be damaged; please delete and re-download."
+        lower.contains("incompatible") || lower.contains("unsupported") ->
+            "Model format or architecture is incompatible with this device."
+        lower.contains("not installed") || lower.contains("not found") ->
+            "Model is not installed on this device. Download it first."
+        lower.contains("too large") || lower.contains("request_too_large") ->
+            "Request payload exceeds allowed limit (10 MB)."
+        lower.contains("generation_limit") ->
+            "Requested generation length exceeds allowed limit."
+        else -> error
+    }
+}

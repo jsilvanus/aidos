@@ -351,7 +351,25 @@ fun ModelDetailContent(
                 }
 
                 if (loadingState.status == ModelLoadingStatus.ERROR && loadError != null) {
-                    Text(loadError, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Model load failed",
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                formatActionableErrorMessage(loadError),
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
                 }
             }
         }

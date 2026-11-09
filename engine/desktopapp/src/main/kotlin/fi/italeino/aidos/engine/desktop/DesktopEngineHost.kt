@@ -216,7 +216,8 @@ class DesktopEngineHost(
                 port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
                 extraRoutes = { agentRoutes(agent) { subject, requested -> server.effectiveLocality(subject, requested) } },
-                onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) }
+                onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) },
+                aidinNode = { _aidin.value },
             )
             server.start()
             val port = server.getBoundPort() ?: run {
@@ -241,7 +242,7 @@ class DesktopEngineHost(
         }
     }
 
-    /** Phase 1 only links and tracks peers; nothing is served to them yet (RFC-0105 phases 2-3). */
+    /** Starts the AIDIN peer node and wires its delegation handler into the Engine HTTP server (RFC-0105 phases 1-3). */
     private fun startAidin(scope: CoroutineScope) {
         _aidinError.value = null
         val node = try {
@@ -251,6 +252,7 @@ class DesktopEngineHost(
             return
         }
         try {
+            httpServer?.attachAidinNode(node)
             // A fixed port lets paired peers find us after a restart; fall back if it is taken.
             try {
                 node.start(port = aidinPort)

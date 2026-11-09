@@ -131,7 +131,10 @@ fun ModelDetailScreen(
                         modelLoadingState = modelLoadingState.copy(loadProgress = progress)
                     },
                     onError = { error ->
-                        modelLoadingState = modelLoadingState.copy(status = ModelLoadingStatus.ERROR, error = error)
+                        modelLoadingState = modelLoadingState.copy(
+                            status = ModelLoadingStatus.ERROR,
+                            error = formatActionableErrorMessage(error)
+                        )
                     }
                 ).onSuccess {
                     modelLoadingState = modelLoadingState.copy(
@@ -141,7 +144,7 @@ fun ModelDetailScreen(
                 }.onFailure { error ->
                     modelLoadingState = modelLoadingState.copy(
                         status = ModelLoadingStatus.ERROR,
-                        error = error.message ?: "Unknown error"
+                        error = formatActionableErrorMessage(error.message ?: "Unknown error")
                     )
                 }
             }

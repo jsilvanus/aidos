@@ -161,7 +161,11 @@ suspend fun runModelSelfTest(
 private suspend fun chatTest(client: AidosEngineClient, modelId: String, prompt: String): SelfTestOutcome {
     val response = client.chatCompletion(
         ChatCompletionRequest(modelId, listOf(ChatMessage("user", prompt)), temperature = 0.2f, max_tokens = 64)
-    ) ?: return SelfTestOutcome(false, "Engine returned no answer")
+    ) ?: return SelfTestOutcome(
+        passed = false,
+        title = client.lastError?.userActionableMessage() ?: "Engine returned no answer",
+        lines = client.lastError?.let { listOf("Error code: ${it.code ?: "unknown"}", it.message) } ?: emptyList()
+    )
     val reply = response.choices.firstOrNull()?.message?.content.orEmpty().trim()
     return if (reply.isEmpty()) {
         SelfTestOutcome(false, "The model answered with nothing")
@@ -181,7 +185,11 @@ private suspend fun fixtureChatTest(
     if (prompt.last().code > 127) return chatTest(client, modelId, prompt)
     val response = client.chatCompletion(
         ChatCompletionRequest(modelId, listOf(ChatMessage("user", prompt)), temperature = 0f, max_tokens = SmokeFixture.TOKENS)
-    ) ?: return SelfTestOutcome(false, "Engine returned no answer")
+    ) ?: return SelfTestOutcome(
+        passed = false,
+        title = client.lastError?.userActionableMessage() ?: "Engine returned no answer",
+        lines = client.lastError?.let { listOf("Error code: ${it.code ?: "unknown"}", it.message) } ?: emptyList()
+    )
     // Not trimmed: a space is a real answer from these models when the prompt ends in one.
     val reply = response.choices.firstOrNull()?.message?.content.orEmpty()
     val expected = fixture.expected(prompt, SmokeFixture.TOKENS)
@@ -216,7 +224,11 @@ private suspend fun decisionTest(client: AidosEngineClient, modelId: String, sta
                 ),
             ),
         )
-    ) ?: return SelfTestOutcome(false, "Engine returned no answer (is this a decision model?)")
+    ) ?: return SelfTestOutcome(
+        passed = false,
+        title = client.lastError?.userActionableMessage() ?: "Engine returned no answer (is this a decision model?)",
+        lines = client.lastError?.let { listOf("Error code: ${it.code ?: "unknown"}", it.message) } ?: emptyList()
+    )
     val noul = response.answers["is_command"]?.noul
     val choice = response.answers["kind"]?.choice
     val score = response.answers["urgency"]?.score
@@ -238,7 +250,11 @@ private suspend fun transcriptionTest(client: AidosEngineClient, modelId: String
             model = modelId,
             language = language.ifBlank { null },
         )
-    ) ?: return SelfTestOutcome(false, "Engine returned no transcript (is the file a WAV?)")
+    ) ?: return SelfTestOutcome(
+        passed = false,
+        title = client.lastError?.userActionableMessage() ?: "Engine returned no transcript (is the file a WAV?)",
+        lines = client.lastError?.let { listOf("Error code: ${it.code ?: "unknown"}", it.message) } ?: emptyList()
+    )
     val transcript = response.text.trim()
     return if (transcript.isEmpty()) SelfTestOutcome(false, "Transcript is empty (silence, or the wrong language?)")
     else SelfTestOutcome(true, "Transcription works", listOf(transcript))
@@ -253,7 +269,11 @@ private suspend fun visionTest(client: AidosEngineClient, modelId: String, quest
             temperature = 0f,
             max_tokens = 96,
         )
-    ) ?: return SelfTestOutcome(false, "Engine returned no answer (is the file a PNG or JPEG?)")
+    ) ?: return SelfTestOutcome(
+        passed = false,
+        title = client.lastError?.userActionableMessage() ?: "Engine returned no answer (is the file a PNG or JPEG?)",
+        lines = client.lastError?.let { listOf("Error code: ${it.code ?: "unknown"}", it.message) } ?: emptyList()
+    )
     val answer = response.choices.firstOrNull()?.message?.content.orEmpty().trim()
     return if (answer.isEmpty()) SelfTestOutcome(false, "The model answered with nothing")
     else SelfTestOutcome(true, "Vision works", listOf(answer))

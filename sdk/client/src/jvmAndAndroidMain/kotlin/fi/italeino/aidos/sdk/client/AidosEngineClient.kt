@@ -111,9 +111,78 @@ interface AidosEngineClient {
      */
     val locality: Locality? get() = null
 
+    /**
+     * The most recent classified error from Engine (§2.7), or null if the last call succeeded
+     * or no requests have been made.
+     */
+    val lastError: EngineError? get() = null
+
     /** Release resources and forget the current handshake. */
     fun close()
 }
+
+/**
+ * Detailed error reported by Aidos Engine (§2.7, RFC-0103).
+ */
+@Serializable
+data class EngineError(
+    val message: String,
+    val type: String = "engine_error",
+    val param: String? = null,
+    val code: String? = null,
+    val statusCode: Int? = null,
+) {
+    /**
+     * Human-actionable message explaining what happened and how to resolve it.
+     */
+    fun userActionableMessage(): String {
+        val hint = when (code) {
+            "locality_violation" -> "Placement restricted: model cannot be served under requested locality"
+            "insufficient_memory" -> "Device RAM full: close background apps or unload other models"
+            "queue_saturated" -> "Engine busy: too many queued requests. Retry in a moment"
+            "shutdown" -> "Engine is restarting or shutting down"
+            "model_busy" -> "Model is currently processing another request. Retry shortly"
+            "model_not_installed" -> "Model is not installed. Download it first"
+            "model_integrity_mismatch" -> "Model file appears corrupted. Delete and re-download"
+            "model_integrity_missing" -> "Model integrity verification missing"
+            "incompatible_model" -> "Model is incompatible with this device runtime"
+            "model_load_failed" -> "Failed to load model into memory"
+            "native_failure" -> "Internal inference failure in native engine"
+            "request_too_large" -> "Request payload exceeds allowed size limit"
+            "generation_limit_exceeded" -> "Requested token generation limit exceeds allowed maximum"
+            "request_limit_exceeded" -> "Request exceeds prompt or message limits"
+            "request_timeout" -> "Generation timed out before completion"
+            "request_cancelled" -> "Request was cancelled"
+            else -> null
+        }
+        return if (hint != null) "$message ($hint)" else message
+    }
+}
+
+/**
+ * Thrown when an Aidos Engine HTTP streaming call fails with a classified error.
+ */
+class EngineApiException(
+    val statusCode: Int,
+    val error: EngineError,
+    cause: Throwable? = null,
+) : RuntimeException(
+    "Engine API error ($statusCode${error.code?.let { ": $it" } ?: ""}): ${error.message}",
+    cause
+)
+
+@Serializable
+private data class ErrorResponseWire(
+    val error: ErrorDetailWire
+)
+
+@Serializable
+private data class ErrorDetailWire(
+    val message: String,
+    val type: String = "engine_error",
+    val param: String? = null,
+    val code: String? = null,
+)
 
 /**
  * The widest place a request's data may go (RFC-0104), sent as `X-Aidos-Locality`. [LOCAL_ONLY]:
@@ -498,6 +567,8 @@ internal class EngineClientImpl(
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
     private var cachedCapabilities: EngineCapabilities? = null
     private var lastCapabilitiesRefresh = 0L
+    override var lastError: EngineError? = null
+        private set
     // Guards concurrent callers from triggering overlapping re-handshakes (RFC-0103: "the port is
     // ephemeral... never assumed stable across Engine restarts" — two racing re-handshakes could
     // otherwise leave `handshakeResult` holding one caller's port with another's token).
@@ -582,8 +653,22 @@ internal class EngineClientImpl(
         body: String?,
         allowReauth: Boolean
     ): String? {
-        val current = handshakeResult ?: return null
-        if (!localityEnforceable(current)) return null
+        val current = handshakeResult ?: run {
+            lastError = EngineError(
+                message = "Engine is not initialized or unavailable ($availabilityState)",
+                type = "availability_error",
+                code = "engine_unavailable"
+            )
+            return null
+        }
+        if (!localityEnforceable(current)) {
+            lastError = EngineError(
+                message = "Locality restriction ($locality) cannot be enforced by this Engine",
+                type = "locality_error",
+                code = "locality_unsupported"
+            )
+            return null
+        }
         // OkHttp requires a non-null body for methods that carry one (POST/PUT/PATCH) — unlike
         // HttpURLConnection, it refuses to build the request rather than sending an empty body.
         val requestBody = body?.toRequestBody(jsonMediaType)
@@ -605,15 +690,61 @@ internal class EngineClientImpl(
                     // stale token). Retry exactly once with a fresh handshake.
                     response.code == 401 && allowReauth -> {
                         val reconnected = handshakeMutex.withLock { doHandshakeLocked() }
-                        if (reconnected) executeRaw(endpoint, method, body, allowReauth = false) else null
+                        if (reconnected) executeRaw(endpoint, method, body, allowReauth = false) else {
+                            lastError = EngineError(
+                                message = "Engine token expired and re-handshake failed",
+                                type = "auth_error",
+                                code = "unauthorized",
+                                statusCode = 401
+                            )
+                            null
+                        }
                     }
-                    response.isSuccessful -> response.body?.string()
-                    else -> null
+                    response.isSuccessful -> {
+                        lastError = null
+                        response.body?.string()
+                    }
+                    else -> {
+                        val errorBody = response.body?.string()
+                        lastError = parseErrorDetail(errorBody, response.code)
+                        null
+                    }
                 }
             }
         } catch (e: IOException) {
+            lastError = EngineError(
+                message = e.message ?: "Network error connecting to Engine",
+                type = "io_error",
+                code = "connection_failed"
+            )
             null
         }
+    }
+
+    private fun parseErrorDetail(body: String?, statusCode: Int): EngineError {
+        if (!body.isNullOrBlank()) {
+            try {
+                val wire = engineJson.decodeFromString<ErrorResponseWire>(body)
+                return EngineError(
+                    message = wire.error.message,
+                    type = wire.error.type,
+                    param = wire.error.param,
+                    code = wire.error.code,
+                    statusCode = statusCode
+                )
+            } catch (_: Exception) {
+                return EngineError(
+                    message = body.take(200),
+                    type = "http_error",
+                    statusCode = statusCode
+                )
+            }
+        }
+        return EngineError(
+            message = "HTTP $statusCode",
+            type = "http_error",
+            statusCode = statusCode
+        )
     }
 
     /** True when this client requires no limit, or Engine says it enforces them. */
@@ -642,8 +773,22 @@ internal class EngineClientImpl(
     }
 
     override fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatCompletionChunk> = flow {
-        val current = handshakeResult ?: return@flow
-        if (!localityEnforceable(current)) return@flow
+        val current = handshakeResult ?: run {
+            lastError = EngineError(
+                message = "Engine is not initialized or unavailable ($availabilityState)",
+                type = "availability_error",
+                code = "engine_unavailable"
+            )
+            return@flow
+        }
+        if (!localityEnforceable(current)) {
+            lastError = EngineError(
+                message = "Locality restriction ($locality) cannot be enforced by this Engine",
+                type = "locality_error",
+                code = "locality_unsupported"
+            )
+            return@flow
+        }
         val streamingRequest = if (request.stream) request else request.copy(stream = true)
         val httpRequest = Request.Builder()
             .url("http://127.0.0.1:${current.port}/v1/chat/completions")
@@ -655,19 +800,48 @@ internal class EngineClientImpl(
 
         try {
             httpClient.newCall(httpRequest).execute().use { response ->
-                if (!response.isSuccessful) return@use
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    val err = parseErrorDetail(errorBody, response.code)
+                    lastError = err
+                    throw EngineApiException(response.code, err)
+                }
+                lastError = null
                 val source = response.body?.source() ?: return@use
                 val parser = SseFrameParser()
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     val payload = parser.onLine(line) ?: continue
                     if (payload == "[DONE]") break
+                    if (payload.contains("\"error\"")) {
+                        try {
+                            val errWire = engineJson.decodeFromString<ErrorResponseWire>(payload)
+                            val err = EngineError(
+                                message = errWire.error.message,
+                                type = errWire.error.type,
+                                param = errWire.error.param,
+                                code = errWire.error.code,
+                                statusCode = 500
+                            )
+                            lastError = err
+                            throw EngineApiException(500, err)
+                        } catch (e: EngineApiException) {
+                            throw e
+                        } catch (_: Exception) {
+                            // If decoding as error fails, continue to normal chunk decode
+                        }
+                    }
                     emit(engineJson.decodeFromString<ChatCompletionChunk>(payload))
                 }
             }
         } catch (e: IOException) {
-            // Stream simply ends — matches every other method's "unavailable means nothing to
-            // report" behavior rather than propagating the exception into a collector.
+            val err = EngineError(
+                message = e.message ?: "Connection error during streaming",
+                type = "io_error",
+                code = "connection_failed"
+            )
+            lastError = err
+            throw EngineApiException(503, err, e)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -708,6 +882,7 @@ internal class EngineClientImpl(
         availabilityState = EngineAvailability.NotInstalled
         handshakeResult = null
         cachedCapabilities = null
+        lastError = null
     }
 
     /**

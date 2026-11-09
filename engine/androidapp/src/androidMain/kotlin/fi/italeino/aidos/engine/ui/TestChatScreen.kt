@@ -132,7 +132,7 @@ fun TestChatScreen(
                         generationStatus = TestChatGenerationStatus.ERROR
                         state = state.copy(
                             isLoading = false,
-                            error = error.message ?: "Inference failed",
+                            error = formatActionableErrorMessage(error.message),
                         )
                     },
                 )
@@ -148,7 +148,7 @@ fun TestChatScreen(
                 generationStatus = TestChatGenerationStatus.ERROR
                 state = state.copy(
                     isLoading = false,
-                    error = e.message ?: "Inference failed",
+                    error = formatActionableErrorMessage(e.message),
                 )
             } finally {
                 generationJob = null
@@ -231,12 +231,20 @@ fun TestChatScreen(
                     color = MaterialTheme.colorScheme.errorContainer,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        state.error!!,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(8.dp),
-                        fontSize = 12.sp,
-                    )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Inference issue",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            state.error!!,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
 

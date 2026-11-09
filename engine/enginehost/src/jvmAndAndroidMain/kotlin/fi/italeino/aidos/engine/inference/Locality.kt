@@ -47,6 +47,21 @@ enum class Locality(val wire: String, val widest: Placement) {
 const val LOCALITY_HEADER = "X-Aidos-Locality"
 const val PLACEMENT_HEADER = "X-Aidos-Placement"
 
+/**
+ * Additive response header (RFC-0105): `local` or `peer:<nodeId>`, so apps can show where an
+ * answer came from.
+ */
+const val ROUTE_HEADER = "X-Aidos-Route"
+
+/** Hop counter for peer delegation (RFC-0104 / RFC-0105): hop limit is 1; delegated requests are never re-delegated. */
+const val HOP_HEADER = "X-Aidos-Hop"
+
+/** Verified split-plan version sent by the origin after checking `POST /aidin/v1/route` (RFC-0105). */
+const val PLAN_VERSION_HEADER = "X-Aidos-Plan-Version"
+
+/** Authenticated peer node ID header for HTTP `/aidin/v1/` requests in tests or mTLS proxies. */
+const val PEER_NODE_HEADER = "X-Aidos-Peer-Node"
+
 /** Descriptor metadata key a runtime may use to declare a placement wider than `isLocal` implies. */
 const val PLACEMENT_METADATA_KEY = "placement"
 
@@ -78,3 +93,26 @@ class LocalityViolationException(
 ) : RuntimeException(
     "Model $modelId is served at placement '${placement.wire}', which '${required.wire}' does not allow"
 )
+
+/** No permitted candidate of a virtual model has an active node and loaded model (RFC-0105 -> 503 `model_unavailable`). */
+class ModelUnavailableException(
+    val modelId: String,
+    message: String = "No candidate for $modelId is currently available",
+) : RuntimeException(message)
+
+/** Serving peer refused a delegated request due to saturation or draining contribution policy (RFC-0105 -> 503 `peer_busy`). */
+class PeerBusyException(
+    val peerNodeId: String = "",
+    message: String = "Peer is busy or draining",
+) : RuntimeException(message) {
+    constructor(message: String) : this("", message)
+}
+
+/** Split plan changed between `/aidin/v1/route` verification and request execution (RFC-0105 -> 409 `plan_changed`). */
+class PlanChangedException(
+    val expectedVersion: Long,
+    val currentVersion: Long?,
+    message: String = "Split plan version changed from $expectedVersion to ${currentVersion ?: "none"}",
+) : RuntimeException(message) {
+    constructor(message: String) : this(0L, null, message)
+}
