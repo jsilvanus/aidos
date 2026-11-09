@@ -403,6 +403,36 @@ class ExecutorTest {
         assertEquals(1, seeded.size, "No new event should have been inserted")
     }
 
+    @Test
+    fun `worker session task completion is attributed to ActorKind WORKER in audit log`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = "worker-session-1"; val eid = nextId()
+        seedProject(driver, pid)
+        driver.execute(null,
+            "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) " +
+                "VALUES (?, ?, 'worker', 'WORKER', 'RUNNING', ?, ?, ?)", 5
+        ) {
+            bindString(0, sid)
+            bindString(1, pid)
+            bindString(2, nowIso)
+            bindString(3, nowIso)
+            bindString(4, nowIso)
+        }
+        val runId = nextId()
+        val tid = nextId()
+        insertRun(driver, runId, pid, sid, eid)
+        insertTask(driver, tid, runId, sid, pid, ordinal = 0, kind = "TOOL_CALL")
+
+        val executor = buildExecutor(driver)
+        executor.drive(RunId(runId))
+
+        val audit = dev.aidos.broker.AuditLog(driver)
+        val rows = audit.rowsForProject(pid)
+        val completedRow = rows.first { it.kind == "ToolCompleted" }
+        assertEquals(dev.aidos.kernel.ActorKind.WORKER.name, completedRow.actorKind)
+        assertEquals(sid, completedRow.actorId)
+    }
+
     // ─── TaskRunner stubs ─────────────────────────────────────────────────────
 
     private class AlwaysSucceedRunner : TaskRunner {

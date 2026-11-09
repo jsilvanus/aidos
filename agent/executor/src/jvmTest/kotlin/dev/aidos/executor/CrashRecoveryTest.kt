@@ -10,6 +10,7 @@ import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 /**
  * M8 / G1: Crash-recovery suite (RFC-0038).
@@ -165,6 +166,12 @@ class CrashRecoveryTest {
 
         assertEquals("COMPLETED", runState(driver, rid), "B3: Run should complete after recovery + drive")
         assertEquals("COMPLETED", taskState(driver, tid), "B3: Task should complete after recovery + drive")
+
+        val auditRows = AuditLog(driver).rowsForProject(pid)
+        val recoveryRow = auditRows.firstOrNull { it.kind == "CrashRecoveryExecuted" }
+        assertNotNull(recoveryRow, "Crash recovery must write a CrashRecoveryExecuted audit row")
+        assertEquals(dev.aidos.kernel.ActorKind.RUNTIME.name, recoveryRow.actorKind)
+        assertEquals("crash-recovery", recoveryRow.actorId)
     }
 
     /**

@@ -10,6 +10,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.inference.InferenceTester
+import fi.italeino.aidos.engine.ui.AgentsScreen
 import fi.italeino.aidos.engine.ui.ConnectedAppsScreen
 import fi.italeino.aidos.engine.ui.GroupsScreen
 import fi.italeino.aidos.engine.ui.PendingInvite
@@ -93,6 +94,10 @@ fun EngineNavHost(
 
         composable(EngineRoute.ConnectedApps.route) {
             ConnectedAppsScreen()
+        }
+
+        composable(EngineRoute.Agents.route) {
+            AgentsScreen()
         }
 
         composable(EngineRoute.Settings.route) {

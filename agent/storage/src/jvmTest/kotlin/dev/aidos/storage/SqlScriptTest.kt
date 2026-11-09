@@ -47,6 +47,6 @@ class SqlScriptTest {
         for (statement in SqlScript.statements(schema)) {
             driver.execute(identifier = null, sql = statement, parameters = 0)
         }
-        assertEquals(43, tableCount(driver))
+        assertEquals(44, tableCount(driver))
     }
 }

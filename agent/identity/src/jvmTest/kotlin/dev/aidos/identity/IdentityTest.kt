@@ -157,4 +157,52 @@ class IdentityTest {
         val r = store.resolve(Settings.routingRemoteEgress)
         assertEquals(SettingOrigin.DEFAULT, r.origin)
     }
+
+    // --- DeviceIdentity (RFC-0046) ------------------------------------------
+
+    @Test
+    fun `DeviceIdentity is generated on first start with UUIDv7 and persisted in user db`() {
+        val driver = openUserDriver()
+        val store = DeviceIdentityStore(
+            userDriver = driver,
+            idGen = UuidV7Generator(),
+            nowIso = { "2026-08-05T12:00:00Z" },
+        )
+
+        val identity = store.getOrRegister(
+            platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
+            defaultDisplayName = "Work Laptop",
+        )
+
+        assertEquals("Work Laptop", identity.displayName)
+        assertEquals(dev.aidos.kernel.PlatformProfile.DESKTOP, identity.platformProfile)
+        assertEquals(kotlinx.datetime.Instant.parse("2026-08-05T12:00:00Z"), identity.createdAt)
+        assertTrue(
+            identity.deviceId.value.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")),
+            "deviceId must be a valid UUIDv7: ${identity.deviceId.value}",
+        )
+
+        // Subsequent getOrRegister returns the identical row
+        val second = store.getOrRegister(
+            platformProfile = dev.aidos.kernel.PlatformProfile.MOBILE,
+            defaultDisplayName = "Different Phone",
+        )
+        assertEquals(identity.deviceId, second.deviceId)
+        assertEquals(identity.displayName, second.displayName)
+        assertEquals(identity.platformProfile, second.platformProfile)
+        assertEquals(identity.createdAt, second.createdAt)
+    }
+
+    @Test
+    fun `DeviceIdentity display name is user-editable`() {
+        val driver = openUserDriver()
+        val store = DeviceIdentityStore(userDriver = driver)
+        store.getOrRegister(defaultDisplayName = "Original Name")
+
+        val updated = store.updateDisplayName("Pixel 9 Pro")
+        assertTrue(updated)
+
+        val loaded = store.load()
+        assertEquals("Pixel 9 Pro", loaded?.displayName)
+    }
 }

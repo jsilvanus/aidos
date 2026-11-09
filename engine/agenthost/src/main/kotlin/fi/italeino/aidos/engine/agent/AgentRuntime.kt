@@ -4,6 +4,7 @@ import dev.aidos.amp.AmpAgentRunner
 import dev.aidos.amp.AmpToolDefinition
 import dev.aidos.amp.AmpToolExecutionResult
 import dev.aidos.kernel.ModelAdapter
+import fi.italeino.aidos.engine.inference.Placement
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -52,11 +53,32 @@ class AgentRuntime(
     val retention: Duration = 10.minutes,
     val maxRetained: Int = 64,
     private val now: () -> Long = System::currentTimeMillis,
+    private val adapterWithPlacement: ((AgentTurnRequest, (Placement) -> Unit) -> ModelAdapter)? = null,
 ) {
-    private class Run(val id: String, val owner: String, val async: Boolean) {
+    private class Run(
+        val id: String,
+        val owner: String,
+        val async: Boolean,
+        val model: String,
+        val locality: String,
+        val promptPreview: String,
+        val startedAt: Long,
+        val role: String = "DRIVER",
+        val parentSessionId: String? = null,
+        val parentRunId: String? = null,
+        val workerBrief: String? = null,
+    ) {
         val state = MutableStateFlow(AgentTurnResponse(AgentTurnResponse.RUNNING, id))
         val waiting = ConcurrentHashMap<String, CompletableDeferred<AmpToolExecutionResult>>()
         @Volatile var finishedAt: Long = 0
+        @Volatile var placement: String = "local"
+        val egressRecords = java.util.Collections.synchronizedList(mutableListOf<EgressRecordDto>())
+        val tasks = java.util.Collections.synchronizedList(mutableListOf<TaskGraphNodeDto>())
+        val workerSpawns = java.util.Collections.synchronizedList(mutableListOf<WorkerSpawnDto>())
+        @Volatile var budget: AgentBudgetDto? = null
+        @Volatile var workerOutcome: WorkerOutcomeDto? = null
+        @Volatile var isParkedOnChild: Boolean = false
+        @Volatile var awaitingChildRunId: String? = null
         lateinit var job: Job
     }
 
@@ -79,13 +101,33 @@ class AgentRuntime(
         if (runs.values.count { !it.state.value.isTerminal } >= maxConcurrentRuns) {
             throw AgentRequestException("too_many_runs", "agent runtime is busy", 429)
         }
+
+        val run = Run(
+            id = UUID.randomUUID().toString(),
+            owner = owner,
+            async = request.async,
+            model = request.model,
+            locality = request.locality ?: "local_only",
+            promptPreview = request.message,
+            startedAt = now(),
+            role = request.role ?: "DRIVER",
+            parentSessionId = request.parentSessionId,
+            parentRunId = request.parentRunId,
+            workerBrief = request.workerBrief,
+        )
+
         val adapter = try {
-            adapterFor(request)
+            if (adapterWithPlacement != null) {
+                adapterWithPlacement.invoke(request) { observedPlacement ->
+                    run.placement = observedPlacement.wire
+                }
+            } else {
+                adapterFor(request)
+            }
         } catch (e: Exception) {
             throw AgentRequestException("invalid_request", e.message ?: "cannot build model adapter")
         }
 
-        val run = Run(UUID.randomUUID().toString(), owner, request.async)
         runs[run.id] = run
         emit(run, run.state.value)
         val runner = AmpAgentRunner(adapter, request.maxSteps?.coerceIn(1, 32) ?: defaultMaxSteps)
@@ -142,6 +184,78 @@ class AgentRuntime(
 
     fun list(owner: String): List<AgentTurnResponse> =
         runs.values.filter { it.owner == owner }.map { it.state.value }.sortedBy { it.runId }
+
+    /** Supervisory query: list all runs across all owners with metadata (RFC-0104 placement, egress). */
+    fun listAll(): List<AgentRunSummaryDto> = runs.values.map { r ->
+        val snapshot = r.state.value
+        AgentRunSummaryDto(
+            runId = r.id,
+            owner = r.owner,
+            model = r.model,
+            placement = r.placement,
+            locality = r.locality,
+            status = snapshot.status,
+            steps = snapshot.steps,
+            maxSteps = defaultMaxSteps,
+            promptPreview = r.promptPreview,
+            replyText = snapshot.reply.orEmpty(),
+            error = snapshot.error,
+            seq = snapshot.seq,
+            pendingToolCall = snapshot.toolCalls.firstOrNull(),
+            executedTools = snapshot.executedToolCalls,
+            egressRecords = r.egressRecords.toList(),
+            startedAt = r.startedAt,
+            finishedAt = r.finishedAt,
+            role = r.role,
+            parentSessionId = r.parentSessionId,
+            parentRunId = r.parentRunId,
+            workerBrief = r.workerBrief,
+            tasks = r.tasks.toList(),
+            workerSpawns = r.workerSpawns.toList(),
+            budget = r.budget,
+            workerOutcome = r.workerOutcome,
+            isParkedOnChild = r.isParkedOnChild,
+            awaitingChildRunId = r.awaitingChildRunId,
+        )
+    }.sortedByDescending { it.startedAt }
+
+    /** Supervisory query: aggregated overview stats. */
+    fun stats(): AgentOverviewStatsDto {
+        val all = runs.values
+        val active = all.count { !it.state.value.isTerminal }
+        val waiting = all.count { it.state.value.status == AgentTurnResponse.TOOL_CALLS }
+        val completed = all.count { it.state.value.status == AgentTurnResponse.COMPLETED }
+        val failed = all.count { it.state.value.status == AgentTurnResponse.FAILED || it.state.value.status == AgentTurnResponse.CANCELLED }
+        val byApp = all.groupBy { it.owner }.mapValues { it.value.size }
+        val totalEgress = all.sumOf { it.egressRecords.size }
+        return AgentOverviewStatsDto(
+            activeRuns = active,
+            maxConcurrentRuns = maxConcurrentRuns,
+            waitingToolCalls = waiting,
+            completedRuns = completed,
+            failedRuns = failed,
+            totalRetainedRuns = all.size,
+            appsCount = byApp.size,
+            runsByApp = byApp,
+            totalEgressCalls = totalEgress,
+        )
+    }
+
+    /** Supervisory cancellation for any run regardless of owner. */
+    fun cancelAny(runId: String): Boolean {
+        val run = runs[runId] ?: return false
+        if (!run.state.value.isTerminal) {
+            run.job.cancel()
+            publish(run, AgentTurnResponse(AgentTurnResponse.CANCELLED, run.id, steps = run.state.value.steps))
+        }
+        if (!run.async) runs.remove(run.id)
+        return true
+    }
+
+    /** Record egress connection against a run (RFC-0042). */
+    fun recordEgress(runId: String, record: EgressRecordDto) {
+        runs[runId]?.egressRecords?.add(record)
+    }
 
     /** Cooperative: the status becomes `cancelled` when the request is made; a model call in flight may still finish. */
     fun cancel(owner: String, runId: String): Boolean {

@@ -3,6 +3,8 @@ package dev.aidos.executor
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContentNodeId
@@ -278,11 +280,14 @@ class AgentLoopTaskRunner(
      * task then fails with a clear "no longer available" message instead of hanging.
      */
     private val resolveRemoteAdapter: (modelId: String) -> ModelAdapter? = { null },
+    private val workerSpawner: WorkerSpawner? = null,
 ) : TaskRunner {
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
         TaskKind.MODEL_CALL -> executeModelCall(task)
         TaskKind.TOOL_CALL -> executeToolCall(task)
+        TaskKind.COMPOSITE -> workerSpawner?.spawn(task)
+            ?: TaskResult(success = false, errorMessage = "AgentLoopTaskRunner does not handle ${task.kind}")
         else -> TaskResult(success = false, errorMessage = "AgentLoopTaskRunner does not handle ${task.kind}")
     }
 
@@ -923,12 +928,12 @@ class AgentLoopTaskRunner(
         providerRetention: ProviderRetention? = null,
     ) {
         val auditId = idGen()
+        val actor = resolveSessionActor(task.sessionId.value)
         audit.write(
             id = auditId,
             projectId = projectId.value,
             kind = if (task.kind == TaskKind.MODEL_CALL) "ModelCallCompleted" else "ToolCallCompleted",
-            actorKind = "SESSION",
-            actorId = task.sessionId.value,
+            actor = actor,
             subjectRef = task.toolName ?: task.kind.name,
             nowIso = nowIso(),
         )
@@ -1031,5 +1036,20 @@ class AgentLoopTaskRunner(
             bindString(1, excludingTaskId.value)
         }.value
         return nonTerminal == 0L
+    }
+
+    private fun resolveSessionActor(sessionId: String): ActorRef {
+        val role = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT role FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
+        val kind = if (role.equals("WORKER", ignoreCase = true) || sessionId.startsWith("worker")) {
+            ActorKind.WORKER
+        } else {
+            ActorKind.SESSION
+        }
+        return ActorRef(kind, sessionId)
     }
 }

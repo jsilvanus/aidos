@@ -51,6 +51,7 @@ private data class ContentNodeRow(
 class GitRunReconciler(
     private val idGen: () -> String = { UuidV7Generator().next() },
     private val nowIso: () -> String,
+    private val deviceId: String = "runtime",
 ) : RunReconciler {
 
     private val json = Json { encodeDefaults = true }
@@ -80,7 +81,7 @@ class GitRunReconciler(
                 val terminated = terminateParkedRuns(driver, projectId.value, now)
 
                 val auditId = idGen()
-                AuditLog(driver).write(
+                AuditLog(driver, deviceId).write(
                     id = auditId, projectId = projectId.value, kind = "RepoMutatedExternally",
                     actorKind = "RUNTIME", actorId = "reconciler",
                     detailJson = "{\"classification\":\"${classification.name}\",\"fromCommit\":\"${stored.headCommit}\",\"toCommit\":\"${current.headCommit}\"}",

@@ -15,7 +15,9 @@ import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
 import dev.aidos.executor.CapabilityApprovalResolution
 import dev.aidos.executor.EventStore
+import dev.aidos.executor.RunCreator
 import dev.aidos.executor.SqliteExecutor
+import dev.aidos.executor.WorkerSpawner
 import dev.aidos.filesystem.FilesystemTool
 import dev.aidos.git.GitTool
 import dev.aidos.identity.UuidV7Generator
@@ -301,7 +303,7 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
-        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
+        val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
         val broker = ToolBroker(
             capabilityManager = capabilityManager,
             audit = audit,
@@ -361,6 +363,14 @@ class RuntimeCompositionRoot(
         )
 
         val capabilityResolver = CapabilityResolver(capabilityManager, nowIso)
+        val runCreator = RunCreator(projectDriver, idGen, nowIso)
+        val workerSpawner = WorkerSpawner(
+            driver = projectDriver,
+            capabilityManager = capabilityManager,
+            runCreator = runCreator,
+            idGen = idGen,
+            nowIso = nowIso,
+        )
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -373,6 +383,7 @@ class RuntimeCompositionRoot(
             redact = redactor::redact,
             resolveCapability = capabilityResolver::resolve,
             resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
+            workerSpawner = workerSpawner,
         )
         return SqliteExecutor(
             driver = projectDriver,
@@ -381,7 +392,9 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,
-            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso),
+            reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso, deviceId = deviceId),
+            workerSpawner = workerSpawner,
+            workerCommitter = GitWorkerCommitter(projectDriver),
         )
     }
 

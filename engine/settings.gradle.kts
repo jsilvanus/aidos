@@ -8,6 +8,7 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositories {
+        mavenLocal()
         mavenCentral()
         // AGP dependencies (e.g. lint, core-ktx) come from Google Maven.
         google()
@@ -46,6 +47,17 @@ project(":client").projectDir = file("../sdk/client")
 // agent loop beside the model API (AGENT-MANAGEMENT.md). It depends only on :kernel.
 include(":amp")
 project(":amp").projectDir = file("../agent/amp")
+
+val aidosTcrCandidates = listOf(
+    file("../aidos-tcr"),
+    file("../../aidos-tcr"),
+    file("D:/aidos-tcr"),
+    file("c:/Users/jsilv/Code/aidos-tcr")
+)
+val aidosTcrDir = aidosTcrCandidates.firstOrNull { it.exists() && it.isDirectory }
+if (aidosTcrDir != null) {
+    includeBuild(aidosTcrDir)
+}
 
 include(":modelruntime")
 include(":decisions")

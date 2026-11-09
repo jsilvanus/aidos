@@ -30,6 +30,10 @@ data class AgentTurnRequest(
      * with the effective limit (strictest of this, the app's and Engine's) before the run starts.
      */
     val locality: String? = null,
+    val role: String? = "DRIVER",
+    val parentSessionId: String? = null,
+    val parentRunId: String? = null,
+    val workerBrief: String? = null,
 )
 
 @Serializable
@@ -51,6 +55,103 @@ data class ToolResultsRequest(val results: List<ClientToolResult>, val async: Bo
 
 @Serializable
 data class ExecutedToolCallDto(val toolName: String, val argumentsJson: String, val resultText: String)
+
+@Serializable
+data class EgressRecordDto(
+    val destinationHost: String,
+    val method: String = "GET",
+    val requestBytes: Long = 0L,
+    val responseBytes: Long = 0L,
+    val payloadHash: String = "",
+    val durationMs: Long = 0L,
+    val outcome: String = "ALLOWED",
+    val timestamp: String = "",
+)
+
+@Serializable
+data class TaskGraphNodeDto(
+    val taskId: String,
+    val ordinal: Int,
+    val kind: String,
+    val description: String,
+    val state: String,
+    val dependsOnTaskIds: List<String> = emptyList(),
+    val toolName: String? = null,
+    val awaitingRunId: String? = null,
+)
+
+@Serializable
+data class WorkerSpawnDto(
+    val taskId: String,
+    val workerSessionId: String? = null,
+    val childRunId: String? = null,
+    val brief: String,
+    val budgetSplitWays: Int = 1,
+    val delegatedCapabilities: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentBudgetDto(
+    val modelCalls: Int? = null,
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val costUnits: Long? = null,
+    val steps: Int? = null,
+    val maxSteps: Int? = null,
+    val splitWays: Int? = null,
+)
+
+@Serializable
+data class WorkerOutcomeDto(
+    val workerSessionId: String,
+    val commitRef: String,
+    val outcomeSummary: String,
+    val committedAt: String? = null,
+)
+
+@Serializable
+data class AgentRunSummaryDto(
+    val runId: String,
+    val owner: String,
+    val model: String,
+    val placement: String = "local",
+    val locality: String = "local_only",
+    val status: String,
+    val steps: Int = 0,
+    val maxSteps: Int = 8,
+    val promptPreview: String = "",
+    val replyText: String = "",
+    val error: String? = null,
+    val seq: Int = 0,
+    val pendingToolCall: PendingToolCall? = null,
+    val executedTools: List<ExecutedToolCallDto> = emptyList(),
+    val egressRecords: List<EgressRecordDto> = emptyList(),
+    val startedAt: Long = 0L,
+    val finishedAt: Long = 0L,
+    val role: String = "DRIVER",
+    val parentSessionId: String? = null,
+    val parentRunId: String? = null,
+    val workerBrief: String? = null,
+    val tasks: List<TaskGraphNodeDto> = emptyList(),
+    val workerSpawns: List<WorkerSpawnDto> = emptyList(),
+    val budget: AgentBudgetDto? = null,
+    val workerOutcome: WorkerOutcomeDto? = null,
+    val isParkedOnChild: Boolean = false,
+    val awaitingChildRunId: String? = null,
+)
+
+@Serializable
+data class AgentOverviewStatsDto(
+    val activeRuns: Int,
+    val maxConcurrentRuns: Int,
+    val waitingToolCalls: Int,
+    val completedRuns: Int,
+    val failedRuns: Int,
+    val totalRetainedRuns: Int,
+    val appsCount: Int,
+    val runsByApp: Map<String, Int>,
+    val totalEgressCalls: Int,
+)
 
 /**
  * Snapshot of a run (a task). [status]: `running`; `tool_calls` (input required: execute [toolCalls]

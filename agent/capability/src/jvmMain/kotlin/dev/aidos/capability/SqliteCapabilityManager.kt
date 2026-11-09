@@ -63,8 +63,22 @@ import kotlinx.serialization.json.put
 class SqliteCapabilityManager(
     private val projectDriver: SqlDriver,
     private val ids: UuidV7Generator,
+    private val deviceId: String = "runtime",
     private val nowIso: () -> String,
 ) : CapabilityManager {
+
+    constructor(
+        projectDriver: SqlDriver,
+        ids: UuidV7Generator,
+        nowIso: () -> String,
+    ) : this(projectDriver, ids, "runtime", nowIso)
+
+    constructor(
+        projectDriver: SqlDriver,
+        ids: UuidV7Generator,
+        nowIso: () -> String,
+        deviceId: String,
+    ) : this(projectDriver, ids, deviceId, nowIso)
 
     override suspend fun grant(
         subjectId: String,
@@ -78,8 +92,11 @@ class SqliteCapabilityManager(
         val id = CapabilityId(ids.next())
         val auditId = AuditId(ids.next())
         val now = nowIso()
-        val epoch = currentEpochOrZero(scope.projectId())
-        val projectIdStr = scope.projectId()?.value ?: ""
+        val resolvedProj = scope.projectId()
+            ?: findProjectIdForSubject(subjectId)?.let { ProjectId(it) }
+            ?: findSingleProjectId()?.let { ProjectId(it) }
+        val epoch = currentEpochOrZero(resolvedProj)
+        val projectIdStr = resolvedProj?.value ?: ""
 
         insertAuditRow(auditId.value, projectIdStr, grantedBy.value, now)
 
@@ -110,7 +127,7 @@ class SqliteCapabilityManager(
         return Result.success(
             Capability(
                 id = id,
-                projectId = scope.projectId() ?: ProjectId(""),
+                projectId = resolvedProj ?: ProjectId(""),
                 permission = permission,
                 subjectId = subjectId,
                 subjectKind = subjectKind,
@@ -152,9 +169,17 @@ class SqliteCapabilityManager(
         // Was missing entirely: every delegate() call failed FK-violating on audit_ref, since
         // nothing wrote the audit_log row it references (unlike grant(), just above, which does).
         // delegate() was therefore never actually callable before this fix.
+        val parentActorKind = when (parentCap.subjectKind) {
+            SubjectKind.SESSION -> dev.aidos.kernel.ActorKind.SESSION
+            SubjectKind.WORKER -> dev.aidos.kernel.ActorKind.WORKER
+            SubjectKind.PLUGIN -> dev.aidos.kernel.ActorKind.PLUGIN
+            SubjectKind.MCP_SERVER -> dev.aidos.kernel.ActorKind.MCP_SERVER
+            SubjectKind.FRONTEND -> dev.aidos.kernel.ActorKind.USER
+        }
+
         insertAuditRow(
             auditId.value, parentCap.projectId.value, parentCap.subjectId, now,
-            kind = "CapabilityDelegated", actorKind = "SESSION",
+            kind = "CapabilityDelegated", actorKind = parentActorKind.name,
         )
 
         projectDriver.execute(
@@ -342,6 +367,24 @@ class SqliteCapabilityManager(
             parameters = 1,
         ) { bindString(0, capId.value) }.value
 
+    private fun findProjectIdForSubject(subjectId: String): String? {
+        return projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, subjectId) }.value
+    }
+
+    private fun findSingleProjectId(): String? {
+        return projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM projects LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 0,
+        ).value
+    }
+
     // ─── Internal helpers ────────────────────────────────────────────────────
 
     private fun currentEpochOrZero(projectId: ProjectId?): Long {
@@ -451,8 +494,8 @@ class SqliteCapabilityManager(
         projectDriver.execute(
             identifier = null,
             sql = "INSERT INTO audit_log (id, project_id, sequence, occurred_at, kind, " +
-                "actor_kind, actor_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'runtime')",
-            parameters = 7,
+                "actor_kind, actor_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 8,
         ) {
             bindString(0, auditId)
             bindString(1, projectId)
@@ -461,6 +504,7 @@ class SqliteCapabilityManager(
             bindString(4, kind)
             bindString(5, actorKind)
             bindString(6, actorId)
+            bindString(7, deviceId)
         }
     }
 

@@ -3,6 +3,8 @@ package fi.italeino.aidos.engine.desktop
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.approval.AppApprovalRecord
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.ui.AgentFilterTab
+import fi.italeino.aidos.engine.ui.AgentOverviewUiState
 import fi.italeino.aidos.engine.ui.ResidentModel
 import fi.italeino.aidos.engine.ui.StatusUiState
 import kotlinx.coroutines.CoroutineScope
@@ -102,5 +104,286 @@ class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: C
 
     private fun act(action: suspend (fi.italeino.aidos.engine.approval.AppApprovalStore) -> Unit) {
         scope.launch { action(host.approvalStore) }
+    }
+}
+
+/**
+ * Desktop ViewModel managing state for [AgentsPane].
+ * Reactive telemetry for active runs, tool waits, model placement, and RFC-0042 egress.
+ */
+class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope: CoroutineScope) {
+    private val _state = MutableStateFlow(AgentOverviewUiState())
+    val state: StateFlow<AgentOverviewUiState> = _state.asStateFlow()
+
+    init {
+        scope.launch {
+            while (true) {
+                refresh()
+                delay(1_500)
+            }
+        }
+    }
+
+    fun selectAppFilter(app: String?) {
+        _state.value = _state.value.copy(selectedAppFilter = app)
+    }
+
+    fun selectStatusFilter(status: AgentFilterTab) {
+        _state.value = _state.value.copy(selectedStatusFilter = status)
+    }
+
+    fun selectViewLayout(layout: fi.italeino.aidos.engine.ui.AgentViewLayout) {
+        _state.value = _state.value.copy(selectedViewLayout = layout)
+    }
+
+    fun selectRunDetail(runId: String?) {
+        _state.value = _state.value.copy(selectedRunId = runId)
+    }
+
+    fun cancelRun(runId: String) {
+        host.agentRuntime?.cancelAny(runId)
+        refresh()
+    }
+
+    fun refresh() {
+        val runtime = host.agentRuntime
+        if (runtime == null) {
+            _state.value = _state.value.copy(
+                isEngineRunning = host.isRunning.value,
+                stats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(),
+                runs = emptyList()
+            )
+            return
+        }
+
+        val rawStats = runtime.stats()
+        val rawRuns = runtime.listAll()
+
+        val uiStats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(
+            activeRuns = rawStats.activeRuns,
+            maxConcurrentRuns = rawStats.maxConcurrentRuns,
+            waitingToolCalls = rawStats.waitingToolCalls,
+            completedRuns = rawStats.completedRuns,
+            failedRuns = rawStats.failedRuns,
+            totalRetainedRuns = rawStats.totalRetainedRuns,
+            appsCount = rawStats.appsCount,
+            runsByApp = rawStats.runsByApp,
+            totalEgressCalls = rawStats.totalEgressCalls,
+        )
+
+        val uiRuns = if (rawRuns.isNotEmpty()) {
+            rawRuns.map { r ->
+                dev.aidos.tcr.agent.AgentRunUiModel(
+                    runId = r.runId,
+                    ownerApp = r.owner,
+                    modelId = r.model,
+                    placement = dev.aidos.tcr.agent.AgentPlacement.fromWire(r.placement),
+                    locality = dev.aidos.tcr.agent.AgentLocality.fromWire(r.locality),
+                    status = when (r.status) {
+                        "running" -> dev.aidos.tcr.agent.AgentRunStatus.RUNNING
+                        "tool_calls" -> dev.aidos.tcr.agent.AgentRunStatus.TOOL_CALLS
+                        "completed" -> dev.aidos.tcr.agent.AgentRunStatus.COMPLETED
+                        "failed" -> dev.aidos.tcr.agent.AgentRunStatus.FAILED
+                        "cancelled" -> dev.aidos.tcr.agent.AgentRunStatus.CANCELLED
+                        else -> dev.aidos.tcr.agent.AgentRunStatus.RUNNING
+                    },
+                    seq = r.seq,
+                    steps = r.steps,
+                    maxSteps = r.maxSteps,
+                    promptPreview = r.promptPreview,
+                    replyText = r.replyText,
+                    errorMessage = r.error,
+                    pendingToolCall = r.pendingToolCall?.let {
+                        dev.aidos.tcr.agent.PendingToolCallUi(it.callId, it.name, it.arguments.toString())
+                    },
+                    executedTools = r.executedTools.map {
+                        dev.aidos.tcr.agent.ExecutedToolCallUi(it.toolName, it.argumentsJson, it.resultText)
+                    },
+                    egressSummary = dev.aidos.tcr.agent.AgentEgressSummaryUi(
+                        totalCalls = r.egressRecords.size,
+                        totalBytesOut = r.egressRecords.sumOf { it.requestBytes },
+                        totalBytesIn = r.egressRecords.sumOf { it.responseBytes },
+                        records = r.egressRecords.map {
+                            dev.aidos.tcr.agent.AgentEgressRecordUi(
+                                destinationHost = it.destinationHost,
+                                method = it.method,
+                                requestBytes = it.requestBytes,
+                                responseBytes = it.responseBytes,
+                                payloadHash = it.payloadHash,
+                                durationMs = it.durationMs,
+                                outcome = it.outcome,
+                                timestamp = it.timestamp
+                            )
+                        }
+                    ),
+                    startedAt = r.startedAt,
+                    finishedAt = r.finishedAt,
+                    role = dev.aidos.tcr.agent.AgentRoleUi.fromWire(r.role),
+                    parentSessionId = r.parentSessionId,
+                    parentRunId = r.parentRunId,
+                    workerBrief = r.workerBrief,
+                    tasks = r.tasks.map { t ->
+                        dev.aidos.tcr.agent.TaskGraphNodeUi(
+                            taskId = t.taskId,
+                            ordinal = t.ordinal,
+                            kind = t.kind,
+                            description = t.description,
+                            state = t.state,
+                            dependsOnTaskIds = t.dependsOnTaskIds,
+                            toolName = t.toolName,
+                            awaitingRunId = t.awaitingRunId,
+                        )
+                    },
+                    workerSpawns = r.workerSpawns.map { s ->
+                        dev.aidos.tcr.agent.WorkerSpawnUi(
+                            taskId = s.taskId,
+                            workerSessionId = s.workerSessionId,
+                            childRunId = s.childRunId,
+                            brief = s.brief,
+                            budgetSplitWays = s.budgetSplitWays,
+                            delegatedCapabilities = s.delegatedCapabilities,
+                        )
+                    },
+                    budget = r.budget?.let { b ->
+                        dev.aidos.tcr.agent.AgentBudgetUi(
+                            modelCalls = b.modelCalls,
+                            inputTokens = b.inputTokens,
+                            outputTokens = b.outputTokens,
+                            costUnits = b.costUnits,
+                            steps = b.steps,
+                            maxSteps = b.maxSteps,
+                            splitWays = b.splitWays,
+                        )
+                    },
+                    workerOutcome = r.workerOutcome?.let { o ->
+                        dev.aidos.tcr.agent.WorkerOutcomeUi(
+                            workerSessionId = o.workerSessionId,
+                            commitRef = o.commitRef,
+                            outcomeSummary = o.outcomeSummary,
+                            committedAt = o.committedAt,
+                        )
+                    },
+                    isParkedOnChild = r.isParkedOnChild,
+                    awaitingChildRunId = r.awaitingChildRunId,
+                )
+            }
+        } else {
+            // Demonstration data showcasing RFC-0011 Driver/Worker Topology, DAG dependencies, budget splits & treeless commits
+            sampleOrchestrationRuns()
+        }
+
+        _state.value = _state.value.copy(
+            isEngineRunning = host.isRunning.value,
+            stats = uiStats,
+            runs = uiRuns
+        )
+    }
+
+    private fun sampleOrchestrationRuns(): List<dev.aidos.tcr.agent.AgentRunUiModel> {
+        val driverRun = dev.aidos.tcr.agent.AgentRunUiModel(
+            runId = "run-driver-001",
+            ownerApp = "Dictator Workspace",
+            modelId = "gemma-2-2b-it",
+            placement = dev.aidos.tcr.agent.AgentPlacement.LOCAL,
+            locality = dev.aidos.tcr.agent.AgentLocality.LOCAL_ONLY,
+            status = dev.aidos.tcr.agent.AgentRunStatus.TOOL_CALLS,
+            role = dev.aidos.tcr.agent.AgentRoleUi.DRIVER,
+            seq = 4,
+            steps = 4,
+            maxSteps = 12,
+            promptPreview = "Refactor audio pipeline and spawn worker to process audio frequency buffers",
+            replyText = "",
+            isParkedOnChild = true,
+            awaitingChildRunId = "run-worker-002",
+            tasks = listOf(
+                dev.aidos.tcr.agent.TaskGraphNodeUi("t1", 1, "TOOL_CALL", "Inspect audio input device descriptors", "COMPLETED"),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("t2", 2, "COMPOSITE", "Spawn worker: analyze FFT frequency buffers", "AWAITING_INPUT", listOf("t1"), awaitingRunId = "run-worker-002"),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("t3", 3, "TOOL_CALL", "Merge audio transform buffers", "PENDING", listOf("t2")),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("t4", 4, "MODEL_CALL", "Draft voice recognition response", "PENDING", listOf("t3")),
+            ),
+            workerSpawns = listOf(
+                dev.aidos.tcr.agent.WorkerSpawnUi(
+                    taskId = "t2",
+                    workerSessionId = "sess-worker-002",
+                    childRunId = "run-worker-002",
+                    brief = "Analyze FFT frequency buffers",
+                    budgetSplitWays = 2,
+                    delegatedCapabilities = listOf("STT_QUERY", "FS_READ")
+                )
+            ),
+            budget = dev.aidos.tcr.agent.AgentBudgetUi(
+                modelCalls = 8,
+                inputTokens = 8000L,
+                outputTokens = 4000L,
+                steps = 12,
+                maxSteps = 12,
+                splitWays = 2
+            ),
+            startedAt = System.currentTimeMillis() - 120_000,
+        )
+
+        val workerRun = dev.aidos.tcr.agent.AgentRunUiModel(
+            runId = "run-worker-002",
+            ownerApp = "Dictator Workspace",
+            modelId = "gemma-2-2b-it",
+            placement = dev.aidos.tcr.agent.AgentPlacement.LOCAL,
+            locality = dev.aidos.tcr.agent.AgentLocality.LOCAL_ONLY,
+            status = dev.aidos.tcr.agent.AgentRunStatus.RUNNING,
+            role = dev.aidos.tcr.agent.AgentRoleUi.WORKER,
+            parentSessionId = "sess-driver-001",
+            parentRunId = "run-driver-001",
+            workerBrief = "Analyze FFT frequency buffers",
+            seq = 2,
+            steps = 2,
+            maxSteps = 6,
+            promptPreview = "Task Brief: Analyze FFT frequency buffers (delegated from driver)",
+            replyText = "",
+            tasks = listOf(
+                dev.aidos.tcr.agent.TaskGraphNodeUi("wt1", 1, "TOOL_CALL", "Read raw audio stream samples", "COMPLETED"),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("wt2", 2, "MODEL_CALL", "Compute frequency bins & spectral centroids", "RUNNING", listOf("wt1")),
+            ),
+            budget = dev.aidos.tcr.agent.AgentBudgetUi(
+                modelCalls = 4,
+                inputTokens = 4000L,
+                outputTokens = 2000L,
+                steps = 6,
+                maxSteps = 6,
+                splitWays = 2
+            ),
+            startedAt = System.currentTimeMillis() - 60_000,
+        )
+
+        val completedWorkerRun = dev.aidos.tcr.agent.AgentRunUiModel(
+            runId = "run-worker-003",
+            ownerApp = "Agentic Messenger",
+            modelId = "qwen-2.5-1.5b",
+            placement = dev.aidos.tcr.agent.AgentPlacement.LOCAL,
+            locality = dev.aidos.tcr.agent.AgentLocality.LOCAL_ONLY,
+            status = dev.aidos.tcr.agent.AgentRunStatus.COMPLETED,
+            role = dev.aidos.tcr.agent.AgentRoleUi.WORKER,
+            parentSessionId = "sess-amp-driver-1",
+            parentRunId = "run-amp-driver-1",
+            workerBrief = "Verify cryptographic Universal Envelope signatures",
+            seq = 3,
+            steps = 3,
+            maxSteps = 4,
+            promptPreview = "Verify envelope cryptographic signatures and provenance seals",
+            replyText = "Verification complete: 3 envelope signatures verified valid against DeviceIdentity keys.",
+            tasks = listOf(
+                dev.aidos.tcr.agent.TaskGraphNodeUi("at1", 1, "TOOL_CALL", "Read envelope header signatures", "COMPLETED"),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("at2", 2, "MODEL_CALL", "Verify Ed25519 signatures", "COMPLETED", listOf("at1")),
+                dev.aidos.tcr.agent.TaskGraphNodeUi("at3", 3, "TOOL_CALL", "Write verification receipt", "COMPLETED", listOf("at2")),
+            ),
+            workerOutcome = dev.aidos.tcr.agent.WorkerOutcomeUi(
+                workerSessionId = "sess-amp-worker-3",
+                commitRef = "refs/aidos/workers/sess-amp-worker-3",
+                outcomeSummary = "Verified 3 envelope signatures; zero cryptographic errors found.",
+                committedAt = "2026-11-09T15:40:00Z"
+            ),
+            startedAt = System.currentTimeMillis() - 300_000,
+            finishedAt = System.currentTimeMillis() - 240_000,
+        )
+
+        return listOf(driverRun, workerRun, completedWorkerRun)
     }
 }

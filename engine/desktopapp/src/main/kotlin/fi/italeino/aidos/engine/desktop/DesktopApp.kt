@@ -24,22 +24,29 @@ import kotlinx.coroutines.CoroutineScope
 import java.awt.Desktop
 import java.net.URI
 
+enum class DesktopRightPaneTab {
+    MODELS,
+    AGENTS
+}
+
 /** Everything the window binds to, created once per app run. */
 class DesktopModels(val host: DesktopEngineHost, val prefs: DesktopPreferences, val scope: CoroutineScope) {
     val status = DesktopStatusModel(host, scope)
     val apps = DesktopAppsModel(host, scope)
     val models = DesktopModelsModel(host, prefs, scope)
+    val agents = DesktopAgentsModel(host, scope)
 }
 
 /**
- * One-window layout: Home (status) above Connected Apps on the left, the Models tabs (or a model's
- * detail) on the right, Settings in a dialog. All panes are the shared :engineui ones.
+ * One-window layout: Home (status) above Connected Apps on the left, the Models tabs / Agent Runtime on the right,
+ * Settings in a dialog. All panes are the shared :engineui ones.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DesktopApp(models: DesktopModels) {
     var showSettings by remember { mutableStateOf(false) }
     var showGroups by remember { mutableStateOf(false) }
+    var rightPaneTab by remember { mutableStateOf(DesktopRightPaneTab.MODELS) }
     var selectedModelId by remember { mutableStateOf<String?>(null) }
     val errorMessage by models.models.errorMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -74,15 +81,45 @@ fun DesktopApp(models: DesktopModels) {
                 AppsColumn(models, Modifier.weight(0.45f))
             }
             VerticalDivider()
-            Box(modifier = Modifier.weight(0.6f).fillMaxHeight()) {
-                val modelId = selectedModelId
-                if (modelId == null) {
-                    ModelsColumn(models, onModelSelected = { selectedModelId = it })
-                } else {
-                    DetailColumn(models, modelId, onBack = {
-                        selectedModelId = null
-                        models.models.refresh()
-                    })
+            Column(modifier = Modifier.weight(0.6f).fillMaxHeight()) {
+                val agentStats by models.agents.state.collectAsState()
+                TabRow(selectedTabIndex = rightPaneTab.ordinal) {
+                    Tab(
+                        selected = rightPaneTab == DesktopRightPaneTab.MODELS,
+                        onClick = { rightPaneTab = DesktopRightPaneTab.MODELS },
+                        text = { Text("Models & Providers") }
+                    )
+                    Tab(
+                        selected = rightPaneTab == DesktopRightPaneTab.AGENTS,
+                        onClick = { rightPaneTab = DesktopRightPaneTab.AGENTS },
+                        text = {
+                            val active = agentStats.stats.activeRuns
+                            Text(if (active > 0) "Agents ($active)" else "Agents")
+                        }
+                    )
+                }
+
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    if (rightPaneTab == DesktopRightPaneTab.MODELS) {
+                        val modelId = selectedModelId
+                        if (modelId == null) {
+                            ModelsColumn(models, onModelSelected = { selectedModelId = it })
+                        } else {
+                            DetailColumn(models, modelId, onBack = {
+                                selectedModelId = null
+                                models.models.refresh()
+                            })
+                        }
+                    } else {
+                        AgentsPane(
+                            state = agentStats,
+                            onAppFilterSelected = { models.agents.selectAppFilter(it) },
+                            onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
+                            onViewLayoutSelected = { models.agents.selectViewLayout(it) },
+                            onCancelRun = { models.agents.cancelRun(it) },
+                            onInspectRun = { models.agents.selectRunDetail(it) }
+                        )
+                    }
                 }
             }
         }
