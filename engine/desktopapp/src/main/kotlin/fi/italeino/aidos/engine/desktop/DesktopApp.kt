@@ -115,6 +115,7 @@ fun DesktopApp(models: DesktopModels) {
                             state = agentStats,
                             onAppFilterSelected = { models.agents.selectAppFilter(it) },
                             onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
+                            onViewLayoutSelected = { models.agents.selectViewLayout(it) },
                             onCancelRun = { models.agents.cancelRun(it) },
                             onInspectRun = { models.agents.selectRunDetail(it) }
                         )

@@ -35,6 +35,10 @@ class AgentsViewModel : ViewModel() {
         _state.value = _state.value.copy(selectedStatusFilter = status)
     }
 
+    fun selectViewLayout(layout: AgentViewLayout) {
+        _state.value = _state.value.copy(selectedViewLayout = layout)
+    }
+
     fun selectRunDetail(runId: String?) {
         _state.value = _state.value.copy(selectedRunId = runId)
     }

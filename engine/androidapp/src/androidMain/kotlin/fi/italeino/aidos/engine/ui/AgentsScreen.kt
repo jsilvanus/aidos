@@ -24,6 +24,7 @@ fun AgentsScreen(viewModel: AgentsViewModel = viewModel()) {
             state = state,
             onAppFilterSelected = viewModel::selectAppFilter,
             onStatusFilterSelected = viewModel::selectStatusFilter,
+            onViewLayoutSelected = viewModel::selectViewLayout,
             onCancelRun = viewModel::cancelRun,
             onInspectRun = viewModel::selectRunDetail,
             modifier = Modifier.padding(innerPadding),

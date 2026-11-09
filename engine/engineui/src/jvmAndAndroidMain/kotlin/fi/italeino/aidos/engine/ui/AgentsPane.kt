@@ -31,11 +31,17 @@ enum class AgentFilterTab(val label: String) {
     FAILED("Failed / Cancelled")
 }
 
+enum class AgentViewLayout(val label: String) {
+    HIERARCHY("🌳 Subagent Hierarchy"),
+    FLAT("📋 Flat Feed")
+}
+
 data class AgentOverviewUiState(
     val stats: AgentRuntimeOverviewStats = AgentRuntimeOverviewStats(),
     val runs: List<AgentRunUiModel> = emptyList(),
     val selectedAppFilter: String? = null,
     val selectedStatusFilter: AgentFilterTab = AgentFilterTab.ALL,
+    val selectedViewLayout: AgentViewLayout = AgentViewLayout.HIERARCHY,
     val isEngineRunning: Boolean = true,
     val selectedRunId: String? = null,
 )
@@ -49,6 +55,7 @@ fun AgentsPane(
     state: AgentOverviewUiState,
     onAppFilterSelected: (String?) -> Unit,
     onStatusFilterSelected: (AgentFilterTab) -> Unit,
+    onViewLayoutSelected: (AgentViewLayout) -> Unit = {},
     onCancelRun: (String) -> Unit,
     onInspectRun: (String?) -> Unit,
     modifier: Modifier = Modifier,
@@ -111,22 +118,48 @@ fun AgentsPane(
             }
         }
 
-        // 3. Filter Bar: Execution Status Tabs
+        // 3. Filter Bar: Execution Status & Topology Layout Tabs
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Execution Status",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Gray
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(AgentFilterTab.entries) { tab ->
-                        FilterChip(
-                            selected = state.selectedStatusFilter == tab,
-                            onClick = { onStatusFilterSelected(tab) },
-                            label = { Text(tab.label, fontSize = 11.sp) }
-                        )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                // Status Filter
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Execution Status",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(AgentFilterTab.entries) { tab ->
+                            FilterChip(
+                                selected = state.selectedStatusFilter == tab,
+                                onClick = { onStatusFilterSelected(tab) },
+                                label = { Text(tab.label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
+
+                // Topology Layout Toggle
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "View Layout",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AgentViewLayout.entries.forEach { layout ->
+                            FilterChip(
+                                selected = state.selectedViewLayout == layout,
+                                onClick = { onViewLayoutSelected(layout) },
+                                label = { Text(layout.label, fontSize = 11.sp) }
+                            )
+                        }
                     }
                 }
             }
@@ -145,6 +178,15 @@ fun AgentsPane(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF111827)
                 )
+                if (state.selectedViewLayout == AgentViewLayout.HIERARCHY) {
+                    val driverCount = filteredRuns.count { it.role == AgentRoleUi.DRIVER }
+                    val workerCount = filteredRuns.count { it.role == AgentRoleUi.WORKER }
+                    Text(
+                        text = "$driverCount drivers · $workerCount delegated workers",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+                }
             }
         }
 
@@ -176,7 +218,79 @@ fun AgentsPane(
                     }
                 }
             }
+        } else if (state.selectedViewLayout == AgentViewLayout.HIERARCHY) {
+            // Topology Tree View: Driver Runs with nested Subagent Workers
+            val drivers = filteredRuns.filter { it.role == AgentRoleUi.DRIVER }
+            val allWorkers = filteredRuns.filter { it.role == AgentRoleUi.WORKER }
+            val attachedWorkerIds = mutableSetOf<String>()
+
+            drivers.forEach { driver ->
+                item(key = driver.runId) {
+                    AgentRunCard(
+                        run = driver,
+                        onCancel = onCancelRun,
+                        onInspect = onInspectRun
+                    )
+                }
+
+                // Subagent Workers under this Driver
+                val childWorkers = allWorkers.filter { w ->
+                    val pSession = w.parentSessionId
+                    w.parentRunId == driver.runId ||
+                    (pSession != null && driver.runId.contains(pSession.take(8))) ||
+                    pSession == driver.runId
+                }
+
+                childWorkers.forEach { worker ->
+                    attachedWorkerIds.add(worker.runId)
+                    item(key = "tree_${driver.runId}_${worker.runId}") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 22.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                text = "└── ",
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(top = 10.dp)
+                            )
+                            Box(modifier = Modifier.weight(1f)) {
+                                AgentRunCard(
+                                    run = worker,
+                                    onCancel = onCancelRun,
+                                    onInspect = onInspectRun
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Standalone or unattached workers
+            val orphanWorkers = allWorkers.filterNot { attachedWorkerIds.contains(it.runId) }
+            if (orphanWorkers.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Independent / Unparented Workers",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                items(orphanWorkers, key = { it.runId }) { worker ->
+                    AgentRunCard(
+                        run = worker,
+                        onCancel = onCancelRun,
+                        onInspect = onInspectRun
+                    )
+                }
+            }
         } else {
+            // Flat List View
             items(filteredRuns, key = { it.runId }) { run ->
                 AgentRunCard(
                     run = run,
@@ -192,7 +306,8 @@ fun AgentsPane(
         AgentInspectionDialog(
             run = selectedRun,
             onDismiss = { onInspectRun(null) },
-            onCancelRun = onCancelRun
+            onCancelRun = onCancelRun,
+            onInspectRun = onInspectRun
         )
     }
 }
@@ -201,13 +316,14 @@ fun AgentsPane(
 private fun AgentInspectionDialog(
     run: AgentRunUiModel,
     onDismiss: () -> Unit,
-    onCancelRun: (String) -> Unit
+    onCancelRun: (String) -> Unit,
+    onInspectRun: ((String) -> Unit)? = null
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.85f),
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.90f),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White)
         ) {
@@ -225,7 +341,7 @@ private fun AgentInspectionDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Agent Run Telemetry",
+                            text = "Agent Run Telemetry & Execution Graph",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -245,11 +361,22 @@ private fun AgentInspectionDialog(
 
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Model Placement Section
+                    // 1. Role & Subagent Hierarchy Section
                     item {
-                        Text(text = "Model Placement & Limits", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Orchestration Topology (RFC-0011)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        AgentRoleBadge(
+                            role = run.role,
+                            parentSessionId = run.parentSessionId,
+                            workerBrief = run.workerBrief
+                        )
+                    }
+
+                    // 2. Model Placement Section
+                    item {
+                        Text(text = "Model Placement & Limits (RFC-0104)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
                         AgentPlacementBadge(
                             modelId = run.modelId,
@@ -258,14 +385,50 @@ private fun AgentInspectionDialog(
                         )
                     }
 
-                    // Outside Connections Section
+                    // 3. Execution Graph DAG (RFC-0019)
+                    if (run.tasks.isNotEmpty()) {
+                        item {
+                            Text(text = "Execution Graph (RFC-0019 DAG & Edges)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            AgentTaskGraphView(
+                                tasks = run.tasks,
+                                workerSpawns = run.workerSpawns,
+                                onInspectRun = onInspectRun
+                            )
+                        }
+                    }
+
+                    // 4. Delegated Budget & Spend Ceilings (RFC-0028)
+                    val budget = run.budget
+                    if (budget != null) {
+                        item {
+                            Text(text = "Delegated Budget & Quota (RFC-0028)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            AgentBudgetMeter(
+                                budget = budget,
+                                currentSteps = run.steps
+                            )
+                        }
+                    }
+
+                    // 5. Worker Outcome Commit (RFC-0011)
+                    val workerOutcome = run.workerOutcome
+                    if (workerOutcome != null) {
+                        item {
+                            Text(text = "Worker Git Commit Outcome (RFC-0011)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            WorkerOutcomeCard(outcome = workerOutcome)
+                        }
+                    }
+
+                    // 6. Outside Connections Section
                     item {
                         Text(text = "Network Egress Telemetry (RFC-0042)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
                         AgentEgressSummary(egressSummary = run.egressSummary)
                     }
 
-                    // Prompt Section
+                    // 7. Prompt Section
                     item {
                         Text(text = "User / Peer Prompt", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
@@ -279,7 +442,7 @@ private fun AgentInspectionDialog(
                         }
                     }
 
-                    // Tool Calls Trace
+                    // 8. Tool Calls Trace
                     if (run.executedTools.isNotEmpty()) {
                         item {
                             Text(text = "Executed Tool Calls (${run.executedTools.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -314,7 +477,7 @@ private fun AgentInspectionDialog(
                         }
                     }
 
-                    // Final Reply
+                    // 9. Final Reply
                     if (run.replyText.isNotBlank()) {
                         item {
                             Text(text = "Agent Final Output", fontSize = 12.sp, fontWeight = FontWeight.Bold)

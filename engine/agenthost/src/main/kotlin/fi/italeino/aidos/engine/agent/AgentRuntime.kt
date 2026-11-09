@@ -63,12 +63,22 @@ class AgentRuntime(
         val locality: String,
         val promptPreview: String,
         val startedAt: Long,
+        val role: String = "DRIVER",
+        val parentSessionId: String? = null,
+        val parentRunId: String? = null,
+        val workerBrief: String? = null,
     ) {
         val state = MutableStateFlow(AgentTurnResponse(AgentTurnResponse.RUNNING, id))
         val waiting = ConcurrentHashMap<String, CompletableDeferred<AmpToolExecutionResult>>()
         @Volatile var finishedAt: Long = 0
         @Volatile var placement: String = "local"
         val egressRecords = java.util.Collections.synchronizedList(mutableListOf<EgressRecordDto>())
+        val tasks = java.util.Collections.synchronizedList(mutableListOf<TaskGraphNodeDto>())
+        val workerSpawns = java.util.Collections.synchronizedList(mutableListOf<WorkerSpawnDto>())
+        @Volatile var budget: AgentBudgetDto? = null
+        @Volatile var workerOutcome: WorkerOutcomeDto? = null
+        @Volatile var isParkedOnChild: Boolean = false
+        @Volatile var awaitingChildRunId: String? = null
         lateinit var job: Job
     }
 
@@ -100,6 +110,10 @@ class AgentRuntime(
             locality = request.locality ?: "local_only",
             promptPreview = request.message,
             startedAt = now(),
+            role = request.role ?: "DRIVER",
+            parentSessionId = request.parentSessionId,
+            parentRunId = request.parentRunId,
+            workerBrief = request.workerBrief,
         )
 
         val adapter = try {
@@ -192,6 +206,16 @@ class AgentRuntime(
             egressRecords = r.egressRecords.toList(),
             startedAt = r.startedAt,
             finishedAt = r.finishedAt,
+            role = r.role,
+            parentSessionId = r.parentSessionId,
+            parentRunId = r.parentRunId,
+            workerBrief = r.workerBrief,
+            tasks = r.tasks.toList(),
+            workerSpawns = r.workerSpawns.toList(),
+            budget = r.budget,
+            workerOutcome = r.workerOutcome,
+            isParkedOnChild = r.isParkedOnChild,
+            awaitingChildRunId = r.awaitingChildRunId,
         )
     }.sortedByDescending { it.startedAt }
 

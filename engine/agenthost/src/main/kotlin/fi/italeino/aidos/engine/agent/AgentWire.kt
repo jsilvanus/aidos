@@ -30,6 +30,10 @@ data class AgentTurnRequest(
      * with the effective limit (strictest of this, the app's and Engine's) before the run starts.
      */
     val locality: String? = null,
+    val role: String? = "DRIVER",
+    val parentSessionId: String? = null,
+    val parentRunId: String? = null,
+    val workerBrief: String? = null,
 )
 
 @Serializable
@@ -65,6 +69,47 @@ data class EgressRecordDto(
 )
 
 @Serializable
+data class TaskGraphNodeDto(
+    val taskId: String,
+    val ordinal: Int,
+    val kind: String,
+    val description: String,
+    val state: String,
+    val dependsOnTaskIds: List<String> = emptyList(),
+    val toolName: String? = null,
+    val awaitingRunId: String? = null,
+)
+
+@Serializable
+data class WorkerSpawnDto(
+    val taskId: String,
+    val workerSessionId: String? = null,
+    val childRunId: String? = null,
+    val brief: String,
+    val budgetSplitWays: Int = 1,
+    val delegatedCapabilities: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentBudgetDto(
+    val modelCalls: Int? = null,
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val costUnits: Long? = null,
+    val steps: Int? = null,
+    val maxSteps: Int? = null,
+    val splitWays: Int? = null,
+)
+
+@Serializable
+data class WorkerOutcomeDto(
+    val workerSessionId: String,
+    val commitRef: String,
+    val outcomeSummary: String,
+    val committedAt: String? = null,
+)
+
+@Serializable
 data class AgentRunSummaryDto(
     val runId: String,
     val owner: String,
@@ -83,6 +128,16 @@ data class AgentRunSummaryDto(
     val egressRecords: List<EgressRecordDto> = emptyList(),
     val startedAt: Long = 0L,
     val finishedAt: Long = 0L,
+    val role: String = "DRIVER",
+    val parentSessionId: String? = null,
+    val parentRunId: String? = null,
+    val workerBrief: String? = null,
+    val tasks: List<TaskGraphNodeDto> = emptyList(),
+    val workerSpawns: List<WorkerSpawnDto> = emptyList(),
+    val budget: AgentBudgetDto? = null,
+    val workerOutcome: WorkerOutcomeDto? = null,
+    val isParkedOnChild: Boolean = false,
+    val awaitingChildRunId: String? = null,
 )
 
 @Serializable
