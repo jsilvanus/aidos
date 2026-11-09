@@ -8,6 +8,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -24,6 +25,7 @@ fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
     val node by models.host.aidin.collectAsState()
     val isRunning by models.host.isRunning.collectAsState()
     val error by models.host.aidinError.collectAsState()
+    val split by models.host.split.collectAsState()
 
     // A plain Window, not a DialogWindow: a dialog is modal on Windows and blocks the main window
     // for as long as the sharing window is open.
@@ -43,6 +45,9 @@ fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
                 node = node,
                 error = error,
                 scope = models.scope,
+                split = split,
+                splitModels = remember(split) { models.host.splittableModels() },
+                onStartSplit = { group, model -> models.host.startSplitModel(group, model) },
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             ) }
         }
