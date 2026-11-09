@@ -28,6 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # engine/settings.gradle.kts builds aidos-tcr from a sibling checkout when one exists;
+      # without it Gradle falls back to dev.aidos.tcr:aidos-tcr:0.1.0, which no repository CI can
+      # read serves (GitHub Packages answers 401).
+      - uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -45,6 +52,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # engine/settings.gradle.kts builds aidos-tcr from a sibling checkout when one exists;
+      # without it Gradle falls back to dev.aidos.tcr:aidos-tcr:0.1.0, which no repository CI can
+      # read serves (GitHub Packages answers 401).
+      - uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -63,6 +77,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # engine/settings.gradle.kts builds aidos-tcr from a sibling checkout when one exists;
+      # without it Gradle falls back to dev.aidos.tcr:aidos-tcr:0.1.0, which no repository CI can
+      # read serves (GitHub Packages answers 401).
+      - uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

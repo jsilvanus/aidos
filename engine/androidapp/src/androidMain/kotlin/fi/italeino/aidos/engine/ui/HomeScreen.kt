@@ -63,7 +63,7 @@ private fun AndroidStatusPane(viewModel: StatusViewModel) {
     val availableGB = (statFs.availableBytes / (1024L * 1024L * 1024L)).toInt()
     // Small changing info about engine state (plain state name)
     val engineStateName = try { EngineService.state.value.name } catch (_: Exception) { "OFF" }
-    val linkedPeerCount = try { EngineService.aidinNode.value?.peers?.value?.count { it.connected } ?: 0 } catch (_: Exception) { 0 }
+    val linkedPeerCount = try { EngineService.aidin.value?.peers?.value?.count { it.connected } ?: 0 } catch (_: Exception) { 0 }
 
     StatusPane(
         state = StatusUiState(
