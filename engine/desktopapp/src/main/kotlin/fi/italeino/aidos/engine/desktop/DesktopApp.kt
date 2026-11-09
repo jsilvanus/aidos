@@ -26,7 +26,8 @@ import java.net.URI
 
 enum class DesktopRightPaneTab {
     MODELS,
-    AGENTS
+    AGENTS,
+    TOOLS,
 }
 
 /** Everything the window binds to, created once per app run. */
@@ -35,6 +36,7 @@ class DesktopModels(val host: DesktopEngineHost, val prefs: DesktopPreferences, 
     val apps = DesktopAppsModel(host, scope)
     val models = DesktopModelsModel(host, prefs, scope)
     val agents = DesktopAgentsModel(host, scope)
+    val mcp = DesktopMcpModel(host, scope)
 }
 
 /**
@@ -83,6 +85,7 @@ fun DesktopApp(models: DesktopModels) {
             VerticalDivider()
             Column(modifier = Modifier.weight(0.6f).fillMaxHeight()) {
                 val agentStats by models.agents.state.collectAsState()
+                val mcpState by models.mcp.state.collectAsState()
                 TabRow(selectedTabIndex = rightPaneTab.ordinal) {
                     Tab(
                         selected = rightPaneTab == DesktopRightPaneTab.MODELS,
@@ -97,31 +100,59 @@ fun DesktopApp(models: DesktopModels) {
                             Text(if (active > 0) "Agents ($active)" else "Agents")
                         }
                     )
+                    Tab(
+                        selected = rightPaneTab == DesktopRightPaneTab.TOOLS,
+                        onClick = { rightPaneTab = DesktopRightPaneTab.TOOLS },
+                        text = {
+                            val serverCount = mcpState.servers.size
+                            Text(if (serverCount > 0) "Tools ($serverCount)" else "Tools")
+                        }
+                    )
                 }
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (rightPaneTab == DesktopRightPaneTab.MODELS) {
-                        val modelId = selectedModelId
-                        if (modelId == null) {
-                            ModelsColumn(models, onModelSelected = { selectedModelId = it })
-                        } else {
-                            DetailColumn(models, modelId, onBack = {
-                                selectedModelId = null
-                                models.models.refresh()
-                            })
+                    when (rightPaneTab) {
+                        DesktopRightPaneTab.MODELS -> {
+                            val modelId = selectedModelId
+                            if (modelId == null) {
+                                ModelsColumn(models, onModelSelected = { selectedModelId = it })
+                            } else {
+                                DetailColumn(models, modelId, onBack = {
+                                    selectedModelId = null
+                                    models.models.refresh()
+                                })
+                            }
                         }
-                    } else {
-                        AgentsPane(
-                            state = agentStats,
-                            onAppFilterSelected = { models.agents.selectAppFilter(it) },
-                            onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
-                            onPlacementFilterSelected = { models.agents.selectPlacementFilter(it) },
-                            onSearchQueryChanged = { models.agents.search(it) },
-                            onResetFilters = { models.agents.resetFilters() },
-                            onViewLayoutSelected = { models.agents.selectViewLayout(it) },
-                            onCancelRun = { models.agents.cancelRun(it) },
-                            onInspectRun = { models.agents.selectRunDetail(it) }
-                        )
+                        DesktopRightPaneTab.AGENTS -> {
+                            AgentsPane(
+                                state = agentStats,
+                                onAppFilterSelected = { models.agents.selectAppFilter(it) },
+                                onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
+                                onPlacementFilterSelected = { models.agents.selectPlacementFilter(it) },
+                                onSearchQueryChanged = { models.agents.search(it) },
+                                onResetFilters = { models.agents.resetFilters() },
+                                onViewLayoutSelected = { models.agents.selectViewLayout(it) },
+                                onCancelRun = { models.agents.cancelRun(it) },
+                                onInspectRun = { models.agents.selectRunDetail(it) }
+                            )
+                        }
+                        DesktopRightPaneTab.TOOLS -> {
+                            McpServersPane(
+                                state = mcpState,
+                                onAddServer = { models.mcp.addServer(it) },
+                                onDeleteServer = { models.mcp.deleteServer(it) },
+                                onSelectServer = { models.mcp.selectServer(it) },
+                                onToggleAdoption = { serverId, toolName, shouldAdopt ->
+                                    models.mcp.toggleAdoption(serverId, toolName, shouldAdopt)
+                                },
+                                onAdoptAll = { models.mcp.adoptAll(it) },
+                                onUnadoptAll = { models.mcp.unadoptAll(it) },
+                                onRefreshCatalog = { models.mcp.refreshCatalog(it) },
+                                onSearchQueryChange = { models.mcp.search(it) },
+                                onTransportFilterChange = { models.mcp.setTransportFilter(it) },
+                                onAdoptionFilterChange = { models.mcp.setAdoptionFilter(it) }
+                            )
+                        }
                     }
                 }
             }
