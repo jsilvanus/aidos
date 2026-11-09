@@ -100,6 +100,18 @@ class McpOperationAdoptionStore(private val projectDriver: SqlDriver) {
      * A stored row whose `input_schema_json` no longer parses is skipped rather than failing the
      * whole load, since one corrupt row should not withdraw a server's other adopted operations.
      */
+    fun unadopt(projectId: String, serverName: String, operationName: String) {
+        projectDriver.execute(
+            identifier = null,
+            sql = "DELETE FROM mcp_operation_adoptions WHERE project_id = ? AND server_name = ? AND operation_name = ?",
+            parameters = 3,
+        ) {
+            bindString(0, projectId)
+            bindString(1, serverName)
+            bindString(2, operationName)
+        }
+    }
+
     fun adoptedCatalog(projectId: String, serverName: String): List<McpToolSpec> =
         projectDriver.executeQuery(
             identifier = null,

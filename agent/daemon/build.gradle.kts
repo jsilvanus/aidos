@@ -16,6 +16,8 @@ kotlin {
                 implementation(project(":identity"))
                 implementation(project(":executor"))
                 implementation(project(":broker"))
+                implementation(project(":mcp-broker"))
+                implementation(project(":mcp-core"))
                 implementation(project(":capability"))
                 implementation(project(":filesystem"))
                 implementation(project(":git"))

@@ -27,6 +27,8 @@ import kotlin.test.fail
  */
 class McpToolTest {
 
+    private val pythonCmd = if (System.getProperty("os.name").contains("win", ignoreCase = true)) "python" else "python3"
+
     private fun fakeServerPath(): String {
         val url = Thread.currentThread().contextClassLoader.getResource("fake_mcp_stdio_server.py")
             ?: fail("fake_mcp_stdio_server.py not found on test classpath")
@@ -46,10 +48,10 @@ class McpToolTest {
 
     @Test
     fun `execute drives a real call through the transport and reports UNTRUSTED`() = runBlocking {
-        val client = StdioMcpClient(command = "python3", args = listOf(fakeServerPath()))
+        val client = StdioMcpClient(command = pythonCmd, args = listOf(fakeServerPath()))
         val registration = McpServerRegistration(
             serverId = "fake",
-            transport = McpTransport.Stdio(command = "python3", args = listOf(fakeServerPath())),
+            transport = McpTransport.Stdio(command = pythonCmd, args = listOf(fakeServerPath())),
             tools = listOf(McpToolSpec("echo", "echoes its input")),
         )
         val tool = McpTool(registration, client)
@@ -65,10 +67,10 @@ class McpToolTest {
 
     @Test
     fun `a server-reported tool error becomes ToolOutcome_Failed, not a thrown exception`() = runBlocking {
-        val client = StdioMcpClient(command = "python3", args = listOf(fakeServerPath()))
+        val client = StdioMcpClient(command = pythonCmd, args = listOf(fakeServerPath()))
         val registration = McpServerRegistration(
             serverId = "fake",
-            transport = McpTransport.Stdio(command = "python3", args = listOf(fakeServerPath())),
+            transport = McpTransport.Stdio(command = pythonCmd, args = listOf(fakeServerPath())),
             tools = listOf(McpToolSpec("fail", "always fails")),
         )
         val tool = McpTool(registration, client)
@@ -83,10 +85,10 @@ class McpToolTest {
 
     @Test
     fun `a crashed transport becomes ToolOutcome_Failed, not an unhandled throw`() = runBlocking {
-        val client = StdioMcpClient(command = "python3", args = listOf(fakeServerPath()))
+        val client = StdioMcpClient(command = pythonCmd, args = listOf(fakeServerPath()))
         val registration = McpServerRegistration(
             serverId = "fake",
-            transport = McpTransport.Stdio(command = "python3", args = listOf(fakeServerPath())),
+            transport = McpTransport.Stdio(command = pythonCmd, args = listOf(fakeServerPath())),
             tools = listOf(McpToolSpec("echo", "echoes its input")),
         )
         val tool = McpTool(registration, client)

@@ -18,7 +18,8 @@ fun scrubbedEnvironment(
     extra: Map<String, String> = emptyMap(),
     ambient: Map<String, String> = System.getenv(),
 ): Map<String, String> {
-    val allowed = ambient.filterKeys { it in ALLOWED_AMBIENT_VARS }
+    val allowedUpper = ALLOWED_AMBIENT_VARS.map { it.uppercase() }.toSet()
+    val allowed = ambient.filterKeys { it.uppercase() in allowedUpper }
     // `extra` (this server's own resolved secret_ref) wins over an ambient var of the same name --
     // an explicit, per-server grant is never shadowed by whatever happens to be in the parent's
     // environment.

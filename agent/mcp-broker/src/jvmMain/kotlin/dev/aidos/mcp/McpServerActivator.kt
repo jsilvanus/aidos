@@ -220,7 +220,7 @@ sealed interface McpActivationFailure {
 class McpServerActivation(
     val tool: McpTool,
     val unadopted: List<McpToolSpec>,
-    private val client: McpClient,
+    val client: McpClient,
 ) {
     // Not [AutoCloseable]: the SDK's shutdown is suspending, and wrapping it in `runBlocking` to
     // satisfy the interface would block whichever thread the caller happens to be on -- including

@@ -18,6 +18,7 @@
 # Ignore build outputs and local properties
 build/
 .gradle/
+.kotlin/
 local.properties
 
 # Ignore OS files

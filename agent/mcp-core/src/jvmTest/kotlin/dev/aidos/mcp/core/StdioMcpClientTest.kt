@@ -20,8 +20,10 @@ class StdioMcpClientTest {
         return File(url.toURI()).absolutePath
     }
 
+    private val pythonCmd = if (System.getProperty("os.name").contains("win", ignoreCase = true)) "python" else "python3"
+
     private fun newClient(extraEnv: Map<String, String> = emptyMap()) =
-        StdioMcpClient(command = "python3", args = listOf(fakeServerPath()), extraEnv = extraEnv, requestTimeoutMillis = 5_000)
+        StdioMcpClient(command = pythonCmd, args = listOf(fakeServerPath()), extraEnv = extraEnv, requestTimeoutMillis = 5_000)
 
     @Test
     fun `initialize returns the server's advertised info over a real subprocess`() = runBlocking {
@@ -80,7 +82,7 @@ class StdioMcpClientTest {
 
     @Test
     fun `a tool the server never answers times out rather than hanging forever`() = runBlocking {
-        val client = StdioMcpClient(command = "python3", args = listOf(fakeServerPath()), requestTimeoutMillis = 500)
+        val client = StdioMcpClient(command = pythonCmd, args = listOf(fakeServerPath()), requestTimeoutMillis = 500)
         try {
             client.initialize()
             val result = withTimeoutOrNull(5_000) {

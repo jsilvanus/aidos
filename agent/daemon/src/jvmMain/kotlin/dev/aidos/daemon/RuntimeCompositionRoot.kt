@@ -4,6 +4,13 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.broker.ToolBroker
+import dev.aidos.mcp.LazyMcpTool
+import dev.aidos.mcp.McpClientFactory
+import dev.aidos.mcp.McpOperationAdoptionStore
+import dev.aidos.mcp.McpSecretResolver
+import dev.aidos.mcp.McpServerActivator
+import dev.aidos.mcp.McpServerLoadOutcome
+import dev.aidos.mcp.McpServerStore
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
 import dev.aidos.executor.CapabilityApprovalResolution
@@ -78,6 +85,12 @@ import kotlinx.serialization.json.jsonPrimitive
 class RuntimeCompositionRoot(
     private val anthropicApiKey: () -> CharArray? = { null },
     private val userDriver: SqlDriver? = null,
+    private val mcpSecretResolver: McpSecretResolver = McpSecretResolver { ref ->
+        System.getenv(ref)?.toCharArray()?.let { Result.success(it) }
+            ?: System.getenv(ref.uppercase())?.toCharArray()?.let { Result.success(it) }
+            ?: Result.failure(NoSuchElementException("Secret not found: $ref"))
+    },
+    private val mcpClientFactory: McpClientFactory = McpClientFactory.Default,
 ) {
 
     /**
@@ -103,7 +116,7 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
-        buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso).drive(runId)
+        buildExecutor(projectDriver, projectId, sessionId, rootPath, deviceId, platformProfile, idGen, nowIso).drive(runId)
     }
 
     /**
@@ -138,7 +151,7 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
-        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
             .resolveCapabilityApproval(runId, approved, denialReason)
     }
 
@@ -174,7 +187,7 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
 
-        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
             .resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
                 val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
                 val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
@@ -243,7 +256,7 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
-        return buildExecutor(projectDriver, sessionId, rootPath, deviceId, idGen, nowIso)
+        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
             .resolveUserPrompt(runId, answer, denialReason)
     }
 
@@ -266,6 +279,26 @@ class RuntimeCompositionRoot(
         deviceId: String,
         idGen: () -> String,
         nowIso: () -> String,
+    ): SqliteExecutor = buildExecutor(
+        projectDriver = projectDriver,
+        projectId = ProjectId(""),
+        sessionId = sessionId,
+        rootPath = rootPath,
+        deviceId = deviceId,
+        platformProfile = PlatformProfile.DESKTOP,
+        idGen = idGen,
+        nowIso = nowIso,
+    )
+
+    private fun buildExecutor(
+        projectDriver: SqlDriver,
+        projectId: ProjectId,
+        sessionId: String,
+        rootPath: String,
+        deviceId: String,
+        platformProfile: PlatformProfile = PlatformProfile.DESKTOP,
+        idGen: () -> String,
+        nowIso: () -> String,
     ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
@@ -278,6 +311,34 @@ class RuntimeCompositionRoot(
         )
         broker.register(FilesystemTool())
         broker.register(GitTool(File(rootPath)))
+
+        if (userDriver != null) {
+            val serverStore = McpServerStore(userDriver)
+            val adoptionStore = McpOperationAdoptionStore(projectDriver)
+            val activator = McpServerActivator(
+                serverStore = serverStore,
+                adoptionStore = adoptionStore,
+                secretResolver = mcpSecretResolver,
+                clientFactory = mcpClientFactory,
+            )
+            for (outcome in serverStore.loadAll(platformProfile)) {
+                if (outcome is McpServerLoadOutcome.Loaded) {
+                    val serverId = outcome.load.registration.serverId
+                    val adoptedSpecs = adoptionStore.adoptedCatalog(projectId.value, serverId)
+                    if (adoptedSpecs.isNotEmpty()) {
+                        broker.register(
+                            LazyMcpTool(
+                                serverId = serverId,
+                                projectId = projectId.value,
+                                initialAdoptedSpecs = adoptedSpecs,
+                                transport = outcome.load.registration.transport,
+                                activator = { activator.activate(projectId.value, serverId, platformProfile) }
+                            )
+                        )
+                    }
+                }
+            }
+        }
 
         // RFC-0035: registered before the adapter ever sees the key, so the very first
         // output_snapshot that could echo it back is already covered.

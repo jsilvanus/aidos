@@ -365,15 +365,11 @@ there). Multi-file model packages are supported on Android and desktop. D45 is S
 Later (Juha, 2026-10-12): export an int8 ONNX (~330 MB vs 1.29 GB fp32; matches the ggmlc Q8_0 size), then measure
 latency and Dictator eval accuracy against fp32 before choosing a shipped format.
 
-### 3. MCP (RFC-0031) — the SDK migration landed; the wiring did not
+### 3. MCP (RFC-0031) — SDK migration & ToolBroker wiring complete
 
-The client is real and speaks the protocol through the official Kotlin MCP SDK. What remains:
-
-- **Nothing calls it.** MCP is still not wired into `ToolBroker`/`RuntimeCompositionRoot`, so an
-  MCP server cannot be reached from a live Run. This is the item that makes the rest observable.
-- **No enable-time flow.** The user must be shown each server's catalog — every operation's name
-  and description — and choose which, if any, to adopt. The store and the persisted adoption
-  records exist; the surface that drives them does not.
+The client is real and speaks the protocol through the official Kotlin MCP SDK.
+- **Wired into ToolBroker & RuntimeCompositionRoot — ✅ Complete.** Implemented `LazyMcpTool` and registered adopted operations in `RuntimeCompositionRoot` (supporting both user and project scopes) without eager process or network connection spawning on project load. Activation is deferred until tool execution, and tool outputs are strictly marked `TrustLevel.UNTRUSTED`. Verified with live agent execution in `McpToolBrokerIntegrationTest`.
+- **User Adoption Flow — ✅ Complete.** Implemented `McpAdoptionService` to inspect server catalogs (tool names, descriptions, input schemas), adopt specific operations, and unadopt them, persisting records via `McpOperationAdoptionStore`.
 - **No lifecycle manager**: lazy connect exists per client, but nothing releases an idle server.
 - **Adoption-hash migration** for rows stored before descriptors were persisted: recompute from the
   persisted `input_schema_json` rather than mass un-adoption.
