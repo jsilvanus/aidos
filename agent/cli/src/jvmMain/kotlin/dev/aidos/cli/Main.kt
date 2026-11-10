@@ -1,6 +1,15 @@
 package dev.aidos.cli
 
 import dev.aidos.api.socket.SocketPaths
+import dev.aidos.identity.ProjectRegistry
+import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.ProjectId
+import dev.aidos.portability.PortabilityCli
+import dev.aidos.portability.ProjectRegistryPort
+import dev.aidos.storage.AidosStorage
+import dev.aidos.storage.DesktopPaths
+import java.io.File
+import java.time.Instant
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
@@ -27,6 +36,9 @@ import kotlin.system.exitProcess
  *   answer-run <runId> <answer...>
  *   ping
  *   version
+ *   export <projectDir> [--output F] [--encrypt] [--sign KEY] ...   (RFC-0041; local, no daemon)
+ *   import <archive> [--into DIR] [--rename|--replace] ...          (RFC-0041; local, no daemon)
+ *   keygen <prefix>                                                 (RFC-0041; local, no daemon)
  * ```
  *
  * Connects to a running `aidos-daemon` over the socket at `--socket-path` (default
@@ -61,6 +73,8 @@ fun main(args: Array<String>) {
         printHelp()
         exitProcess(if (rest.isEmpty()) 1 else 0)
     }
+
+    if (rest[0] in PortabilityCli.COMMANDS) exitProcess(runPortability(rest))
 
     val resolvedSocketPath = socketPath ?: SocketPaths.defaultSocketPath()
     val client = SocketRuntimeClient(resolvedSocketPath, SocketPaths.defaultTokenPath(resolvedSocketPath))
@@ -172,4 +186,23 @@ private fun printHelp() {
         --socket-path PATH   Daemon socket (default: ${'$'}XDG_RUNTIME_DIR/aidos/runtime.sock)
         """.trimIndent()
     )
+}
+
+/**
+ * RFC-0041: export/import work on files, so they run in this process. The registry port opens
+ * the user-scope user.db lazily, and only for `import` -- an export touches no user state.
+ */
+private fun runPortability(args: List<String>): Int {
+    val ids = UuidV7Generator()
+    val userDb by lazy {
+        File(DesktopPaths.userDb()).parentFile.mkdirs()
+        AidosStorage.openUser(DesktopPaths.userDb(), "cli") { Instant.now().toString() }
+    }
+    val registry = object : ProjectRegistryPort {
+        private val reg by lazy { ProjectRegistry(userDb.driver, ids) }
+        override fun isRegistered(projectId: String) = reg.isRegistered(ProjectId(projectId))
+        override fun register(projectId: String, path: String, nowIso: String) =
+            reg.register(ProjectId(projectId), path, nowIso = nowIso)
+    }
+    return PortabilityCli.run(args, registry, newId = { ids.next() })
 }

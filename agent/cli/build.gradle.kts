@@ -14,6 +14,11 @@ kotlin {
                 // dev.aidos.kernel.FileDiff directly (M10) -- not exposed transitively through
                 // :api's own `implementation(project(":kernel"))`.
                 implementation(project(":kernel"))
+                // RFC-0041 export/import act on local files and need no daemon.
+                implementation(project(":portability"))
+                implementation(project(":identity"))
+                implementation(project(":storage"))
+                implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
