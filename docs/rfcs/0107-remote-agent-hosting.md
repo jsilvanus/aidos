@@ -35,6 +35,6 @@ Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0
 
 ## Phases
 1. Agent adapter through the virtual router (model on a peer, loop local). **Built on the desktop host** (`RoutedModelAdapter`, unit-tested with fakes); a two-Engine run over loopback is not done yet.
-2. Android host runs the agent runtime and Binder MCP broker.
+2. Android host runs the agent runtime and Binder MCP broker. **Runtime built** (`createEngineAgentRuntime`, shared with desktop; compiles and starts on an emulator, not yet exercised with a model); Binder MCP broker not built.
 3. Peer agent endpoints, scope `agent`, MCP tool relay, tool-host taint and approval.
 4. Real two-device run (owner's devices).
