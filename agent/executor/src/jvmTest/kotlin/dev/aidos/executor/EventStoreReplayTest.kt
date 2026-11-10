@@ -119,4 +119,18 @@ class EventStoreReplayTest {
         assertEquals(1, filtered.size)
         assertEquals("filesystem:/project/docs/readme.md", filtered.single().topic)
     }
+
+    @Test
+    fun payloadIsRedactedBeforeItIsWritten() {
+        val driver = openDriver()
+        val store = EventStore(driver) { it.replace("hunter2-secret", "«redacted:pw»") }
+        val projectId = nextId()
+        seedProject(driver, projectId)
+        store.publish(
+            id = nextId(), projectId = projectId, type = "ToolOutput", source = "tool",
+            payload = """{"out":"password hunter2-secret"}""", nowIso = nowIso,
+        )
+        val payload = store.eventsForProject(projectId).single().payload
+        assertEquals("""{"out":"password «redacted:pw»"}""", payload)
+    }
 }

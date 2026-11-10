@@ -77,7 +77,25 @@ data class InstructionSource(
  * Token counting uses an estimate: 4 chars ≈ 1 token (conservative). A production
  * implementation would use a model-specific tokenizer; this estimate is a bounded error.
  */
-class PromptAssembler {
+class PromptAssembler(
+    /**
+     * RFC-0035: "before any model sees it". Applied to every text in the final turn list, so a
+     * secret that reached the transcript by any route (a file the model read, an earlier
+     * answer, a knowledge item) is filtered at the last point before the request leaves.
+     * Defaults to identity for callers with no redactor.
+     */
+    private val redact: (String) -> String = { it },
+) {
+
+    /** [redact] over every text the turn carries. */
+    private fun redactTurn(turn: Turn): Turn = when (turn) {
+        is Turn.System -> turn.copy(content = redact(turn.content))
+        is Turn.User -> turn.copy(content = turn.content.map(::redactBlock))
+        is Turn.Assistant -> turn.copy(text = turn.text?.let(redact))
+        is Turn.ToolResult -> Turn.ToolResult(turn.result.copy(content = turn.result.content.map(::redactBlock)))
+    }
+
+    private fun redactBlock(b: ContentBlock): ContentBlock = if (b is ContentBlock.Text) ContentBlock.Text(redact(b.text)) else b
 
     fun assemble(request: AssemblyRequest): AssemblyResult {
         val adapter = request.model
@@ -139,7 +157,7 @@ class PromptAssembler {
         ))
 
         val modelRequest = ModelRequest(
-            messages = turns,
+            messages = turns.map(::redactTurn),
             tools = tools,
             toolChoice = ToolChoice.Auto,
             maxOutputTokens = adapter.contextWindow / 8,

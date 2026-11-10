@@ -214,6 +214,25 @@ class CapabilityTest {
     // ─── 3. Taint ceiling ────────────────────────────────────────────────────
 
     @Test
+    fun `grant refuses a SECRETS_READ with no ids, a wildcard, or a non-secrets scope`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000101"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+        fun grant(scope: CapabilityScope) = runBlocking {
+            mgr.grant("session-3", dev.aidos.kernel.SubjectKind.SESSION, Permission.SECRETS_READ, scope, CapabilityConstraints(), null, UserId("user-1"))
+        }
+        for (ids in listOf(emptyList(), listOf(dev.aidos.kernel.SecretId("*")), listOf(dev.aidos.kernel.SecretId("gh-*")), listOf(dev.aidos.kernel.SecretId(" ")))) {
+            val r = grant(CapabilityScope.Secrets(ProjectId(projectId), ids))
+            assertTrue(r.isFailure, "should refuse $ids")
+            assertTrue(r.exceptionOrNull()!!.message!!.startsWith("secrets.wildcard_denied"))
+        }
+        assertTrue(grant(CapabilityScope.Events(listOf("*"))).exceptionOrNull()!!.message!!.startsWith("secrets.scope_required"))
+        assertTrue(grant(CapabilityScope.Secrets(ProjectId(projectId), listOf(dev.aidos.kernel.SecretId("one")))).isSuccess)
+    }
+
+    @Test
     fun `validate denies SECRETS_READ when run taint is UNTRUSTED`(): Unit = runBlocking {
         val driver = openProjectDriver()
         val mgr = manager(driver)
@@ -227,7 +246,7 @@ class CapabilityTest {
             subjectId = "session-2",
             subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
             permission = Permission.SECRETS_READ,
-            scope = CapabilityScope.Secrets(ProjectId(projectId), emptyList()),
+            scope = CapabilityScope.Secrets(ProjectId(projectId), listOf(dev.aidos.kernel.SecretId("secret-1"))),
             constraints = CapabilityConstraints(),
             expiresAt = null,
             grantedBy = UserId("user-1"),

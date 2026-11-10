@@ -5,6 +5,8 @@ import dev.aidos.api.RuntimeClient
 import dev.aidos.api.RealRuntimeClient
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
+import dev.aidos.vault.DesktopVault
+import dev.aidos.vault.Redactor
 import kotlinx.datetime.Clock
 
 /**
@@ -52,9 +54,19 @@ object RuntimeClientFactory {
             }
             projectLocker = JvmProjectLocker()
             runtimeManagedProjectsRoot = "$home/.aidos/projects"
+            // RFC-0035: the vault is opened once per daemon. A vault that cannot be opened (e.g. the
+            // keystore refuses) is reported and the daemon carries on without it, falling back to
+            // environment variables, rather than refusing to start.
+            val opened = runCatching { DesktopVault.open(home) }
+                .onFailure { DaemonLog.err("aidos: secrets vault unavailable: ${it.message}") }
+                .getOrNull()
+            opened?.weakProtectionNotice?.let { DaemonLog.err("aidos: secrets vault: $it") }
+            opened?.vault?.let { v -> DaemonLog.redactor = Redactor().also(v::registerAllWith) }
             val compositionRoot = RuntimeCompositionRoot(
                 anthropicApiKey = { System.getenv("ANTHROPIC_API_KEY")?.toCharArray() },
                 userDriver = userDb.driver,
+                vault = opened?.vault,
+                mcpSecretResolver = opened?.vault?.let { VaultMcpSecretResolver(it) } ?: RuntimeCompositionRoot.envMcpSecretResolver,
             )
             runExecutor = SqliteRunExecutor(
                 nowIso = nowIso,

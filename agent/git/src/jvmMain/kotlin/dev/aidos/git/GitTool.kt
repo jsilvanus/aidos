@@ -54,8 +54,22 @@ import java.io.File
  * Reconciliation: any operation that checks the working tree re-reads the index and status
  * on every call, so changes made outside Aidos between two steps are always reflected.
  */
+/** A username and secret for one remote. The caller zeroes [secret] after use. */
+class GitCredential(val username: String, val secret: CharArray)
+
+/**
+ * RFC-0035 "Git remotes receive it through a credential provider at connection time": resolves
+ * the credential for a remote URL, or null when none is configured (the push then goes out
+ * unauthenticated and the remote decides). Implemented over the vault by the daemon.
+ */
+fun interface GitCredentialSource {
+    fun credentialFor(remoteUrl: String): GitCredential?
+}
+
 class GitTool(
     private val repoDir: File,
+    /** RFC-0035: where push credentials come from; never from the repository's own config. */
+    private val credentials: GitCredentialSource? = null,
     /**
      * Called after a successful `git:commit`, with an event shaped exactly like RFC-0004's own
      * worked "GitCommit" example. `GitTool` has no `EventStore`/`executor` dependency and no
@@ -247,7 +261,20 @@ class GitTool(
     /** `push` is UNSAFE: cannot be retried and cannot be un-done. Declared as Egress. */
     private fun gitPush(): List<ContentBlock> {
         val git = openGit()
-        val results = git.use { g -> g.push().call() }
+        val results = git.use { g ->
+            val push = g.push()
+            val remote = push.remote ?: "origin"
+            val url = g.repository.config.getString("remote", remote, "url")
+            val cred = url?.let { credentials?.credentialFor(it) }
+            try {
+                if (cred != null) {
+                    push.setCredentialsProvider(org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider(cred.username, String(cred.secret)))
+                }
+                push.call()
+            } finally {
+                cred?.secret?.fill('\u0000')
+            }
+        }
         val messages = results.flatMap { r -> r.remoteUpdates.map { u -> "${u.remoteName}: ${u.status}" } }
         return listOf(ContentBlock.Text(messages.joinToString("\n").ifBlank { "pushed" }))
     }

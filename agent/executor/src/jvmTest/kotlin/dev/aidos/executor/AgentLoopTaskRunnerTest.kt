@@ -200,6 +200,7 @@ class AgentLoopTaskRunnerTest {
         redact: (String) -> String = { it },
         resolveRemoteAdapter: (String) -> ModelAdapter? = { null },
         largeOutputs: LargeOutputStore? = null,
+        detectSecrets: (String, String) -> List<String> = { _, _ -> emptyList() },
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -217,6 +218,7 @@ class AgentLoopTaskRunnerTest {
             redact = redact,
             resolveRemoteAdapter = resolveRemoteAdapter,
             largeOutputs = largeOutputs,
+            detectSecrets = detectSecrets,
         ),
     )
 
@@ -353,6 +355,33 @@ class AgentLoopTaskRunnerTest {
             PromptAssembler.wrapContext("tool:read-file", TrustLevel.UNTRUSTED, big), text,
             "history reconstruction resolved the reference back to the original text",
         )
+    }
+
+    @Test
+    fun `a tool result containing credentials is withheld from the transcript and the model (RFC-0035)`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()), requests)
+        val dotenv = "DB_PASSWORD=hunter2-not-a-real-password-0123\nOTHER=1"
+
+        buildExecutor(
+            driver, fakeRouter(adapter), brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, dotenv),
+            detectSecrets = { _, text -> if ("DB_PASSWORD=" in text) listOf("pattern:credential-assignment") else emptyList() },
+        ).drive(runId)
+
+        assertEquals("COMPLETED", runRow(driver, runId).first)
+        val stored = driver.executeQuery(null,
+            "SELECT group_concat(a.output_snapshot) FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE t.run_id = ? AND t.kind = 'TOOL_CALL'",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1
+        ) { bindString(0, runId.value) }.value!!
+        assertTrue(!stored.contains("hunter2"), "the snapshot holds no part of the match")
+        assertTrue(stored.contains("Content withheld"))
+        val seen = requests[1].messages.filterIsInstance<Turn.ToolResult>().single().result.content.filterIsInstance<ContentBlock.Text>().single().text
+        assertTrue(!seen.contains("hunter2") && seen.contains("excluded from AI context"), seen)
+        val audit = driver.executeQuery(null, "SELECT subject_ref, detail_json FROM audit_log WHERE kind = 'SecretContentWithheld'",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) + "|" + c.getString(1) else null) }, 0).value!!
+        assertEquals("read-file|{\"kinds\":[\"pattern:credential-assignment\"]}", audit)
     }
 
     @Test

@@ -15,6 +15,14 @@ import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+/**
+ * RFC-0035: reports what kinds of credential [text] contains (never the match); empty if none.
+ * A project file for which it reports anything is left out of the archive.
+ */
+fun interface SecretScanner {
+    fun kinds(text: String): List<String>
+}
+
 class ExportOptions(
     val output: File,
     val password: CharArray? = null,
@@ -28,6 +36,8 @@ class ExportOptions(
     val kdfIterations: Int = ArchiveCrypto.DEFAULT_ITERATIONS,
     val nowIso: () -> String = { Instant.now().toString() },
     val newId: () -> String = { UUID.randomUUID().toString() },
+    /** RFC-0035: files containing credentials are excluded from the archive and named in the warnings. */
+    val secretScanner: SecretScanner? = null,
 )
 
 data class ExportResult(
@@ -77,12 +87,13 @@ object ProjectExporter {
             val schemaVersion = Sqlite.schemaVersion(snapshot)
                 ?: throw PortabilityException("export.no_schema", "state.db has no schema version")
 
+            val excluded = mutableListOf<String>()
             val plainZip = File(work, "archive.zip")
             val entries = mutableListOf<ManifestEntry>()
             var payloadBytes = 0L
             ZipOutputStream(FileOutputStream(plainZip).buffered()).use { zip ->
                 zip.setLevel(if (options.compression == 0) Deflater.NO_COMPRESSION else options.compression)
-                for ((rel, file) in collect(projectRoot, snapshot)) {
+                for ((rel, file) in collect(projectRoot, snapshot, options.secretScanner, excluded)) {
                     val e = writeEntry(zip, ArchiveFormat.PAYLOAD_PREFIX + rel, file)
                     entries += e; payloadBytes += e.sizeBytes
                 }
@@ -131,7 +142,7 @@ object ProjectExporter {
             }
             moveInto(finished, out)
 
-            val warnings = mutableListOf<String>()
+            val warnings = excluded.toMutableList()
             val gitHead = resolveGitHead(projectRoot)
             // Audited in the source project *after* the snapshot, so the archive does not contain
             // its own export record. A failed audit write must not delete a finished archive.
@@ -168,7 +179,7 @@ object ProjectExporter {
     }
 
     /** (archive-relative path, source file), sorted so identical projects export identically. */
-    private fun collect(root: File, snapshot: File): List<Pair<String, File>> {
+    private fun collect(root: File, snapshot: File, scanner: SecretScanner?, excluded: MutableList<String>): List<Pair<String, File>> {
         val result = mutableListOf<Pair<String, File>>()
         val base = root.toPath()
         Files.walk(base).use { stream ->
@@ -178,12 +189,26 @@ object ProjectExporter {
                     rel == ".aidos/state.db" -> result += rel to snapshot
                     rel.startsWith(".aidos/blobs/") -> result += rel to p.toFile()
                     rel.startsWith(".aidos/") -> Unit // lock, WAL/SHM, derived index
-                    else -> result += rel to p.toFile()
+                    else -> {
+                        val found = scanner?.let { scan(it, p.toFile()) }.orEmpty()
+                        if (found.isEmpty()) result += rel to p.toFile()
+                        else excluded += "excluded $rel from the archive: it looks like it contains credentials (${found.joinToString()})"
+                    }
                 }
             }
         }
         return result.sortedBy { it.first }
     }
+
+    /** Text files only, and only up to a size a credential file plausibly has; binaries are not scanned. */
+    private fun scan(scanner: SecretScanner, file: File): List<String> {
+        if (file.length() > MAX_SCAN_BYTES) return emptyList()
+        val bytes = file.readBytes()
+        if (bytes.take(8000).any { it == 0.toByte() }) return emptyList()
+        return scanner.kinds(String(bytes, Charsets.UTF_8))
+    }
+
+    private const val MAX_SCAN_BYTES = 2L * 1024 * 1024
 
     private fun writeEntry(zip: ZipOutputStream, name: String, file: File): ManifestEntry {
         val digest = MessageDigest.getInstance("SHA-256")
