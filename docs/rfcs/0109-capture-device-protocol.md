@@ -2,6 +2,8 @@
 
 Status: Draft (2026-11-10, revised same day after owner review). Not implemented. Planning only: no code accompanies this RFC.
 
+Revision 3 (owner, 2026-11-10): (a) **default trust is TRUSTED** (binding default and per-device ceiling default); (b) the protocol models **inputs generally**: buttons, motion (gyro/accelerometer), touch surfaces with touch position, rotary and sliders, with per-device variety allowed through a declared, extensible input registry.
+
 Revision 2 (owner, 2026-11-10): (1) **buttons are user-configured bindings**, any number per device, each binding routing its speech to a chosen sink; (2) **trust is configured by the user per binding**, not fixed at UNTRUSTED, because untrusted input would defeat hands-free operation (RFC-0057); (3) **Omi is deferred and may be removed**; (4) **the code must be modular so it can be split out** of this repository later; (5) pairing stays mandatory.
 
 Related: RFC-0027 (trust and taint), RFC-0035 (secrets and vault), RFC-0036 (settings), RFC-0046 (identity and device identity), RFC-0056 (retention), RFC-0057 (glanceable and hands-free), RFC-0103 (Engine), RFC-0104 (locality), RFC-0105 (inference groups), RFC-0107 (remote agent hosting); D47, D48, D49, D51, D52. Hardware study: `plans/ai-cube-esp32.md` and `plans/ai-button-existing-products.md` in the project files. Engine API v1 (`sdk/CONTRACT.md`) is frozen and is not changed here.
@@ -100,7 +102,7 @@ Message types (`D→H` device to host, `H→D` host to device):
 
 | Type | Name | Dir | Body (key: meaning) |
 |---|---|---|---|
-| 0x01 | `hello` | D→H | `versions[]`, `fw`, `caps[]`, `devpub` (COSE_Key, P-256), `bat`, `storage{free,total}`, `unsynced`, `clock{t,q}` |
+| 0x01 | `hello` | D→H | `versions[]`, `fw`, `caps[]`, `inputs[]` (see Inputs), `devpub` (COSE_Key, P-256), `bat`, `storage{free,total}`, `unsynced`, `clock{t,q}` |
 | 0x02 | `auth_challenge` | H→D | `nonce` (32 bytes), `host` (host key fingerprint) |
 | 0x03 | `auth_response` | D→H | `sig` over the transcript below |
 | 0x04 | `pair_request` | D→H | `devpub`, `name`, `oob?`; sent only while the device is in pairing mode |
@@ -120,10 +122,13 @@ Message types (`D→H` device to host, `H→D` host to device):
 | 0x26 | `rec_delete` | H→D | `rec`; refused if not acked unless `force` and the user confirmed |
 | 0x30 | `card` | H→D | card body below |
 | 0x31 | `haptic` | H→D | `pattern` (small registry) |
+| 0x50 | `input_subscribe` | H→D | `input`, `events[]` (empty = none), `stream?{rate_hz}`; what the device reports |
+| 0x51 | `input_get` | H→D | `input`; device answers with `input_state` |
+| 0x52 | `input_state` | D→H | `input`, `state{}` (current continuous state, e.g. orientation) |
 | 0x40 | `wipe` | H→D | requires user confirmation on the device |
 | 0x80 | `speak` | H→D | reserved for v2; v1 devices answer `unsupported` |
 
-**Events** (ACP Events, unchunked, a CBOR map each): `button{id, kind}` (`press`, `release`, `long`, `click2`), `rec_state{state, rec}`, `battery{pct, charging}`, `storage{free, unsynced, warn}`, `indicator{on}`. Events are advisory UI and logging input; they carry no authority.
+**Events** (ACP Events, unchunked, a CBOR map each): `input{i, ev, d, t}` (see Inputs), `rec_state{state, rec}`, `battery{pct, charging}`, `storage{free, unsynced, warn}`, `indicator{on}`. Events are advisory UI and logging input plus binding triggers; they carry no authority of their own.
 
 **Error codes**: `unsupported`, `bad_request`, `not_paired`, `not_authorized`, `busy`, `too_large`, `no_such_rec`, `storage_full`, `locked_key`, `internal`.
 
@@ -174,21 +179,50 @@ Layered, each layer adding something the one below cannot:
 2. **Device key.** The device generates an **ECDSA P-256 key pair** at first boot and never exports the private key. P-256 rather than Ed25519 [decision]: Android Keystore verifies P-256 on every API level the Engine targets, while Ed25519 only arrived in API 33 [known], and ESP32 mbedtls accelerates it [known]. The **device id** is the SHA-256 of the public key; UIs show the first 4 bytes grouped.
 3. **Application pairing.** In pairing mode (button held, visible on the display or by LED) the device sends `pair_request`. The host shows an approval card in the Engine UI (same shape as Connected Apps: name, device id, capabilities asked for). The user must confirm **on the host screen and on the device** (button). On accept the host sends `pair_accept` with its own public key; the device stores the host key fingerprint and accepts config, time and unpair only from hosts it has paired with (a device may keep up to 4, default 2: phone and desktop [decision]).
 4. **Per-connection authentication.** Bonding alone is not an identity: a cloned or replayed bond must not become a trusted capture source. After each connect the host sends `auth_challenge`; the device signs `"ACP1-auth" ‖ nonce ‖ devpub ‖ host fingerprint` with the device key. The host rejects a connection whose signature does not match the key it paired. Audio received before authentication is dropped.
-5. **Device principal.** The host records the device as an actor of kind device (RFC-0046 ActorKind; the exact enum value is for the implementer to confirm against the code), with revocable **grants** chosen at approval: `capture` (audio in), `cards` (host may push to the display), `config` (host may change settings), `sync` (host may pull stored recordings). Revocation sets the grant row to revoked, drops the bond, and sends `unpair` at the next contact. Taking effect is immediate on the host: frames from a revoked device are dropped even if the radio link is up.
+5. **Device principal.** The host records the device as an actor of kind device (RFC-0046 ActorKind; the exact enum value is for the implementer to confirm against the code), with revocable **grants** chosen at approval: `capture` (audio in), `sensors` (raw motion/touch streams, off by default), `cards` (host may push to the display), `config` (host may change settings), `sync` (host may pull stored recordings). Revocation sets the grant row to revoked, drops the bond, and sends `unpair` at the next contact. Taking effect is immediate on the host: frames from a revoked device are dropped even if the radio link is up.
 6. **Recordings at rest on the device** are the device's responsibility (cube plan §8.3: flash encryption, per-file keys wrapped by the device key). The BLE link is encrypted, so sync carries decrypted file bytes; no application-layer encryption is added in v1 [decision]. If the Wi-Fi transport is added, TLS covers it.
 
 **Pairing is mandatory** [owner, rev. 2]. A device that has not completed pairing and per-connection authentication can send nothing the host will act on. There is no unauthenticated capture mode in v1.
+
+### Inputs: buttons, motion, touch and more
+
+Devices differ, and the protocol allows that [owner, rev. 3]. A device does not declare "one button"; it declares a list of **inputs** in `hello`, and each input has a `kind` from an extensible registry. The host builds its binding UI from what the device declares, and ignores (but still shows, as unavailable) inputs of a kind it does not know.
+
+```
+input = { i: <id uint>, k: <kind>, label: text, ev: [<event names it can emit>],
+          rec: bool,           // may an event of this input start a recording
+          ...kind-specific fields }
+```
+
+| Kind `k` | Declared fields | Events `ev` (data `d`) | State (`input_get`) |
+|---|---|---|---|
+| `button` | none | `press`, `release`, `click`, `click2`, `click3`, `hold` (fires when held past the device's threshold, `release` ends it), `long` | `{down}` |
+| `motion` | `axes` (`accel`, `gyro`, `mag`), `range`, `max_rate_hz` | `tap`, `double_tap`, `shake`, `flip{from,to}`, `face{face}` (face is `up`, `down`, `left`, `right`, `front`, `back`), `tilt{pitch,roll}` (on threshold), `lift`, `still` | `{face, pitch, roll}` (orientation, in 0.1 degree units) |
+| `touch` | `w`, `h` (surface size in device units), `multi` (max simultaneous points) | `tap{x,y}`, `double_tap{x,y}`, `long_press{x,y}`, `swipe{dir,x,y}`, `drag{x,y,dx,dy}`, `up{x,y}` | `{points[]}` |
+| `rotary` | `detents?` | `step{delta}`, `click` | `{pos}` |
+| `slider` | `min`, `max` | `change{value}` | `{value}` |
+| other | `x-<vendor>-<name>` | vendor-defined | vendor-defined |
+
+Rules:
+- **Position is normalised.** Touch `x,y` are integers in `0..65535` over the declared surface (so a host does not need the pixel size to interpret them); `w,h` are declared so it can still map to the device's own pixels. Orientation values are signed integers, units stated in the table; accel in mg, gyro in 0.1 deg/s.
+- **Every event carries `t`**, device monotonic milliseconds, so ordering and gesture timing survive BLE jitter. The host maps it to wall time using the connect-time clock exchange (`hello.clock`).
+- **State versus events.** Continuous things (which face is up, tilt) are *state*, not a stream of events. The host reads state with `input_get` and receives `face`/`tilt` events only on change. This lets a binding depend on state (below) without any sensor streaming.
+- **Subscribe, do not flood.** A device reports only what the host subscribed to (`input_subscribe`), and by default nothing but the events needed by bindings. This saves battery and keeps ambient data off the air.
+- **Raw sensor streams are opt-in.** `input_subscribe{stream{rate_hz}}` asks for batched raw samples (motion: accel/gyro; touch: raw points). Rate is capped by the declared `max_rate_hz` and by the host (default cap 50 Hz). It needs the separate `sensors` grant at pairing and is off by default: movement data can reveal activity, health and location patterns, so it is not collected unless a use needs it. Samples arrive on ACP Events as `input{ev:"samples", d:{...}}` batches.
+- **Recording from an input.** `rec: true` marks inputs whose events may start a recording. It must be a **deliberate** event (button hold, touch hold, a shake or double-tap the user chose), never a continuous state such as orientation. A device may declare `rec: true` for a motion input only if its firmware debounces to a deliberate gesture, and the recording indicator rule still applies. The no-remote-start rule is unchanged.
+- **Variety is the point.** A one-button clip, the multi-face cube with IMU and a touch strip, a ring with a single tap sensor and a wall panel with a touch screen are all conformant if they declare their inputs truthfully and obey the locked rules. New standard kinds and events are added to the registry by amendment, vendor ones with the `x-` prefix; the protocol version does not change for either.
 
 ### Buttons, bindings and trust (RFC-0027)
 
 #### Buttons are bindings the user configures
 
-A device declares its buttons in `hello` (`buttons[]`: `{id, label, kinds[]}`, where kinds are the gestures it can detect: `press`, `hold`, `click2`, `long`). A single-button device declares one; a cube may declare several. The user then creates **bindings** on the host, any number, one per `(button, gesture)`:
+The device's declared inputs (above) are what bindings attach to. A one-button device offers one input; a cube may offer several buttons, a motion sensor and a touch strip. The user creates **bindings** on the host, any number, one per `(input, event)` with an optional condition on another input's state:
 
 ```
 binding = {
-  device, button, gesture,           // what triggers it
-  action:  record | event,           // record speech, or just report the gesture
+  device, input, event, filter?,     // what triggers it; filter e.g. touch region x<32768
+  when?:   {input, state},           // only while another input is in a state, e.g. {imu, face: up}
+  action:  record | event,           // record speech (input must be rec-capable), or just report the event
   sink:    agent | app:<id> | ...,   // where the transcript goes (see Delivery)
   trust:   TRUSTED | PROJECT | UNTRUSTED,   // chosen by the user, see below
   language?, prompt?,                // STT hints per binding (e.g. liturgical vocabulary)
@@ -196,7 +230,7 @@ binding = {
 }
 ```
 
-Examples: button 1 hold -> speech-to-text -> agent; button 2 hold -> speech-to-text -> Dictator; button 2 double-click -> event only (a host action such as "bookmark"). Bindings are stored host-side in settings (RFC-0036 scope, per device) and survive replacing a device. The **device only needs to know which gestures start a recording**: the host pushes that as the `bindings` config key (`[{button, gesture, mode}]`), and `rec_open` carries the `{button, gesture}` that started the recording. The host looks up the binding; **routing and trust are decided on the host, never by the device**, so a compromised device cannot choose a more privileged sink or higher trust than the user configured. The no-remote-start rule is unchanged: a binding tells the device *which physical gesture* records, it cannot start a recording.
+Examples: button 1 hold -> speech-to-text -> agent; button 2 hold -> speech-to-text -> Dictator; button 2 double-click -> event only (a host action such as "bookmark"); the same button held with the cube face-up goes to the agent and face-down goes to Dictator (a `when` on the motion input); touch strip left half hold -> agent, right half hold -> Dictator; shake -> discard last capture. Bindings are stored host-side in settings (RFC-0036 scope, per device) and survive replacing a device. The **device only needs to know which events start a recording**: the host pushes that as the `bindings` config key (`[{input, event, mode}]`), and `rec_open` carries the `{input, event, d}` that started the recording. `when` conditions are evaluated on the host from reported state at that moment; the device does not need to understand them. The host looks up the binding; **routing and trust are decided on the host, never by the device**, so a compromised device cannot choose a more privileged sink or higher trust than the user configured. The no-remote-start rule is unchanged: a binding tells the device *which physical gesture* records, it cannot start a recording, and a trigger the device never declared cannot be bound.
 
 #### Trust is configured by the user
 
@@ -210,8 +244,8 @@ A fixed UNTRUSTED rule would make hands-free operation impossible (RFC-0057): ev
 
 Guardrails that keep this a deliberate choice and not a default:
 
-1. **No silent default.** Creating a binding with an agent sink asks for the trust level; the setup screen explains the trade-off in one sentence (a TRUSTED binding means anyone who can make the device hear them can instruct the agent with your authority). The recommendation shown is the user's own to override.
-2. **Ceiling per device.** At pairing approval the user sets the highest trust any binding on that device may use (default PROJECT [decision, open question 3]). Raising a binding above the ceiling, and raising the ceiling, happens only on a host screen. A device can never change its own binding trust, ceiling or sink.
+1. **Default is TRUSTED** [owner, rev. 3], so hands-free works out of the box. The binding screen states the trade-off in one sentence (a TRUSTED binding means anyone who can make the device hear them can instruct the agent with your authority) and lets the user lower it per binding to PROJECT or UNTRUSTED.
+2. **Ceiling per device.** At pairing approval the user sets the highest trust any binding on that device may use (default TRUSTED [owner, rev. 3]; the user can lower it at pairing or later, for example for a device used in shared rooms). Changing a binding's trust or the ceiling happens only on a host screen. A device can never change its own binding trust, ceiling or sink.
 3. **Authentication first.** Trust applies only to a connection that passed the per-connection signature check; before that, frames are dropped.
 4. **Revocation and audit.** Revoking the device kills every binding at once. Audit records the binding id and the trust level applied to each capture (never content), so "what could this button do" is answerable afterwards.
 5. **Everything else in RFC-0027 still applies.** TRUSTED input removes taint from the transcript itself; it does not remove capability checks, approvals for UNSAFE effects, or taint picked up later in the run from tool results. RFC-0057's limits on what may be approved by voice remain.
@@ -251,7 +285,7 @@ Per RFC process this RFC does not edit RFC-0027. The amendment text above is the
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `name` | text | device class | Shown in the host UI. |
-| `bindings` | list of `{button, gesture, mode}` | one `hold` per button | Which gestures record, pushed by the host from the user's bindings. Sink and trust are never sent to the device. |
+| `bindings` | list of `{input, event, mode}` | one `hold` per button | Which gestures record, pushed by the host from the user's bindings. Sink and trust are never sent to the device. |
 | `codec` | 1, 2 or 3 | 1 | Applies to the next recording. |
 | `bitrate` | uint (bps) | 24000 | Opus only; device clamps. |
 | `preroll_ms` | uint | 400 | 0-1000. |
@@ -318,7 +352,7 @@ Spoken confession and counselling are pastoral confidentiality, and religious be
 
 1. **Name.** ACP is a working name carried over from the cube plan; "Aidos Capture Protocol" or something button-specific? It will be in third parties' docs.
 2. **Dictator.** Is the cube a Dictator input device (Dictator receives captures and owns the UX), or its own memory app that Dictator reads from? Changes who holds the per-app capture grant first.
-3. **Trust ceiling.** I proposed a per-device ceiling (default PROJECT) so TRUSTED needs one deliberate host-screen step per device. Is that the right default, or should new devices default to TRUSTED-capable since you pair them yourself?
+3. ~~Trust ceiling default~~ settled: TRUSTED (owner, rev. 3).
 4. **Openness terms.** CC0 for the spec and vectors, EUPL-1.2 for reference code: agreed?
 5. **Desktop authorisation.** The Node bridge as a normal per-app client with a token, or a dedicated local socket under RFC-0052?
 6. **Hands-free confirmation.** Should a binding be able to require a spoken or haptic confirmation (not a screen tap) before an effectful agent action, within RFC-0057's limits?
@@ -326,6 +360,7 @@ Spoken confession and counselling are pastoral confidentiality, and religious be
 
 ## Required follow-ups outside this RFC
 
+- Input registry test vectors (motion, touch, rotary) and a `sensors` grant entry in the grant list.
 - Dependency test enforcing the modularity rule above.
 - RFC-0027 amendment (origin rows) after approval.
 - RFC-0036: `devices.*` setting namespace.
