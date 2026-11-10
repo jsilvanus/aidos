@@ -34,7 +34,7 @@ Runs are in memory. If the link drops, tool calls time out (today 120 s); the ag
 Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0051); Android agent runtime hosting (D49).
 
 ## Phases
-1. Agent adapter through the virtual router (model on a peer, loop local). Testable with two Engines over loopback.
+1. Agent adapter through the virtual router (model on a peer, loop local). **Built on the desktop host** (`RoutedModelAdapter`, unit-tested with fakes); a two-Engine run over loopback is not done yet.
 2. Android host runs the agent runtime and Binder MCP broker.
 3. Peer agent endpoints, scope `agent`, MCP tool relay, tool-host taint and approval.
 4. Real two-device run (owner's devices).

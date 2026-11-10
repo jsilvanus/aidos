@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="engineui-jvm">
+    <output-path>$PROJECT_DIR$/engineui/build/libs</output-path>
+    <root id="archive" name="engineui-jvm.jar">
+      <element id="module-output" name="aidos-engine.engineui.jvmMain" />
+    </root>
+  </artifact>
+</component>

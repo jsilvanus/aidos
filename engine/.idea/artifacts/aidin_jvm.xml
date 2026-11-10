@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="aidin-jvm">
+    <output-path>$PROJECT_DIR$/aidin/build/libs</output-path>
+    <root id="archive" name="aidin-jvm.jar">
+      <element id="module-output" name="aidos-engine.aidin.jvmMain" />
+    </root>
+  </artifact>
+</component>

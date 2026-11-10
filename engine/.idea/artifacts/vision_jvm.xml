@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="vision-jvm">
+    <output-path>$PROJECT_DIR$/vision/build/libs</output-path>
+    <root id="archive" name="vision-jvm.jar">
+      <element id="module-output" name="aidos-engine.vision.jvmMain" />
+    </root>
+  </artifact>
+</component>

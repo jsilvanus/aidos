@@ -35,7 +35,11 @@ import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.agent.AgentRuntime
+import fi.italeino.aidos.engine.agent.AgentTurnRequest
 import fi.italeino.aidos.engine.agent.ManagedModelAdapter
+import fi.italeino.aidos.engine.agent.RoutedModelAdapter
+import dev.aidos.aidin.LinkMessage
+import dev.aidos.kernel.ModelAdapter
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.handshake.HandshakeWire
@@ -49,6 +53,7 @@ import fi.italeino.aidos.engine.http.KtorEffectBroker
 import fi.italeino.aidos.engine.http.TokenManager
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import fi.italeino.aidos.engine.inference.Locality
+import fi.italeino.aidos.engine.inference.Placement
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -204,25 +209,35 @@ class DesktopEngineHost(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = InferenceRequestManager(runtime)
             lateinit var server: EngineHttpServer
-            val agent = AgentRuntime(
-                scope = scope,
-                adapterFor = { req ->
-                    ManagedModelAdapter(
-                        manager,
-                        req.model,
-                        Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
-                        req.contextWindow ?: 8192,
-                    )
-                },
-                adapterWithPlacement = { req, onPlacement ->
-                    ManagedModelAdapter(
-                        manager,
-                        req.model,
-                        Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY,
-                        req.contextWindow ?: 8192,
+            // The loop's model goes through the virtual router (RFC-0107 phase 1): `aidos:chat`, `peer:<node>/<m>`
+            // and `local:<m>` resolve like they do for /v1/chat/completions, so the loop runs here while its
+            // model may run on a trusted peer. A plain installed-model id keeps the direct in-process path.
+            fun modelAdapterFor(req: AgentTurnRequest, onPlacement: ((Placement) -> Unit)?): ModelAdapter {
+                val locality = Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY
+                val contextWindow = req.contextWindow ?: 8192
+                val router = server.virtualModelRouter
+                return if (router.isVirtualModelId(req.model)) {
+                    RoutedModelAdapter(
+                        resolveRoutes = router::resolveRoutes,
+                        callLocal = { id, loc, request -> ManagedModelAdapter(manager, id, loc, contextWindow).invoke(request) },
+                        callPeer = { peer, endpoint, body, loc, plan ->
+                            _aidin.value?.delegate(peer, endpoint, body, loc.wire, plan)
+                                ?: LinkMessage.DelegateResponse(requestId = "", status = 503, bodyJson = "")
+                        },
+                        quarantine = { router.markRouteQuarantined(it) },
+                        modelId = req.model,
+                        locality = locality,
+                        contextWindow = contextWindow,
                         onPlacementObserved = onPlacement,
                     )
+                } else {
+                    ManagedModelAdapter(manager, req.model, locality, contextWindow, onPlacementObserved = onPlacement)
                 }
+            }
+            val agent = AgentRuntime(
+                scope = scope,
+                adapterFor = { req -> modelAdapterFor(req, null) },
+                adapterWithPlacement = { req, onPlacement -> modelAdapterFor(req, onPlacement) },
             )
             _agentRuntime = agent
             server = EngineHttpServer(
