@@ -10,6 +10,7 @@ import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Turn
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -78,6 +79,53 @@ class AgentRoutesTest {
             routing { agentRoutes(runtime, subjectOf = { it.request.headers["X-Test-App"] ?: "app-a" }) }
         }
         block()
+    }
+
+    private fun gated(granted: Set<String>, block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
+        application {
+            install(ContentNegotiation) { json(json) }
+            routing {
+                agentRoutes(
+                    runtime(),
+                    subjectOf = { it.request.headers["X-Test-App"] ?: "app-a" },
+                    mayRunAgent = { it in granted },
+                )
+            }
+        }
+        block()
+    }
+
+    @Test
+    fun inferenceOnlyAppIsRefusedOnEveryAgentRoute() = gated(granted = setOf("app-b")) {
+        val refused = listOf(
+            postJson("/v1/agent/turns", """{"model":"m","message":"hi"}"""),
+            client.get("/v1/agent/runs"),
+            client.get("/v1/agent/runs/r1"),
+            postJson("/v1/agent/runs/r1/tool-results", """{"results":[]}"""),
+            client.delete("/v1/agent/runs/r1"),
+            client.get("/v1/agent/events"),
+        )
+        for (res in refused) {
+            assertEquals(HttpStatusCode.Forbidden, res.status)
+            assertTrue(res.bodyAsText().contains("agent_not_granted"))
+        }
+    }
+
+    @Test
+    fun infoStaysOpenWithoutAnAgentGrant() = gated(granted = emptySet()) {
+        assertEquals(HttpStatusCode.OK, client.get("/v1/agent/info").status)
+    }
+
+    @Test
+    fun grantedAppRunsAgentsAndTheGrantIsPerApp() = gated(granted = setOf("app-b")) {
+        val ok = client.post("/v1/agent/turns") {
+            header("X-Test-App", "app-b")
+            contentType(ContentType.Application.Json)
+            setBody("""{"model":"m","message":"hi"}""")
+        }
+        assertEquals(HttpStatusCode.OK, ok.status)
+        // app-a has no grant, even though app-b does.
+        assertEquals(HttpStatusCode.Forbidden, postJson("/v1/agent/turns", """{"model":"m","message":"hi"}""").status)
     }
 
     private fun runtime(toolWait: kotlin.time.Duration = 5_000.milliseconds, max: Int = 8) =

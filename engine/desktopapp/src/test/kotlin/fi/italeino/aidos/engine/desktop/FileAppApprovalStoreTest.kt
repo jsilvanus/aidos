@@ -44,6 +44,20 @@ class FileAppApprovalStoreTest {
     }
 
     @Test
+    fun agentGrantIsOffByDefault_persists_andRevokeClearsIt() = runTest {
+        val store = FileAppApprovalStore(file)
+        store.recordFirstHandshake("debug.app", "Debug App")
+        store.approveApp("debug.app")
+        assertEquals(false, store.getApproval("debug.app")?.agentAllowed)
+
+        store.setAgentAllowed("debug.app", true)
+        assertEquals(true, FileAppApprovalStore(file).getApproval("debug.app")?.agentAllowed)
+
+        assertEquals(false, store.revokeApproval("debug.app")?.agentAllowed)
+        assertNull(store.setAgentAllowed("missing", true))
+    }
+
+    @Test
     fun actionsOnUnknownAppsReturnNull() = runTest {
         val store = FileAppApprovalStore(file)
         assertNull(store.approveApp("missing"))

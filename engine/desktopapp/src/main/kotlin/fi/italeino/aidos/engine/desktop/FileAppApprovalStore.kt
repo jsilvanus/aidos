@@ -56,8 +56,11 @@ class FileAppApprovalStore(
 
     override suspend fun revokeApproval(packageName: String): AppApprovalRecord? = update(packageName) {
         if (it.status != AppApprovalStatus.APPROVED) it
-        else it.copy(status = AppApprovalStatus.PENDING, decidedAt = null, lastSeenAt = now().toString())
+        else it.copy(status = AppApprovalStatus.PENDING, decidedAt = null, agentAllowed = false, lastSeenAt = now().toString())
     }
+
+    override suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord? =
+        update(packageName) { it.copy(agentAllowed = allowed) }
 
     override suspend fun recordFirstHandshake(packageName: String, displayName: String): AppApprovalRecord =
         mutex.withLock {

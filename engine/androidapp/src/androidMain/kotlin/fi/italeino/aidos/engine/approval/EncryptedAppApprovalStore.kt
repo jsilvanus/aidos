@@ -115,8 +115,19 @@ class EncryptedAppApprovalStore(context: Context) : AppApprovalStore {
             val updated = current.copy(
                 status = AppApprovalStatus.PENDING,
                 decidedAt = null,
+                agentAllowed = false,
                 lastSeenAt = Instant.now().toString()
             )
+            saveRecord(updated)
+            emitUpdate()
+            updated
+        }
+
+    override suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord? =
+        withContext(Dispatchers.IO) {
+            val current = getApproval(packageName) ?: return@withContext null
+            if (current.agentAllowed == allowed) return@withContext current
+            val updated = current.copy(agentAllowed = allowed)
             saveRecord(updated)
             emitUpdate()
             updated

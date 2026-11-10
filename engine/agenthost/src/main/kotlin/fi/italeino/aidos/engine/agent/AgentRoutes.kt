@@ -35,8 +35,8 @@ private const val MAX_WAIT_MS = 30_000L
 
 /**
  * The agent routes (additive to Engine API v1). Install inside the Engine's authenticated block so
- * the same bearer tokens and per-app approval apply: an app that may call the Engine may run an
- * agent. Runs belong to the token subject that started them ([subjectOf]); another app's run id is
+ * the same bearer tokens and per-app approval apply, and (D49) running an agent also needs the
+ * separate per-app agent grant, [mayRunAgent]. Runs belong to the token subject that started them ([subjectOf]); another app's run id is
  * a 404. Per-agent and per-tool authorization (AGENT-MANAGEMENT.md) is not enforced here yet; the
  * only tools a run can use are the ones the calling app hands it.
  */
@@ -45,10 +45,27 @@ fun Route.agentRoutes(
     subjectOf: (ApplicationCall) -> String = { it.principal<UserIdPrincipal>()?.name ?: "anonymous" },
     /** Applies the host's locality layering (app and Engine limits); the default is the caller's own limit, else local only. */
     localityFor: suspend (subject: String?, requested: Locality?) -> Locality = { _, requested -> requested ?: Locality.LOCAL_ONLY },
+    /**
+     * D49: an inference grant is not an agent grant. Whether [subject] may use the agent routes at all;
+     * the host answers from the per-app agent grant (default deny). The default allows, for hosts and
+     * tests that have no per-app approval.
+     */
+    mayRunAgent: suspend (subject: String) -> Boolean = { true },
 ) {
+    // Answers 403 and returns true when the caller has no agent grant; each handler but /info starts with it.
+    suspend fun refused(call: ApplicationCall): Boolean {
+        if (mayRunAgent(subjectOf(call))) return false
+        call.respond(
+            HttpStatusCode.Forbidden,
+            ErrorResponse(ErrorDetail("this app has not been granted agent access; the user can allow it in Engine's connected apps", "permission_error", code = "agent_not_granted")),
+        )
+        return true
+    }
+
     get("/v1/agent/info") { call.respond(runtime.info()) }
 
     post("/v1/agent/turns") {
+        if (refused(call)) return@post
         guarded(call) {
             val request = call.receive<AgentTurnRequest>()
             val requested = request.locality?.let {
@@ -60,10 +77,14 @@ fun Route.agentRoutes(
         }
     }
 
-    get("/v1/agent/runs") { call.respond(runtime.list(subjectOf(call))) }
+    get("/v1/agent/runs") {
+        if (refused(call)) return@get
+        call.respond(runtime.list(subjectOf(call)))
+    }
 
     // Task snapshot. ?since=<seq>&waitMs=<n> long-polls until the run changes past `since`.
     get("/v1/agent/runs/{id}") {
+        if (refused(call)) return@get
         guarded(call) {
             val wait = (call.request.queryParameters["waitMs"]?.toLongOrNull() ?: 0L).coerceIn(0, MAX_WAIT_MS)
             call.respond(runtime.get(subjectOf(call), runId(call), call.request.queryParameters["since"]?.toIntOrNull(), wait.milliseconds))
@@ -71,6 +92,7 @@ fun Route.agentRoutes(
     }
 
     post("/v1/agent/runs/{id}/tool-results") {
+        if (refused(call)) return@post
         guarded(call) {
             val body = call.receive<ToolResultsRequest>()
             call.respond(runtime.submit(subjectOf(call), runId(call), body.results, body.async))
@@ -78,6 +100,7 @@ fun Route.agentRoutes(
     }
 
     delete("/v1/agent/runs/{id}") {
+        if (refused(call)) return@delete
         val id = call.parameters["id"].orEmpty()
         if (runtime.cancel(subjectOf(call), id)) call.respond(HttpStatusCode.NoContent)
         else call.respond(HttpStatusCode.NotFound, ErrorResponse(ErrorDetail("no such run: $id", "invalid_request_error", code = "run_not_found")))
@@ -86,6 +109,7 @@ fun Route.agentRoutes(
     // Server-sent notifications for the caller's runs. Lossy and advisory (a client that was away
     // or missed one reconciles with GET /v1/agent/runs/{id}); `: ping` comments keep the line open.
     get("/v1/agent/events") {
+        if (refused(call)) return@get
         val owner = subjectOf(call)
         call.response.cacheControl(CacheControl.NoCache(null))
         call.respondTextWriter(ContentType.Text.EventStream) {
