@@ -117,6 +117,7 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 
 ## Not covered
 
+- `/v1/agent/*` (additive, D49) answers 403 `agent_not_granted` to an approved app the user has not allowed to run agents; `GET /v1/agent/info` stays open. Inference routes are unchanged.
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).
 - STT takes a whole utterance and returns no partial results and no timestamps; audio over 30 s is
   cut into windows internally, so send utterance-sized pieces for best results.

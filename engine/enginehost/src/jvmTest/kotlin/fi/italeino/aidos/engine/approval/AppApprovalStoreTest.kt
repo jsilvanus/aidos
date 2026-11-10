@@ -65,7 +65,8 @@ class AppApprovalStoreTest {
             if (current.status != AppApprovalStatus.APPROVED) return current
             val updated = current.copy(
                 status = AppApprovalStatus.PENDING,
-                decidedAt = null
+                decidedAt = null,
+                agentAllowed = false
             )
             records[packageName] = updated
             return updated
@@ -107,6 +108,11 @@ class AppApprovalStoreTest {
             return updated
         }
         
+        override suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord? {
+            val current = records[packageName] ?: return null
+            return current.copy(agentAllowed = allowed).also { records[packageName] = it }
+        }
+
         override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord? {
             val current = records[packageName] ?: return null
             return current.copy(sdkVersion = sdkVersion ?: current.sdkVersion, apiVersion = apiVersion ?: current.apiVersion)
@@ -172,6 +178,19 @@ class AppApprovalStoreTest {
         assertNull(revoked?.decidedAt)
     }
     
+    @Test
+    fun agentGrantDefaultsToDeniedAndRevokeClearsIt() = runBlocking {
+        val store = InMemoryAppApprovalStore()
+        val first = store.recordFirstHandshake("com.example.app", "Example App")
+        assertEquals(false, first.agentAllowed)
+        store.approveApp("com.example.app")
+        // D49: approval for inference does not carry an agent grant.
+        assertEquals(false, store.getApproval("com.example.app")?.agentAllowed)
+        assertEquals(true, store.setAgentAllowed("com.example.app", true)?.agentAllowed)
+        assertEquals(false, store.revokeApproval("com.example.app")?.agentAllowed)
+        assertNull(store.setAgentAllowed("never.seen", true))
+    }
+
     @Test
     fun recordHandshakeAttemptIncrementsCounter() = runBlocking {
         val store = InMemoryAppApprovalStore()

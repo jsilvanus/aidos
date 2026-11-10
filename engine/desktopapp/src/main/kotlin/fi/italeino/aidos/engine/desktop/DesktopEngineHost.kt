@@ -231,7 +231,18 @@ class DesktopEngineHost(
                 inferenceManager = manager,
                 port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
-                extraRoutes = { agentRoutes(agent) { subject, requested -> server.effectiveLocality(subject, requested) } },
+                extraRoutes = {
+                    agentRoutes(
+                        agent,
+                        localityFor = { subject, requested -> server.effectiveLocality(subject, requested) },
+                        // D49: running an agent is a separate grant from inference. The Engine's own token and the
+                        // desktop's own localhost client are the user's; every other app needs the per-app grant.
+                        mayRunAgent = { subject ->
+                            subject == TokenManager.ENGINE_SUBJECT || subject == LOCALHOST_SUBJECT ||
+                                approvalStore.getApproval(subject)?.agentAllowed == true
+                        },
+                    )
+                },
                 onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) },
                 aidinNode = { _aidin.value },
             )

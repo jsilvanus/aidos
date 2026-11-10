@@ -36,8 +36,11 @@ class InMemoryAppApprovalStore : AppApprovalStore {
     }
 
     override suspend fun revokeApproval(packageName: String) = set(packageName) {
-        if (it.status == AppApprovalStatus.APPROVED) it.copy(status = AppApprovalStatus.PENDING, decidedAt = null) else it
+        if (it.status == AppApprovalStatus.APPROVED) it.copy(status = AppApprovalStatus.PENDING, decidedAt = null, agentAllowed = false) else it
     }
+
+    override suspend fun setAgentAllowed(packageName: String, allowed: Boolean) =
+        set(packageName) { it.copy(agentAllowed = allowed) }
 
     override suspend fun recordFirstHandshake(packageName: String, displayName: String): AppApprovalRecord {
         val t = now()

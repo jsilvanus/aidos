@@ -592,7 +592,9 @@ On desktop, D48 already hosts both in one process behind the loopback API; that 
 
 **Open (must be done before the Android host ships):**
 - Foreground service type. The Engine declares `FOREGROUND_SERVICE_TYPE_DATA_SYNC`; recent Android versions time that type out. Verify against the target API level and pick the type (or a different keep-alive design) accordingly; do not promise indefinite background execution.
-- Process death and recovery tests for interrupted agent jobs; inference-only-client authorization tests.
+- Process death and recovery tests for interrupted agent jobs.
+
+**Built 2026-11-10 (desktop host):** the authorization boundary is enforced. `AppApprovalRecord.agentAllowed` is a separate per-app grant, default false, cleared on revoke; every `/v1/agent` route except `/v1/agent/info` answers 403 `agent_not_granted` to an app without it. The Engine's own token and the desktop's own localhost client (`~/.aidos/engine.json`) are the user's and exempt. The Connected Apps pane has an "Allow agent runs" button. Tests: `AgentRoutesTest`, `AppApprovalStoreTest`, `FileAppApprovalStoreTest`. The Android host does not serve agent routes yet; it must wire the same `mayRunAgent` when it does.
 
 **Not decided here:** the signed invocation assertion and model attestation (IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md) stay proposals; Binder caller identity plus package/signature checks are enough for the first cross-app slice.
 
@@ -637,6 +639,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
+| 2026-11-10 | D49: default-deny per-app agent grant built on the desktop host. |
 | 2026-11-09 | D49 settled: one Android host app; package stays `fi.italeino.aidos.engine`. |
 | 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |
 | 2026-10-25 | D47 settled: Engine-enforced inference locality (RFC-0104); default local_only. |
