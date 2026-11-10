@@ -1,6 +1,6 @@
 # RFC-0056: Retention, Compaction, and Storage Lifecycle
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0056-requirement-map).
 
 ## Abstract
 
@@ -236,3 +236,38 @@ want full fidelity without local storage cost.
 
 Content verification against Git before compaction, allowing more aggressive policies when a
 verified copy exists in history.
+
+## Implementation notes (2026-11-10)
+
+Where the built system differs from, or narrows, the text above. None of these changes the
+principle ("skeletons are permanent; flesh is reclaimable") or any never-delete rule.
+
+- **ContentNode records are never deleted.** An earlier engine soft-deleted `content_nodes` after
+  90 days and evicted by LRU past a 512 MB cap. That contradicted the table (ContentNode records
+  are PERMANENT) and was removed. The 512 MB figure is now the Stage 1 soft limit.
+- **Settings.** The windows are ordinary settings (RFC-0036): `retention.aged_days` (30),
+  `retention.tool_result_days` (7), `retention.soft_limit_mb` (512) and `retention.never_compact`
+  (false), all PREFERENCE scope, so `aidos.toml` can set them per project. `retention_policy` rows
+  override them per object class, project over user, and a row naming a class that is not AGED is
+  ignored.
+- **What "Tool result payloads over 64KB" means in code.** Tool results live in
+  `attempts.output_snapshot`; an output over 64KB ages out after `tool_result_days` instead of
+  `aged_days`. There is no separate tool-result table.
+- **Run transcripts.** No transcript table exists; RFC-0008's transcript is the Attempt output
+  snapshots, which are compacted like any other.
+- **Deduplication writes Attempt outputs, not ContentNodes.** `.aidos/blobs/<sha256>` with
+  `blob_refs` ref counts stores any Attempt output of 16 KB or more once; the `attempts` row holds
+  `{"blob_ref":"<sha256>","bytes":N}`. Compacting such an Attempt reads the blob for head, tail and
+  hash and releases the reference; the file goes with the last reference. ContentNode content
+  stays in Git or the working tree (RFC-0024), so there is nothing of theirs to deduplicate.
+- **Live Runs are protected.** Attempts of a PENDING, RUNNING or YIELDED Run, and the event that
+  triggered such a Run, are never compacted, because a parked Run rebuilds its history from them.
+- **Stage 3 is an admission check.** Below 250 MB free on the project's volume, `sessions.send`
+  returns `run.storage_critical` with a message naming the free space instead of creating a Run.
+  The offered export is RFC-0041, which is still a Draft with no code, so the message tells the
+  user to free space or archive by hand.
+- **Not built, and outside this RFC's MVP:** Stage 2 (DERIVED eviction, including the model-weight
+  conflict with RFC-0103 noted above), the per-project retention UI, verification against Git
+  before compaction, and cold export. Deleting SECRET-labelled content on detection (Security
+  section) is also not built: RFC-0035 redaction at write time is what keeps secrets out of the
+  stored payloads today, and there is no detector yet to trigger a purge afterward.

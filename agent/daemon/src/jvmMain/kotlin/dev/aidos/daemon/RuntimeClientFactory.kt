@@ -56,7 +56,11 @@ object RuntimeClientFactory {
                 anthropicApiKey = { System.getenv("ANTHROPIC_API_KEY")?.toCharArray() },
                 userDriver = userDb.driver,
             )
-            runExecutor = SqliteRunExecutor(nowIso = nowIso, compositionRoot = compositionRoot)
+            runExecutor = SqliteRunExecutor(
+                nowIso = nowIso,
+                compositionRoot = compositionRoot,
+                admission = StoragePressureAdmission(),
+            )
             // RFC-0008 step 8d: the same composition (router, remote adapters resolved from the
             // same ANTHROPIC_API_KEY) resolves a parked Run as drove it, so the adapter named at
             // park time is the one `approve-run`/`deny-run` actually resumes with.
