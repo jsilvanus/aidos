@@ -14,7 +14,7 @@ Each RFC progresses through the following statuses:
 
 ### Accepted is not implemented
 
-No RFC carries the status Implemented. Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, one (0046) is fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.
+Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, two (0046, and 0036 since 2026-11-10) are fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.
 
 ### Accepted is not frozen
 

@@ -187,7 +187,7 @@ fun applyTypeDefaults(
                 JsonPrimitive(EgressPolicy.NEVER.name),
                 SettingSetByKind.RUNTIME,
                 nowIso,
-            )
+            ).getOrThrow()  // NEVER is always a valid routing.remote_egress value
             // Applying this at user scope means it affects every project for this user, not just
             // the personal one being created, and this call re-applies (clobbering any explicit
             // choice) every time a personal project is created or its type changes to PERSONAL —

@@ -247,6 +247,20 @@ object Settings {
     )
 
     fun forKey(key: String): SettingDescriptor<*>? = all.firstOrNull { it.key == key }
+
+    // ─── Migration (RFC-0036) ───────────────────────────────────────────────
+
+    /**
+     * Old key → new key. An old key is honoured as its replacement, with a warning, for at least
+     * one major version. Empty today: there is one version.
+     */
+    val renamedKeys: Map<String, String> = emptyMap()
+
+    /**
+     * Keys that no longer exist. Retained in storage but ignored, with a warning; dropped from
+     * storage after one major. Empty today.
+     */
+    val removedKeys: Set<String> = emptySet()
 }
 
 /**

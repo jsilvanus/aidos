@@ -63,6 +63,24 @@ CREATE TABLE settings (
     PRIMARY KEY (scope, scope_id, key)
 );
 
+-- Append-only audit of settings changes (RFC-0036 Security 5). Lives in user.db because a
+-- user-scope SECURITY/SPEND change belongs to no project, and project.db's audit_log needs a
+-- project_id. Also records refused project attempts at a SECURITY/SPEND key.
+CREATE TABLE settings_audit (
+    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at    TEXT NOT NULL,
+    kind           TEXT NOT NULL,                         -- CHANGED|SCOPE_VIOLATION
+    scope          TEXT NOT NULL,                         -- user|workspace|project|session
+    scope_id       TEXT,
+    key            TEXT NOT NULL,
+    old_value_json TEXT,                                  -- NULL when unset before
+    new_value_json TEXT,                                  -- NULL when unset/refused value not stored
+    actor_kind     TEXT NOT NULL,                         -- ActorKind (RFC-0046)
+    actor_id       TEXT NOT NULL
+);
+
+CREATE INDEX idx_settings_audit_key ON settings_audit(key, occurred_at);
+
 -- Model catalogue and installed weights. Device-global: multi-gigabyte, and
 -- one loaded instance can saturate a phone (RFC-0020, RFC-0054).
 -- ---------------------------------------------------------------------------

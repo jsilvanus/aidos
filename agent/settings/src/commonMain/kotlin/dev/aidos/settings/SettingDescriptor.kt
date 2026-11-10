@@ -22,7 +22,7 @@ enum class ScopeClass {
     /** User-scope only. Any project attempting this is a visible error + audit row. */
     SPEND,
 
-    /** User, workspace, project — but not session. A project may only tighten, never loosen. */
+    /** User, workspace, project — but not session (RFC-0036 table). A project may only tighten, never loosen. */
     PROJECT_SAFE,
 
     /** Any scope including session. */
@@ -150,6 +150,11 @@ class SettingBuilder<T>(private val key: String) {
     fun build(): SettingDescriptor<T> {
         val d = checkNotNull(default) { "setting '$key' has no default" }
         val c = checkNotNull(codec) { "setting '$key' has no codec" }
+        // RFC-0036 Fail closed: an invalid SECURITY value resolves to the most restrictive valid
+        // value, so a SECURITY setting that cannot name one cannot be declared.
+        check(scopeClass != ScopeClass.SECURITY || mostRestrictive != null) {
+            "SECURITY setting '$key' must declare mostRestrictive"
+        }
         return SettingDescriptor(key, scopeClass, d, description, c, mostRestrictive)
     }
 }
@@ -177,6 +182,9 @@ enum class SettingErrorClass {
 
     /** Type or range check failed; failed closed to default or mostRestrictive. */
     VALIDATION_FAILED,
+
+    /** The key was renamed or removed (RFC-0036 Migration); a warning, the value is still honoured or ignored as stated. */
+    DEPRECATED_KEY,
 }
 
 fun SettingError.toAidosError(): AidosError = AidosError(
@@ -184,6 +192,7 @@ fun SettingError.toAidosError(): AidosError = AidosError(
         SettingErrorClass.UNKNOWN_KEY -> "settings.unknown_key"
         SettingErrorClass.SCOPE_VIOLATION -> "settings.scope_violation"
         SettingErrorClass.VALIDATION_FAILED -> "settings.validation_failed"
+        SettingErrorClass.DEPRECATED_KEY -> "settings.deprecated_key"
     },
     errorClass = ErrorClass.INVALID_INPUT,
     message = message,

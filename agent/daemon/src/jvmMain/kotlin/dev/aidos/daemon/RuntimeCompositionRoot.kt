@@ -30,8 +30,12 @@ import dev.aidos.prompt.PromptAssembler
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
 import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.ProjectSettingsLoader
+import dev.aidos.settings.ProjectSettingsSnapshot
+import dev.aidos.settings.SettingError
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
+import dev.aidos.settings.UserDbSettingsAudit
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.Redactor
 import java.io.File
@@ -95,6 +99,13 @@ class RuntimeCompositionRoot(
     },
     private val mcpClientFactory: McpClientFactory = McpClientFactory.Default,
     val mcpLifecycleManager: McpLifecycleManager = McpLifecycleManager(),
+    /**
+     * RFC-0036: where `aidos.toml` problems go (scope violations, invalid values, unknown keys,
+     * each with file and line). The default prints them; a UI host replaces it to show the user.
+     */
+    private val settingsDiagnostics: (List<SettingError>) -> Unit = { errors ->
+        errors.forEach { System.err.println("aidos: settings ${it.errorClass} ${it.originPath ?: ""}: ${it.message}") }
+    },
 ) {
 
     /**
@@ -358,7 +369,11 @@ class RuntimeCompositionRoot(
             redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
             listOf(AnthropicAdapter(key))
         } ?: emptyList()
-        val egressPolicy = resolveEgressPolicy(userDriver)
+        // RFC-0036: aidos.toml is untrusted input that arrives with the repository. Loading it
+        // here reports and audits a project's attempt at routing.remote_egress (SECURITY) and
+        // resolves the policy against the project scope so that attempt provably does not apply.
+        val projectSettings = loadProjectSettings(projectDriver, projectId, rootPath, nowIso())
+        val egressPolicy = resolveEgressPolicy(userDriver, projectSettings)
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
                 allowRemote = allowRemoteFor(egressPolicy),
@@ -408,6 +423,25 @@ class RuntimeCompositionRoot(
         )
     }
 
+    private fun loadProjectSettings(
+        projectDriver: SqlDriver, projectId: ProjectId, rootPath: String, nowIso: String,
+    ): ProjectSettingsSnapshot {
+        val file = File(rootPath, "aidos.toml")
+        val tooBig = file.isFile && file.length() > MAX_AIDOS_TOML_BYTES
+        // A symlinked aidos.toml could point anywhere; the file is repository-supplied.
+        val readable = file.isFile && !tooBig && !java.nio.file.Files.isSymbolicLink(file.toPath())
+        val content = if (readable) runCatching { file.readText() }.getOrNull() else null
+        val load = ProjectSettingsLoader(projectDriver, userDriver?.let { UserDbSettingsAudit(it) })
+            .load(projectId.value, content, nowIso)
+        val problems = if (tooBig) load.diagnostics + SettingError(
+            key = "", originPath = "aidos.toml", line = null,
+            message = "aidos.toml is larger than $MAX_AIDOS_TOML_BYTES bytes. Ignored.",
+            errorClass = dev.aidos.settings.SettingErrorClass.VALIDATION_FAILED,
+        ) else load.diagnostics
+        if (problems.isNotEmpty()) settingsDiagnostics(problems)
+        return load.snapshot
+    }
+
     private fun projectRootPath(driver: SqlDriver, projectId: String): String? =
         driver.executeQuery(
             identifier = null,
@@ -423,10 +457,17 @@ class RuntimeCompositionRoot(
          * no [userDriver] is supplied. `internal` so tests can verify the resolution without
          * driving a full Run.
          */
-        internal fun resolveEgressPolicy(userDriver: SqlDriver?): EgressPolicy =
+        internal fun resolveEgressPolicy(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+        ): EgressPolicy =
             userDriver?.let {
-                SettingsStore(userDriver = it, projectDriver = null).resolve(Settings.routingRemoteEgress).value
+                SettingsStore(userDriver = it, projectDriver = null)
+                    .resolve(Settings.routingRemoteEgress, project = project).value
             } ?: Settings.routingRemoteEgress.default
+
+        /** `aidos.toml` comes with the repository; bound what is read from it. */
+        internal const val MAX_AIDOS_TOML_BYTES = 256 * 1024L
 
         /**
          * M23: only `ALLOW` permits automatic remote routing. `NEVER` blocks it outright; `ASK`
