@@ -59,7 +59,7 @@ class RetentionMaintenance(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                System.err.println("aidos: retention pass for project $projectId failed: ${e.message}")
+                DaemonLog.err("aidos: retention pass for project $projectId failed: ${e.message}")
             }
         }
         active[projectId] = job

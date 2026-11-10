@@ -170,4 +170,12 @@ class SessionMemoryTest {
     // Allow store.write to accept a different content for the TASK_STATE test.
     private fun baseEntry(content: String): MemoryEntry =
         baseEntry().copy(content = content)
+
+    @Test
+    fun `a secret in a memory entry is redacted before it is written (RFC-0035)`() {
+        val redacting = SessionMemoryStore(driver) { it.replace("hunter2-secret", "«redacted:pw»") }
+        redacting.write(baseEntry().copy(content = "The password is hunter2-secret"))
+        val stored = redacting.readForSession("sess-1").single().content
+        assertEquals("The password is «redacted:pw»", stored)
+    }
 }

@@ -68,6 +68,42 @@ class PortabilityCliTest {
         assertEquals(1, run("import", "s.aidos-project", "--into", "s2", io = Io(envPw = "wrong")).first)
     }
 
+    private class MemKeys : SigningKeyStore {
+        val m = mutableMapOf<String, String>()
+        override fun save(name: String, text: String) { check(name !in m) { "a signing key named '$name' already exists" }; m[name] = text }
+        override fun load(name: String) = m[name]
+    }
+
+    @Test fun `a signing key kept in the vault signs an export and never touches disk`() {
+        project()
+        val keys = MemKeys()
+        fun go(vararg a: String, io: Io = Io()) = PortabilityCli.run(a.toList(), reg, io, cwd = tmp, exportedBy = "juha", kdfIterations = 1000, keys = keys) to io
+        val (k, kio) = go("keygen", "--vault", "release", "release.pub")
+        assertEquals(0, k, kio.err.toString())
+        assertTrue(tmp.listFiles()!!.none { it.name.endsWith(".key") }, "no private key file is written")
+        assertEquals(1, go("keygen", "--vault", "release").first, "a second keygen under the same name is refused")
+        val fp = ArchiveCrypto.fingerprint(ArchiveCrypto.decodePublic(File(tmp, "release.pub").readText().trim()))
+        assertEquals(0, go("export", "demo", "--output", "v.aidos-project", "--sign", "vault:release").first)
+        val (c, io) = go("import", "v.aidos-project", "--into", "v", "--require-signature", "--trust", fp)
+        assertEquals(0, c, io.err.toString())
+        val (c2, io2) = go("export", "demo", "--output", "w.aidos-project", "--sign", "vault:missing")
+        assertEquals(1, c2); assertTrue(io2.err.single().contains("export.bad_key"))
+    }
+
+    @Test fun `a file containing a credential is left out of the export and named without its value`() {
+        val root = project()
+        File(root, ".env").writeText("API_KEY=abcdef0123456789abcdef\n")
+        File(root, "binary.bin").writeBytes(byteArrayOf(0, 1, 2, 3))
+        val scanner = SecretScanner { text -> if ("API_KEY=" in text) listOf("pattern:credential-assignment") else emptyList() }
+        val io = Io()
+        assertEquals(0, PortabilityCli.run(listOf("export", "demo", "--output", "e.aidos-project"), reg, io, cwd = tmp, exportedBy = "juha", scanner = scanner))
+        assertTrue(io.err.single().contains("excluded .env"), io.err.toString())
+        assertTrue(io.err.none { it.contains("abcdef0123456789abcdef") })
+        assertEquals(0, PortabilityCli.run(listOf("import", "e.aidos-project", "--into", "e"), reg, Io(), cwd = tmp, exportedBy = "juha"))
+        assertTrue(!File(tmp, "e/.env").exists(), "the credential file is not in the archive")
+        assertTrue(File(tmp, "e/notes.md").isFile && File(tmp, "e/binary.bin").isFile)
+    }
+
     @Test fun `keygen refuses to overwrite and bad usage exits 2`() {
         run("keygen", "k"); assertEquals(1, run("keygen", "k").first)
         assertEquals(2, run("export").first); assertEquals(2, run("import", "x", "--bogus").first)

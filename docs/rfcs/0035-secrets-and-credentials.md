@@ -1,6 +1,6 @@
 # RFC-0035: Secrets and Credentials
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0035-requirement-map).
 
 ## Abstract
 
@@ -277,3 +277,17 @@ Provider-assisted rotation for providers whose APIs support it.
 
 Hardware-backed attestation on Android, so a secret can be bound to the device rather than only
 encrypted on it.
+
+## Implementation Amendments
+
+Recorded 2026-11-10 with the implementation. The design above is unchanged; these are what building it settled.
+
+1. **Key storage per platform.** Linux uses the Secret Service through `secret-tool`, macOS the Keychain through `security`, Windows DPAPI through PowerShell `ProtectedData`. The vault key is a random 256-bit key held there; on Windows the DPAPI-wrapped blob sits in `~/.aidos/secrets/vault.key.dpapi` and is useless to another user or machine. Where none of these exists, a passphrase (`AIDOS_VAULT_PASSPHRASE`) derives the key with PBKDF2-HmacSHA256 (salt and a verifier in `vault.salt`), and failing that a random key is kept in a file readable only by the owner. The last two report a weaker `KeyProtection`, and every host says so plainly.
+2. **Android Keystore is not implemented.** The vault module is JVM-only and the Android host does not run the vault yet; the Android section of this RFC (the Engine's separate vault) still holds.
+3. **Ciphertext is bound to its row.** The secret's id is the AES-GCM associated data, so a ciphertext copied onto another row fails to decrypt.
+4. **Audit location.** `secret_accesses` carries a non-null capability id under a foreign key, but the runtime's own resolutions have no capability. They are written to `audit_log` as `SecretResolved`. `secret_accesses` is kept for resolutions made under a `secrets:read` capability.
+5. **Content found to contain secrets** is withheld from the transcript as a whole and audited (`SecretContentWithheld`) rather than labelled on a content node, because no tool produces content nodes yet.
+6. **Short values.** A known value shorter than four characters is not registered with the redactor: it would corrupt ordinary text more often than it would protect anything.
+7. **`secrets:read` grants** are refused at grant time unless they name specific secret ids; an empty list, a blank id, `*` or `?` is rejected.
+8. **Consumer allow-lists.** A secret with an allow-list can only be resolved by a named consumer (`MCP_SERVER:<server>`, `PROVIDER:<name>`, `GIT_REMOTE:<host>`); the runtime's anonymous resolve refuses it.
+9. **Export.** Project files that contain credentials are left out of the archive and named in the export warnings; export signing keys (RFC-0041) can be kept in the vault (`keygen --vault`).

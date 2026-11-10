@@ -8,6 +8,9 @@ import dev.aidos.portability.PortabilityCli
 import dev.aidos.portability.ProjectRegistryPort
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
+import dev.aidos.portability.SecretScanner
+import dev.aidos.vault.DesktopVault
+import dev.aidos.vault.Redactor
 import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.coroutineScope
@@ -38,7 +41,8 @@ import kotlin.system.exitProcess
  *   version
  *   export <projectDir> [--output F] [--encrypt] [--sign KEY] ...   (RFC-0041; local, no daemon)
  *   import <archive> [--into DIR] [--rename|--replace] ...          (RFC-0041; local, no daemon)
- *   keygen <prefix>                                                 (RFC-0041; local, no daemon)
+ *   keygen <prefix> | keygen --vault NAME [pubfile]                 (RFC-0041; local, no daemon)
+ *   secrets status|set|rotate|delete|list|expire|allow ...          (RFC-0035; local, no daemon)
  * ```
  *
  * Connects to a running `aidos-daemon` over the socket at `--socket-path` (default
@@ -75,6 +79,7 @@ fun main(args: Array<String>) {
     }
 
     if (rest[0] in PortabilityCli.COMMANDS) exitProcess(runPortability(rest))
+    if (rest[0] in SecretsCli.COMMANDS) exitProcess(SecretsCli({ DesktopVault.open() }, dev.aidos.portability.SystemCliIo).run(rest.drop(1)))
 
     val resolvedSocketPath = socketPath ?: SocketPaths.defaultSocketPath()
     val client = SocketRuntimeClient(resolvedSocketPath, SocketPaths.defaultTokenPath(resolvedSocketPath))
@@ -204,5 +209,16 @@ private fun runPortability(args: List<String>): Int {
         override fun register(projectId: String, path: String, nowIso: String) =
             reg.register(ProjectId(projectId), path, nowIso = nowIso)
     }
-    return PortabilityCli.run(args, registry, newId = { ids.next() })
+    return PortabilityCli.run(args, registry, newId = { ids.next() }, keys = VaultSigningKeys { DesktopVault.open() }, scanner = exportScanner())
+}
+
+/**
+ * RFC-0035: the export boundary. Pattern detection always; vault values too when the vault can be
+ * opened (an unreachable keystore must not stop an export, only narrow what it can recognise).
+ */
+private fun exportScanner(): SecretScanner {
+    val redactor by lazy {
+        Redactor().also { r -> runCatching { DesktopVault.open().vault.use { it.registerAllWith(r) } } }
+    }
+    return SecretScanner { text -> redactor.detections(text) }
 }

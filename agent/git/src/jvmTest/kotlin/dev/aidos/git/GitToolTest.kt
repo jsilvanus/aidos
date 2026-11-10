@@ -254,4 +254,30 @@ class GitToolTest {
         assertIs<ToolOutcome.Failed>(result.outcome)
         assertTrue(events.isEmpty(), "a failed commit must not fire onCommit")
     }
+
+    @Test
+    fun `push asks the credential source for the remote's URL and zeroes the secret afterwards (RFC-0035)`() = runTest {
+        val (dir, _) = tempRepo()
+        val remote = Files.createTempDirectory("git-tool-remote").toFile()
+        Git.init().setBare(true).setDirectory(remote).call().close()
+        Git.open(dir).use { g -> g.repository.config.apply { setString("remote", "origin", "url", remote.toURI().toString()); save() } }
+
+        val asked = mutableListOf<String>()
+        val secret = "token-value-123".toCharArray()
+        val tool = GitTool(dir, credentials = GitCredentialSource { url -> asked += url; GitCredential("x-access-token", secret) })
+        val result = tool.execute(mockHandle, "git:push", buildJsonObject { })
+
+        assertIs<ToolOutcome.Ok>(result.outcome)
+        assertEquals(listOf(remote.toURI().toString()), asked)
+        assertTrue(secret.all { it == '\u0000' }, "the credential must not outlive the push")
+    }
+
+    @Test
+    fun `push without a credential source still works and asks nothing`() = runTest {
+        val (dir, tool) = tempRepo()
+        val remote = Files.createTempDirectory("git-tool-remote2").toFile()
+        Git.init().setBare(true).setDirectory(remote).call().close()
+        Git.open(dir).use { g -> g.repository.config.apply { setString("remote", "origin", "url", remote.toURI().toString()); save() } }
+        assertIs<ToolOutcome.Ok>(tool.execute(mockHandle, "git:push", buildJsonObject { }).outcome)
+    }
 }

@@ -89,6 +89,15 @@ class SqliteCapabilityManager(
         expiresAt: Instant?,
         grantedBy: UserId,
     ): Result<Capability> {
+        // RFC-0035/RFC-0054: secrets:read names specific IDs. There is no wildcard and no "all my
+        // secrets" -- an empty list, a blank id or a glob is refused rather than stored.
+        if (permission == Permission.SECRETS_READ) {
+            val secrets = scope as? CapabilityScope.Secrets
+                ?: return Result.failure(IllegalArgumentException("secrets.scope_required: SECRETS_READ needs a Secrets scope naming specific secret ids"))
+            if (secrets.allowedSecretIds.isEmpty() || secrets.allowedSecretIds.any { it.value.isBlank() || '*' in it.value || '?' in it.value }) {
+                return Result.failure(IllegalArgumentException("secrets.wildcard_denied: SECRETS_READ must name specific secret ids, never a wildcard or an empty list"))
+            }
+        }
         val id = CapabilityId(ids.next())
         val auditId = AuditId(ids.next())
         val now = nowIso()

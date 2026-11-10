@@ -23,6 +23,12 @@ import kotlinx.coroutines.CancellationException
  */
 fun interface McpSecretResolver {
     suspend fun resolve(reference: String): Result<CharArray>
+
+    /**
+     * The same, naming the MCP server the value is for, so a vault allow-list (RFC-0035
+     * `allowedConsumers`) can be enforced per server. The default ignores the server.
+     */
+    suspend fun resolveFor(serverId: String, reference: String): Result<CharArray> = resolve(reference)
 }
 
 /**
@@ -82,7 +88,7 @@ class McpServerActivator(
             is McpTransport.Http -> transport.secretRefs
             is McpTransport.Binder -> emptyMap() // authenticated by OS-verified package and signature, no secrets
         }
-        val resolvedSecrets = resolveSecrets(secretRefs).let { resolution ->
+        val resolvedSecrets = resolveSecrets(serverName, secretRefs).let { resolution ->
             when (resolution) {
                 is SecretResolution.Failed ->
                     return McpActivationOutcome.Failed(McpActivationFailure.SecretUnresolved(serverName, resolution.reference))
@@ -129,10 +135,10 @@ class McpServerActivator(
      * [HttpMcpClient]'s `authHeaderValue` parameters force — this class never holds a resolved
      * value any longer than that.
      */
-    private suspend fun resolveSecrets(secretRefs: Map<String, String>): SecretResolution {
+    private suspend fun resolveSecrets(serverName: String, secretRefs: Map<String, String>): SecretResolution {
         val resolved = LinkedHashMap<String, String>(secretRefs.size)
         for ((destinationName, reference) in secretRefs) {
-            val chars = secretResolver.resolve(reference).getOrElse { return SecretResolution.Failed(reference) }
+            val chars = secretResolver.resolveFor(serverName, reference).getOrElse { return SecretResolution.Failed(reference) }
             try {
                 resolved[destinationName] = String(chars)
             } finally {

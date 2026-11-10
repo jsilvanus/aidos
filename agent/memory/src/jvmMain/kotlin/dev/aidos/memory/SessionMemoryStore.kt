@@ -24,7 +24,11 @@ import java.util.UUID
  * The schema's CHECK constraints are the enforcement layer; this code matches that policy
  * but does not re-implement it — the database will reject a write that violates a CHECK.
  */
-class SessionMemoryStore(private val driver: SqlDriver) {
+class SessionMemoryStore(
+    private val driver: SqlDriver,
+    /** RFC-0035: before a secret becomes a remembered "fact". Defaults to identity. */
+    private val redact: (String) -> String = { it },
+) {
 
     /**
      * Writes a memory entry.
@@ -52,7 +56,7 @@ class SessionMemoryStore(private val driver: SqlDriver) {
             bindString(1, entry.sessionId)
             bindString(2, entry.projectId)
             bindString(3, entry.kind.name)
-            bindString(4, entry.content)
+            bindString(4, redact(entry.content))
             bindString(5, sourceRefsJson)
             bindString(6, entry.createdByKind.name)
             bindString(7, entry.createdById)

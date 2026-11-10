@@ -877,7 +877,7 @@ CREATE TABLE secret_accesses (
 CREATE TABLE redaction_events (
     id              TEXT PRIMARY KEY,
     project_id      TEXT,
-    boundary        TEXT NOT NULL,                        -- prompt|event|log|export|memory
+    boundary        TEXT NOT NULL,                        -- prompt|event|log|export|memory|attempt
     detection_kind  TEXT NOT NULL,                        -- known_value|pattern:jwt|...
     content_node_id TEXT,
     occurred_at     TEXT NOT NULL,

@@ -276,6 +276,14 @@ class AgentLoopTaskRunner(
      */
     private val redact: (String) -> String = { it },
     /**
+     * RFC-0035 "Secrets found in content": given a tool's name and its text result, returns the
+     * kinds of credential it contains (never the match), or empty. A non-empty answer withholds
+     * the whole result from the transcript and every prompt -- the model is told only that
+     * content was withheld, and the user gets a non-modal notice through the audit log. Defaults
+     * to "nothing found" for callers with no detector.
+     */
+    private val detectSecrets: (toolName: String, text: String) -> List<String> = { _, _ -> emptyList() },
+    /**
      * RFC-0008 step 8c, M19: resolves a model-emitted [ToolCall] to a capability the subject
      * already holds for the tool's required permission — picking the most recently issued,
      * unexpired, unrevoked match; see [dev.aidos.daemon.CapabilityResolver]'s own doc comment
@@ -629,10 +637,22 @@ class AgentLoopTaskRunner(
         // today is the tool operation that first raised the taint (durable data, always present);
         // a real content node (path, not just an operation name) is used instead once one exists.
         val deniedOutcome = result.outcome as? ToolOutcome.Denied
-        val text = if (deniedOutcome != null && deniedOutcome.reason == DenialReason.ATTENUATED_BY_TAINT) {
+        val unguarded = if (deniedOutcome != null && deniedOutcome.reason == DenialReason.ATTENUATED_BY_TAINT) {
             rawText + " (Run is tainted by: ${taintSourceDescription(task.runId)})"
         } else {
             rawText
+        }
+        // RFC-0035: content that looks like credentials never reaches the transcript. Nothing of
+        // the match is kept -- not in the snapshot, not in the audit row, not in the notice.
+        val secretKinds = detectSecrets(callRow.toolName, unguarded)
+        val text = if (secretKinds.isEmpty()) unguarded else {
+            audit.write(
+                id = idGen(), projectId = run.projectId.value, kind = "SecretContentWithheld",
+                actor = resolveSessionActor(task.sessionId.value), subjectRef = callRow.toolName,
+                detailJson = "{\"kinds\":[" + secretKinds.joinToString(",") { "\"$it\"" } + "]}", nowIso = nowIso(),
+            )
+            "[Content withheld: the result of ${callRow.toolName} looks like it contains credentials " +
+                "(${secretKinds.joinToString()}) and has been excluded from AI context.]"
         }
 
         updateToolCallOutcome(callRow.callId, outcomeStr)

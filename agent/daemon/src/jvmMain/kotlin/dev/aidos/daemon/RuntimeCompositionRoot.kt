@@ -40,7 +40,12 @@ import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.UserDbSettingsAudit
 import dev.aidos.vault.AnthropicAdapter
+import dev.aidos.vault.ConsumerKind
+import dev.aidos.vault.ConsumerRef
+import dev.aidos.vault.RedactionBoundary
 import dev.aidos.vault.Redactor
+import dev.aidos.vault.SecretRequest
+import dev.aidos.vault.SqliteSecretsVault
 import java.io.File
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
@@ -95,11 +100,13 @@ import kotlinx.serialization.json.jsonPrimitive
 class RuntimeCompositionRoot(
     private val anthropicApiKey: () -> CharArray? = { null },
     private val userDriver: SqlDriver? = null,
-    private val mcpSecretResolver: McpSecretResolver = McpSecretResolver { ref ->
-        System.getenv(ref)?.toCharArray()?.let { Result.success(it) }
-            ?: System.getenv(ref.uppercase())?.toCharArray()?.let { Result.success(it) }
-            ?: Result.failure(NoSuchElementException("Secret not found: $ref"))
-    },
+    private val mcpSecretResolver: McpSecretResolver = envMcpSecretResolver,
+    /**
+     * RFC-0035: the user-scope vault. When present, every value in it is registered with each
+     * Run's redactor, the Anthropic key is read from the entry [ANTHROPIC_KEY_SECRET] first
+     * ([anthropicApiKey] is the fallback), and every resolution is audited per project.
+     */
+    private val vault: SqliteSecretsVault? = null,
     private val mcpClientFactory: McpClientFactory = McpClientFactory.Default,
     val mcpLifecycleManager: McpLifecycleManager = McpLifecycleManager(),
     /**
@@ -107,7 +114,7 @@ class RuntimeCompositionRoot(
      * each with file and line). The default prints them; a UI host replaces it to show the user.
      */
     private val settingsDiagnostics: (List<SettingError>) -> Unit = { errors ->
-        errors.forEach { System.err.println("aidos: settings ${it.errorClass} ${it.originPath ?: ""}: ${it.message}") }
+        errors.forEach { DaemonLog.err("aidos: settings ${it.errorClass} ${it.originPath ?: ""}: ${it.message}") }
     },
     /** RFC-0056: background compaction and storage-pressure maintenance after each driven Run. */
     internal val retention: RetentionMaintenance = RetentionMaintenance(),
@@ -336,15 +343,22 @@ class RuntimeCompositionRoot(
         // filesystem tool's result labels and routing.remote_egress shapes the router below.
         val projectSettings = loadProjectSettings(projectDriver, projectId, rootPath, nowIso())
         broker.register(FilesystemTool(trustPolicy = PathTrustPolicy(resolveUntrustedPaths(userDriver, projectSettings))))
-        broker.register(GitTool(File(rootPath)))
+        broker.register(GitTool(File(rootPath), credentials = vault?.let { v ->
+            VaultGitCredentialSource(v) { host -> auditSecretUse(audit, projectId.value, "RUNTIME", "git:$host", "git:$host", nowIso, idGen) }
+        }))
 
         // RFC-0035: registered before any adapter or MCP server ever sees a secret, so any
         // output_snapshot or log that could echo it back is already covered.
-        val redactor = Redactor()
-        val redactingMcpSecretResolver = McpSecretResolver { ref ->
-            mcpSecretResolver.resolve(ref).onSuccess { secret ->
-                redactor.register(id = "mcp-secret-$ref", name = ref, value = secret.copyOf())
-            }
+        val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
+        vault?.registerAllWith(redactor)
+        val redactingMcpSecretResolver = object : McpSecretResolver {
+            override suspend fun resolve(reference: String): Result<CharArray> = resolveFor("runtime", reference)
+
+            override suspend fun resolveFor(serverId: String, reference: String): Result<CharArray> =
+                mcpSecretResolver.resolveFor(serverId, reference).onSuccess { secret ->
+                    redactor.register(id = "mcp-secret-$reference", name = reference, value = secret.copyOf())
+                    auditSecretUse(audit, projectId.value, "MCP_SERVER", serverId, reference, nowIso, idGen)
+                }
         }
 
         if (userDriver != null) {
@@ -376,8 +390,9 @@ class RuntimeCompositionRoot(
             }
         }
 
-        val remoteAdapters = anthropicApiKey()?.let { key ->
-            redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
+        val providerKey = vaultAnthropicKey(audit, projectId.value, nowIso, idGen) ?: anthropicApiKey()
+        val remoteAdapters = providerKey?.let { key ->
+            redactor.register(id = "anthropic-api-key", name = ANTHROPIC_KEY_SECRET, value = key)
             listOf(AnthropicAdapter(key))
         } ?: emptyList()
         // Loading aidos.toml (above) reports and audits a project's attempt at
@@ -411,10 +426,16 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             router = router,
-            assembler = PromptAssembler(),
+            assembler = PromptAssembler(redact = { redactor.redact(it, RedactionBoundary.PROMPT) }),
             broker = broker,
             subjectId = sessionId,
-            redact = redactor::redact,
+            redact = { redactor.redact(it, RedactionBoundary.ATTEMPT) },
+            detectSecrets = { _, text ->
+                redactor.detections(text).also { kinds ->
+                    // Records the detection (kind + boundary) in redaction_events; the result is discarded.
+                    if (kinds.isNotEmpty()) redactor.redact(text, RedactionBoundary.PROMPT)
+                }
+            },
             resolveCapability = capabilityResolver::resolve,
             resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
             workerSpawner = workerSpawner,
@@ -425,7 +446,7 @@ class RuntimeCompositionRoot(
         return SqliteExecutor(
             driver = projectDriver,
             audit = audit,
-            events = EventStore(projectDriver),
+            events = EventStore(projectDriver) { redactor.redactJson(it, RedactionBoundary.EVENT) },
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,
@@ -454,6 +475,25 @@ class RuntimeCompositionRoot(
         return load.snapshot
     }
 
+    /** RFC-0035 provider consumer: the Anthropic key from the vault, audited. Null if the vault has none. */
+    private fun vaultAnthropicKey(audit: AuditLog, projectId: String, nowIso: () -> String, idGen: () -> String): CharArray? = kotlinx.coroutines.runBlocking {
+        val v = vault ?: return@runBlocking null
+        val entry = v.getByName(ANTHROPIC_KEY_SECRET).getOrNull() ?: return@runBlocking null
+        val key = v.resolveFor(entry.id, SecretRequest(ConsumerRef(ConsumerKind.PROVIDER, "anthropic"))).getOrNull() ?: return@runBlocking null
+        auditSecretUse(audit, projectId, "RUNTIME", "anthropic", ANTHROPIC_KEY_SECRET, nowIso, idGen)
+        key
+    }
+
+    /** One `audit_log` row per resolution; names the secret and the consumer, never the value. */
+    private fun auditSecretUse(audit: AuditLog, projectId: String, actorKind: String, consumerId: String, secretName: String, nowIso: () -> String, idGen: () -> String) {
+        runCatching {
+            audit.write(
+                id = idGen(), projectId = projectId, kind = "SecretResolved", actorKind = actorKind, actorId = consumerId,
+                subjectRef = "secret:$secretName", detailJson = "{\"consumer\":\"$actorKind:$consumerId\"}", nowIso = nowIso(),
+            )
+        }
+    }
+
     private fun projectRootPath(driver: SqlDriver, projectId: String): String? =
         driver.executeQuery(
             identifier = null,
@@ -463,6 +503,12 @@ class RuntimeCompositionRoot(
         ) { bindString(0, projectId) }.value
 
     companion object {
+        /** Pre-vault behaviour: a `secret_ref` names an environment variable. Used when no vault is open. */
+        val envMcpSecretResolver: McpSecretResolver = McpSecretResolver { ref ->
+            System.getenv(ref)?.toCharArray()?.let { Result.success(it) }
+                ?: System.getenv(ref.uppercase())?.toCharArray()?.let { Result.success(it) }
+                ?: Result.failure(NoSuchElementException("Secret not found: $ref"))
+        }
         /**
          * M23: resolves `Settings.routingRemoteEgress` from [userDriver] (user scope only, per
          * the setting's SECURITY scope class), falling back to the declared default (`ASK`) when

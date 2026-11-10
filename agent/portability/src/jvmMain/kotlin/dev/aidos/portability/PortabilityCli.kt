@@ -19,6 +19,17 @@ object SystemCliIo : CliIo {
 }
 
 /**
+ * Where export signing keys live when they are not in a key file: the secrets vault (RFC-0035).
+ * Nothing here ever returns a key to anything but the signer.
+ */
+interface SigningKeyStore {
+    /** Stores [text] (private line, newline, public line) under [name]; fails if [name] exists. */
+    fun save(name: String, text: String)
+    /** The stored text, or null if there is no such key. */
+    fun load(name: String): String?
+}
+
+/**
  * `export`, `import` and `keygen` for the CLI (RFC-0041). These act on local files, so they need
  * no daemon. Returns a process exit code: 0 ok, 1 refused (a [PortabilityException]), 2 usage.
  *
@@ -27,6 +38,8 @@ object SystemCliIo : CliIo {
  * import <archive> [--into DIR] [--rename | --replace] [--name NAME]
  *                  [--require-signature] [--trust FINGERPRINT]...
  * keygen <prefix>      writes <prefix>.key (private+public, keep secret) and <prefix>.pub
+ * keygen --vault NAME [pubfile]   keeps the private key in the secrets vault (RFC-0035), never on
+ *                      disk; export it with `--sign vault:NAME`. Optionally writes the public key.
  * ```
  * The password comes from `AIDOS_ARCHIVE_PASSWORD` or an interactive prompt, never from argv.
  */
@@ -38,13 +51,15 @@ object PortabilityCli {
         cwd: File = File("."), exportedBy: String = System.getProperty("user.name") ?: "unknown",
         deviceId: String = "unknown", newId: () -> String = { java.util.UUID.randomUUID().toString() },
         kdfIterations: Int = ArchiveCrypto.DEFAULT_ITERATIONS,
+        keys: SigningKeyStore? = null,
+        scanner: SecretScanner? = null,
     ): Int {
         if (args.isEmpty() || args[0] !in COMMANDS) return usage(io)
         return try {
             when (args[0]) {
-                "export" -> doExport(args.drop(1), io, cwd, exportedBy, deviceId, newId, kdfIterations)
+                "export" -> doExport(args.drop(1), io, cwd, exportedBy, deviceId, newId, kdfIterations, keys, scanner)
                 "import" -> doImport(args.drop(1), registry, io, cwd, exportedBy, deviceId, newId)
-                else -> doKeygen(args.drop(1), io, cwd)
+                else -> doKeygen(args.drop(1), io, cwd, keys)
             }
         } catch (e: PortabilityException) {
             io.err("aidos: ${e.code}: ${e.message}"); 1
@@ -76,7 +91,7 @@ object PortabilityCli {
 
     private fun resolve(cwd: File, p: String) = File(p).let { if (it.isAbsolute) it else File(cwd, p) }
 
-    private fun doExport(a: List<String>, io: CliIo, cwd: File, by: String, device: String, newId: () -> String, kdf: Int): Int {
+    private fun doExport(a: List<String>, io: CliIo, cwd: File, by: String, device: String, newId: () -> String, kdf: Int, keys: SigningKeyStore?, scanner: SecretScanner?): Int {
         val f = Flags(a, setOf("--output", "--sign", "--compress"), setOf("--encrypt", "--overwrite"))
         val dir = resolve(cwd, f.positional.singleOrNull() ?: throw UsageError("export needs one project directory"))
         val name = dir.absoluteFile.normalize().name
@@ -91,12 +106,12 @@ object PortabilityCli {
             if (p.isEmpty()) throw UsageError("empty password")
             p
         } else null
-        val key = f.one("--sign")?.let { readKey(resolve(cwd, it)) }
+        val key = f.one("--sign")?.let { spec -> if (spec.startsWith(VAULT_PREFIX)) readVaultKey(spec.removePrefix(VAULT_PREFIX), keys) else readKey(resolve(cwd, spec)) }
         val r = ProjectExporter.export(
             dir, ExportOptions(
                 output = out, password = password, signingKey = key, exportedBy = by, actorId = by, deviceId = device,
                 compression = f.one("--compress")?.toIntOrNull() ?: 6, overwrite = "--overwrite" in f.on,
-                newId = newId, kdfIterations = kdf,
+                newId = newId, kdfIterations = kdf, secretScanner = scanner,
             ),
         )
         io.out("exported ${r.projectName} (${r.projectId}): ${r.files} files, ${r.archiveBytes} bytes -> ${r.file.path}")
@@ -130,7 +145,31 @@ object PortabilityCli {
         return 0
     }
 
-    private fun doKeygen(a: List<String>, io: CliIo, cwd: File): Int {
+    private const val VAULT_PREFIX = "vault:"
+
+    private fun readVaultKey(name: String, keys: SigningKeyStore?): KeyPair {
+        val text = (keys ?: throw PortabilityException("export.bad_key", "no secrets vault is available"))
+            .load(name) ?: throw PortabilityException("export.bad_key", "no signing key named '$name' in the vault")
+        return parseKey(text.lines().filter { it.isNotBlank() }, "vault key '$name'")
+    }
+
+    private fun doKeygen(a: List<String>, io: CliIo, cwd: File, keys: SigningKeyStore?): Int {
+        if (a.firstOrNull() == "--vault") {
+            val name = a.getOrNull(1) ?: throw UsageError("keygen --vault needs a name")
+            val store = keys ?: throw PortabilityException("keygen.no_vault", "no secrets vault is available")
+            val pubFile = a.getOrNull(2)?.let { resolve(cwd, it) }
+            if (pubFile != null && pubFile.exists()) throw PortabilityException("keygen.exists", "${pubFile.path} already exists")
+            val kp = ArchiveCrypto.generateSigningKeyPair()
+            try {
+                store.save(name, ArchiveCrypto.encodePrivate(kp.private) + "\n" + ArchiveCrypto.encodePublic(kp.public) + "\n")
+            } catch (e: IllegalStateException) {
+                throw PortabilityException("keygen.exists", e.message ?: "a signing key named '$name' already exists")
+            }
+            pubFile?.writeText(ArchiveCrypto.encodePublic(kp.public) + "\n")
+            io.out("stored signing key '$name' in the secrets vault; use --sign $VAULT_PREFIX$name")
+            io.out("fingerprint: ${ArchiveCrypto.fingerprint(kp.public)}")
+            return 0
+        }
         val prefix = resolve(cwd, a.singleOrNull() ?: throw UsageError("keygen needs a file prefix"))
         val priv = File(prefix.path + ".key"); val pub = File(prefix.path + ".pub")
         if (priv.exists() || pub.exists()) throw PortabilityException("keygen.exists", "${priv.path} or ${pub.path} already exists")
@@ -146,18 +185,22 @@ object PortabilityCli {
     private fun readKey(file: File): KeyPair {
         val lines = file.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }
             ?: throw PortabilityException("export.bad_key", "${file.path} not found")
-        if (lines.size < 2) throw PortabilityException("export.bad_key", "${file.path} is not a key file made by 'keygen'")
+        return parseKey(lines, file.path)
+    }
+
+    private fun parseKey(lines: List<String>, what: String): KeyPair {
+        if (lines.size < 2) throw PortabilityException("export.bad_key", "$what is not a key made by 'keygen'")
         return try {
             KeyPair(ArchiveCrypto.decodePublic(lines[1]), ArchiveCrypto.decodePrivate(lines[0]))
         } catch (e: Exception) {
-            throw PortabilityException("export.bad_key", "${file.path} is not a readable key file")
+            throw PortabilityException("export.bad_key", "$what is not a readable key")
         }
     }
 
     private fun usage(io: CliIo): Int {
         io.err("usage: export <projectDir> [--output FILE] [--encrypt] [--sign KEYFILE] [--overwrite] [--compress 0-9]")
         io.err("       import <archive> [--into DIR] [--rename|--replace] [--name NAME] [--require-signature] [--trust FINGERPRINT]")
-        io.err("       keygen <prefix>")
+        io.err("       keygen <prefix> | keygen --vault NAME [pubfile]      (sign with --sign vault:NAME)")
         return 2
     }
 }

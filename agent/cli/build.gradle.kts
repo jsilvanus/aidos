@@ -16,6 +16,8 @@ kotlin {
                 implementation(project(":kernel"))
                 // RFC-0041 export/import act on local files and need no daemon.
                 implementation(project(":portability"))
+                // RFC-0035: `secrets` commands and vault-held export signing keys, local, no daemon.
+                implementation(project(":vault"))
                 implementation(project(":identity"))
                 implementation(project(":storage"))
                 implementation("app.cash.sqldelight:runtime:2.0.2")

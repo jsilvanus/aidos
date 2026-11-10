@@ -12,7 +12,14 @@ import app.cash.sqldelight.db.SqlDriver
  * Causality is stored as the parent event ID. Causal depth is bounded (RFC-0028) to prevent
  * wake amplification — a session cannot wake itself indefinitely.
  */
-class EventStore(private val driver: SqlDriver) {
+class EventStore(
+    private val driver: SqlDriver,
+    /**
+     * RFC-0035: events are permanent, so the payload is redacted before it is written. Defaults
+     * to identity for callers with no redactor.
+     */
+    private val redactPayload: (String) -> String = { it },
+) {
 
     companion object {
         /** Maximum causal depth before a wake is refused (RFC-0028, M6 guard). */
@@ -64,7 +71,7 @@ class EventStore(private val driver: SqlDriver) {
             bindString(7, nowIso)
             bindString(8, source)
             bindString(9, topic)
-            bindString(10, payload)
+            bindString(10, redactPayload(payload))
             bindString(11, causedBy)
             bindLong(12, causalDepth.toLong())
         }
