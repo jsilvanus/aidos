@@ -650,11 +650,11 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 |---|---|---|
 | An app that uses an agent | agent client | MCP server (Binder transport, D51) for its own tools |
 | The Engine (agent runtime) | agent server | MCP client of the apps' tools |
-| A peer Engine running the loop | agent server | MCP client of the *origin* Engine's gateway |
+| A peer Engine running the loop | agent server | MCP client of the *origin* Engine's tool relay |
 
 **Front door.** Apps always call their local Engine. The Engine picks where the loop runs from an ordered candidate list (like `aidos:chat`, RFC-0105), filtered by the effective locality first. Apps do not know which topology is in use. Running the loop on a peer is `cluster` placement, the same as using a peer's model.
 
-**Remote loop = MCP gateway.** When the loop runs on a peer (e.g. desktop), the origin Engine (e.g. phone) is an MCP server to that peer, reached over the AIDIN peer link, and fans out to its own Binder apps as MCP client. Tools execute only at the tool host.
+**Remote loop = MCP tool relay.** When the loop runs on a peer (e.g. desktop), the origin Engine (e.g. phone) is an MCP server to that peer, reached over the AIDIN peer link, and fans out to its own Binder apps as MCP client. Tools execute only at the tool host.
 
 **Tool-host rules** (the remote loop is never trusted):
 1. The user approves, on the tool host, which apps' tools a given peer may see (same shape as the D51 adoption step).
@@ -668,7 +668,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 **Not decided here:** whether a desktop-hosted run continues or is cancelled when the phone drops; the wire form of the peer agent endpoints (RFC-0107 draft).
 
-**Built / not built (checked 2026-11-10).** Model delegation (`aidos:chat`) is built. Not built: an agent runtime in the Android host; an agent model adapter through the virtual router (today `ManagedModelAdapter` calls `InferenceRequestManager` directly and cannot name `aidos:chat` or a peer); peer agent endpoints and the `agent` scope; the Engine MCP gateway; tool-host taint and approval.
+**Built / not built (checked 2026-11-10).** Model delegation (`aidos:chat`) is built. Not built: an agent runtime in the Android host; an agent model adapter through the virtual router (today `ManagedModelAdapter` calls `InferenceRequestManager` directly and cannot name `aidos:chat` or a peer); peer agent endpoints and the `agent` scope; the Engine MCP tool relay; tool-host taint and approval.
 
 **RFCs:** 0107 (draft), 0105, 0104, 0027, 0031; D47, D48, D49, D50, D51.
 
@@ -687,7 +687,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
-| 2026-11-10 | D52 proposed: agents and models as separate routable services; remote loop through an MCP gateway. |
+| 2026-11-10 | D52 proposed: agents and models as separate routable services; remote loop through an MCP tool relay. |
 | 2026-11-10 | D49: default-deny per-app agent grant built on the desktop host. |
 | 2026-11-09 | D49 settled: one Android host app; package stays `fi.italeino.aidos.engine`. |
 | 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |
