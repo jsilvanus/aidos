@@ -8,7 +8,9 @@ import kotlinx.serialization.json.JsonElement
 /**
  * The declared-key entries of one `aidos.toml`, with the line each came from (RFC-0036).
  *
- * Unknown, removed and refused keys are not here: they are never interpreted.
+ * Unknown and removed keys are not here: they are never interpreted. A refused SECURITY/SPEND
+ * key *is* here, so resolution reports the refusal ([Resolved.overriddenBy]) instead of silently
+ * returning the default; it is never cached and never applied.
  */
 data class ProjectSettingsSnapshot(
     val sourcePath: String,
@@ -98,6 +100,7 @@ class ProjectSettingsLoader(
                         scopeId = projectId, key = descriptor.key, oldValueJson = null,
                         newValueJson = value.toString(), actor = ActorRef(ActorKind.RUNTIME, "aidos.toml"),
                     ))
+                    entries[key] = ProjectEntry(value, line)
                     continue
                 }
                 descriptor.codec.decode(value).onFailure {
@@ -123,7 +126,8 @@ class ProjectSettingsLoader(
                 "DELETE FROM settings WHERE scope = 'project' AND scope_id = ? AND set_by_kind = 'RUNTIME'", 1) {
                 bindString(0, projectId)
             }
-            val all = entries.mapValues { it.value.value!! } + preserved
+            val cacheable = entries.filterKeys { Settings.forKey(it)?.scopeClass?.userOnly == false }
+            val all = cacheable.mapValues { it.value.value!! } + preserved
             for ((key, value) in all) {
                 driver.execute(null,
                     "INSERT OR REPLACE INTO settings (scope, scope_id, key, value_json, set_at, set_by_kind) " +

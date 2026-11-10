@@ -109,7 +109,6 @@ class Rfc0036RequirementsTest {
     fun `a SPEND key in a project file is refused too`() {
         val load = ProjectSettingsLoader(null).load("p1", "[budget]\nrun_cost_ceiling = 999999999\n", now)
         assertEquals(SettingErrorClass.SCOPE_VIOLATION, load.diagnostics.single().errorClass)
-        assertTrue(load.snapshot.entries.isEmpty())
     }
 
     // ── MVP 2: resolution with origin and line ──────────────────────────────
