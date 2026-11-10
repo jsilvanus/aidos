@@ -49,6 +49,25 @@ class PeerLink internal constructor(
 
     val isClosed: Boolean get() = socket.isClosed
 
+    /**
+     * Read and drop frames until the peer closes the link (Bye or end of stream), or until no frame
+     * has arrived for [timeoutMillis]. Lets a pairing side wait until the other side has finished
+     * and stored its part before it opens the normal link.
+     */
+    internal fun awaitPeerClose(timeoutMillis: Int) {
+        try {
+            socket.soTimeout = timeoutMillis
+        } catch (e: IOException) {
+            return
+        }
+        while (true) {
+            when (receive()) {
+                null, is LinkMessage.Bye -> return
+                else -> Unit
+            }
+        }
+    }
+
     /** Says goodbye if still possible, then closes. Safe to call twice. */
     override fun close() {
         if (socket.isClosed) return
