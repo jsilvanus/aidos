@@ -51,6 +51,14 @@ Implemented in-process with an SSH library (sshj or Apache MINA SSHD), not by sh
 
 `restrict` removes pty, agent, X11 and user-rc; `port-forwarding` re-enables only forwarding; `permitlisten` limits it to the one reverse port; the forced command gives no shell. The page also shows the sshd line needed to let the phone reach the port directly (`GatewayPorts clientspecified`) with a plain statement that this exposes an mTLS port to the internet. Private keys are never displayed, exported or written to disk by the Engine.
 
+**Setup key (installer), optional.** Pasting a line into `authorized_keys` by hand is the default. To let the Engine install it instead, as farcmd-mcp does, the user may supply a **setup key**: an existing SSH key for an admin account on the server, kept under a passphrase. Rules:
+
+- Vault kind `SSH_SETUP_KEY` (third kind alongside tunnel and command keys), stored encrypted with its own passphrase that the Engine does not keep. The user types the passphrase for each install.
+- It is used only by the installer, once: connect, append the restricted tunnel-key line, verify the line is there, disconnect. It is never used to carry the tunnel and never resolvable by the tunnel manager.
+- After the install the user is offered to delete it from the vault. Re-install, rotate and remove run the same way and ask for the passphrase again.
+- The installer shows the exact line and the host fingerprint and waits for confirmation before writing. It touches only the Aidos-marked line (`aidos-tunnel-<nodeId>`) and never edits other entries.
+- The same setup-key mechanism is what a future command-key RFC would use to install a verifier and per-command keys on a target (farcmd's master key plus root-owned integrity verifier).
+
 **Host key.** The server's host key fingerprint is shown at setup and the user confirms it. It is pinned. A change stops the tunnel and raises a notice; no silent trust-on-first-use on reconnect.
 
 **Vault.** The key is a new `SecretKind.SSH_TUNNEL_KEY` (RFC-0035 amendment) with `allowedConsumers = [tunnel manager]`, so other consumers cannot resolve it. The redactor already covers boundaries.
@@ -64,6 +72,9 @@ Implemented in-process with an SSH library (sshj or Apache MINA SSHD), not by sh
 | Purpose | carry the peer link | let the agent run specific commands on a machine |
 | Server side | `restrict,permitlisten=…,command="/bin/false"` | `restrict,command="<one script>"`, one key per command |
 | Vault kind | `SSH_TUNNEL_KEY` | `SSH_COMMAND_KEY` (reserved name) |
+
+A third kind, `SSH_SETUP_KEY` (passphrase-locked, installer only), serves both and carries neither.
+
 | Governed by | tunnel manager, remote-access switch | agent permissions, approval, taint |
 
 The vault kinds are separate so a tunnel key can never be used to run a command and vice versa. A later RFC for agent-run commands over SSH can follow the pattern of the user's farcmd-mcp: one Ed25519 key per command pinned with `restrict,command=…` to a single installed script, risk levels with human approval for high levels, an integrity check of the installed script before each run, and an audit chain. That is out of scope here; this RFC only reserves the separation.
@@ -102,7 +113,7 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 ## Amendments to other RFCs (made with implementation)
 
-- RFC-0035: `SSH_TUNNEL_KEY` and `SSH_COMMAND_KEY` kinds; generate/show-public-key/rotate for the tunnel key moves into scope.
+- RFC-0035: `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY` and `SSH_SETUP_KEY` kinds (setup key passphrase-locked, never kept by the Engine); generate/show-public-key/rotate for the tunnel key moves into scope.
 - RFC-0042: tunnel server as a scoped egress destination.
 - RFC-0105: route hints in pair records; remote routes never carry helper roles.
 - RFC-0107: the bounded continue-then-cancel rule.
