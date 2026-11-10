@@ -9,6 +9,7 @@ import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SessionId
 import dev.aidos.settings.EgressPolicy
 import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.SettingSetByKind
 import dev.aidos.settings.SettingsWriter
 import dev.aidos.storage.AidosStorage
@@ -195,5 +196,52 @@ class RuntimeCompositionRootTest {
         // hard failure. "denies automatic routing" is still true (no model was invoked); it just
         // no longer means "fails the Run" the way it did when this test was written.
         assertEquals("YIELDED", runState(driver, runId.value))
+    }
+
+    @Test
+    fun `drive() reads aidos toml, reports and audits a project's attempt at routing remote_egress, and does not apply it`() = runTest {
+        val driver = openDriver()
+        val userDriver = openUserDriver()
+        val root = java.nio.file.Files.createTempDirectory("aidos-toml-root").toFile()
+        java.io.File(root, "aidos.toml").writeText("[routing]\nremote_egress = \"ALLOW\"\n[retention]\naged_days = 12\n")
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid, rootPath = root.path)
+        val runId = createRun(driver, pid, sid)
+
+        val diagnostics = mutableListOf<dev.aidos.settings.SettingError>()
+        RuntimeCompositionRoot(
+            anthropicApiKey = { "fake-key".toCharArray() },
+            userDriver = userDriver,
+            settingsDiagnostics = { diagnostics += it },
+        ).drive(
+            projectDriver = driver, runId = runId, projectId = ProjectId(pid), sessionId = sid,
+            deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = false,
+            idGen = { nextId() }, nowIso = { nowIso },
+        )
+
+        // Same outcome as the default-ASK test: the project's ALLOW did not take effect.
+        assertEquals("YIELDED", runState(driver, runId.value))
+        val violation = diagnostics.single()
+        assertEquals(dev.aidos.settings.SettingErrorClass.SCOPE_VIOLATION, violation.errorClass)
+        assertEquals("aidos.toml:2", violation.originPath)
+        assertEquals(
+            1,
+            dev.aidos.settings.UserDbSettingsAudit(userDriver).entries("routing.remote_egress").size,
+        )
+        // The valid PROJECT_SAFE/PREFERENCE line was cached for readers without the file.
+        assertEquals(
+            12,
+            SettingsStore(userDriver, driver).resolve(Settings.retentionAgedDays, projectId = pid).value,
+        )
+    }
+
+    @Test
+    fun `resolveEgressPolicy ignores a project snapshot that carries a SECURITY value`() {
+        val userDriver = openUserDriver()
+        val snapshot = dev.aidos.settings.ProjectSettingsSnapshot(
+            "aidos.toml",
+            mapOf("routing.remote_egress" to dev.aidos.settings.ProjectEntry(JsonPrimitive("ALLOW"), line = 2)),
+        )
+        assertEquals(EgressPolicy.ASK, RuntimeCompositionRoot.resolveEgressPolicy(userDriver, snapshot))
     }
 }

@@ -39,7 +39,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0032 | PARTIAL | JGit GitTool 14 tests, Reconciliation, TreelessWorker CAS; no fetch/merge_ff/switch, no worker-ref pruning, per-op capabilities differ |
 | 0034 | PARTIAL | RelPath + symlink-aware containment + read/write/list/search+diff preview; no delete/move/mkdir, no .git refusal, non-atomic writes |
 | 0035 | PARTIAL | SqliteSecretsVault AES-GCM tests, Redactor; key in-memory, no keystore, redact() not on any real path, secret_accesses/redaction_events DDL only |
-| 0036 | PARTIAL | typed catalogue, resolve, TOML parser, tests; no caller loads aidos.toml, UNKNOWN_KEY unused, no audit rows; SQL by interpolation |
+| 0036 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0036 requirement map](#rfc-0036-requirement-map) below |
 | 0037 | NOT_IMPLEMENTED | metric_samples/crash_records DDL only; no logger, metrics, crash writer, diagnostic bundle, tests |
 | 0038 | PARTIAL | CrashRecoveryTest 4 seeded boundaries, injection suite, RelPath tests; no shared fakes, no fixtures tree, no profile matrix, no concurrency tests |
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
@@ -75,3 +75,32 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0104 Inference Locality | Proposed | Placement derivation and enforcement built (D47 settled). Not done: per-app limit toggle, Engine-wide limit UI, refusal audit, non-local placements. |
 | 0106 Desktop Generative UI | Draft | No code. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
+
+## RFC-0036 requirement map
+
+Implemented 2026-11-10. Every normative requirement, where it is built, and the test that proves it. Code is under `agent/settings/src/commonMain/kotlin/dev/aidos/settings/` (`Settings.kt`, `SettingDescriptor.kt`, `SettingsStore.kt`, `ProjectSettingsLoader.kt`, `SettingsAudit.kt`, `SecretRef.kt`, `TomlParser.kt`); tests are `SettingsTest` and `Rfc0036RequirementsTest` in `agent/settings/src/jvmTest/`, plus `RuntimeCompositionRootTest` in `agent/daemon/`.
+
+| Requirement (RFC section) | Code | Test |
+|---|---|---|
+| Settings declared once with type, default, range, scope class; no untyped store (Design, MVP 1) | `Settings.all`, `SettingDescriptor`, codecs | `every declared setting has a key, default, scope class, and codec` |
+| A SECURITY setting must name a most restrictive value (Fail closed) | `SettingBuilder.build` | `a SECURITY descriptor must name a most restrictive value` |
+| Nearest-first resolution session, project, workspace, user, default (Resolution) | `SettingsStore.resolve` | `project scope overrides user scope...`, `user scope overrides the default` |
+| Origin reported with file and line, `overriddenBy` set on a refusal (Resolution) | `Resolved`, `ProjectEntry.line`, `TomlParser.lines` | `a project value reports the exact file and line it came from`, `a project setting a SECURITY key is reported...` |
+| SECURITY/SPEND user-scope only; project attempt is a visible error with file and line, not applied (Scope classes, Security 1, MVP 3) | `ProjectSettingsLoader.load`, `SettingsStore.resolve`, `SettingsWriter.writeProject` | `a project setting a SECURITY key is reported with file and line...`, `a SPEND key in a project file is refused too`, `SettingsWriter rejects...` |
+| PROJECT_SAFE not settable from a session; PREFERENCE is (Scope classes table) | `SettingsStore.resolve` | `a session may override a PREFERENCE but not PROJECT_SAFE, SECURITY or SPEND` |
+| Invalid value falls back to the default, not the next scope (Fail closed) | `SettingsStore.resolve` | `an invalid project value resolves to the default, not to the user's value`, `range violation falls through to default` |
+| Invalid SECURITY value fails closed to the most restrictive value (Fail closed, Security 3) | `SettingsStore.resolve` | `invalid SECURITY value fails closed to mostRestrictive` |
+| Rejection reported with file and line (Fail closed) | `ProjectSettingsLoader.load` | `an invalid project value resolves to the default...` |
+| Unknown key warns, is preserved, never interpreted (Fail closed, Security 6) | `ProjectSettingsLoader.load` (cache keeps it, snapshot omits it) | `an unknown key warns, is kept in the cache and never resolves` |
+| SECURITY/SPEND changes audited with old value, new value, actor (Security 5, MVP 4) | `SettingsWriter.writeUser`, `UserDbSettingsAudit`, table `settings_audit` in `schema/user.sql` | `a SECURITY change is audited...`, `a SPEND change is audited and a PREFERENCE change is not`, `a refused project write is audited` |
+| Refused project attempt is audited once, not on every reload (Security 1) | `UserDbSettingsAudit.record` | `reloading an unchanged offending file does not append the same violation again` |
+| `secret_ref` indirection; a bare credential is rejected; the secret is resolved at use and never stored, logged or audited (Settings are not secrets, MVP 5) | `SecretRef`, `SecretRefCodec`, `Resolved.resolveSecret` | the two `secret_ref` tests |
+| `aidos.toml` parsed with per-line errors, trailing comments handled (MVP 6) | `TomlParser` | `toml parses...`, `toml strips trailing comments but not a hash inside a string` |
+| Project scope resolves from Git-tracked `aidos.toml`, SQLite row is a cache; session overrides in memory only (Data Model) | `ProjectSettingsLoader.cache`, `SettingsStore.resolve` | `the state db cache resolves when no snapshot is supplied`, `PROJECT_SAFE accepts a project value and the file replaces the cache on reload` |
+| Wired into the running engine: the daemon loads `aidos.toml` when it builds an executor, reports problems, and resolves `routing.remote_egress` against it (Motivation: a cloned repo must not change egress) | `RuntimeCompositionRoot.loadProjectSettings` | `drive() reads aidos toml, reports and audits a project's attempt...`, `resolveEgressPolicy ignores a project snapshot that carries a SECURITY value` |
+| Migration: renamed key aliased with a warning, removed key kept but ignored with a warning (Migration) | `Settings.renamedKeys/removedKeys`, `ProjectSettingsLoader` | the three migration tests |
+| Values written to the store are validated; SQL is parameterised | `SettingsWriter`, `SettingsStore.readRow` | `writeUser rejects a value the codec rejects...`, `writing the same user key twice leaves one row` |
+
+Not built, and out of the RFC's own MVP ("Not in MVP"): a settings UI beyond the CLI, workspace scope (single implicit workspace), dynamic reconfiguration without restart, and the one-time user prompt when a default for a SECURITY setting changes (no SECURITY default has changed yet, so there is nothing to prompt about). The RFC's Future Work items (import diff view, policy profiles) are likewise not built.
+
+Known limits that do not block the MVP: only `routing.remote_egress` is consumed through the project-aware path in production today; the other declared settings have no production reader yet (that is those RFCs' work, e.g. 0027 `trust.untrusted_paths`, 0056 `retention.aged_days`). The setting audit is in `user.db` (`settings_audit`) rather than a project's `audit_log`, because a user-scope change belongs to no project.

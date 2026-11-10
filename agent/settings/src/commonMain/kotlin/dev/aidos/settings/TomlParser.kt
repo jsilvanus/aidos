@@ -19,17 +19,20 @@ object TomlParser {
     data class ParseResult(
         /** Key → raw JSON text. Unknown keys are preserved, not dropped (RFC-0039). */
         val values: Map<String, JsonElement>,
+        /** Key → 1-based line of its (last) definition, for origin reporting ("aidos.toml:14"). */
+        val lines: Map<String, Int>,
         val errors: List<SettingError>,
     )
 
     fun parse(content: String, sourcePath: String = "aidos.toml"): ParseResult {
         val values = mutableMapOf<String, JsonElement>()
+        val lines = mutableMapOf<String, Int>()
         val errors = mutableListOf<SettingError>()
         var currentSection = ""
 
         content.lines().forEachIndexed { i, raw ->
             val lineNum = i + 1
-            val line = raw.trim()
+            val line = stripComment(raw).trim()
             when {
                 line.isEmpty() || line.startsWith('#') -> { /* skip */ }
 
@@ -56,6 +59,7 @@ object TomlParser {
                     val element = parseValue(rawValue, fullKey, sourcePath, lineNum, errors)
                     if (element != null) {
                         values[fullKey] = element
+                        lines[fullKey] = lineNum
                     }
                 }
 
@@ -69,7 +73,7 @@ object TomlParser {
             }
         }
 
-        return ParseResult(values, errors)
+        return ParseResult(values, lines, errors)
     }
 
     private fun parseValue(
@@ -116,6 +120,22 @@ object TomlParser {
                 null
             }
         }
+    }
+
+    /** Drop a trailing `# comment`, leaving a `#` inside a quoted string alone. */
+    private fun stripComment(raw: String): String {
+        var inString = false
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            when {
+                c == '\\' && inString -> i++  // skip the escaped character
+                c == '"' -> inString = !inString
+                c == '#' && !inString -> return raw.substring(0, i)
+            }
+            i++
+        }
+        return raw
     }
 
     /** Split comma-separated array items, respecting quoted strings. */
