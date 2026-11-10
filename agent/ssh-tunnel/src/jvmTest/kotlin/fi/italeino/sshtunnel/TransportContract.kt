@@ -23,8 +23,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Real SSH, in process, on loopback: no external server (RFC-0108 test rule). */
-class MinaIntegrationTest {
+/** The transport contract: every [SshTransport] must pass the same real-SSH tests. */
+abstract class TransportContract {
+    abstract fun transport(): SshTransport
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val servers = mutableListOf<SshServer>()
     private val echo = mutableListOf<ServerSocket>()
@@ -64,7 +66,7 @@ class MinaIntegrationTest {
     }
 
     private fun tunnel(spec: TunnelSpec, key: ByteArray?, fp: String) =
-        SshTunnel(spec, { key?.copyOf() }, HostKeyPolicy.pinned(fp), MinaTransport(), scope)
+        SshTunnel(spec, { key?.copyOf() }, HostKeyPolicy.pinned(fp), transport(), scope)
 
     @Test
     fun reverseTunnelCarriesBytesToTarget() = runBlocking {
@@ -142,6 +144,22 @@ class MinaIntegrationTest {
     }
 
     @Test
+    fun localForwardCarriesBytesToRemoteTarget() = runBlocking {
+        val gen = KeyGen.ed25519("e")
+        val (srv, fp) = startServer(gen.publicKey)
+        val target = startEcho()
+        val spec = TunnelSpec("127.0.0.1", "tun", Forward.Local(remoteHost = "127.0.0.1", remotePort = target), port = srv.port)
+        val t = tunnel(spec, gen.privateKey, fp)
+        t.start()
+        val up = withTimeout(20_000) { t.state.first { it is TunnelState.Up } } as TunnelState.Up
+        Socket("127.0.0.1", up.boundPort).use { c ->
+            c.getOutputStream().apply { write(9); flush() }
+            assertEquals(9, c.getInputStream().read())
+        }
+        t.stop()
+    }
+
+    @Test
     fun generatedKeyHasAuthorizedLineShape() {
         val g = KeyGen.ed25519("aidos-tunnel-xyz")
         assertTrue(g.publicKey.startsWith("ssh-ed25519 "))
@@ -150,4 +168,13 @@ class MinaIntegrationTest {
         val line = AuthorizedKeys.forReverse(g.publicKey, Forward.Reverse(47100, 47100))
         assertTrue(line.startsWith("restrict,port-forwarding,permitlisten="))
     }
+}
+
+/** Real SSH, in process, on loopback: no external server (RFC-0108 test rule). */
+class MinaTransportTest : TransportContract() {
+    override fun transport(): SshTransport = MinaTransport()
+}
+
+class SshjTransportTest : TransportContract() {
+    override fun transport(): SshTransport = SshjTransport()
 }
