@@ -55,6 +55,9 @@ class McpServerStore(private val userDriver: SqlDriver) {
 
     private fun buildLoad(row: Row, deviceProfile: PlatformProfile): McpServerLoad {
         val transport = buildTransport(row)
+        if (transport is McpTransport.Binder && deviceProfile != PlatformProfile.MOBILE) {
+            throw RowRejected("binder transport exists only on MOBILE, this device is $deviceProfile")
+        }
         if (transport is McpTransport.Http) {
             when (val result = policyValidateHttpEndpoint(transport.endpointUrl, deviceProfile.toMcpProfile())) {
                 is McpValidationResult.Rejected -> throw RowRejected(result.reason)
@@ -105,6 +108,18 @@ class McpServerStore(private val userDriver: SqlDriver) {
                     secretRefs = secretRefs,
                 )
             }
+            "binder" -> {
+                if (row.command != null || row.endpointUrl != null) {
+                    throw RowRejected("binder row '${row.name}' also has command or endpoint_url set")
+                }
+                val pkg = row.binderPackage?.takeIf { it.isNotBlank() }
+                    ?: throw RowRejected("binder row '${row.name}' has no binder_package")
+                val service = row.binderService?.takeIf { it.isNotBlank() }
+                    ?: throw RowRejected("binder row '${row.name}' has no binder_service")
+                val certs = parseCerts(row.binderCertsJson)
+                    ?: throw RowRejected("binder row '${row.name}' has no pinned signing certificate (binder_certs_json)")
+                McpTransport.Binder(packageName = pkg, serviceClass = service, signingCertSha256 = certs)
+            }
             else -> throw RowRejected("row '${row.name}' has unknown transport '${row.transport}'")
         }
     }
@@ -121,6 +136,16 @@ class McpServerStore(private val userDriver: SqlDriver) {
             runCatching { PlatformProfile.valueOf(name) }
                 .getOrElse { throw RowRejected("profiles_json names an unknown profile '$name'") }
         }.toSet()
+    }
+
+    /** Null when absent, empty or malformed: a binder row without a usable pin is rejected, never defaulted. */
+    private fun parseCerts(json: String?): Set<String>? {
+        if (json == null) return null
+        val array = runCatching { Json.parseToJsonElement(json).jsonArray }.getOrNull() ?: return null
+        val certs = array.mapNotNull { runCatching { it.jsonPrimitive.content.lowercase() }.getOrNull() }
+            .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+            .toSet()
+        return certs.takeIf { it.isNotEmpty() && it.size == array.size }
     }
 
     private fun parseArgs(json: String): List<String> {
@@ -156,7 +181,8 @@ class McpServerStore(private val userDriver: SqlDriver) {
     private fun readRows(): List<Row> =
         userDriver.executeQuery(
             identifier = null,
-            sql = "SELECT name, transport, command, args_json, endpoint_url, profiles_json, secret_refs_json " +
+            sql = "SELECT name, transport, command, args_json, endpoint_url, profiles_json, secret_refs_json, " +
+                "binder_package, binder_service, binder_certs_json " +
                 "FROM mcp_servers ORDER BY name",
             mapper = { cursor ->
                 val rows = mutableListOf<Row>()
@@ -170,6 +196,9 @@ class McpServerStore(private val userDriver: SqlDriver) {
                             endpointUrl = cursor.getString(4),
                             profilesJson = cursor.getString(5)!!,
                             secretRefsJson = cursor.getString(6)!!,
+                            binderPackage = cursor.getString(7),
+                            binderService = cursor.getString(8),
+                            binderCertsJson = cursor.getString(9),
                         )
                     )
                 }
@@ -186,6 +215,9 @@ class McpServerStore(private val userDriver: SqlDriver) {
         val endpointUrl: String?,
         val profilesJson: String,
         val secretRefsJson: String,
+        val binderPackage: String?,
+        val binderService: String?,
+        val binderCertsJson: String?,
     )
 
     /** Internal control-flow only — never escapes [loadRow]. */

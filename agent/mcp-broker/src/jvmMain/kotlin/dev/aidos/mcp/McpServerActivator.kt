@@ -1,7 +1,9 @@
 package dev.aidos.mcp
 
 import dev.aidos.kernel.PlatformProfile
+import dev.aidos.mcp.core.BinderMcpClient
 import dev.aidos.mcp.core.HttpMcpClient
+import dev.aidos.mcp.core.McpBinderConnector
 import dev.aidos.mcp.core.McpClient
 import dev.aidos.mcp.core.McpToolSpec
 import dev.aidos.mcp.core.McpTransport
@@ -78,6 +80,7 @@ class McpServerActivator(
         val secretRefs = when (transport) {
             is McpTransport.Stdio -> transport.secretRefs
             is McpTransport.Http -> transport.secretRefs
+            is McpTransport.Binder -> emptyMap() // authenticated by OS-verified package and signature, no secrets
         }
         val resolvedSecrets = resolveSecrets(secretRefs).let { resolution ->
             when (resolution) {
@@ -165,8 +168,19 @@ fun interface McpClientFactory {
     fun create(transport: McpTransport, resolvedSecrets: Map<String, String>): McpClient
 
     companion object {
-        val Default: McpClientFactory = McpClientFactory { transport, resolvedSecrets ->
+        /** stdio and HTTP. A Binder registration fails here: only an Android host can supply [McpBinderConnector]. */
+        val Default: McpClientFactory = withBinder(null)
+
+        /**
+         * The default factory plus Binder support. Android hosts pass their connector, which binds the
+         * provider service and enforces the registration's pinned signing certificate.
+         */
+        fun withBinder(binder: McpBinderConnector?): McpClientFactory = McpClientFactory { transport, resolvedSecrets ->
             when (transport) {
+                is McpTransport.Binder -> BinderMcpClient(
+                    transport,
+                    binder ?: error("binder transport is not available on this platform"),
+                )
                 is McpTransport.Stdio -> StdioMcpClient(
                     command = transport.command,
                     args = transport.args,

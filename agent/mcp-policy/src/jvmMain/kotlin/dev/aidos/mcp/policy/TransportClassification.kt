@@ -6,7 +6,7 @@ import dev.aidos.mcp.core.McpTransport
 enum class McpEffect { READ, EGRESS }
 
 /** The capability an MCP tool call is gated behind (RFC-0031). */
-enum class McpPermission { SHELL_EXEC, NETWORK_EGRESS }
+enum class McpPermission { SHELL_EXEC, NETWORK_EGRESS, APP_IPC }
 
 /** Where an MCP tool sits in the availability hierarchy (RFC-0031, RFC-0049). */
 enum class McpTier { PLATFORM, NETWORKED }
@@ -54,7 +54,10 @@ data class McpOperationClassification(
  *   [McpTier.PLATFORM], no network required.
  * - HTTP: [McpEffect.EGRESS] to the endpoint URL, [McpPermission.NETWORK_EGRESS], every profile,
  *   [McpTier.NETWORKED], network required.
- * - Both transports default to [McpRecovery.CHECKABLE] (conservative; operator may upgrade).
+ * - Binder: [McpEffect.READ], [McpPermission.APP_IPC], MOBILE only, [McpTier.PLATFORM], no network.
+ *   The effect is READ for the same reason as stdio: it stays on the device. Whether the *other app*
+ *   then sends anything out is that app's own business and is not visible here.
+ * - All transports default to [McpRecovery.CHECKABLE] (conservative; operator may upgrade).
  */
 object McpTransportPolicy {
 
@@ -76,6 +79,15 @@ object McpTransportPolicy {
                 profiles = setOf(McpProfile.MOBILE, McpProfile.DESKTOP, McpProfile.HEADLESS_SERVER),
                 tier = McpTier.NETWORKED,
                 requiresNetwork = true,
+                recovery = McpRecovery.CHECKABLE,
+            )
+            is McpTransport.Binder -> McpOperationClassification(
+                effect = McpEffect.READ,
+                egressDestination = null,
+                permission = McpPermission.APP_IPC,
+                profiles = setOf(McpProfile.MOBILE),
+                tier = McpTier.PLATFORM,
+                requiresNetwork = false,
                 recovery = McpRecovery.CHECKABLE,
             )
         }
