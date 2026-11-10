@@ -73,7 +73,16 @@ Implemented in-process with an SSH library (sshj or Apache MINA SSHD), not by sh
 | Server side | `restrict,permitlisten=…,command="/bin/false"` | `restrict,command="<one script>"`, one key per command |
 | Vault kind | `SSH_TUNNEL_KEY` | `SSH_COMMAND_KEY` (reserved name) |
 
-A third kind, `SSH_SETUP_KEY` (passphrase-locked, installer only), serves both and carries neither.
+**Master command key (reserved, future RFC).** Besides fixed per-command keys, an `SSH_MASTER_KEY` kind may allow arbitrary commands on one named target. It is the most dangerous secret in the vault, so the design constraint recorded here is that it resolves only when all of these hold, checked by the Engine at the moment of use and not by the agent:
+
+- the run is **untainted** (RFC-0027): nothing from the network, MCP results, shell output or other untrusted content has entered it, and the Engine, not a remote loop (RFC-0107), judges that;
+- a **specific access grant** exists for that key, that target and that agent or app, created by the user and expiring, never implied by a general agent grant (D49);
+- the user approves each run in the Engine UI (no approval cache), with the exact command shown;
+- the call is made from the local Engine, never from a peer or a remote route.
+
+A taint event during the run revokes the key for the rest of the run. Every use is audited with the command, target and grant. It is never offered to a remote loop, which can only use fixed per-command keys. Its server-side form is not `restrict,command=`, so the target should be a low-privilege account; hardening of that account belongs to the future RFC.
+
+A third kind, `SSH_SETUP_KEY` (passphrase-locked, installer only), serves both and carries neither. A fourth, `SSH_MASTER_KEY`, is reserved for gated arbitrary commands (below).
 
 | Governed by | tunnel manager, remote-access switch | agent permissions, approval, taint |
 
