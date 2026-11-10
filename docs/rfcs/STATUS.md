@@ -76,6 +76,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0106 Desktop Generative UI | Draft | No code. |
 | 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
 | 0108 AIDIN Remote Routes | Draft | No code; proposed with D53. |
+| 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube) and the Engine receiving side. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map
