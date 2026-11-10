@@ -65,7 +65,8 @@ class AppApprovalStoreTest {
             if (current.status != AppApprovalStatus.APPROVED) return current
             val updated = current.copy(
                 status = AppApprovalStatus.PENDING,
-                decidedAt = null
+                decidedAt = null,
+                agentAllowed = false
             )
             records[packageName] = updated
             return updated
