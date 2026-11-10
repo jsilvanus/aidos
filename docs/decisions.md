@@ -672,6 +672,22 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 **RFCs:** 0107 (draft), 0105, 0104, 0027, 0031; D47, D48, D49, D50, D51.
 
+## D53. Remote routes: a tunnel is a transport, not a placement (proposed)
+
+**Decision.** A peer is reached by a *route* (`lan`, `direct host:port`, or an Engine-managed `ssh-reverse` tunnel to a server the user owns). The peer link's node-key mutual TLS runs end to end inside any route, so a tunnel, VPS or overlay network is an untrusted carrier. Consequences:
+
+1. **No new locality class.** A route does not change placement (D47); a peer's `local` stays the origin's `cluster`.
+2. **Models and agents travel over remote routes** (`aidos:chat`, RFC-0107 agent loop and tool relay). **Layer split is LAN only** (RTT-gated); remote routes never carry helper roles.
+3. **Remote access is a separate per-peer opt-in**, default off, audited; "Share with group" alone does not allow it.
+4. **The Engine manages SSH tunnels itself**: in-process SSH, tunnel key generated in the Engine and kept in the vault, the page shows only the public `authorized_keys` line restricted with `restrict,port-forwarding,permitlisten=…,command=…`, pinned host key, scoped egress grant.
+5. **Tunnel keys and command keys are different kinds** and never interchangeable. Agent-run SSH commands (one restricted key per command, as in farcmd-mcp) are a later RFC.
+6. **TLS-terminating HTTP tunnels (Cloudflare Tunnel) are not peer-link routes**; an Engine endpoint behind one is `remote` placement.
+7. A desktop-hosted agent run continues for a bounded window (default 5 min) after the origin drops, resumable, then cancels.
+
+Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha in the project thread 2026-11-10 (inference and agent over the tunnel, no split layer, Engine-managed tunnels with key creation page, command keys separate, keep going on drop). Public VPS port first, phone-side SSH later.
+
+**RFCs:** 0108 (draft), 0105, 0107, 0035, 0042; D47, D50, D52.
+
 ---
 
 ## Revision history
@@ -694,3 +710,4 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 | 2026-10-25 | D47 settled: Engine-enforced inference locality (RFC-0104); default local_only. |
 | 2026-10-26 | D50 settled: inference groups (RFC-0105); child-process layer split, pairing and group certificates, delegation first, local unless stated. |
 | 2026-11-09 | D51 proposed: MCP Binder transport (apps on the device as MCP servers). |
+| 2026-11-10 | D53 proposed: remote routes; a tunnel is a transport, not a placement; layer split LAN only; Engine-managed SSH tunnels. |

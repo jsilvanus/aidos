@@ -74,6 +74,8 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0060 Plugin SDK | Draft | Not scheduled for v1. |
 | 0104 Inference Locality | Proposed | Placement derivation and enforcement built (D47 settled). Not done: per-app limit toggle, Engine-wide limit UI, refusal audit, non-local placements. |
 | 0106 Desktop Generative UI | Draft | No code. |
+| 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
+| 0108 AIDIN Remote Routes | Draft | No code; proposed with D53. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map
