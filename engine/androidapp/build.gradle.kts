@@ -15,6 +15,8 @@ kotlin {
                 // Host-agnostic engine pieces (HTTP server, tokens, approvals, UI models) shared
                 // with the desktop debug app.
                 implementation(project(":enginehost"))
+                // The agent runtime (D52: every Engine serves agents), same module the desktop host mounts.
+                implementation(project(":agenthost"))
                 implementation(project(":engineui"))
                 implementation(project(":aidin"))
                 implementation(project(":modelruntime"))
@@ -42,6 +44,7 @@ kotlin {
                 implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
                 implementation("androidx.lifecycle:lifecycle-service:2.8.6")
                 implementation("androidx.security:security-crypto:1.1.0")
+                implementation("io.ktor:ktor-server-core:3.5.2")
                 implementation("io.ktor:ktor-client-android:3.5.2")
                 implementation("io.ktor:ktor-client-serialization:3.5.2")
                 implementation("io.ktor:ktor-client-content-negotiation:3.5.2")

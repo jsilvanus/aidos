@@ -56,6 +56,8 @@ import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import kotlinx.coroutines.CompletableDeferred
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.AndroidAidin
+import fi.italeino.aidos.engine.agent.agentRoutes
+import fi.italeino.aidos.engine.agent.createEngineAgentRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -254,10 +256,31 @@ class EngineService : LifecycleService() {
                 // A token proves which app it was issued to; whether that app is still approved
                 // is asked of the store on every request, so revoking in Connected Apps cuts a
                 // live session immediately (RFC-0103, "Trust model").
+                // The agent runtime (/v1/agent) runs in this service and calls models through the same
+                // InferenceRequestManager as the HTTP API, via the virtual router so a loop here can
+                // use a peer's model. Tools stay with the calling app (D48) until the tool relay exists.
+                val agent = createEngineAgentRuntime(
+                    scope = serviceScope,
+                    manager = inferenceManager,
+                    router = { httpServer.virtualModelRouter },
+                    aidin = { _aidin.value },
+                )
                 httpServer = EngineHttpServer(
                     tokenManager,
                     runtime,
                     inferenceManager = inferenceManager,
+                    extraRoutes = {
+                        agentRoutes(
+                            agent,
+                            localityFor = { subject, requested -> httpServer.effectiveLocality(subject, requested) },
+                            // D49: running an agent is a separate grant from inference. The Engine's own token is
+                            // the user's; every other app needs the per-app grant.
+                            mayRunAgent = { subject ->
+                                subject == TokenManager.ENGINE_SUBJECT ||
+                                    approvalStore?.getApproval(subject)?.agentAllowed == true
+                            },
+                        )
+                    },
                     isSubjectApproved = { pkg ->
                         approvalStore?.getApproval(pkg)?.status == AppApprovalStatus.APPROVED
                     },
