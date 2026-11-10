@@ -34,6 +34,9 @@ class SshTunnel(
     @Synchronized
     fun start() {
         if (job?.isActive == true) return
+        // Set before launching: an observer that waits for "not Stopped" right after start() must
+        // not see the stale initial state while the coroutine is still being scheduled.
+        _state.value = TunnelState.Connecting
         job = scope.launch { run() }
     }
 
