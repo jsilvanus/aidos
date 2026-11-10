@@ -6,6 +6,7 @@ import dev.aidos.kernel.CapabilityConstraints
 import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectKind
+import dev.aidos.kernel.MutationScope
 import dev.aidos.kernel.Operation
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.ProjectId
@@ -242,16 +243,54 @@ class CapabilityTest {
         assertEquals(DenialReason.ATTENUATED_BY_TAINT, untrusted.reason)
     }
 
+    private fun op(effect: EffectKind, rc: RecoveryClass = RecoveryClass.PURE) = object : Operation<Unit> {
+        override val name = "test.op"
+        override val effect = effect
+        override val recoveryClass = rc
+    }
+
     @Test
-    fun `taint ceiling denies NETWORK_EGRESS and SHELL_EXEC but not FS_READ`() {
-        // isTaintDenied is the authority used by validate(). Testing it directly exercises
-        // the taint ceiling for all permission classes that RFC-0027 requires to deny.
-        assertTrue(SqliteCapabilityManager.isTaintDenied(Permission.NETWORK_EGRESS, noOp))
-        assertTrue(SqliteCapabilityManager.isTaintDenied(Permission.SECRETS_READ, noOp))
-        assertTrue(SqliteCapabilityManager.isTaintDenied(Permission.SHELL_EXEC, noOp))
-        assertFalse(SqliteCapabilityManager.isTaintDenied(Permission.FS_READ, noOp))
-        assertFalse(SqliteCapabilityManager.isTaintDenied(Permission.FS_WRITE, noOp))
-        assertFalse(SqliteCapabilityManager.isTaintDenied(Permission.GIT_READ, noOp))
+    fun `taint attenuation follows the RFC-0027 effect table`() {
+        val d = TaintAttenuation.Decision.entries.associateBy { it.name }.let { m -> object { val ALLOW = m.getValue("ALLOW"); val DENY = m.getValue("DENY"); val REQUIRES_APPROVAL = m.getValue("REQUIRES_APPROVAL") } }
+        // Local, reversible, in-project work stays frictionless.
+        assertEquals(d.ALLOW, TaintAttenuation.decide(Permission.FS_READ, noOp))
+        assertEquals(d.ALLOW, TaintAttenuation.decide(Permission.GIT_READ, noOp))
+        assertEquals(d.ALLOW, TaintAttenuation.decide(Permission.FS_WRITE,
+            op(EffectKind.Mutate(MutationScope.IN_PROJECT), RecoveryClass.IDEMPOTENT)))
+        assertEquals(d.ALLOW, TaintAttenuation.decide(Permission.NOTIFY, op(EffectKind.Notify)))
+        // Leaves the project or hides a secret: denied.
+        assertEquals(d.DENY, TaintAttenuation.decide(Permission.SECRETS_READ, noOp))
+        assertEquals(d.DENY, TaintAttenuation.decide(Permission.FS_WRITE,
+            op(EffectKind.Mutate(MutationScope.OUT_OF_PROJECT))))
+        // Egress, shell and UNSAFE effects (git push): ask per call.
+        assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.NETWORK_EGRESS, noOp))
+        assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.SHELL_EXEC, noOp))
+        assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.MODEL_QUERY, op(EffectKind.Egress("remote"))))
+        assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.GIT_WRITE,
+            op(EffectKind.Mutate(MutationScope.IN_PROJECT), RecoveryClass.UNSAFE)))
+    }
+
+    @Test
+    fun `validate attenuates only an UNTRUSTED run - PROJECT never attenuates`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000101"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+        val cap = mgr.grant(
+            subjectId = "session-3",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.NETWORK_EGRESS,
+            scope = CapabilityScope.Network(allowedHosts = emptyList()),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-3", cap.id, noOp, TrustLevel.TRUSTED))
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-3", cap.id, noOp, TrustLevel.PROJECT))
+        val tainted = mgr.validate("session-3", cap.id, noOp, TrustLevel.UNTRUSTED)
+        assertIs<CapabilityCheckResult.Denied>(tainted)
+        assertEquals(DenialReason.TAINT_REQUIRES_APPROVAL, tainted.reason)
     }
 
     @Test

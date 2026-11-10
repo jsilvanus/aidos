@@ -20,6 +20,7 @@ import dev.aidos.executor.RunCreator
 import dev.aidos.executor.SqliteExecutor
 import dev.aidos.executor.WorkerSpawner
 import dev.aidos.filesystem.FilesystemTool
+import dev.aidos.filesystem.PathTrustPolicy
 import dev.aidos.git.GitTool
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.PlatformProfile
@@ -33,6 +34,7 @@ import dev.aidos.settings.EgressPolicy
 import dev.aidos.settings.ProjectSettingsLoader
 import dev.aidos.settings.ProjectSettingsSnapshot
 import dev.aidos.settings.SettingError
+import dev.aidos.settings.SettingOrigin
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.UserDbSettingsAudit
@@ -324,7 +326,11 @@ class RuntimeCompositionRoot(
             nowIso = nowIso,
             projectIdResolver = { capId -> capabilityManager.projectIdForCapability(capId) ?: "" },
         )
-        broker.register(FilesystemTool())
+        // RFC-0036: aidos.toml is untrusted input that arrives with the repository. Loaded once,
+        // before any tool is built, because trust.untrusted_paths (RFC-0027) shapes the
+        // filesystem tool's result labels and routing.remote_egress shapes the router below.
+        val projectSettings = loadProjectSettings(projectDriver, projectId, rootPath, nowIso())
+        broker.register(FilesystemTool(trustPolicy = PathTrustPolicy(resolveUntrustedPaths(userDriver, projectSettings))))
         broker.register(GitTool(File(rootPath)))
 
         // RFC-0035: registered before any adapter or MCP server ever sees a secret, so any
@@ -369,10 +375,9 @@ class RuntimeCompositionRoot(
             redactor.register(id = "anthropic-api-key", name = "anthropic_api_key", value = key)
             listOf(AnthropicAdapter(key))
         } ?: emptyList()
-        // RFC-0036: aidos.toml is untrusted input that arrives with the repository. Loading it
-        // here reports and audits a project's attempt at routing.remote_egress (SECURITY) and
-        // resolves the policy against the project scope so that attempt provably does not apply.
-        val projectSettings = loadProjectSettings(projectDriver, projectId, rootPath, nowIso())
+        // Loading aidos.toml (above) reports and audits a project's attempt at
+        // routing.remote_egress (SECURITY); resolving the policy against the project scope here
+        // makes that attempt provably not apply.
         val egressPolicy = resolveEgressPolicy(userDriver, projectSettings)
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
@@ -465,6 +470,25 @@ class RuntimeCompositionRoot(
                 SettingsStore(userDriver = it, projectDriver = null)
                     .resolve(Settings.routingRemoteEgress, project = project).value
             } ?: Settings.routingRemoteEgress.default
+
+        /**
+         * RFC-0027 + RFC-0036: the effective `trust.untrusted_paths`. Specifying a path can only
+         * tighten authority, so the user-scope (or declared default) list is a floor that a
+         * project's `aidos.toml` can add to but never shrink; only the user may narrow it.
+         * `internal` so tests can verify the resolution without driving a full Run.
+         */
+        internal fun resolveUntrustedPaths(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+        ): List<String> {
+            val descriptor = Settings.trustUntrustedPaths
+            if (userDriver == null) return descriptor.default
+            val store = SettingsStore(userDriver = userDriver, projectDriver = null)
+            val base = store.resolve(descriptor).value
+            val fromProject = store.resolve(descriptor, project = project)
+                .takeIf { it.origin == SettingOrigin.PROJECT }?.value.orEmpty()
+            return (base + fromProject).distinct()
+        }
 
         /** `aidos.toml` comes with the repository; bound what is read from it. */
         internal const val MAX_AIDOS_TOML_BYTES = 256 * 1024L

@@ -125,7 +125,9 @@ class PolicyInferenceRouter(
         val remoteAdapter = remoteCandidates.first()
 
         // 5. Tainted run crossing network boundary requires user confirmation (RFC-0027).
-        return if (context.runTaint != TrustLevel.TRUSTED) {
+        // Only UNTRUSTED attenuates: a Run that merely read project files is PROJECT-tainted
+        // and must not be asked about every model call.
+        return if (context.runTaint == TrustLevel.UNTRUSTED) {
             RoutingDecision.RemotePendingApproval(
                 adapter = remoteAdapter,
                 reason = "Run is tainted (${context.runTaint}); sending data off-device requires approval."

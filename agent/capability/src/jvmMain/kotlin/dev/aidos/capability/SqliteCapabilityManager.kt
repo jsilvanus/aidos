@@ -278,8 +278,15 @@ class SqliteCapabilityManager(
         }
 
         // Taint attenuation (RFC-0027): UNTRUSTED runs are denied for specific permission classes.
-        if (runTaint == TrustLevel.UNTRUSTED && isTaintDenied(cap.permission, operation)) {
-            return CapabilityCheckResult.Denied(DenialReason.ATTENUATED_BY_TAINT)
+        // Only UNTRUSTED attenuates: PROJECT (ordinary project reads) never does.
+        if (runTaint == TrustLevel.UNTRUSTED) {
+            when (TaintAttenuation.decide(cap.permission, operation)) {
+                TaintAttenuation.Decision.DENY ->
+                    return CapabilityCheckResult.Denied(DenialReason.ATTENUATED_BY_TAINT)
+                TaintAttenuation.Decision.REQUIRES_APPROVAL ->
+                    return CapabilityCheckResult.Denied(DenialReason.TAINT_REQUIRES_APPROVAL)
+                TaintAttenuation.Decision.ALLOW -> Unit
+            }
         }
 
         // RFC-0008 step 8d, TOOL_CALL continuation (branch `claude/continuation-flow`, follow-up):
@@ -543,19 +550,6 @@ class SqliteCapabilityManager(
         }
     }
 
-    companion object {
-        /**
-         * Returns true when an UNTRUSTED run should be denied this permission+operation.
-         *
-         * RFC-0027 table: UNTRUSTED runs may not exercise SECRETS_READ, NETWORK_EGRESS,
-         * or SHELL_EXEC (unless the grant explicitly sets requiresApprovalPerUse, which
-         * turns the denial into a runtime escalation — out of scope for MVP validate()).
-         */
-        fun isTaintDenied(permission: Permission, @Suppress("UNUSED_PARAMETER") operation: Operation<*>): Boolean =
-            permission == Permission.SECRETS_READ ||
-                permission == Permission.NETWORK_EGRESS ||
-                permission == Permission.SHELL_EXEC
-    }
 }
 
 private fun CapabilityScope.projectId(): ProjectId? = when (this) {

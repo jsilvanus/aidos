@@ -91,7 +91,8 @@ object Settings {
      */
     val trustUntrustedPaths: SettingDescriptor<List<String>> = setting("trust.untrusted_paths") {
         scopeClass(ScopeClass.PROJECT_SAFE)
-        default(emptyList())
+        // RFC-0027: vendored dependencies are the likeliest injection vector in a coding agent.
+        default(listOf("node_modules/**", "vendor/**", "third_party/**", ".venv/**", "target/**", "build/**"))
         description("Paths treated as UNTRUSTED even if present in the project's Git history.")
         codec(StringListCodec())
     }

@@ -50,6 +50,8 @@ class FilesystemTool(
      * `fs:delete` operation on this tool, so `FileDeleted` has no emission point here to wire.
      */
     private val onWrite: (FileChangeEvent) -> Unit = {},
+    /** RFC-0027: labels what a read returns. Default: RFC defaults for `trust.untrusted_paths`. */
+    private val trustPolicy: PathTrustPolicy = PathTrustPolicy(),
 ) : Tool {
 
     override val id = "filesystem"
@@ -178,7 +180,7 @@ class FilesystemTool(
         val path = relPath(args, "path") ?: return error("fs:read", "missing or invalid 'path'")
         val bytes = dir.read(path).getOrElse { return error("fs:read", it.message ?: "read failed") }
         val text = bytes.decodeToString()
-        return ok(listOf(ContentBlock.Text(text)))
+        return ok(listOf(ContentBlock.Text(text)), trustPolicy.classify(path.value))
     }
 
     private suspend fun write(dir: DirHandle, args: JsonObject): ToolCallResult {
@@ -197,14 +199,15 @@ class FilesystemTool(
                 created = !existedBefore,
             )
         )
-        return ok(listOf(ContentBlock.Text("wrote ${path.value}")))
+        // Runtime-authored confirmation, not file content: stays TRUSTED.
+        return ok(listOf(ContentBlock.Text("wrote ${path.value}")), TrustLevel.TRUSTED)
     }
 
     private suspend fun list(dir: DirHandle, args: JsonObject): ToolCallResult {
         val path = relPath(args, "path") ?: return error("fs:list", "missing or invalid 'path'")
         val entries = dir.list(path).getOrElse { return error("fs:list", it.message ?: "list failed") }
         val text = entries.joinToString("\n") { e -> "${if (e.isDirectory) "d" else "f"} ${e.name}" }
-        return ok(listOf(ContentBlock.Text(text)))
+        return ok(listOf(ContentBlock.Text(text)), trustPolicy.classify(path.value))
     }
 
     private suspend fun search(dir: DirHandle, args: JsonObject): ToolCallResult {
@@ -214,9 +217,12 @@ class FilesystemTool(
 
         // Collect all matching lines by recursively reading files under the path.
         val matches = mutableListOf<String>()
-        searchRecursive(dir, path, pattern, matches)
+        val trust = intArrayOf(TrustLevel.PROJECT.ordinal)
+        trust[0] = maxOf(trust[0], trustPolicy.classify(path.value).ordinal)
+        searchRecursive(dir, path, pattern, matches, trust)
         val text = if (matches.isEmpty()) "no matches" else matches.joinToString("\n")
-        return ok(listOf(ContentBlock.Text(text)))
+        // Taint is the max over every file a match came from (RFC-0027).
+        return ok(listOf(ContentBlock.Text(text)), TrustLevel.entries[trust[0]])
     }
 
     private suspend fun searchRecursive(
@@ -224,17 +230,19 @@ class FilesystemTool(
         path: RelPath,
         pattern: String,
         matches: MutableList<String>,
+        trust: IntArray,
     ) {
         val entries = dir.list(path).getOrNull() ?: return
         for (entry in entries) {
             val entryPath = RelPath.of("${path.value}/${entry.name}").getOrNull() ?: continue
             if (entry.isDirectory) {
-                searchRecursive(dir, entryPath, pattern, matches)
+                searchRecursive(dir, entryPath, pattern, matches, trust)
             } else {
                 val bytes = dir.read(entryPath).getOrNull() ?: continue
                 val text = bytes.decodeToString()
                 text.lines().forEachIndexed { lineNum, line ->
                     if (line.contains(pattern)) {
+                        trust[0] = maxOf(trust[0], trustPolicy.classify(entryPath.value).ordinal)
                         matches.add("${entryPath.value}:${lineNum + 1}: $line")
                     }
                 }
@@ -361,8 +369,8 @@ class FilesystemTool(
         return RelPath.of(raw).getOrNull()
     }
 
-    private fun ok(content: List<ContentBlock>) =
-        ToolCallResult("", ToolOutcome.Ok, content, TrustLevel.TRUSTED)
+    private fun ok(content: List<ContentBlock>, trust: TrustLevel) =
+        ToolCallResult("", ToolOutcome.Ok, content, trust)
 
     private fun error(op: String, msg: String) =
         ToolCallResult(

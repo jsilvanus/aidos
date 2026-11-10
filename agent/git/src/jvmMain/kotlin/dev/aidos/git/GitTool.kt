@@ -352,8 +352,11 @@ class GitTool(
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
+    // RFC-0027: repository state and history are PROJECT (present in the project's Git history),
+    // not TRUSTED: commit messages and file contents were written by someone. PROJECT never
+    // attenuates a Run; only UNTRUSTED does.
     private fun ok(content: List<ContentBlock>) =
-        ToolCallResult("", ToolOutcome.Ok, content, TrustLevel.TRUSTED)
+        ToolCallResult("", ToolOutcome.Ok, content, TrustLevel.PROJECT)
 
     private fun err(op: String, msg: String) =
         ToolCallResult(
