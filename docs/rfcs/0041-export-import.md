@@ -1,6 +1,6 @@
 # RFC-0041: Export & Import
 
-Status: Draft
+Status: Implemented 2026-11-10 (MVP scope; was Draft). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0041-requirement-map).
 
 ## Abstract
 
@@ -480,6 +480,21 @@ Resolution strategy:
   - Resources: Union
   - Storage: Merge states, resolve conflicts
 ```
+
+## Implementation Amendments (2026-11-10)
+
+The MVP is built (`agent/portability`, CLI `export`/`import`/`keygen`). Where it differs from the sketch above, the code is the contract:
+
+1. **Layout follows RFC-0054.** Runtime state lives in `<project>/.aidos/`, so the archive mirrors the project directory under `project/` (`.git`, `aidos.toml`, content, `.aidos/state.db`, `.aidos/blobs/`) instead of separate `git/`, `storage.db`, `artifacts/` and `resources/` folders. Artifacts are content-addressed blobs. `.aidos/instance.lock`, WAL/SHM files and the derived `.aidos/index/` are excluded. Nothing outside the project directory is ever included: the vault, device identity, `user.db` and model weights stay on the device.
+2. **No lock; a snapshot instead.** A running runtime holds the exclusive project lock (RFC-0055), so export must work beside it. `state.db` is copied with `VACUUM INTO`, a transactionally consistent snapshot. Git and blobs are append-only and hashed as written.
+3. **Algorithms.** The RFC leaves them configurable. This build uses the JDK's PBKDF2-HMAC-SHA256 (600,000 iterations) and AES-256-GCM in 64 KiB chunks (nonce counter plus a final-chunk flag in the AAD, so reordering and truncation fail), and Ed25519. The names are recorded in the encrypted header, so Argon2id and ChaCha20-Poly1305 can be added later without breaking existing archives. The *whole* ZIP is encrypted, so `metadata.json` is hidden too (stronger than `metadata.json.enc`).
+4. **Signature scope.** The signature covers the exact bytes of `manifest.json`, which lists every payload file's SHA-256 and the hash of `metadata.json`. (An archive cannot contain a signature over itself.) `signature.json` holds the public key; the signer is identified by the SHA-256 fingerprint of that key, and import can require a signature (`--require-signature`) from specific fingerprints (`--trust`).
+5. **Import is foreign input.** After verification the importer revokes every capability grant, bumps the revocation epoch and clears instruction and MCP adoptions recorded in the archive's database (RFC-0003, RFC-0016, RFC-0031): authority is granted by this device's user, not carried in by a file. It rewrites `root_path`, writes a `ProjectImported` audit entry, and the exporting project gets a `ProjectExported` entry.
+6. **Conflicts.** `--skip` is the default and is called REFUSE (error, nothing touched). `--rename` imports a copy with a new project id (every `project_id` row is rewritten), a new name and a free directory. `--replace` moves the existing directory aside to `<dir>.replaced-<time>`; it never deletes.
+7. **Limits.** Import enforces zip-slip and absolute-path rejection, rejects entries outside `project/`, and caps expansion (`maxUncompressedBytes`, default 256 GiB). Git verification checks that HEAD resolves to the exported HEAD and that the commit exists loose or packs are present; it does not run `git fsck`.
+8. **Schema migration** runs through `MigrationRunner`. Only schema v1 exists, so no forward migration is exercised yet; a database newer than the runtime is refused.
+
+Open Questions resolved by this build: partial exports and incremental, snapshot, selective and streaming export stay Future Work (not built). Cryptographic timestamping, 100 GB+ projects, P2P sync and cross-version deduplication remain open.
 
 ## Open Questions
 

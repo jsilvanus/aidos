@@ -16,7 +16,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0007 | PARTIAL | no RuntimeDispatchers, per-project mutex contexts, scope hierarchy; revocation epoch + treeless worker + ProjectLocker present |
 | 0008 | PARTIAL | two loops; no JSON-schema arg validation, UNKNOWN_TOOL/INVALID_ARGUMENTS, budget termination |
 | 0009 | PARTIAL | recovery classes, drive/park/recover real; no INTENT row before effects, idempotency_key unwritten, no deadline budget, tests fabricate states |
-| 0010 | PARTIAL | projects create/registry/lock/settings; no archive/dormancy/export/import/templates |
+| 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); no archive/dormancy/templates |
 | 0011 | PARTIAL | sessions, worker spawn, memory store; no failure budget, no orphan cancel, no FACT cap |
 | 0012 | PARTIAL | flat intent store + status fn, tests only; no proposal gate, edges, acyclicity; not wired in prod |
 | 0015 | PARTIAL | GitsemaKnowledgeIndex adapter+factory; no KnowledgeContextProvider, no prod caller, IndexingJob not executed |
@@ -44,6 +44,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0038 | PARTIAL | CrashRecoveryTest 4 seeded boundaries, injection suite, RelPath tests; no shared fakes, no fixtures tree, no profile matrix, no concurrency tests |
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
 | 0040 | PARTIAL | 3-DB paths, WAL pragmas, MigrationRunner v1; read-only result ignored in prod, no synchronous=FULL, no auto_vacuum, no forward migrations |
+| 0041 | IMPLEMENTED | MVP built (full export, manifest, encryption, signing, verified import, migration, conflict policies, CLI) and tested; requirement map in [RFC-0041 requirement map](#rfc-0041-requirement-map) below |
 | 0042 | PARTIAL | EgressSecurityPolicy+DefaultEgressClient tested; egress_records no writer, Anthropic/MCP/downloads bypass it, no response size cap |
 | 0043 | NOT_APPLICABLE | no plugin host in v1, matches RFC MVP; only enum value + unread installed_plugins table |
 | 0044 | PARTIAL | TriggerCalculator, ScheduledJobManager, NotificationManager tested; NotificationBudget unused, no timer/WorkManager calls scheduler |
@@ -53,7 +54,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0048 | PARTIAL | manual constructor-injection root + test; no PlatformAdapter, no testRuntime, no module-dependency test, no lifecycle types |
 | 0049 | PARTIAL | PlatformProfile+descriptorsFor filter tested; daemon hardcodes DESKTOP, no SIDECAR, no [requirements], availability() unimplemented |
 | 0050 | PARTIAL | foreground service, RuntimeServiceHost, ~75 tests; UI screens placeholders, no editor/voice/WorkManager; manifest requests external storage, RFC forbids |
-| 0052 | PARTIAL | RuntimeClient iface, socket transport, replay, mock; DiffQueries stub, no import/export, no version negotiation, 23 CLI notWired |
+| 0052 | PARTIAL | RuntimeClient iface, socket transport, replay, mock; DiffQueries stub, no version negotiation; export/import/keygen are local CLI commands (RFC-0041), not RuntimeClient calls, 23 CLI notWired |
 | 0053 | PARTIAL | Reconciliation + GitRunReconciler tests, treeless worker; no fingerprint check on open, no CONFLICTED, checkout preview says discard but doesn't |
 | 0054 | PARTIAL | user/project db split, nearest-first settings, UUIDv7, registry; workspace scope no-op, no audit row for scope violation, no .aidos gitignore entry |
 | 0055 | PARTIAL | ProjectLock+stale detection, 0600 socket+token, interactive gate, env scrub; heartbeat never called, lock_breaks no writer, no release on shutdown |
@@ -68,7 +69,6 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 |---|---|---|
 | 0022 Inference Backend Architecture | Draft | Decisions D36-D44 settled; llama.cpp backend and ONNX backends (decisions, STT, vision) exist. Candidate for Accepted. |
 | 0033 Shell | Draft | No code; post-MVP. |
-| 0041 Export/Import | Draft | No code. |
 | 0051 Desktop | Draft | No code matching this RFC; desktop engine app exists under RFC-0103. |
 | 0051 LAN Engine Sharing | Proposed | No LAN/HTTPS sharing code; only AIDIN peer links (RFC-0105). |
 | 0060 Plugin SDK | Draft | Not scheduled for v1. |
@@ -131,4 +131,31 @@ The earlier `RetentionEngine` (90-day soft delete of `content_nodes`, 512 MB LRU
 | MVP 4: Stage 3 (device free space under 250 MB stops new Runs, user told) | `StoragePressureAdmission` in `SqliteRunExecutor.send` | daemon `Stage 3 refuses to start a Run...`, `with enough free space a Run is admitted` |
 | Wired into the running engine; settings come from `aidos.toml` (RFC-0036 consumer) | `RuntimeCompositionRoot.drive` calls `RetentionMaintenance.schedule` | daemon `drive schedules compaction, and aidos toml's retention aged_days is what decides what is old`, `a second drive inside the interval does not start another pass` |
 
-Not built, and out of the RFC's own MVP ("Not in MVP"): the per-project retention UI, Stage 2 DERIVED eviction (its model-weight half conflicts with RFC-0103's manual-only policy, as the RFC's own amendment says), verification against Git before compaction, and cold export. Not built and not named in the MVP list: deleting SECRET-labelled content on detection (RFC-0035 write-time redaction is what exists), and an export to offer at Stage 3 (RFC-0041 is a Draft). Known limits: compaction only runs for projects the daemon drives a Run for; free space is measured where the project lives, not on the Android internal-storage API; the mobile hosts do not run it yet because they do not run the daemon composition root.
+Not built, and out of the RFC's own MVP ("Not in MVP"): the per-project retention UI, Stage 2 DERIVED eviction (its model-weight half conflicts with RFC-0103's manual-only policy, as the RFC's own amendment says), verification against Git before compaction, and cold export. Not built and not named in the MVP list: deleting SECRET-labelled content on detection (RFC-0035 write-time redaction is what exists), and offering an export at Stage 3 (RFC-0041 now exists as `aidos export`, but retention does not call it). Known limits: compaction only runs for projects the daemon drives a Run for; free space is measured where the project lives, not on the Android internal-storage API; the mobile hosts do not run it yet because they do not run the daemon composition root.
+
+## RFC-0041 requirement map
+
+Implemented 2026-11-10 (MVP scope). Code: `agent/portability/src/jvmMain/kotlin/dev/aidos/portability/` (`ProjectExporter`, `ProjectImporter`, `ArchiveFormat`, `ArchiveCrypto`, `PortabilityCli`, `ProjectFiles`); CLI wiring in `agent/cli` (`Main.kt`); `ProjectRegistry.isRegistered` in `agent/identity`. Tests: `PortabilityTest`, `PortabilityCliTest` (31). Deviations from the RFC's sketch are in the RFC's "Implementation Amendments".
+
+| Requirement (RFC section) | Code | Test |
+|---|---|---|
+| MVP 1-2: full export as a ZIP with the whole project directory incl. Git history, state db and blobs | `ProjectExporter.export`, `collect` | `full export has metadata, manifest, git head and excludes lock and derived index` |
+| Export while the runtime has the project open (Export Process: consistent read) | `Sqlite.snapshot` (`VACUUM INTO`) | `export works beside an open database and audits itself in the source project` |
+| Export never includes secrets or anything outside the project (Security) | `collect` only walks the project root | `nothing outside the project directory is ever exported` |
+| MVP 3: metadata and manifest with per-file SHA-256 and total checksum | `ExportMetadata`, `ExportManifest`, `ArchiveFormat.totalChecksum` | `full export has metadata...`, `a modified payload file is rejected...`, `an added or removed file is rejected` |
+| MVP 4: password encryption, metadata hidden | `ArchiveCrypto.encrypt/decrypt` | `encrypted export hides everything and round trips with the password`, `crypto streams survive chunk boundaries and empty input` |
+| Wrong password, tampering, truncation and reordering fail closed | AEAD per chunk, final flag in AAD | `wrong or missing password and tampering are refused`, `chunk reordering is detected` |
+| MVP 5: Ed25519 signing and verification, signer identity | `ArchiveCrypto.sign/verify/fingerprint`, `ProjectImporter.verifySignature` | `signed export verifies and reports the signer`, `untrusted signer and a tampered manifest are refused`, `key encoding round trips` |
+| Unsigned archives can be refused; a stripped signature is detected | `ImportOptions.requireSignature/trustedSigners`, metadata `signed` | `unsigned archive is refused when a signature is required...`, `untrusted signer...` |
+| MVP 6: integrity verification before anything is placed | `ProjectImporter.verifyManifest`, staging directory | `a modified payload file is rejected and nothing is placed`, `import leaves no staging directory behind` |
+| Validation of archive paths and size (Security 7) | `extract` (zip-slip, absolute paths, stray entries, byte cap) | `zip-slip and absolute entry names are rejected`, `an entry outside project and the metadata files is rejected`, `an archive that expands past the limit is rejected` |
+| Format version compatibility (Import 2) | `ArchiveFormat.isSupported` | `a garbage file and an unsupported format version are rejected` |
+| MVP 7: schema check and migration | `MigrationRunner` via `AidosStorage.openProject`, `Sqlite.schemaVersion` | `a database newer than this runtime is refused`, round trip (schema v1 to v1) |
+| Git history verified (Import 9) | `resolveGitHead`, `gitObjectPresent` | `a git HEAD that does not match the export is rejected`, round trip |
+| MVP 8: conflict detection, default refuse; rename, replace | `ConflictPolicy`, `ProjectImporter.import` | `default policy refuses...`, `rename imports a copy with a new id...`, `replace moves the existing directory aside...` |
+| Import registers the project and restores it faithfully (Import 10-13) | `ProjectRegistryPort`, `rewriteForThisDevice` | `round trip restores content, git, blobs and registers the project` |
+| Imported authority is not inherited (RFC-0003, 0016, 0031 applied to Import) | `rewriteForThisDevice` revokes grants, bumps epoch, clears adoptions | `import revokes grants and adoptions and records a ProjectImported audit entry` |
+| Audit trail of every export and import (Security 5) | `Sqlite.appendAudit` (`ProjectExported`, `ProjectImported`) | `export works beside an open database and audits itself...`, `import revokes grants...` |
+| CLI `aidos export` / `aidos import` (Export/Import Process), local, no daemon | `PortabilityCli`, `Main.runPortability` | `export then import via the command line`, `second import is refused...`, `encrypted and signed round trip...`, `keygen refuses to overwrite and bad usage exits 2`, `exporting something that is not a project fails cleanly` |
+
+Not built, and out of the RFC's own MVP ("Not included"): snapshot and selective export, streaming export, cloud backup, incremental export, project merging, compression tuning beyond `--compress`. Not built and not in the RFC: a UI on the desktop or Android apps (the Android host can call `ProjectExporter`/`ProjectImporter` but nothing does yet), signing-key storage in the vault (key files from `keygen` for now), `git fsck` on import, and an export offered by retention at Stage 3. Known limits: the audit entry in the exporting project is best-effort (a failure is returned as a warning, not an error, so a finished archive is never discarded); passwords never come from argv (environment variable or prompt).

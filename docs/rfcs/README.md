@@ -39,6 +39,8 @@ two ways.
 **Draft (7).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · and the
 reviews. Genuinely unsettled or post-MVP — every one is a subsystem the MVP does not build.
 
+**0041 Export/Import left Draft on 2026-11-10** when its MVP was built and tested; see its header and STATUS.md.
+
 **0099 Roadmap left Draft on 2026-08-04**, the last document the legacy audit had excepted. It
 defines all six gates, so it was the only file where every gate in the plan was stated by
 something nobody had read end to end.

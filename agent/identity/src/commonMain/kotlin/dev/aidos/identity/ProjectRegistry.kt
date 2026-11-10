@@ -86,6 +86,14 @@ class ProjectRegistry(
         }
     }
 
+    /** True when [projectId] has a registry row, even if its directory has since moved. */
+    fun isRegistered(projectId: ProjectId): Boolean = userDriver.executeQuery(
+        identifier = null,
+        sql = "SELECT 1 FROM project_registry WHERE project_id = ?",
+        mapper = { c -> QueryResult.Value(c.next().value) },
+        parameters = 1,
+    ) { bindString(0, projectId.value) }.value
+
     /**
      * Resolve a project by ID. Returns the registered path, or a [ProjectMovedError] if
      * the registered path no longer exists on disk.
