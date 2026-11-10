@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="decisions-jvm">
+    <output-path>$PROJECT_DIR$/decisions/build/libs</output-path>
+    <root id="archive" name="decisions-jvm.jar">
+      <element id="module-output" name="aidos-engine.decisions.jvmMain" />
+    </root>
+  </artifact>
+</component>
