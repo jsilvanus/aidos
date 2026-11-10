@@ -69,3 +69,6 @@ include(":daemon")
 include(":voice")
 include(":amp")
 include(":portability")
+
+// RFC-0108: standalone, kernel-free SSH tunnel library (fi.italeino.sshtunnel). No :kernel dependency.
+include(":ssh-tunnel")
