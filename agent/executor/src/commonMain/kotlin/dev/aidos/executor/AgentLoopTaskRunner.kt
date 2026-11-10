@@ -61,6 +61,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -95,7 +96,10 @@ private data class StoredToolResult(
     val outcome: String, // OK | DENIED | FAILED | CANCELLED
     val detail: String?, // DenialReason name, or an error message — meaning depends on outcome
     val text: String, // concatenated ContentBlock.Text content (MVP: text-only replay, see below)
+    /** The Run's taint as of this call (monotonic) — what [taintSourceDescription] reads back. */
     val trustLevel: String,
+    /** This result's own label (RFC-0027); null in rows written before it existed. */
+    val resultTrust: String? = null,
 )
 
 /**
@@ -133,6 +137,17 @@ private data class CapabilityApprovalDetail(
 private data class ToolCallApprovalDetail(
     val capabilityId: String,
     val toolName: String,
+    /**
+     * RFC-0027 "Escalation": set when the park is a taint escalation
+     * ([DenialReason.TAINT_REQUIRES_APPROVAL]) — the text shown to the human, which names the
+     * untrusted content that tainted the Run. Such an approval is **single-use** and does not
+     * grant a capability: [SqliteExecutor.resolveToolCallApproval] keeps this row with
+     * `resolution = "approved"`, [executeToolCall] consumes it for exactly this call, and the Run
+     * stays tainted.
+     */
+    val taintMessage: String? = null,
+    val callId: String? = null,
+    val resolution: String? = null,
 )
 
 /**
@@ -509,7 +524,14 @@ class AgentLoopTaskRunner(
         // does that. This matches AgentLoop.kt's own handling of the same broker call. The one
         // exception is immediately below: REQUIRES_APPROVAL is not the model's problem to route
         // around, so it parks instead of falling through to the denial-as-data path.
-        val result = broker.invoke(subjectId, call, run.taintLevel)
+        // RFC-0027 single-use escalation: an approved taint escalation for *this* call is evaluated
+        // as if the Run were PROJECT-tainted, once. The row is deleted before the call runs, so a
+        // crash afterwards re-asks rather than leaving a standing exemption; the Run's own recorded
+        // taint (and everything after this call) is unchanged.
+        val taintApproved = consumeTaintApproval(task.runId, callRow.callId)
+        val effectiveTaint =
+            if (taintApproved && run.taintLevel == TrustLevel.UNTRUSTED) TrustLevel.PROJECT else run.taintLevel
+        val result = broker.invoke(subjectId, call, effectiveTaint)
 
         // RFC-0008 step 8d, TOOL_CALL continuation: a human explicitly gated this specific
         // exercise of authority (CapabilityConstraints.requiresApprovalPerUse) -- unlike every
@@ -519,16 +541,28 @@ class AgentLoopTaskRunner(
         // no taint update -- ToolBroker's denied() reports TRUSTED, so taint couldn't have moved
         // anyway), so parking here is a clean no-op on everything except task/Run state.
         val deniedForApproval = (result.outcome as? ToolOutcome.Denied)
-            ?.takeIf { it.reason == DenialReason.REQUIRES_APPROVAL }
+            ?.takeIf {
+                it.reason == DenialReason.REQUIRES_APPROVAL || it.reason == DenialReason.TAINT_REQUIRES_APPROVAL
+            }
         if (deniedForApproval != null && capabilityId != null) {
+            // RFC-0027 "Escalation": the human is told *which* untrusted content entered the
+            // context, not merely that the Run is tainted — otherwise the prompt is unanswerable.
+            val taintMessage = if (deniedForApproval.reason == DenialReason.TAINT_REQUIRES_APPROVAL) {
+                "Run wants to call ${call.toolName}${describeArgs(callRow.argumentsJson)}. " +
+                    "This run has read untrusted content from ${taintSourceDescription(task.runId)}. Allow once?"
+            } else null
             return TaskResult(
                 success = true,
                 park = ParkRequest(
                     suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
                     operationDetailJson = json.encodeToString(
-                        ToolCallApprovalDetail(capabilityId = capabilityId.value, toolName = call.toolName),
+                        ToolCallApprovalDetail(
+                            capabilityId = capabilityId.value, toolName = call.toolName,
+                            taintMessage = taintMessage, callId = call.callId,
+                        ),
                     ),
                     taskState = TaskState.AWAITING_APPROVAL,
+                    escalationMessage = taintMessage,
                 ),
             )
         }
@@ -601,7 +635,7 @@ class AgentLoopTaskRunner(
             modelVersion = null,
             tokensInput = null,
             tokensOutput = null,
-            outputSnapshot = json.encodeToString(StoredToolResult(outcomeStr, detail, text, newTaint.name)),
+            outputSnapshot = json.encodeToString(StoredToolResult(outcomeStr, detail, text, newTaint.name, result.trustLevel.name)),
         )
 
         // Fan-in: once every sibling TOOL_CALL task for this model turn is terminal, append the
@@ -752,7 +786,7 @@ class AgentLoopTaskRunner(
                                         callId = callId,
                                         outcome = storedOutcome(tr),
                                         content = listOf(ContentBlock.Text(tr.text)),
-                                        trustLevel = TrustLevel.valueOf(tr.trustLevel),
+                                        trustLevel = TrustLevel.valueOf(tr.resultTrust ?: tr.trustLevel),
                                     )
                                 )
                             )
@@ -858,6 +892,35 @@ class AgentLoopTaskRunner(
     }
 
     /**
+     * Reads and deletes an approved taint escalation for [callId] (RFC-0027: single-use). Returns
+     * true only for a `TOOL_CALL` continuation that names this call, carries a taint message and
+     * was approved; anything else leaves the continuation alone.
+     */
+    private fun consumeTaintApproval(runId: RunId, callId: String): Boolean {
+        val detailJson = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_detail_json FROM continuations " +
+                "WHERE run_id = ? AND suspended_operation = 'TOOL_CALL'",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: return false
+        val detail = runCatching { json.decodeFromString<ToolCallApprovalDetail>(detailJson) }.getOrNull()
+            ?: return false
+        if (detail.taintMessage == null || detail.resolution != "approved" || detail.callId != callId) return false
+        deleteContinuation(runId)
+        return true
+    }
+
+    /** ` (path=...)` / ` (url=...)` for the escalation text; the arguments are the model's, so bounded. */
+    private fun describeArgs(argumentsJson: String): String {
+        val obj = runCatching { parseJsonObject(argumentsJson) }.getOrNull() ?: return ""
+        val shown = listOf("path", "url", "command").firstNotNullOfOrNull { key ->
+            obj[key]?.jsonPrimitive?.contentOrNull?.let { "$key=${it.take(120)}" }
+        }
+        return shown?.let { " ($it)" } ?: ""
+    }
+
+    /**
      * RFC-0027 "Escalation": which tool call first raised this Run's taint, read back from
      * durable rows (no in-memory tracking across the Run — D3). `writeAttempt` stores the *Run's*
      * taint level as of each TOOL_CALL, not that call's own result, so the earliest row whose
@@ -867,16 +930,20 @@ class AgentLoopTaskRunner(
     private fun taintSourceDescription(runId: RunId): String =
         driver.executeQuery(
             identifier = null,
-            sql = "SELECT tc.tool_name, a.output_snapshot FROM tool_calls tc " +
+            sql = "SELECT tc.tool_name, tc.arguments_json, a.output_snapshot FROM tool_calls tc " +
                 "JOIN attempts a ON a.task_id = tc.tool_task_id AND a.attempt_number = 1 " +
                 "WHERE tc.run_id = ? ORDER BY tc.step_index ASC",
             mapper = { c ->
                 var found: String? = null
                 while (found == null && c.next().value) {
                     val toolName = c.getString(0) ?: continue
-                    val snapshot = c.getString(1) ?: continue
+                    val args = c.getString(1) ?: "{}"
+                    val snapshot = c.getString(2) ?: continue
                     val stored = runCatching { json.decodeFromString<StoredToolResult>(snapshot) }.getOrNull()
-                    if (stored != null && stored.trustLevel != TrustLevel.TRUSTED.name) found = toolName
+                    // Only UNTRUSTED attenuates; a PROJECT read before it is not "the" source.
+                    if (stored != null && stored.trustLevel == TrustLevel.UNTRUSTED.name) {
+                        found = toolName + describeArgs(args)
+                    }
                 }
                 QueryResult.Value(found)
             },

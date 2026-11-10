@@ -1,6 +1,6 @@
 # RFC-0027: Trust, Taint, and Untrusted Content
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
 
 ## Abstract
 
