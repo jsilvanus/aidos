@@ -962,9 +962,11 @@ class AidinNode(
         }
 
         fun readLoop() {
+            var linkEnded = false
             while (true) {
                 when (val m = link.receive()) {
                     null, is LinkMessage.Bye -> {
+                        linkEnded = true
                         synchronized(lock) { if (status == PairingStatus.WAITING_FOR_CONFIRMATION) fail("other device left") }
                         break
                     }
@@ -995,6 +997,14 @@ class AidinNode(
                     else -> Unit
                 }
                 if (status != PairingStatus.WAITING_FOR_CONFIRMATION) break
+            }
+            // The scanning side reconnects over a normal link next, and the other device admits
+            // that link only once it has stored the pairing or enrolment. It stores before it closes
+            // the pairing link, so wait for its close: reconnecting right after sending Enrolment
+            // (or reading the last PairConfirm) raced the other side's store, got refused as "not
+            // trusted", and nothing retried without discovery.
+            if (invite != null && !linkEnded && synchronized(lock) { status } == PairingStatus.DONE) {
+                link.awaitPeerClose(PAIRING_CLOSE_WAIT_MILLIS)
             }
             link.close()
             reconnectIfDone()
@@ -1067,6 +1077,10 @@ class AidinNode(
                 status = PairingStatus.DONE
             }
             publishPairings()
+            // The scanned side closes once it has stored: that close is the scanning side's signal
+            // that it may open the normal link (see readLoop). finish() can run on the confirming
+            // thread while readLoop is blocked in receive(), so closing here also ends that loop.
+            if (invite == null) link.close()
         }
 
         fun fail(reason: String) {
@@ -1088,3 +1102,6 @@ class AidinNode(
         }
     }
 }
+
+/** How long the scanning side waits for the other device to close the pairing link after both confirmed. */
+private const val PAIRING_CLOSE_WAIT_MILLIS = 5_000

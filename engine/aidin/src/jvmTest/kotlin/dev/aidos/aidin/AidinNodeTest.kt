@@ -6,11 +6,17 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** RFC-0105 phase 1 end to end: two (or three) real nodes over loopback TLS. */
@@ -120,6 +126,59 @@ class AidinNodeTest {
         // C's invite, but B answers at that port.
         val forged = c.createInvite(listOf("127.0.0.1")).copy(port = b.port!!)
         assertFailsWith<PeerRejectedException> { a.pairWith(forged) }
+    }
+
+    /**
+     * Regression for the flaky renewal test on CI: the admin used to open the normal link the moment
+     * it had sent Enrolment. A device that had not stored the enrolment yet (its reader thread not
+     * scheduled, a busy phone) refused that link as untrusted, and with no discovery nothing
+     * retried. Here the enrolled device is a bare endpoint that, like a real node, admits only what
+     * its trust store holds, and takes half a second to store before closing the pairing link.
+     */
+    @Test
+    fun adminOpensTheNormalLinkOnlyAfterTheEnrolledDeviceStored() {
+        val admin = node()
+        val group = admin.createGroup("Office")
+        val memberKey = SigningKey.generate()
+        val trust = TrustStore(memberKey.nodeId)
+        val ownCert = AtomicReference<MembershipCertificate?>(null)
+        val pairingLink = CompletableFuture<PeerLink>()
+        val normalLinks = CopyOnWriteArrayList<PeerLink>()
+        val refusals = AtomicInteger()
+        var invite: PairingInvite? = null
+        val endpoint = PeerLinkEndpoint(
+            memberKey,
+            admit = { creds -> synchronized(trust) { trust.authorizeAny(creds, System.currentTimeMillis()) } },
+            ownCertificates = { listOfNotNull(ownCert.get()) },
+            pendingInviteSecrets = { listOfNotNull(invite?.secret) },
+        )
+        val server = endpoint.listen("127.0.0.1", onReject = { refusals.incrementAndGet() }) { link ->
+            if (link.isPairing) pairingLink.complete(link) else normalLinks += link
+        }
+        try {
+            invite = PairingInvite.create(memberKey, listOf("127.0.0.1"), server.port)
+            admin.enrol(invite!!, group)
+            val link = pairingLink.get(10, TimeUnit.SECONDS)
+            assertEquals(LinkMessage.PairOffer(group.value), link.receive())
+
+            admin.confirmPairing(admin.pairingViews.value.single().id, "member")
+            link.send(LinkMessage.PairConfirm(Scope.ALL.map { it.wire }, group.value))
+            val enrolment = assertIs<LinkMessage.Enrolment>(generateSequence { link.receive() }.first { it !is LinkMessage.PairConfirm })
+
+            Thread.sleep(500)
+            val cert = assertNotNull(enrolment.certificate.toCertificate())
+            synchronized(trust) {
+                trust.join(GroupMembership(cert.groupPublicKey, cert, enrolment.revocations?.toRevocationList()), System.currentTimeMillis())
+            }
+            ownCert.set(cert)
+            link.close()
+
+            eventually("admin links the member") { admin.peers.value.any { it.nodeId == memberKey.nodeId && it.connected } }
+            assertEquals(0, refusals.get(), "the admin connected before the member had stored its enrolment")
+        } finally {
+            normalLinks.forEach { runCatching { it.close() } }
+            server.close()
+        }
     }
 
     @Test
