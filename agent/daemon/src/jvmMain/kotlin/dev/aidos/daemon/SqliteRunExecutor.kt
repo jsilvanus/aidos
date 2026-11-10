@@ -49,6 +49,8 @@ class SqliteRunExecutor(
     private val idGen: () -> String = { UuidV7Generator().next() },
     private val nowIso: () -> String,
     private val compositionRoot: RuntimeCompositionRoot? = null,
+    /** RFC-0056 Stage 3: refuses to start a Run when the device is critically short of storage. */
+    private val admission: RunAdmission? = null,
 ) : RunExecutor {
 
     override suspend fun send(
@@ -60,6 +62,7 @@ class SqliteRunExecutor(
         deviceId: String,
         networkAvailable: Boolean,
     ): RunResult {
+        admission?.refusal(projectDriver, projectId)?.let { return RunResult.Error("run.storage_critical", it) }
         val events = EventStore(projectDriver)
         val eventId = idGen()
         val sequence = events.publish(

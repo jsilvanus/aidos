@@ -8,6 +8,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 
 /**
  * RFC-0036: The three scope classes that decide who may write a setting.
@@ -110,6 +111,16 @@ class RangedIntCodec(private val range: IntRange) : SettingCodec<Int> {
     override fun decode(element: JsonElement): Result<Int> = runCatching {
         val v = element.jsonPrimitive.int
         require(v in range) { "value $v is outside allowed range $range" }
+        v
+    }
+}
+
+/** A megabyte count between 16 MB and one petabyte; stored as a JSON integer. */
+object RangedLongMbCodec : SettingCodec<Long> {
+    override fun encode(value: Long): JsonElement = JsonPrimitive(value)
+    override fun decode(element: JsonElement): Result<Long> = runCatching {
+        val v = element.jsonPrimitive.long
+        require(v in 16L..1_000_000_000L) { "value $v is outside allowed range 16..1000000000 MB" }
         v
     }
 }

@@ -199,6 +199,7 @@ class AgentLoopTaskRunnerTest {
         broker: EffectBroker,
         redact: (String) -> String = { it },
         resolveRemoteAdapter: (String) -> ModelAdapter? = { null },
+        largeOutputs: LargeOutputStore? = null,
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -215,6 +216,7 @@ class AgentLoopTaskRunnerTest {
             broker = broker,
             redact = redact,
             resolveRemoteAdapter = resolveRemoteAdapter,
+            largeOutputs = largeOutputs,
         ),
     )
 
@@ -309,6 +311,44 @@ class AgentLoopTaskRunnerTest {
         val secondRequestMessages = requests[1].messages
         assertTrue(secondRequestMessages.any { it is Turn.Assistant && it.toolCalls.any { c -> c.toolName == "read-file" } })
         assertTrue(secondRequestMessages.any { it is Turn.ToolResult })
+    }
+
+    /** RFC-0056: a map-backed [LargeOutputStore] that externalizes anything over 500 characters. */
+    private class MapOutputStore : LargeOutputStore {
+        val blobs = mutableMapOf<String, String>()
+        override fun externalize(text: String): String? {
+            if (text.length < 500) return null
+            val key = "ref-${text.hashCode()}"
+            blobs[key] = text
+            return "{\"blob_ref\":\"$key\"}"
+        }
+        override fun resolve(stored: String): String =
+            Regex("""^\{"blob_ref":"([^"]+)"}$""").matchEntire(stored)?.let { blobs[it.groupValues[1]] } ?: stored
+    }
+
+    @Test
+    fun `a large tool result is stored by reference and still reaches the model on the next step (RFC-0056)`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()), requests)
+        val big = "line of file content\n".repeat(200)
+        val store = MapOutputStore()
+
+        buildExecutor(driver, fakeRouter(adapter), brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, big), largeOutputs = store)
+            .drive(runId)
+
+        assertEquals("COMPLETED", runRow(driver, runId).first)
+        val stored = driver.executeQuery(null,
+            "SELECT a.output_snapshot FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE t.run_id = ? AND t.kind = 'TOOL_CALL'",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 1
+        ) { bindString(0, runId.value) }.value!!
+        assertTrue(stored.startsWith("{\"blob_ref\""), "the row holds a reference, not the payload: ${stored.take(60)}")
+        assertEquals(1, store.blobs.size)
+
+        val toolResult = requests[1].messages.filterIsInstance<Turn.ToolResult>().single()
+        val text = (toolResult.result.content.single() as ContentBlock.Text).text
+        assertEquals(big, text, "history reconstruction resolved the reference back to the original text")
     }
 
     @Test

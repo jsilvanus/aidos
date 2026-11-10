@@ -106,6 +106,30 @@ object Settings {
         codec(RangedIntCodec(1..3650))
     }
 
+    /** Window for an oversized Attempt output before it is compacted (RFC-0056). */
+    val retentionToolResultDays: SettingDescriptor<Int> = setting("retention.tool_result_days") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(7)
+        description("Days before a tool result over 64KB is compacted to head, tail and hash.")
+        codec(RangedIntCodec(1..3650))
+    }
+
+    /** Project footprint above which Stage 1 storage-pressure compaction starts (RFC-0056). */
+    val retentionSoftLimitMb: SettingDescriptor<Long> = setting("retention.soft_limit_mb") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(512L)
+        description("Project storage above this many MB starts compacting aged content older than 7 days.")
+        codec(RangedLongMbCodec)
+    }
+
+    /** "Never compact this project", for work under audit obligations (RFC-0056). */
+    val retentionNeverCompact: SettingDescriptor<Boolean> = setting("retention.never_compact") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(false)
+        description("Never compact this project's history. Storage grows without bound.")
+        codec(BooleanCodec)
+    }
+
     /** Default model kind for new sessions (RFC-0020). */
     val modelDefaultKind: SettingDescriptor<String> = setting("model.default_kind") {
         scopeClass(ScopeClass.PREFERENCE)
@@ -235,6 +259,9 @@ object Settings {
         knowledgeExcludePaths,
         trustUntrustedPaths,
         retentionAgedDays,
+        retentionToolResultDays,
+        retentionSoftLimitMb,
+        retentionNeverCompact,
         modelDefaultKind,
         speechTtsModelId,
         speechSummaryOnFinish,

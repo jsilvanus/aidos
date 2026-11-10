@@ -57,7 +57,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0053 | PARTIAL | Reconciliation + GitRunReconciler tests, treeless worker; no fingerprint check on open, no CONFLICTED, checkout preview says discard but doesn't |
 | 0054 | PARTIAL | user/project db split, nearest-first settings, UUIDv7, registry; workspace scope no-op, no audit row for scope violation, no .aidos gitignore entry |
 | 0055 | PARTIAL | ProjectLock+stale detection, 0600 socket+token, interactive gate, env scrub; heartbeat never called, lock_breaks no writer, no release on shutdown |
-| 0056 | PARTIAL | RetentionEngine age/LRU/batch tests; not wired; no classes/compaction/blob dedup/SECRET deletion; conflicts: soft-deletes content_nodes RFC says PERMANENT |
+| 0056 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0056 requirement map](#rfc-0056-requirement-map) below |
 | 0057 | PARTIAL | RunSummaryComputer, spoken summary, voice approval tested; no UI uses them, no STT/TTS wired, approval_channel null |
 | 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client 38 tests, desktop+Android host; no LicenseAcceptance, queue-never-reject violated at 8 queued |
 | 0105 | PARTIAL | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split: planner+supervisors exist but emulated children, supervisors only in tests, no GGML_RPC CI; header stale 'Not implemented yet' |
@@ -103,4 +103,32 @@ Implemented 2026-11-10. Every normative requirement, where it is built, and the 
 
 Not built, and out of the RFC's own MVP ("Not in MVP"): a settings UI beyond the CLI, workspace scope (single implicit workspace), dynamic reconfiguration without restart, and the one-time user prompt when a default for a SECURITY setting changes (no SECURITY default has changed yet, so there is nothing to prompt about). The RFC's Future Work items (import diff view, policy profiles) are likewise not built.
 
-Known limits that do not block the MVP: only `routing.remote_egress` is consumed through the project-aware path in production today; the other declared settings have no production reader yet (that is those RFCs' work, e.g. 0027 `trust.untrusted_paths`, 0056 `retention.aged_days`). The setting audit is in `user.db` (`settings_audit`) rather than a project's `audit_log`, because a user-scope change belongs to no project.
+Known limits that do not block the MVP: only `routing.remote_egress` is consumed through the project-aware path in production today; the other declared settings have no production reader yet except the `retention.*` ones, which RFC-0056 now reads (that is those RFCs' work, e.g. 0027 `trust.untrusted_paths`). The setting audit is in `user.db` (`settings_audit`) rather than a project's `audit_log`, because a user-scope change belongs to no project.
+
+## RFC-0056 requirement map
+
+Implemented 2026-11-10. Code is in `agent/retention/src/jvmMain/kotlin/dev/aidos/retention/` (`RetentionModel.kt`, `RetentionPolicyResolver.kt`, `Compactor.kt`, `BlobStore.kt`, `StoragePressure.kt`), the executor seam `LargeOutputStore` in `agent/executor/`, the four `retention.*` settings in `agent/settings/`, and the daemon wiring in `agent/daemon/` (`RetentionMaintenance.kt`, `RuntimeCompositionRoot`, `SqliteRunExecutor`). Tests: `Rfc0056RequirementsTest` (retention), `RetentionWiringTest` (daemon), `AgentLoopTaskRunnerTest` (executor).
+
+The earlier `RetentionEngine` (90-day soft delete of `content_nodes`, 512 MB LRU cap, never called) is gone: it deleted PERMANENT records, which the RFC forbids.
+
+| Requirement (RFC section) | Code | Test |
+|---|---|---|
+| MVP 1: retention classes and the default policy table | `RetentionClass`, `RetainedObject`, `RetentionPolicy` | `R1 the default policy table classifies...`, `R1 default windows are 30 days...` |
+| Windows are user-adjustable per project, defaults stated (User control) | settings `retention.aged_days`, `tool_result_days`, `soft_limit_mb`, `never_compact`; `retention_policy` rows; `RetentionPolicyResolver` | `R8 retention reads its windows through the settings layer...`, `R8 retention_policy rows override per object...`, `R8 an invalid retention value falls back...` |
+| "Never compact this project" (User control) | `RetentionPolicy.neverCompact`, null `perObjectDays` | `R3 never_compact for the project, or a null per-object window...` |
+| MVP 2: compaction of Attempt snapshots, prompt packages and event payloads with head, tail, hash (Compaction) | `Compactor.compact`, `Compactor.compactedJson` | `R2 an old attempt snapshot, prompt package and event payload are compacted...`, `R2 event headers survive compaction...`, `R2 head and tail never split a surrogate pair` |
+| Idempotent; never grows a value; young data untouched (Compaction) | `Compactor` selection, `retained >= original` guard | `R2 compaction is idempotent`, `R2 a payload too small to shrink...` |
+| Tool results over 64KB age out after 7 days (table) | `Compactor` per-row cutoff | `R2 a tool result over 64KB is compacted after 7 days...` |
+| Bounded batches, cancellation checks, background (Compaction) | `RetentionPolicy.batchSize/maxBatchesPerPass`, `yield()` per row, `RetentionMaintenance` on `Dispatchers.IO` | `R4 a pass is bounded by batches...`, `R4 cancelling mid-pass...` |
+| MVP 5, Security 2: every compaction is recorded with the original hash | `compactions` insert in the same transaction as the update | `R5 every compaction writes a compactions row...` |
+| Security 1, never-deleted list: PERMANENT records, audit log and capability history are never touched | `Compactor` writes only the four payload columns | `R3 compaction never touches PERMANENT records...` (also proves `content_nodes` are not soft-deleted) |
+| Live Runs are not compacted from under themselves | `LIVE_RUN_STATES` filters | `R3 attempts of a Run that is still live...` |
+| MVP 3: content-addressed blobs under `.aidos/blobs/<hash>` with reference counts (Deduplication) | `BlobStore`, `blob_refs` | `R6 identical content is stored once...`, `R6 the file is deleted when the last reference is released...`, `R6 a corrupted blob is never returned` |
+| Dedup is used by the running agent loop | `LargeOutputStore` seam in `AgentLoopTaskRunner`, `BlobStore` injected by `RuntimeCompositionRoot` | `R6 large outputs are externalized...`, executor `a large tool result is stored by reference and still reaches the model...` |
+| Deduplicated content is reclaimed when its Attempt is compacted | `Compactor.apply` releases the reference after commit | `R6 compacting an attempt whose output is a blob reference...` |
+| EPHEMERAL: temp files and interrupted writes cleaned on startup | `BlobStore.sweep`, run by the first maintenance pass | `R6 startup sweep removes interrupted writes...` |
+| MVP 4: Stage 1 (over soft limit, compact AGED older than 7 days) | `StoragePressureMonitor`, `RetentionService.maintain` | `R7 stage assessment orders...`, `R7 stage 1 compacts content older than 7 days...`, `R7 under the soft limit nothing inside the window is compacted` |
+| MVP 4: Stage 3 (device free space under 250 MB stops new Runs, user told) | `StoragePressureAdmission` in `SqliteRunExecutor.send` | daemon `Stage 3 refuses to start a Run...`, `with enough free space a Run is admitted` |
+| Wired into the running engine; settings come from `aidos.toml` (RFC-0036 consumer) | `RuntimeCompositionRoot.drive` calls `RetentionMaintenance.schedule` | daemon `drive schedules compaction, and aidos toml's retention aged_days is what decides what is old`, `a second drive inside the interval does not start another pass` |
+
+Not built, and out of the RFC's own MVP ("Not in MVP"): the per-project retention UI, Stage 2 DERIVED eviction (its model-weight half conflicts with RFC-0103's manual-only policy, as the RFC's own amendment says), verification against Git before compaction, and cold export. Not built and not named in the MVP list: deleting SECRET-labelled content on detection (RFC-0035 write-time redaction is what exists), and an export to offer at Stage 3 (RFC-0041 is a Draft). Known limits: compaction only runs for projects the daemon drives a Run for; free space is measured where the project lives, not on the Android internal-storage API; the mobile hosts do not run it yet because they do not run the daemon composition root.
