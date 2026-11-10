@@ -149,6 +149,44 @@ class RuntimeCompositionRootTest {
         assertEquals(Settings.routingRemoteEgress.default, RuntimeCompositionRoot.resolveEgressPolicy(null))
     }
 
+    // ─── RFC-0027: trust.untrusted_paths is read through the RFC-0036 layer ──────────────────
+
+    private fun projectSnapshot(vararg paths: String) = dev.aidos.settings.ProjectSettingsSnapshot(
+        "aidos.toml",
+        mapOf(
+            Settings.trustUntrustedPaths.key to dev.aidos.settings.ProjectEntry(
+                kotlinx.serialization.json.JsonArray(paths.map { JsonPrimitive(it) }), line = 3,
+            ),
+        ),
+    )
+
+    @Test
+    fun `resolveUntrustedPaths defaults to the RFC-0027 dependency directories`() {
+        val expected = listOf("node_modules/**", "vendor/**", "third_party/**", ".venv/**", "target/**", "build/**")
+        assertEquals(expected, RuntimeCompositionRoot.resolveUntrustedPaths(null))
+        assertEquals(expected, RuntimeCompositionRoot.resolveUntrustedPaths(openUserDriver()))
+    }
+
+    @Test
+    fun `a project can add untrusted paths but never shrink the floor`() {
+        val resolved = RuntimeCompositionRoot.resolveUntrustedPaths(openUserDriver(), projectSnapshot("fixtures/**"))
+        assertTrue("fixtures/**" in resolved)
+        assertTrue("node_modules/**" in resolved, "a project cannot remove the default floor")
+        // Even an empty project list leaves the floor intact.
+        assertTrue("node_modules/**" in RuntimeCompositionRoot.resolveUntrustedPaths(openUserDriver(), projectSnapshot()))
+    }
+
+    @Test
+    fun `the user may narrow the list in their own settings`() {
+        val userDriver = openUserDriver()
+        SettingsWriter(userDriver).writeUser(
+            Settings.trustUntrustedPaths,
+            kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("vendor/**"))),
+            SettingSetByKind.USER, nowIso,
+        )
+        assertEquals(listOf("vendor/**"), RuntimeCompositionRoot.resolveUntrustedPaths(userDriver))
+    }
+
     @Test
     fun `drive() denies automatic remote routing when the user set NEVER, even with a key configured`() = runTest {
         val driver = openDriver()

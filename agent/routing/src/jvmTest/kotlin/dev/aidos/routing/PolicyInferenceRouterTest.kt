@@ -125,6 +125,17 @@ class PolicyInferenceRouterTest {
     }
 
     @Test
+    fun `PROJECT-tainted run (read ordinary project files) is not attenuated`() = runTest {
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = true),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(fakeAdapter("remote-claude")),
+        )
+        val result = router.select(ModelKind.LLM, ctx(runTaint = TrustLevel.PROJECT))
+        assertIs<RoutingDecision.RemoteApproved>(result)
+    }
+
+    @Test
     fun `allowedRemoteModelIds allowlist enforced`() = runTest {
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(

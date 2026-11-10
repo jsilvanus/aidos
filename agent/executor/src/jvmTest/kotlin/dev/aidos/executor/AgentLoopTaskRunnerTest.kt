@@ -348,7 +348,11 @@ class AgentLoopTaskRunnerTest {
 
         val toolResult = requests[1].messages.filterIsInstance<Turn.ToolResult>().single()
         val text = (toolResult.result.content.single() as ContentBlock.Text).text
-        assertEquals(big, text, "history reconstruction resolved the reference back to the original text")
+        // RFC-0027: the UNTRUSTED result reaches the model inside a <context> sandbox.
+        assertEquals(
+            PromptAssembler.wrapContext("tool:read-file", TrustLevel.UNTRUSTED, big), text,
+            "history reconstruction resolved the reference back to the original text",
+        )
     }
 
     @Test

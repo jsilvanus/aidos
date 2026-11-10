@@ -144,8 +144,29 @@ class SqliteExecutor(
                         kind = EventTypes.PERMISSION_REQUESTED,
                         actor = actor,
                         subjectRef = task.toolName ?: task.kind.name,
+                        detailJson = park.escalationMessage?.let {
+                            buildJsonObject { put("reason", "taint_escalation"); put("message", it) }.toString()
+                        } ?: "{}",
                         nowIso = nowIso(),
                     )
+                    if (park.escalationMessage != null) {
+                        // RFC-0027 "Escalation": a CapabilityRequested event carrying the taint reason.
+                        events.publish(
+                            id = idGen(),
+                            projectId = currentRun.projectId.value,
+                            type = "CapabilityRequested",
+                            source = "executor",
+                            payload = buildJsonObject {
+                                put("run_id", runId.value)
+                                put("task_id", task.id.value)
+                                put("reason", "taint_escalation")
+                                put("message", park.escalationMessage)
+                            }.toString(),
+                            causedBy = currentRun.triggerEventId.value,
+                            causalDepth = 1,
+                            nowIso = nowIso(),
+                        )
+                    }
                     events.publish(
                         id = idGen(),
                         projectId = currentRun.projectId.value,
@@ -878,10 +899,30 @@ class SqliteExecutor(
             return CapabilityApprovalResolution.Denied
         }
 
-        onApprove(continuation.operationDetailJson)
-        inTransaction {
-            deleteContinuation(runId)
-            updateTaskState(continuation.taskId, TaskState.PENDING)
+        // RFC-0027: a taint escalation is a single-use approval, not a grant. Keep the row with
+        // resolution=approved so the re-executed call consumes it (and only it); no capability is
+        // issued, and the Run stays tainted.
+        val isTaintEscalation = runCatching {
+            json.parseToJsonElement(continuation.operationDetailJson).jsonObject["taintMessage"]
+        }.getOrNull().let { it != null && it !is kotlinx.serialization.json.JsonNull }
+        if (isTaintEscalation) {
+            inTransaction {
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE continuations SET operation_detail_json = ? WHERE run_id = ?",
+                    parameters = 2,
+                ) {
+                    bindString(0, withResolution(continuation.operationDetailJson, "approved"))
+                    bindString(1, runId.value)
+                }
+                updateTaskState(continuation.taskId, TaskState.PENDING)
+            }
+        } else {
+            onApprove(continuation.operationDetailJson)
+            inTransaction {
+                deleteContinuation(runId)
+                updateTaskState(continuation.taskId, TaskState.PENDING)
+            }
         }
         updateRunState(runId, RunState.RUNNING)
         audit.write(
@@ -1118,6 +1159,8 @@ data class ParkRequest(
     val suspendedOperation: SuspendedOperation,
     val operationDetailJson: String,
     val taskState: TaskState,
+    /** RFC-0027: the human-readable escalation (names the tainting content); published as `CapabilityRequested`. */
+    val escalationMessage: String? = null,
 )
 
 /** Pluggable task runner — replaced by a stub in tests. */

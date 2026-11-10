@@ -31,7 +31,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0024 | PARTIAL | kernel types, schema, SqliteContentNodeStore in androidapp; not wired to runtime composition; no sensitivity enforcement |
 | 0025 | PARTIAL | PromptAssembler sections/fit/TooBig/tool-descriptor fencing real; no PromptPackage provenance, no PrivacyFilter, no <context> sandboxing, provenance never written |
 | 0026 | PARTIAL | SessionMemoryStore+tests; not wired to runtime; no delete/inspect, no redactor, no expiry |
-| 0027 | PARTIAL | Trust.kt, monotonic taint, capability denial real; fs/git tools hardcode TRUSTED so file reads never taint; trust.untrusted_paths unused; no escalation/approval flow |
+| 0027 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0027 requirement map](#rfc-0027-requirement-map) below. Content-node provenance (`taint_source_node_id`, `prompt_provenance`) waits on RFC-0024/0025 plumbing |
 | 0028 | PARTIAL | Budget type+split, causal depth, step ceiling; BudgetLedger interface only, no writers, budgetRemaining=null; causal depth 16 not 8 |
 | 0029 | PARTIAL | AidosError/ErrorClass + RetryPolicy + INDETERMINATE real; isModelAudience test-only; most registry codes never emitted, ad hoc codes used |
 | 0030 | PARTIAL | ToolBroker capability check+audit+preview; no JSON-schema validation, budget stub, approvalTier no callers |
@@ -103,7 +103,33 @@ Implemented 2026-11-10. Every normative requirement, where it is built, and the 
 
 Not built, and out of the RFC's own MVP ("Not in MVP"): a settings UI beyond the CLI, workspace scope (single implicit workspace), dynamic reconfiguration without restart, and the one-time user prompt when a default for a SECURITY setting changes (no SECURITY default has changed yet, so there is nothing to prompt about). The RFC's Future Work items (import diff view, policy profiles) are likewise not built.
 
-Known limits that do not block the MVP: only `routing.remote_egress` is consumed through the project-aware path in production today; the other declared settings have no production reader yet except the `retention.*` ones, which RFC-0056 now reads (that is those RFCs' work, e.g. 0027 `trust.untrusted_paths`). The setting audit is in `user.db` (`settings_audit`) rather than a project's `audit_log`, because a user-scope change belongs to no project.
+Known limits that do not block the MVP: only `routing.remote_egress` and `trust.untrusted_paths` (RFC-0027) are consumed through the project-aware path in production today, plus the `retention.*` settings that RFC-0056 reads; the other declared settings have no production reader yet. The setting audit is in `user.db` (`settings_audit`) rather than a project's `audit_log`, because a user-scope change belongs to no project.
+
+## RFC-0027 requirement map
+
+Implemented 2026-11-10. Code: `agent/capability` (`TaintAttenuation.kt`, `SqliteCapabilityManager.validate`), `agent/filesystem` (`PathTrustPolicy.kt`, `FilesystemTool`), `agent/git` (`GitTool`), `agent/executor` (`AgentLoopTaskRunner`, `SqliteExecutor`), `agent/prompt` (`PromptAssembler`), `agent/routing` (`PolicyInferenceRouter`), `agent/settings` (`Settings.trustUntrustedPaths`), `agent/daemon` (`RuntimeCompositionRoot.resolveUntrustedPaths`), kernel `DenialReason.TAINT_REQUIRES_APPROVAL`. Tests: `TaintEscalationEndToEndTest` (executor), `TrustLabelTest` (filesystem), `CapabilityTest`, `ContextSandboxTest` (prompt), `PolicyInferenceRouterTest`, `RuntimeCompositionRootTest`.
+
+| Requirement (RFC section) | Code | Test |
+|---|---|---|
+| Trust assigned by origin, automatically: project file reads and git output are PROJECT, files under `untrusted_paths` are UNTRUSTED, network/MCP output UNTRUSTED, runtime-authored text TRUSTED (Trust levels) | `PathTrustPolicy.classify`, `FilesystemTool` read/list/search, `GitTool.ok`, `HttpTool`, `McpTool` | `ordinary project reads are PROJECT, which never attenuates`, `files under default untrusted paths are UNTRUSTED at any depth`, `search is UNTRUSTED when any match came from an untrusted path`, `write confirmation is runtime-authored and stays TRUSTED` |
+| Default `untrusted_paths` for dependency directories (MVP 6) | `Settings.trustUntrustedPaths` default | `resolveUntrustedPaths defaults to the RFC-0027 dependency directories` |
+| `untrusted_paths` read through the RFC-0036 layer; a project can only add, never shrink the floor (Settings, RFC-0036 PROJECT_SAFE) | `RuntimeCompositionRoot.resolveUntrustedPaths`, fed to `FilesystemTool` when the executor is built | `a project can add untrusted paths but never shrink the floor`, `the user may narrow the list in their own settings` |
+| Run taint is the max over results, monotonic, recorded per Run, never carried into another Run (Taint propagation, MVP 2) | `AgentLoopTaskRunner.finishToolCall`, `runs.taint_level` | `reading a vendored file then attempting an unsafe effect parks and names the file` (taint UNTRUSTED), `approval is single-use, grants nothing, and leaves the run tainted` |
+| Only UNTRUSTED attenuates; PROJECT and TRUSTED never do (Authority attenuation) | `SqliteCapabilityManager.validate`, `PolicyInferenceRouter` | `validate attenuates only an UNTRUSTED run - PROJECT never attenuates`, `PROJECT-tainted run (read ordinary project files) is not attenuated`, `reading ordinary project files never attenuates` |
+| Attenuation by effect class: read, in-project mutate and notify allowed; out-of-project mutate and secrets denied; egress, shell and UNSAFE effects need approval per call (Authority attenuation table, MVP 3) | `TaintAttenuation.decide` | `taint attenuation follows the RFC-0027 effect table` |
+| Escalation names the specific tainting content and publishes a `CapabilityRequested` event with the taint reason (Escalation, MVP 4) | `AgentLoopTaskRunner.taintSourceDescription`, `ParkRequest.escalationMessage`, `SqliteExecutor` | `reading a vendored file then attempting an unsafe effect parks and names the file` |
+| Approval is a single-use exercise, not a capability upgrade; the Run remains tainted (Escalation) | `consumeTaintApproval`, `SqliteExecutor.resolveToolCallApproval` | `approval is single-use, grants nothing, and leaves the run tainted`, `denying the escalation fails the run and nothing unsafe runs` |
+| Delimiter escaping in `<context>` sandboxing, moved into MVP (Interaction with structural sandboxing, MVP 5) | `PromptAssembler.wrapContext`, `escapeContextContent`, system prompt statement | `untrusted and project tool results are wrapped in context with source and trust`, `a closing delimiter inside content cannot end the sandbox`, `runtime-authored and denied results are not wrapped`, `system prompt states that context content is never instructions` |
+| No model-written summary carries taint across Runs (Taint propagation, D32) | none needed: a new Run starts with a fresh transcript | n/a |
+
+Decisions where the code departs from the RFC text:
+
+- **Shell and NETWORK_EGRESS need approval, not denial.** The table says egress and unsafe effects ask per call. The old blunt permission list denied them outright.
+- **Git output is PROJECT.** Repository history is "present in the project's Git history", so it never attenuates.
+- **Model output is not a taint source.** It is a function of its input; treating its arguments as untrusted is what schema validation is for (RFC-0008). Counting it as taint would taint every Run at its first response.
+- **Patterns match at any depth** unless they start with a slash, so `node_modules/**` also covers `web/node_modules/x`.
+
+Not built: (a) `runs.taint_source_node_id`, `prompt_provenance.trust_level` and `content_nodes` trust writes need the content-node and provenance plumbing of RFC-0024 and RFC-0025, which is not wired into the runtime; today the tainting content is named from the tool-call row (tool and path). (b) The runner does not yet feed knowledge-engine `ContextItem`s into a prompt, so there is no context-item taint to compute; the assembler already labels them PROJECT and sandboxes them. (c) Worker creation with a wider scope than its parent is not attenuated (no scope comparison exists at validation time). (d) A symlink inside the project that points into an untrusted directory is not followed by the path match. (e) The one `PreviewRecorded` row the RFC mentions for tainted in-project mutation is the broker's existing preview step, which runs for every `Mutate`. Out of the RFC's own MVP: configurable attenuation policy, per-token influence tracking, taint visualisation beyond the escalation prompt, injection-pattern detection.
 
 ## RFC-0056 requirement map
 

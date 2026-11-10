@@ -153,6 +153,13 @@ enum class DenialReason {
 
     /** The Run has read untrusted content and this effect is attenuated away (RFC-0027). */
     ATTENUATED_BY_TAINT,
+
+    /**
+     * The Run has read untrusted content and this effect is allowed only with a fresh, single-use
+     * approval that names the tainting content (RFC-0027 "Escalation"). Parks the Run; the
+     * approval does not clear the taint.
+     */
+    TAINT_REQUIRES_APPROVAL,
 }
 
 /**
