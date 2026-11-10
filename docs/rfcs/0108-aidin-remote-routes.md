@@ -92,9 +92,21 @@ The vault kinds are separate so a tunnel key can never be used to run a command 
 
 Heartbeat 3 s and grace 20 s were chosen for LAN. On a remote route the grace is configurable per route (default 60 s) and a dropped stream is redialled at once. For RFC-0107's open question: a desktop-hosted run **continues for a bounded window (default 5 minutes, configurable) after the origin drops and is resumable by `seq`**, then is cancelled. Tool calls that need the origin's tool relay wait or fail with a clear status during the window.
 
+### The SSH tunnel is a standalone library
+
+The SSH tunnel code is **not Engine code**. It is a reusable Kotlin library that other apps use too (Juha plans SSH tunnelling in a media-project Android app), so it must build and run with no Aidos dependency.
+
+- **Own module, kernel-free**, like `mcp-core` and `mcp-policy`: no import of `kernel`, the vault, AIDIN, settings or any Aidos type. Preferably its own repository so the media app can consume it without checking out aidos; until then a self-contained Gradle module in aidos that publishes the same way. Package `fi.italeino.sshtunnel` (module and repo name may differ).
+- **Kotlin Multiplatform with `jvm()` and `android()` targets**, one SSH library underneath (sshj or Apache MINA SSHD, chosen in phase 3 by trying both on Android: crypto provider, Ed25519 support, size). Desktop Engine and Android apps use the same code.
+- **Narrow API.** A tunnel is described by `TunnelSpec` (server host and port, user, forward kind `reverse` or `local`, bind and target address and port, keepalive and backoff). The caller supplies three small interfaces: `KeyProvider` (hands the private key bytes for one connection, never stored by the library), `HostKeyPolicy` (pinned fingerprint check, a change is reported, not trusted), and a `Clock`/logger. The library exposes a `StateFlow` of `Connecting | Up | HostKeyChanged | AuthRefused | Backoff(n)` and `start()`/`stop()`. It has no UI, no storage, no policy and no settings.
+- **Generic key helpers.** Ed25519 key generation and the `authorized_keys` line builder (`restrict,port-forwarding,permitlisten=…,command=…`, plus `permitopen=` for the local-forward case) live in the library, so any app gets the same restricted line. The library never persists keys.
+- **Aidos adapters live in aidos.** The vault-backed `KeyProvider` (RFC-0035), the egress grant (RFC-0042), the audit events and the remote-access switch are thin adapters in the Engine that wrap the library. The setup-key installer and the key page UI stay in the Engine; the installer's low-level step (connect, append a line, verify) may sit in the library behind the same interfaces.
+- **Tests** use an in-process SSH server, never a real server; the same suite runs on JVM and, where possible, an Android unit-test target.
+
 ### Phone side
 
-Phase 1 needs no SSH on the phone: it dials the server's public port as `direct`. Phone-side SSH (a `-L`/jump forward so the server exposes only sshd) needs an SSH client in the Android host and Keystore-backed key storage, which the vault does not yet have (JVM only). It is phase 4.
+
+Phase 1 needs no SSH on the phone: it dials the server's public port as `direct`. Phone-side SSH (a `-L`/jump forward so the server exposes only sshd) uses the standalone library above on Android, and needs Keystore-backed key storage for the Engine's `KeyProvider` adapter, which the vault does not yet have (JVM only). It is phase 4.
 
 ## Threats
 
@@ -116,8 +128,8 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 1. Route hints in pair records and QR, dialer fallback, "Add address" UI on desktop and Android, docs for Tailscale/WireGuard. Deterministic in-memory transport tests.
 2. Per-route RTT, split planner refuses non-`lan`, per-peer remote-access switch and audit.
-3. Desktop SSH reverse tunnel: tunnel key page, vault kind, host pinning, backoff, state UI. Tested against an in-process SSH server, never a real server.
-4. Phone-side SSH and Android Keystore vault.
+3. Standalone SSH tunnel library (JVM first, Android target compiled), then the desktop reverse tunnel on top of it: tunnel key page, vault kind, host pinning, backoff, state UI. Tested against an in-process SSH server, never a real server.
+4. Phone-side SSH using the same library, and the Android Keystore vault.
 5. RFC-0107 bounded continue-then-cancel behaviour.
 
 ## Amendments to other RFCs (made with implementation)
