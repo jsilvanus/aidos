@@ -49,7 +49,14 @@ data class AppApprovalRecord(
     val sdkVersion: String? = null,
 
     /** API version the app last reported speaking (`X-Aidos-Api-Version`); null until it sends a request. */
-    val apiVersion: Int? = null
+    val apiVersion: Int? = null,
+
+    /**
+     * D49: the user has allowed this app to run agents (and so to have the Engine act through tools).
+     * Separate from [status], which only covers inference; default false, so an inference-only app
+     * cannot start agent runs until the user grants it. Cleared when approval is revoked.
+     */
+    val agentAllowed: Boolean = false
 )
 
 /**
@@ -128,6 +135,11 @@ interface AppApprovalStore {
      * so calling it on every request costs no write. Returns null for an unknown app.
      */
     suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord?
+
+    /**
+     * Grant or withdraw the agent permission (D49). Returns null for an unknown app.
+     */
+    suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord?
 
     /**
      * Delete all records (for testing, or if Engine is uninstalled).

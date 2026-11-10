@@ -193,7 +193,7 @@ class SplitInferenceTest {
             scope = scope,
             engineVersion = "test",
             clock = clock::get,
-            tracker = PeerTracker(heartbeatIntervalMillis = 100, leaveAfterMillis = 2_000),
+            tracker = PeerTracker(heartbeatIntervalMillis = 100, leaveAfterMillis = 20L * 24 * 60 * 60 * 1000),
             certificateRenewalThresholdMillis = 25L * 24 * 60 * 60 * 1000,
         ).also {
             it.start("127.0.0.1")
@@ -206,7 +206,7 @@ class SplitInferenceTest {
             scope = scope,
             engineVersion = "test",
             clock = clock::get,
-            tracker = PeerTracker(heartbeatIntervalMillis = 100, leaveAfterMillis = 2_000),
+            tracker = PeerTracker(heartbeatIntervalMillis = 100, leaveAfterMillis = 20L * 24 * 60 * 60 * 1000),
         ).also {
             it.start("127.0.0.1")
             nodes += it

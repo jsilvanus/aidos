@@ -48,6 +48,7 @@ fun PlatformProfile.toMcpProfile(): McpProfile = when (this) {
 fun McpPermission.toPermission(): Permission = when (this) {
     McpPermission.SHELL_EXEC -> Permission.SHELL_EXEC
     McpPermission.NETWORK_EGRESS -> Permission.NETWORK_EGRESS
+    McpPermission.APP_IPC -> Permission.APP_IPC
 }
 
 /**

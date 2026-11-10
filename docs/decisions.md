@@ -592,7 +592,9 @@ On desktop, D48 already hosts both in one process behind the loopback API; that 
 
 **Open (must be done before the Android host ships):**
 - Foreground service type. The Engine declares `FOREGROUND_SERVICE_TYPE_DATA_SYNC`; recent Android versions time that type out. Verify against the target API level and pick the type (or a different keep-alive design) accordingly; do not promise indefinite background execution.
-- Process death and recovery tests for interrupted agent jobs; inference-only-client authorization tests.
+- Process death and recovery tests for interrupted agent jobs.
+
+**Built 2026-11-10 (desktop host):** the authorization boundary is enforced. `AppApprovalRecord.agentAllowed` is a separate per-app grant, default false, cleared on revoke; every `/v1/agent` route except `/v1/agent/info` answers 403 `agent_not_granted` to an app without it. The Engine's own token and the desktop's own localhost client (`~/.aidos/engine.json`) are the user's and exempt. The Connected Apps pane has an "Allow agent runs" button. Tests: `AgentRoutesTest`, `AppApprovalStoreTest`, `FileAppApprovalStoreTest`. The Android host does not serve agent routes yet; it must wire the same `mayRunAgent` when it does.
 
 **Not decided here:** the signed invocation assertion and model attestation (IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md) stay proposals; Binder caller identity plus package/signature checks are enough for the first cross-app slice.
 
@@ -624,6 +626,22 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 ---
 
+## D51. MCP Binder transport: apps on the device as MCP servers (proposed)
+
+**Decision.** `McpTransport` gains a third variant, `Binder(packageName, serviceClass, signingCertSha256)`, for MCP servers that are other apps on the same Android device. MCP JSON-RPC is carried unchanged by the `kotlin-mcp-android-binder` library: Binder bootstraps a session and returns a socket pair, so messages are not limited by the ~1 MiB transaction buffer and get kernel backpressure.
+
+**Classification.** `McpEffect.READ`, new `McpPermission.APP_IPC` (kernel `Permission.APP_IPC`), MOBILE only, `McpTier.PLATFORM`, no network. It is neither `SHELL_EXEC` (nothing is spawned) nor `NETWORK_EGRESS` (nothing leaves the device through this transport; what the other app then does is its own business).
+
+**Trust.** A registration without a pinned signing certificate is invalid (`mcp_servers.binder_certs_json` is NOT NULL for binder rows, and the store rejects empty, malformed or non-SHA-256 pins). The Android connector must verify the provider against the pin before binding and again after connecting. Provider-side authorisation of Aidos is the provider's allowlist (package plus signing certificate). The existing adoption and descriptor-hash flow is unchanged: discovering an installed provider is not consent.
+
+**Layering.** `mcp-core` holds the variant and `BinderMcpClient` (lazy: nothing is bound until first use, D30) behind a `McpBinderConnector` seam; only an Android host supplies a connector, via `McpClientFactory.withBinder`. The desktop and headless factories fail a Binder registration.
+
+**Not decided here.** Where the Android connector module lives and how Aidos consumes the library (published artifact vs composite build); the signed invocation assertion (D49 "Not decided here"); AppFunctions as an extra outbound surface for other apps.
+
+**Schema.** `schema/user.sql`: `transport` accepts `'binder'`; new nullable columns `binder_package`, `binder_service`, `binder_certs_json` with a CHECK that a binder row has all three and neither `command` nor `endpoint_url`.
+
+---
+
 ## Revision history
 
 | Date | Change |
@@ -637,7 +655,9 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 | 2026-10-12 | D45 proposed and settled: typed decisions (System One) as a first-class capability. |
 | 2026-10-23 | D46 settled: Dictator owns text-editing and actor pill domain in Generative UI (TCR) for Aidos Desktop. |
 | 2026-10-25 | D48 proposed: desktop host serves the agent runtime under /v1/agent. |
+| 2026-11-10 | D49: default-deny per-app agent grant built on the desktop host. |
 | 2026-11-09 | D49 settled: one Android host app; package stays `fi.italeino.aidos.engine`. |
 | 2026-10-26 | D49 proposed: Android Engine and Agent Runtime share one host app and foreground service; desktop stays joined (D48). |
 | 2026-10-25 | D47 settled: Engine-enforced inference locality (RFC-0104); default local_only. |
 | 2026-10-26 | D50 settled: inference groups (RFC-0105); child-process layer split, pairing and group certificates, delegation first, local unless stated. |
+| 2026-11-09 | D51 proposed: MCP Binder transport (apps on the device as MCP servers). |

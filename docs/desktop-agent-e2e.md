@@ -23,6 +23,8 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 
 Expect a `completed` snapshot with a `reply`. Add `"async": true` and poll `GET /v1/agent/runs/<id>?since=0&waitMs=20000` to see the task flow; `GET /v1/agent/events` streams state changes. Full API: [agent-runtime-api.md](agent-runtime-api.md).
 
+Agent access is a separate per-app grant (D49). The token in `engine.json` belongs to the desktop's own client and may run agents. An app that connects through the SDK handshake gets inference once approved, but its `/v1/agent` calls return 403 `agent_not_granted` until you press "Allow agent runs" on its card in the Connected Apps pane (a one-time step per app).
+
 ## 3. Agentic Messenger
 
 ```

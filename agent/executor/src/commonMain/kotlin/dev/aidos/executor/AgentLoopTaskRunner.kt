@@ -297,7 +297,17 @@ class AgentLoopTaskRunner(
     private val resolveRemoteAdapter: (modelId: String) -> ModelAdapter? = { null },
     private val workerSpawner: WorkerSpawner? = null,
     private val resolveToolCapability: (suspend (subjectId: String, toolName: String, permission: Permission) -> CapabilityId?)? = null,
+    /**
+     * RFC-0056: content-addressed storage for large `attempts.output_snapshot` payloads. A tool
+     * result that is re-read across steps and Runs is stored once, by hash, with a reference
+     * count, instead of once per Attempt. Null (the default; most tests) keeps every snapshot
+     * inline in the row, exactly as before.
+     */
+    private val largeOutputs: LargeOutputStore? = null,
 ) : TaskRunner {
+
+    /** Undoes [LargeOutputStore.externalize] for a snapshot read back from `attempts`. */
+    private fun resolveStored(snapshot: String): String = largeOutputs?.resolve(snapshot) ?: snapshot
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
         TaskKind.MODEL_CALL -> executeModelCall(task)
@@ -724,7 +734,7 @@ class AgentLoopTaskRunner(
                 "WHERE t.run_id = ? AND t.kind = 'MODEL_CALL' AND t.ordinal < ? ORDER BY t.ordinal DESC LIMIT ?",
             mapper = { c ->
                 while (c.next().value) {
-                    val snapshot = c.getString(0) ?: continue
+                    val snapshot = resolveStored(c.getString(0) ?: continue)
                     val resp = json.decodeFromString<StoredModelResponse>(snapshot)
                     keys.add(callKey(resp.toolCalls.map { it.toolName to it.argumentsJson }))
                 }
@@ -759,7 +769,7 @@ class AgentLoopTaskRunner(
             mapper = { c ->
                 while (c.next().value) {
                     val kind = c.getString(0)!!
-                    val snapshot = c.getString(1) ?: continue
+                    val snapshot = resolveStored(c.getString(1) ?: continue)
                     when (kind) {
                         "MODEL_CALL" -> {
                             val resp = json.decodeFromString<StoredModelResponse>(snapshot)
@@ -938,7 +948,7 @@ class AgentLoopTaskRunner(
                 while (found == null && c.next().value) {
                     val toolName = c.getString(0) ?: continue
                     val args = c.getString(1) ?: "{}"
-                    val snapshot = c.getString(2) ?: continue
+                    val snapshot = resolveStored(c.getString(2) ?: continue)
                     val stored = runCatching { json.decodeFromString<StoredToolResult>(snapshot) }.getOrNull()
                     // Only UNTRUSTED attenuates; a PROJECT read before it is not "the" source.
                     if (stored != null && stored.trustLevel == TrustLevel.UNTRUSTED.name) {
@@ -1030,7 +1040,9 @@ class AgentLoopTaskRunner(
             bindString(1, task.id.value)
             bindString(2, nowIso())
             bindString(3, nowIso())
-            bindString(4, redactedSnapshot)
+            // RFC-0056: oversized payloads are stored once, content-addressed, and the row holds a
+            // small reference (resolved again by `resolveStored` on every read above).
+            bindString(4, largeOutputs?.externalize(redactedSnapshot) ?: redactedSnapshot)
             bindString(5, modelProvider)
             bindString(6, modelVersion)
             bindString(7, retentionJson)

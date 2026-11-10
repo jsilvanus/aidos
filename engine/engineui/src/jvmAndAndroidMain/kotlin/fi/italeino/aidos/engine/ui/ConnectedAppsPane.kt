@@ -31,6 +31,8 @@ fun ConnectedAppsPane(
     onRevoke: (String) -> Unit,
     onUndoDeny: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** D49: when the host runs agents, lets the user grant or withdraw an approved app's agent access; null hides it. */
+    onSetAgentAllowed: ((String, Boolean) -> Unit)? = null,
     notRunningText: String = "The Engine is not running. Start it from Home to manage app access.",
 ) {
     val pending = approvals.filter { it.status == AppApprovalStatus.PENDING }
@@ -74,6 +76,12 @@ fun ConnectedAppsPane(
         } else {
             items(approved, key = { it.packageName }) { app ->
                 AppCard(app) {
+                    if (onSetAgentAllowed != null) {
+                        OutlinedButton(
+                            onClick = { onSetAgentAllowed(app.packageName, !app.agentAllowed) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (app.agentAllowed) "Withdraw agent access" else "Allow agent runs", fontSize = 12.sp) }
+                    }
                     OutlinedButton(
                         onClick = { onRevoke(app.packageName) },
                         modifier = Modifier.weight(1f),

@@ -271,6 +271,15 @@ throws on a JSON-RPC error response will collapse the two if you let it: the mod
 is unreachable when it merely rejected the call. Map the error response back to a result; let only
 connection-closed and timeout propagate.
 
+**A handoff between two links needs an explicit "I have stored it" signal.** After enrolment the
+admin opened the normal peer link as soon as it had *sent* the certificate. The member admitted that
+link only once it had *stored* the certificate, on another thread; when that thread was scheduled
+late the link was refused as untrusted, and with no discovery running nothing retried. It showed up
+as a flaky cert-renewal test on loaded CI runners, and widening the test's liveness window did
+not help because the test was not the cause. The scanned side now closes the pairing link only
+after storing, and the scanning side waits for that close before reconnecting. When a test is
+flaky, reproduce it with an injected delay in the suspected window before changing the test.
+
 ---
 
 ## 7. Working practice

@@ -28,6 +28,7 @@ import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.UserId
 import dev.aidos.prompt.PromptAssembler
+import dev.aidos.retention.BlobStore
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
 import dev.aidos.settings.EgressPolicy
@@ -108,6 +109,8 @@ class RuntimeCompositionRoot(
     private val settingsDiagnostics: (List<SettingError>) -> Unit = { errors ->
         errors.forEach { System.err.println("aidos: settings ${it.errorClass} ${it.originPath ?: ""}: ${it.message}") }
     },
+    /** RFC-0056: background compaction and storage-pressure maintenance after each driven Run. */
+    internal val retention: RetentionMaintenance = RetentionMaintenance(),
 ) {
 
     /**
@@ -134,6 +137,8 @@ class RuntimeCompositionRoot(
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
         buildExecutor(projectDriver, projectId, sessionId, rootPath, deviceId, platformProfile, idGen, nowIso).drive(runId)
+        // RFC-0056: compaction runs after the Run, on a background dispatcher; it never fails a Run.
+        runCatching { retention.schedule(projectDriver, projectId.value, rootPath, userDriver, idGen, nowIso) }
     }
 
     /**
@@ -414,6 +419,8 @@ class RuntimeCompositionRoot(
             resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
             workerSpawner = workerSpawner,
             resolveToolCapability = capabilityResolver::resolveForTool,
+            // RFC-0056: large tool outputs are stored once, content-addressed, under .aidos/blobs.
+            largeOutputs = BlobStore(projectDriver, File(rootPath, RetentionMaintenance.BLOBS_DIR), nowIso),
         )
         return SqliteExecutor(
             driver = projectDriver,

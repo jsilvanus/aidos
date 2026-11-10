@@ -24,6 +24,7 @@ class McpAdoptionService(
                     transportKind = when (outcome.load.registration.transport) {
                         is McpTransport.Stdio -> "stdio"
                         is McpTransport.Http -> "http"
+                        is McpTransport.Binder -> "binder"
                     },
                     status = "configured",
                 )
