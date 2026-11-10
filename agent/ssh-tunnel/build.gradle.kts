@@ -15,6 +15,9 @@ kotlin {
 
         val jvmMain by getting {
             dependencies {
+                // sshj: pure Java, the transport meant for Android too (RFC-0108). MINA is the other
+                // JVM transport and the test server.
+                implementation("com.hierynomus:sshj:0.41.2")
                 implementation("org.apache.sshd:sshd-core:2.20.1")
                 implementation("org.slf4j:slf4j-api:2.0.16")
                 // MINA gets its Ed25519 key encoder/decoder from Bouncy Castle (or net.i2p eddsa); the JDK alone is not enough.
