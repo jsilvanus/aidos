@@ -1,6 +1,6 @@
 # RFC-0022: Inference Backend Architecture
 
-**Status:** Draft — decisions D36–D44 settled; implementation pending
+**Status:** Draft — decisions D36–D44 settled. Implemented in part (audited 2026-11-09): `InferenceBackend` interface, llama.cpp backend, ONNX backends for decisions, STT and vision. See [STATUS.md](STATUS.md).
 
 ## Abstract
 

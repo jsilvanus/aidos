@@ -77,4 +77,25 @@ class EndpointValidationTest {
         )
         assertIs<McpValidationResult.Rejected>(result)
     }
+
+    @Test
+    fun `hosts that merely start with a loopback name are not loopback`() {
+        val lookalikes = listOf(
+            "http://localhost.evil.example/mcp",
+            "http://127.0.0.1.nip.io/mcp",
+            "http://localhost@evil.example/mcp",
+            "http://127.0.0.10/mcp",
+        )
+        for (url in lookalikes) {
+            assertIs<McpValidationResult.Rejected>(
+                validateHttpEndpoint(url, McpProfile.DESKTOP),
+                "expected $url to be refused on DESKTOP",
+            )
+        }
+    }
+
+    @Test
+    fun `loopback with port and upper-case scheme is still accepted on DESKTOP`() {
+        assertIs<McpValidationResult.Ok>(validateHttpEndpoint("HTTP://localhost:8080/mcp", McpProfile.DESKTOP))
+    }
 }

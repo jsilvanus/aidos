@@ -1,6 +1,6 @@
 # RFC-0104: Inference Locality — Where a Request's Data May Go
 
-Status: Proposed 2026-10-25; layering, default and peer mapping settled by the owner 2026-10-26 (D47).
+Status: Accepted (settled as D47; the part described under "Implementation status" is built). Proposed 2026-10-25; layering, default and peer mapping settled by the owner 2026-10-26 (D47).
 The Engine-side mechanism and SDK option below are implemented.
 
 ## Abstract
