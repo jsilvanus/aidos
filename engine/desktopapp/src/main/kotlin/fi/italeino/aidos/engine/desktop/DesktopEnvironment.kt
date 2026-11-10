@@ -64,5 +64,7 @@ object DesktopDevice {
         return MemoryBudget(usedMB = ((total - free) / mb).toInt(), totalMB = (total / mb).toInt())
     }
 
+    fun totalMemoryBytes(): Long = os?.totalMemorySize ?: Runtime.getRuntime().maxMemory()
+
     fun freeStorageGb(): Int = (DesktopPaths.modelsDir.usableSpace / (1024L * 1024L * 1024L)).toInt()
 }

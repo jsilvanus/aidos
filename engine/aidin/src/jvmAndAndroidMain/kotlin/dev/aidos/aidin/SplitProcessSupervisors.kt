@@ -6,19 +6,23 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.BufferedReader
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.io.PrintWriter
+import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -61,16 +65,24 @@ interface SplitProcessSpawner {
 class OsSplitProcessSpawner(
     private val ggmlRpcBinary: File? = null,
     private val llamaServerBinary: File? = null,
+    /** Where child output goes; a pipe nobody reads fills up and stalls a chatty `llama-server`. */
+    private val logDir: File = File(System.getProperty("java.io.tmpdir"), "aidin-split-logs"),
 ) : SplitProcessSpawner {
+
+    /** True when both pinned native programs are present, so splits run real llama.cpp. */
+    val usesNativeBinaries: Boolean
+        get() = ggmlRpcBinary.isRunnable() && llamaServerBinary.isRunnable()
 
     override fun spawnHelperRpcServer(port: Int, cacheDir: File): SupervisedChildProcess {
         cacheDir.mkdirs()
-        val command = if (ggmlRpcBinary != null && ggmlRpcBinary.isFile && ggmlRpcBinary.canExecute()) {
+        val native = ggmlRpcBinary.isRunnable()
+        val command = if (native) {
+            // `-c` only switches the weight cache on; its location comes from LLAMA_CACHE.
             listOf(
-                ggmlRpcBinary.absolutePath,
+                ggmlRpcBinary!!.absolutePath,
                 "-H", "127.0.0.1",
                 "-p", port.toString(),
-                "-c", cacheDir.absolutePath,
+                "-c",
             )
         } else {
             jvmCommand(
@@ -79,10 +91,13 @@ class OsSplitProcessSpawner(
                 cacheDir.absolutePath,
             )
         }
+        val log = logFile("ggml-rpc-server-$port.log")
         val process = ProcessBuilder(command)
             .redirectErrorStream(true)
+            .redirectOutput(log)
+            .apply { environment()["LLAMA_CACHE"] = cacheDir.absolutePath }
             .start()
-        waitForLoopbackPort("127.0.0.1", port, process)
+        waitForLoopbackPort("127.0.0.1", port, process, log)
         return OsSupervisedChildProcess(process, port)
     }
 
@@ -94,12 +109,15 @@ class OsSplitProcessSpawner(
         port: Int,
         apiKey: String,
     ): SupervisedChildProcess {
-        val command = if (llamaServerBinary != null && llamaServerBinary.isFile && llamaServerBinary.canExecute()) {
+        val native = llamaServerBinary.isRunnable()
+        val command = if (native) {
+            val offload = nativeOffload(tensorSplit)
             listOf(
-                llamaServerBinary.absolutePath,
+                llamaServerBinary!!.absolutePath,
                 "--model", modelFile.absolutePath,
                 "--rpc", rpcEndpoints.joinToString(","),
-                "--tensor-split", tensorSplit,
+                "--n-gpu-layers", offload.layers.toString(),
+                "--tensor-split", offload.split,
                 "--ctx-size", contextLength.toString(),
                 "--host", "127.0.0.1",
                 "--port", port.toString(),
@@ -116,12 +134,22 @@ class OsSplitProcessSpawner(
                 apiKey,
             )
         }
+        val log = logFile("llama-server-$port.log")
         val process = ProcessBuilder(command)
+            // With two RPC devices llama.cpp has the servers connect to each other directly; that
+            // path bypasses the AIDIN tunnel and its admission, so it stays off.
+            .apply { environment()["GGML_RPC_NO_COMM"] = "1" }
             .redirectErrorStream(true)
+            .redirectOutput(log)
             .start()
-        waitForLoopbackPort("127.0.0.1", port, process)
+        waitForLoopbackPort("127.0.0.1", port, process, log, timeoutMillis = if (native) 300_000L else 10_000L)
+        // The real server listens before the model is loaded and answers 503 until then; the
+        // helpers' layers travel through the tunnel first, so this can take a while.
+        waitForHealth(port, process, log, timeoutMillis = if (native) 300_000L else 10_000L)
         return OsSupervisedChildProcess(process, port)
     }
+
+    private fun logFile(name: String): File = File(logDir.apply { mkdirs() }, name)
 
     private fun jvmCommand(mainClass: String, vararg args: String): List<String> {
         val javaHome = System.getProperty("java.home")
@@ -130,12 +158,11 @@ class OsSplitProcessSpawner(
         return listOf(javaBin, "-Xmx64m", "-cp", classpath, mainClass) + args.toList()
     }
 
-    private fun waitForLoopbackPort(host: String, port: Int, process: Process, timeoutMillis: Long = 10_000L) {
+    private fun waitForLoopbackPort(host: String, port: Int, process: Process, log: File, timeoutMillis: Long = 10_000L) {
         val deadline = System.currentTimeMillis() + timeoutMillis
         while (System.currentTimeMillis() < deadline) {
             if (!process.isAlive) {
-                val out = runCatching { process.inputStream.bufferedReader().readText() }.getOrDefault("")
-                throw IOException("Child process exited prematurely (code=${process.exitValue()}): $out")
+                throw IOException("Child process exited prematurely (code=${process.exitValue()}): ${log.tail()}")
             }
             try {
                 Socket().use { s ->
@@ -149,7 +176,61 @@ class OsSplitProcessSpawner(
         process.destroyForcibly()
         throw IOException("Timed out waiting for child process to listen on $host:$port")
     }
+
+    private fun waitForHealth(port: Int, process: Process, log: File, timeoutMillis: Long) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (!process.isAlive) {
+                throw IOException("llama-server exited while loading (code=${process.exitValue()}): ${log.tail()}")
+            }
+            val status = runCatching {
+                val conn = URL("http://127.0.0.1:$port/health").openConnection() as HttpURLConnection
+                conn.connectTimeout = 1_000
+                conn.readTimeout = 2_000
+                try { conn.responseCode } finally { conn.disconnect() }
+            }.getOrDefault(-1)
+            if (status == 200) return
+            Thread.sleep(100)
+        }
+        process.destroyForcibly()
+        throw IOException("llama-server did not become healthy within ${timeoutMillis / 1000} s: ${log.tail()}")
+    }
+
+    companion object {
+        /**
+         * The pinned programs from the `llama-rpc-native` CI build, looked up in [dir]
+         * (`llama-server` and `ggml-rpc-server`, `.exe` on Windows). Missing ones fall back to the
+         * JVM stand-ins.
+         */
+        fun fromDirectory(dir: File?, logDir: File = File(System.getProperty("java.io.tmpdir"), "aidin-split-logs")): OsSplitProcessSpawner {
+            val ext = if (System.getProperty("os.name").lowercase().contains("win")) ".exe" else ""
+            return OsSplitProcessSpawner(
+                ggmlRpcBinary = dir?.let { File(it, "ggml-rpc-server$ext") },
+                llamaServerBinary = dir?.let { File(it, "llama-server$ext") },
+                logDir = logDir,
+            )
+        }
+
+        internal data class NativeOffload(val layers: Int, val split: String)
+
+        /**
+         * Maps the plan's `helper1,...,helperN,anchor` layer counts onto real `llama-server` flags.
+         * RPC servers are devices, the anchor's CPU is not: the helpers' layers are offloaded
+         * (`--n-gpu-layers`) and divided among them (`--tensor-split`), and whatever is not
+         * offloaded stays on the anchor.
+         */
+        internal fun nativeOffload(tensorSplit: String): NativeOffload {
+            val counts = tensorSplit.split(",").map { it.trim().toInt() }
+            val helpers = counts.dropLast(1).ifEmpty { counts }
+            return NativeOffload(helpers.sum(), helpers.joinToString(","))
+        }
+    }
 }
+
+private fun File?.isRunnable(): Boolean = this != null && isFile && canExecute()
+
+private fun File.tail(maxChars: Int = 2_000): String =
+    runCatching { readText().takeLast(maxChars) }.getOrDefault("")
 
 internal class OsSupervisedChildProcess(
     private val process: Process,
@@ -259,46 +340,91 @@ object LoopbackLlamaServerChildMain {
             Thread({
                 client.use { sock ->
                     try {
-                        val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
-                        val writer = PrintWriter(OutputStreamWriter(sock.getOutputStream(), Charsets.UTF_8), true)
-                        val providedKey = reader.readLine() ?: return@use
-                        val prompt = reader.readLine() ?: return@use
-                        if (providedKey != apiKey) {
-                            writer.println("ERR:UNAUTHORIZED")
-                            return@use
-                        }
-                        // Forward through every helper RPC tunnel in sequence; abort on RPC failure
-                        // just as upstream ggml-rpc.cpp's RPC_STATUS_ASSERT / GGML_ABORT does.
-                        var state = prompt
-                        for (endpoint in rpcEndpoints) {
-                            val parts = endpoint.split(":")
-                            val host = parts[0]
-                            val rpcPort = parts[1].toInt()
-                            try {
-                                Socket().use { rpcSock ->
-                                    rpcSock.soTimeout = 3_000
-                                    rpcSock.connect(InetSocketAddress(host, rpcPort), 2_000)
-                                    val rpcIn = DataInputStream(rpcSock.getInputStream())
-                                    val rpcOut = DataOutputStream(rpcSock.getOutputStream())
-                                    rpcOut.writeUTF("FORWARD:$state")
-                                    rpcOut.flush()
-                                    val reply = rpcIn.readUTF()
-                                    if (!reply.startsWith("ACTIVATION:")) {
+                        val request = readHttpRequest(sock) ?: return@use
+                        when {
+                            request.method == "GET" && request.path == "/health" ->
+                                writeHttpResponse(sock, 200, """{"status":"ok"}""")
+                            request.method == "POST" && request.path == "/completion" -> {
+                                if (request.headers["authorization"] != "Bearer $apiKey") {
+                                    writeHttpResponse(sock, 401, """{"error":{"message":"Invalid API Key"}}""")
+                                    return@use
+                                }
+                                val prompt = Json.parseToJsonElement(request.body).jsonObject["prompt"]
+                                    ?.jsonPrimitive?.content.orEmpty()
+                                // Forward through every helper RPC tunnel in sequence; abort on RPC failure
+                                // just as upstream ggml-rpc.cpp's RPC_STATUS_ASSERT / GGML_ABORT does.
+                                var state = prompt
+                                for (endpoint in rpcEndpoints) {
+                                    val parts = endpoint.split(":")
+                                    try {
+                                        Socket().use { rpcSock ->
+                                            rpcSock.soTimeout = 3_000
+                                            rpcSock.connect(InetSocketAddress(parts[0], parts[1].toInt()), 2_000)
+                                            val rpcIn = DataInputStream(rpcSock.getInputStream())
+                                            val rpcOut = DataOutputStream(rpcSock.getOutputStream())
+                                            rpcOut.writeUTF("FORWARD:$state")
+                                            rpcOut.flush()
+                                            val reply = rpcIn.readUTF()
+                                            if (!reply.startsWith("ACTIVATION:")) exitProcess(134)
+                                            state = reply.removePrefix("ACTIVATION:")
+                                        }
+                                    } catch (_: Exception) {
+                                        // Helper dropped mid-forward -> GGML_ABORT in child process
                                         exitProcess(134)
                                     }
-                                    state = reply.removePrefix("ACTIVATION:")
                                 }
-                            } catch (_: Exception) {
-                                // Helper dropped mid-forward -> GGML_ABORT in child process
-                                exitProcess(134)
+                                val modelName = File(modelPath).nameWithoutExtension
+                                val content = JsonPrimitive("[split:$modelName:$tensorSplit] $state")
+                                writeHttpResponse(sock, 200, """{"content":$content}""")
                             }
+                            else -> writeHttpResponse(sock, 404, """{"error":{"message":"not found"}}""")
                         }
-                        val modelName = File(modelPath).nameWithoutExtension
-                        writer.println("OK:[split:$modelName:$tensorSplit] $state")
                     } catch (_: Exception) {
                     }
                 }
             }, "llama-server-worker").apply { isDaemon = true; start() }
+        }
+    }
+
+    private class HttpRequest(val method: String, val path: String, val headers: Map<String, String>, val body: String)
+
+    private fun readHttpRequest(sock: Socket): HttpRequest? {
+        val input = sock.getInputStream()
+        fun line(): String? {
+            val bytes = java.io.ByteArrayOutputStream()
+            while (true) {
+                val b = input.read()
+                if (b < 0) return if (bytes.size() == 0) null else bytes.toString(Charsets.UTF_8.name())
+                if (b == '\n'.code) return bytes.toString(Charsets.UTF_8.name()).trimEnd('\r')
+                bytes.write(b)
+            }
+        }
+        val (method, path) = line()?.split(" ")?.takeIf { it.size >= 2 }?.let { it[0] to it[1] } ?: return null
+        val headers = HashMap<String, String>()
+        while (true) {
+            val header = line() ?: break
+            if (header.isEmpty()) break
+            val colon = header.indexOf(':')
+            if (colon > 0) headers[header.substring(0, colon).trim().lowercase()] = header.substring(colon + 1).trim()
+        }
+        val length = headers["content-length"]?.toIntOrNull() ?: 0
+        val body = ByteArray(length)
+        var read = 0
+        while (read < length) {
+            val n = input.read(body, read, length - read)
+            if (n < 0) break
+            read += n
+        }
+        return HttpRequest(method, path, headers, String(body, 0, read, Charsets.UTF_8))
+    }
+
+    private fun writeHttpResponse(sock: Socket, status: Int, json: String) {
+        val body = json.toByteArray(Charsets.UTF_8)
+        val head = "HTTP/1.1 $status X\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+        sock.getOutputStream().apply {
+            write(head.toByteArray(Charsets.UTF_8))
+            write(body)
+            flush()
         }
     }
 }
@@ -484,7 +610,7 @@ class HelperProcessSupervisor(
     }
 
     companion object {
-        const val DEFAULT_LLAMA_CPP_BUILD_ID = "b4200-rpc-v1"
+        const val DEFAULT_LLAMA_CPP_BUILD_ID = "b11901"
     }
 }
 
@@ -526,6 +652,11 @@ class AnchorProcessSupervisor(
 
     private var hostedSpec: HostedSpec? = null
     @Volatile private var currentPlan: SplitPlan? = null
+
+    // The plan whose tunnels are open while its llama-server starts. llama.cpp handshakes with
+    // every RPC server and uploads the helpers' tensors during startup, before [currentPlan] is
+    // set, so helper replies for this plan must already be delivered.
+    @Volatile private var deployingPlan: SplitPlan? = null
     private var llamaProcess: SupervisedChildProcess? = null
     private var apiKey: String = ""
     private val tunnelListeners = mutableListOf<ServerSocket>()
@@ -629,6 +760,7 @@ class AnchorProcessSupervisor(
                 startAcceptingTunnelConnections(listener, helper.nodeId, plan)
             }
 
+            deployingPlan = plan
             val llamaPort = allocateEphemeralLoopbackPort()
             val randomKey = UUID.randomUUID().toString()
             val proc = spawner.spawnAnchorLlamaServer(
@@ -646,10 +778,12 @@ class AnchorProcessSupervisor(
                 apiKey = randomKey
                 currentPlan = plan
             }
+            deployingPlan = null
             plan.helpers.forEach { node.markPeerActive(it.nodeId, true) }
             ensureMonitorRunning()
             return SplitPlanOutcome.Planned(plan)
         } catch (e: Exception) {
+            deployingPlan = null
             newListeners.forEach { runCatching { it.close() } }
             tearDownActiveProcess()
             return SplitPlanOutcome.Refused("Failed to launch anchor llama-server: ${e.message}")
@@ -696,7 +830,7 @@ class AnchorProcessSupervisor(
     }
 
     internal fun onTunnelData(fromPeer: NodeId, msg: LinkMessage.TunnelData) {
-        val plan = currentPlan ?: return
+        val plan = currentPlan ?: deployingPlan ?: return
         if (plan.helpers.none { it.nodeId == fromPeer }) return
         val sock = activeClientSockets[msg.streamId] ?: return
         try {
@@ -721,7 +855,12 @@ class AnchorProcessSupervisor(
      * returns [SplitInferenceOutcome.PlanChanged] (HTTP 409 `plan_changed`) before touching
      * the child process so content never reaches an unverified helper set (RFC-0105).
      */
-    fun invoke(prompt: String, expectedPlanVersion: Long? = null): SplitInferenceOutcome {
+    fun invoke(
+        prompt: String,
+        expectedPlanVersion: Long? = null,
+        maxTokens: Int = 128,
+        temperature: Double = 0.8,
+    ): SplitInferenceOutcome {
         val (plan, proc, key) = synchronized(lock) {
             val p = currentPlan
             val pr = llamaProcess
@@ -738,20 +877,30 @@ class AnchorProcessSupervisor(
         }
 
         return try {
-            Socket().use { sock ->
-                sock.soTimeout = 5_000
-                sock.connect(InetSocketAddress("127.0.0.1", proc.port), 2_000)
-                val writer = PrintWriter(OutputStreamWriter(sock.getOutputStream(), Charsets.UTF_8), true)
-                val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
-                writer.println(key)
-                writer.println(prompt.replace('\n', ' '))
-                val line = reader.readLine()
-                if (line != null && line.startsWith("OK:")) {
-                    SplitInferenceOutcome.Success(line.removePrefix("OK:"), plan)
+            val conn = URL("http://127.0.0.1:${proc.port}/completion").openConnection() as HttpURLConnection
+            try {
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.connectTimeout = 2_000
+                conn.readTimeout = 120_000
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $key")
+                val body = buildJsonObject {
+                    put("prompt", prompt)
+                    put("n_predict", maxTokens)
+                    put("temperature", temperature)
+                }.toString()
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                if (conn.responseCode == 200) {
+                    val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val content = Json.parseToJsonElement(text).jsonObject["content"]?.jsonPrimitive?.content.orEmpty()
+                    SplitInferenceOutcome.Success(content, plan)
                 } else {
                     handleFailureAndRestart()
-                    SplitInferenceOutcome.Unavailable("Anchor llama-server failed during generation")
+                    SplitInferenceOutcome.Unavailable("Anchor llama-server failed during generation (HTTP ${conn.responseCode})")
                 }
+            } finally {
+                conn.disconnect()
             }
         } catch (e: Exception) {
             handleFailureAndRestart()

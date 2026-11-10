@@ -1,0 +1,133 @@
+name: llama-rpc-native
+
+# RFC-0105 phase 3: one pinned llama.cpp build with GGML_RPC=ON, packaged as the two programs the
+# Engine supervises for layer split: `llama-server` (anchor) and `ggml-rpc-server` (helper). The RPC
+# protocol changes between releases, so every node must run binaries from this one tag; the tag is
+# what nodes advertise as their llama.cpp build id.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**']
+  pull_request:
+    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**']
+
+env:
+  # Keep equal to HelperProcessSupervisor.DEFAULT_LLAMA_CPP_BUILD_ID (engine/aidin).
+  LLAMA_TAG: b11901
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: windows-x64
+            os: windows-latest
+          - platform: android-arm64
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out llama.cpp ${{ env.LLAMA_TAG }}
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ env.LLAMA_TAG }}
+          path: llama.cpp
+
+      # Static, no OpenMP and no CPU-specific code, so the two programs run on any machine of the
+      # platform without shipping shared libraries beside them.
+      - name: Configure
+        shell: bash
+        working-directory: llama.cpp
+        run: |
+          args=(-DGGML_RPC=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
+                -DGGML_OPENMP=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF)
+          if [ "${{ matrix.platform }}" = "android-arm64" ]; then
+            args+=(-DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+                   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26)
+          fi
+          cmake -B build "${args[@]}"
+
+      - name: Build llama-server and ggml-rpc-server
+        shell: bash
+        working-directory: llama.cpp
+        run: cmake --build build --config Release -j 4 --target llama-server ggml-rpc-server
+
+      - name: Package
+        shell: bash
+        run: |
+          out="dist/llama-rpc-${{ matrix.platform }}-$LLAMA_TAG"
+          mkdir -p "$out"
+          ext=""; [ "${{ matrix.platform }}" = "windows-x64" ] && ext=".exe"
+          for exe in llama-server ggml-rpc-server; do
+            src=$(find llama.cpp/build/bin -name "$exe$ext" -type f | head -1)
+            [ -n "$src" ] || { echo "missing $exe$ext"; exit 1; }
+            cp "$src" "$out/"
+          done
+          cp llama.cpp/LICENSE "$out/LICENSE.llama.cpp"
+          echo "$LLAMA_TAG" > "$out/BUILD"
+          ls -la "$out"
+
+      # A real layer split over loopback with the checked-in ROT13 fixture: the helper holds layers
+      # through RPC and the anchor must still answer rot13('o') = 'b'. Then the helper is killed and
+      # the anchor must fail (it aborts or errors) rather than answer from a partial model.
+      - name: Loopback split smoke test
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          bin="dist/llama-rpc-linux-x64-$LLAMA_TAG"
+          "$bin/ggml-rpc-server" -H 127.0.0.1 -p 50052 > rpc.log 2>&1 &
+          rpc=$!
+          sleep 2
+          "$bin/llama-server" -m models/rot13-gguf/rot13.gguf --rpc 127.0.0.1:50052 -ngl 99 \
+            --host 127.0.0.1 --port 8089 -c 512 > server.log 2>&1 &
+          srv=$!
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8089/health > /dev/null && break
+            sleep 1
+          done
+          out=$(curl -sf http://127.0.0.1:8089/completion \
+            -d '{"prompt":"Hello","n_predict":1,"temperature":0}' | jq -r .content)
+          echo "split answer: '$out'"
+          grep -i "rpc" server.log | head -5 || true
+          [ "$out" = "b" ] || { cat server.log; exit 1; }
+          kill $rpc; sleep 1
+          if curl -sf -m 20 http://127.0.0.1:8089/completion -d '{"prompt":"Hello","n_predict":1}'; then
+            echo "anchor answered after its helper died"; exit 1
+          fi
+          echo "anchor stopped answering once the helper was gone, as expected"
+          kill $srv 2>/dev/null || true
+
+      # The same split driven by the Engine's own supervisors: AidinNode pairing, the planner, the
+      # helper's ggml-rpc-server reached only through the AIDIN tunnel, and the helper kill.
+      - name: Check out aidos-tcr for the Engine build
+        if: matrix.platform == 'linux-x64'
+        uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'linux-x64'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        if: matrix.platform == 'linux-x64'
+      - name: Split inference through the AIDIN tunnel
+        if: matrix.platform == 'linux-x64'
+        working-directory: engine
+        env:
+          AIDOS_LLAMA_RPC_DIR: ${{ github.workspace }}/dist/llama-rpc-linux-x64-${{ env.LLAMA_TAG }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle :aidin:jvmTest --tests 'dev.aidos.aidin.NativeSplitInferenceTest' --tests 'dev.aidos.aidin.SplitHostingTest' --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llama-rpc-${{ matrix.platform }}-${{ env.LLAMA_TAG }}
+          path: dist/
+          retention-days: 90

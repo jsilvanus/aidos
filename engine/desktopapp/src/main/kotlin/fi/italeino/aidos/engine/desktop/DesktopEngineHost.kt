@@ -12,8 +12,15 @@ import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
+import dev.aidos.aidin.AIDIN_PROTOCOL_VERSION
 import dev.aidos.aidin.AidinNode
+import dev.aidos.aidin.ContributionPolicy
 import dev.aidos.aidin.DesktopAidin
+import dev.aidos.aidin.GroupId
+import dev.aidos.aidin.Heartbeat
+import dev.aidos.aidin.SplitHosting
+import dev.aidos.aidin.SplitPlanOutcome
+import dev.aidos.modelruntime.GgufLoader
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.providers.ProviderBackend
@@ -85,10 +92,15 @@ class DesktopEngineHost(
     /** Whether inference groups (RFC-0105) run with the Engine; read at each [start]. */
     private val groupSharing: () -> Boolean = { false },
     /** Builds the group node; tests replace it to avoid real mDNS and fixed ports. */
-    private val aidinFactory: (CoroutineScope) -> AidinNode = { scope ->
-        DesktopAidin.create(File(stateDir, "aidin"), scope, engineVersion = "desktop")
-    },
+    private val aidinFactory: ((CoroutineScope) -> AidinNode)? = null,
     private val aidinPort: Int = DesktopAidin.DEFAULT_PORT,
+    /**
+     * Where the pinned `llama-server` and `ggml-rpc-server` live (the `llama-rpc-native` CI
+     * artifact, RFC-0105 phase 3). Without them this machine neither anchors nor helps a split.
+     */
+    private val llamaRpcDir: File = System.getenv("AIDOS_LLAMA_RPC_DIR")?.let(::File) ?: File(stateDir, "llama-rpc"),
+    /** RAM this machine lends to a split, as anchor or helper; a quarter of its memory by default. */
+    private val splitRamBudgetBytes: () -> Long = { DesktopDevice.totalMemoryBytes() / 4 },
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -107,6 +119,10 @@ class DesktopEngineHost(
     private val _aidin = MutableStateFlow<AidinNode?>(null)
     /** The running group node, or null when group sharing is off or the Engine is stopped. */
     val aidin: StateFlow<AidinNode?> = _aidin.asStateFlow()
+
+    private val _split = MutableStateFlow<SplitHosting?>(null)
+    /** Layer split on the running group node; null when sharing is off. */
+    val split: StateFlow<SplitHosting?> = _split.asStateFlow()
 
     private val _aidinError = MutableStateFlow<String?>(null)
     /** Why group sharing did not start; the Engine itself still runs. */
@@ -246,7 +262,12 @@ class DesktopEngineHost(
     private fun startAidin(scope: CoroutineScope) {
         _aidinError.value = null
         val node = try {
-            aidinFactory(scope)
+            aidinFactory?.invoke(scope) ?: DesktopAidin.create(
+                File(stateDir, "aidin"),
+                scope,
+                engineVersion = "desktop",
+                heartbeatContent = { splitHeartbeat() },
+            )
         } catch (e: Exception) {
             _aidinError.value = e.message ?: e::class.simpleName
             return
@@ -260,6 +281,7 @@ class DesktopEngineHost(
                 node.start(port = 0)
             }
             _aidin.value = node
+            _split.value = SplitHosting(node, scope, llamaRpcDir, File(stateDir, "aidin"), ::splitPolicy)
         } catch (e: Exception) {
             runCatching { node.stop() }
             _aidinError.value = e.message ?: e::class.simpleName
@@ -274,8 +296,42 @@ class DesktopEngineHost(
     }
 
     private fun stopAidin() {
+        _split.value?.let { runCatching { it.close() } }
+        _split.value = null
         _aidin.value?.let { runCatching { it.stop() } }
         _aidin.value = null
+    }
+
+    // A desktop is on mains power, so only the RAM budget limits what it lends.
+    private fun splitPolicy() = ContributionPolicy(ramBudgetBytes = splitRamBudgetBytes())
+
+    private fun splitHeartbeat(): Heartbeat {
+        val base = Heartbeat(AIDIN_PROTOCOL_VERSION, "desktop")
+        return _split.value?.heartbeat(base) ?: base
+    }
+
+    /** Installed GGUF models this machine could anchor as a split, by model id. */
+    fun splittableModels(): List<String> =
+        modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".gguf") }?.map { it.name.removeSuffix(".gguf") }?.sorted().orEmpty()
+
+    /**
+     * Serves installed model [modelId] across [group] with this machine as anchor (RFC-0105 phase 3).
+     * Returns the result in words; blocks while llama-server loads, so call it off the main thread.
+     */
+    fun startSplitModel(group: GroupId, modelId: String): String {
+        val split = _split.value ?: return "Turn on sharing first."
+        val file = File(modelsDir, "$modelId.gguf")
+        val meta = GgufLoader.loadMetadata(file) ?: return "Could not read $modelId."
+        if (meta.blockCount < 2) return "$modelId has too few layers to split."
+        val outcome = split.start(
+            group = group,
+            modelId = modelId,
+            modelDigest = "gguf-bytes:${file.length()}",
+            modelFile = file,
+            blockCount = meta.blockCount,
+            contextLength = meta.contextWindow.takeIf { it > 0 }?.coerceAtMost(4096) ?: 4096,
+        )
+        return split.status.value ?: (outcome as? SplitPlanOutcome.Refused)?.reason.orEmpty()
     }
 
     private fun writeDiscoveryFile(port: Int, token: String) {

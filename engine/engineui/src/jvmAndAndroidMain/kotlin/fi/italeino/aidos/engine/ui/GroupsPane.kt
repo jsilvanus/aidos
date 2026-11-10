@@ -19,6 +19,7 @@ import dev.aidos.aidin.PairingKind
 import dev.aidos.aidin.PairingStatus
 import dev.aidos.aidin.PairingView
 import dev.aidos.aidin.PeerView
+import dev.aidos.aidin.SplitHosting
 import dev.aidos.aidin.TrustDomain
 import dev.aidos.aidin.lanAddresses
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,10 @@ import kotlinx.coroutines.withContext
  * Node calls that touch the network run on [scope] off the main thread.
  *
  * @param initialInvite an invite to prefill, e.g. from an `aidin:` link the user opened.
+ * @param split layer split on this node (RFC-0105 phase 3), or null where the host offers none.
+ * @param splitModels installed models this device could serve across a group.
+ * @param onStartSplit starts serving a model across a group and returns the result in words; it
+ *   blocks while the model loads and is called off the main thread.
  */
 @Composable
 fun GroupsPane(
@@ -47,6 +52,9 @@ fun GroupsPane(
     scope: CoroutineScope,
     modifier: Modifier = Modifier,
     initialInvite: String = "",
+    split: SplitHosting? = null,
+    splitModels: List<String> = emptyList(),
+    onStartSplit: ((GroupId, String) -> String)? = null,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -64,13 +72,20 @@ fun GroupsPane(
             !sharingEnabled -> Unit
             !isEngineRunning -> Text("Start the Engine to use device groups.")
             node == null -> Text("Starting…")
-            else -> GroupsContent(node, scope, initialInvite)
+            else -> GroupsContent(node, scope, initialInvite, split, splitModels, onStartSplit)
         }
     }
 }
 
 @Composable
-private fun GroupsContent(node: AidinNode, scope: CoroutineScope, initialInvite: String) {
+private fun GroupsContent(
+    node: AidinNode,
+    scope: CoroutineScope,
+    initialInvite: String,
+    split: SplitHosting?,
+    splitModels: List<String>,
+    onStartSplit: ((GroupId, String) -> String)?,
+) {
     val peers by node.peers.collectAsState()
     val pairings by node.pairingViews.collectAsState()
     // groups() is not a flow; bump this after anything that can change it.
@@ -122,6 +137,87 @@ private fun GroupsContent(node: AidinNode, scope: CoroutineScope, initialInvite:
     Text("Devices", fontWeight = FontWeight.SemiBold)
     if (peers.isEmpty()) Text("No paired or linked devices yet.", fontSize = 12.sp)
     peers.forEach { PeerRow(it, groups.filter { g -> g.third }.map { g -> g.first }, ::act, node) }
+
+    if (split != null) {
+        HorizontalDivider()
+        SplitSection(split, groups.map { it.first to it.second }, splitModels, onStartSplit, scope)
+    }
+}
+
+/**
+ * Serve one model across a group (RFC-0105 phase 3): this device keeps some layers, group members
+ * that offer RAM take the rest, and the model answers through `aidos:chat` for the whole group.
+ */
+@Composable
+private fun SplitSection(
+    split: SplitHosting,
+    groups: List<Pair<GroupId, String>>,
+    models: List<String>,
+    onStart: ((GroupId, String) -> String)?,
+    scope: CoroutineScope,
+) {
+    val status by split.status.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var group by remember(groups) { mutableStateOf(groups.firstOrNull()?.first) }
+    var model by remember(models) { mutableStateOf(models.firstOrNull()) }
+
+    Text("Run a model across a group", fontWeight = FontWeight.SemiBold)
+    if (!split.available) {
+        Text(
+            "This device needs the pinned llama-server and ggml-rpc-server to split a model. " +
+                "Until they are installed it neither serves nor helps with split models.",
+            fontSize = 12.sp,
+        )
+        return
+    }
+    val active = split.activeModelId
+    if (active != null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Serving $active across the group", modifier = Modifier.weight(1f))
+            TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { split.stop() } } }) { Text("Stop") }
+        }
+    }
+    if (onStart == null) return
+    if (groups.isEmpty() || models.isEmpty()) {
+        Text("Join a group and install a GGUF model to run it across the group.", fontSize = 12.sp)
+        return
+    }
+    ChoiceRow("Group", groups.map { it.first to it.second.ifBlank { it.first.value } }, group) { group = it }
+    ChoiceRow("Model", models.map { it to it }, model) { model = it }
+    Button(
+        onClick = {
+            val g = group ?: return@Button
+            val m = model ?: return@Button
+            busy = true
+            scope.launch {
+                result = try {
+                    withContext(Dispatchers.IO) { onStart(g, m) }
+                } catch (e: Exception) {
+                    e.message ?: e::class.simpleName
+                }
+                busy = false
+            }
+        },
+        enabled = !busy && active == null && group != null && model != null,
+    ) { Text(if (busy) "Loading…" else "Run across group") }
+    (result ?: status)?.let { Text(it, fontSize = 12.sp) }
+}
+
+@Composable
+private fun <T> ChoiceRow(label: String, options: List<Pair<T, String>>, selected: T?, onSelect: (T) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, modifier = Modifier.width(56.dp), fontSize = 12.sp)
+        Box {
+            OutlinedButton(onClick = { open = true }) { Text(options.firstOrNull { it.first == selected }?.second ?: "Choose") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                options.forEach { (value, text) ->
+                    DropdownMenuItem(text = { Text(text) }, onClick = { onSelect(value); open = false })
+                }
+            }
+        }
+    }
 }
 
 @Composable
