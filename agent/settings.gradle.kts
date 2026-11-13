@@ -76,6 +76,9 @@ include(":routes")
 // RFC-0108 Phase 1: AIDIN wire format extension for route hints.
 include(":wire-aidin")
 
+// RFC-0108: standalone, kernel-free SSH tunnel library (fi.italeino.sshtunnel). No :kernel dependency.
+include(":ssh-tunnel")
+
 // RFC-0108 Phase 3: Engine adapter for SSH tunnels with vault and audit integration.
 include(":tunnel-manager")
 
