@@ -139,6 +139,39 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - RFC-0105: route hints in pair records; remote routes never carry helper roles.
 - RFC-0107: the bounded continue-then-cancel rule.
 
+## Phase 1 Implementation Status (2026-11-13)
+
+### Completed
+
+**Route discovery and dialer fallback** (`agent:routes`, `dev.aidos.routes`):
+- ✅ `Route` sealed interface (Lan, Direct, SshReverse) with validation
+- ✅ `RouteHints` value class (ordered list, always starts with Lan)
+- ✅ `RouteDialer` coroutine-based dialer:
+  - Tries routes in order (LAN first, then hints)
+  - Measures RTT on success
+  - Fails over on per-route timeout (default 15s)
+  - Observable `DialerState` (Idle, Dialing, Connected, AllFailed)
+  - Fast redial on network change via `onNetworkChange()` callback
+  - Network-agnostic: caller provides dial functions for each route type
+- ✅ `RouteLatency` data class for RTT tracking
+- ✅ `DialResult` sealed interface (Success with RTT, Failure with reason)
+- ✅ Comprehensive unit tests: happy path, fallback, RTT measurement, timeout, cancellation, validation
+- ✅ No kernel dependencies; reusable by other projects
+- ✅ Kotlin Multiplatform (commonMain for core, jvmTest for tests)
+
+### Deferred to later PRs
+
+1. **AIDIN wire format extension**: Add route hints to `PairingInvite`, serialize/deserialize on pairing.
+2. **Desktop UI**: "Add address" UI to manually add direct routes (Tailscale, router port, etc.)
+3. **Android UI**: Same address entry, plus network-change listener setup.
+4. **Phase 2 (per-route RTT)**: Planner integration — measure RTT continuously, refuse layer split on WAN, cache per route.
+5. **Phase 4 (Android SSH)**: Phone-side SSH tunnel (Android Keystore vault, foreground service, network change handler).
+6. **Network change detection**: Platform-specific listeners (Android `ConnectivityManager`, Desktop platform APIs) to trigger `dialer.onNetworkChange()`.
+
+### Module locations
+
+- `agent/routes`: Kernel-free route model and dialer library
+
 ## Phase 3 Implementation Status (2026-11-13)
 
 ### Completed

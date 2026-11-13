@@ -75,3 +75,6 @@ include(":ssh-tunnel")
 
 // RFC-0108 Phase 3: Engine adapter for SSH tunnels with vault and audit integration.
 include(":tunnel-manager")
+
+// RFC-0108 Phase 1: Route discovery and dialer fallback (kernel-free, multiplatform).
+include(":routes")
