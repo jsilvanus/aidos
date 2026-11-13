@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
+import java.security.MessageDigest
 
 /** ViewModel for Model Detail and Download (RFC-0103 Phase E). */
 class ModelDetailViewModel : ViewModel() {
@@ -179,13 +180,29 @@ class ModelDetailViewModel : ViewModel() {
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
                 val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
+                val licenseText = remote.license?.trim()?.takeIf { it.isNotEmpty() }
+                val licenseDigest = licenseText?.let(::sha256Hex)
                 if (remote.quantizations.isEmpty() && onnxPackage != null) {
-                    installOnnxPackage(model.id, safeModelId, onnxPackage)
+                    installOnnxPackage(
+                        modelId = model.id,
+                        safeId = safeModelId,
+                        pkg = onnxPackage,
+                        licenseText = licenseText,
+                        licenseDigest = licenseDigest,
+                        modelVersion = onnxPackage.files.firstOrNull()?.sha256Digest ?: onnxPackage.files.firstOrNull()?.path,
+                    )
                     return@launch
                 }
                 val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
                 if (remote.quantizations.isEmpty() && visionPackage != null) {
-                    installOnnxPackage(model.id, safeModelId, visionPackage)
+                    installOnnxPackage(
+                        modelId = model.id,
+                        safeId = safeModelId,
+                        pkg = visionPackage,
+                        licenseText = licenseText,
+                        licenseDigest = licenseDigest,
+                        modelVersion = visionPackage.files.firstOrNull()?.sha256Digest ?: visionPackage.files.firstOrNull()?.path,
+                    )
                     return@launch
                 }
                 if (remote.quantizations.isEmpty()) {
@@ -236,6 +253,9 @@ class ModelDetailViewModel : ViewModel() {
                         format = format,
                         backend = backend,
                         quantization = if (format == "gguf") artifactBaseName else null,
+                        licenseText = licenseText,
+                        licenseTextDigest = licenseDigest,
+                        modelVersion = expectedDigest ?: artifactBaseName,
                     )
                 ) { event ->
                     when (event) {
@@ -284,13 +304,26 @@ class ModelDetailViewModel : ViewModel() {
     }
 
     /** Downloads every file of [pkg] (a decision, speech or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
-    private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+    private suspend fun installOnnxPackage(
+        modelId: String,
+        safeId: String,
+        pkg: dev.aidos.huggingface.ModelPackage,
+        licenseText: String?,
+        licenseDigest: String?,
+        modelVersion: String?,
+    ) {
         val service = EngineService.instance ?: return
         val downloader = service.downloadManager ?: return
         val catalog = service.catalogManager ?: return
         val modelsDir = File(service.filesDir, "models").apply { mkdirs() }
         val result = DefaultModelInstallerWorkflow(downloader, catalog).installPackage(
-            dev.aidos.models.PackageInstall.toRequest(modelId, pkg, File(modelsDir, safeId).absolutePath)
+            dev.aidos.models.PackageInstall
+                .toRequest(modelId, pkg, File(modelsDir, safeId).absolutePath)
+                .copy(
+                    licenseText = licenseText,
+                    licenseTextDigest = licenseDigest,
+                    modelVersion = modelVersion,
+                )
         ) { event ->
             when (event) {
                 is dev.aidos.models.InstallerEvent.DownloadProgress -> {
@@ -485,4 +518,9 @@ class ModelDetailViewModel : ViewModel() {
         CookbookVerdict.EXCEEDS_CONTEXT -> ModelFitVerdict.EXCEEDS_CONTEXT
         CookbookVerdict.WILL_NOT_FIT -> ModelFitVerdict.WILL_NOT_FIT
     }
+
+    private fun sha256Hex(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 }

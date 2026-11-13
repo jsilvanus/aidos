@@ -8,9 +8,13 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Files
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PackageInstallTest {
@@ -30,7 +34,11 @@ class PackageInstallTest {
 
     private class FakeCatalog : ModelCatalogManager {
         val installed = mutableListOf<InstalledModel>()
-        override suspend fun addToCatalog(model: CatalogEntry) = Result.success(Unit)
+        val catalogEntries = mutableListOf<CatalogEntry>()
+        override suspend fun addToCatalog(model: CatalogEntry): Result<Unit> {
+            catalogEntries += model
+            return Result.success(Unit)
+        }
         override suspend fun listCatalog() = Result.success(emptyList<CatalogEntry>())
         override suspend fun getCatalog(modelId: String) = Result.success<CatalogEntry?>(null)
         override suspend fun listInstalled() = Result.success(installed.toList())
@@ -87,5 +95,35 @@ class PackageInstallTest {
             assertTrue(workflow.installPackage(request(File(root, "x"), bad to "u/x")).isFailure, "'$bad'")
         }
         assertFalse(File(root, "evil").exists())
+    }
+
+    @Test
+    fun install_persistsLicenseMetadataIntoCatalogEntry() = runBlocking {
+        val catalog = FakeCatalog()
+        val workflow = DefaultModelInstallerWorkflow(FakeDownloads(), catalog)
+        val destination = File(root, "license-model.gguf")
+        val request = ModelDownloadRequest(
+            modelId = "qwen2.5-3b",
+            artifactName = "qwen2.5-3b-q4_k_m.gguf",
+            downloadUrl = "u/model.gguf",
+            expectedDigest = "sha-model",
+            destination = destination.absolutePath,
+            kind = ModelKind.LLM,
+            format = "gguf",
+            backend = "llama.cpp",
+            quantization = "Q4_K_M",
+            licenseText = "apache-2.0",
+            licenseTextDigest = "sha-license",
+            modelVersion = "sha-model",
+        )
+
+        val installed = workflow.install(request).getOrThrow()
+        assertEquals("qwen2.5-3b", installed.modelId)
+
+        val entry = assertNotNull(catalog.catalogEntries.firstOrNull())
+        val metadata = Json.parseToJsonElement(entry.propertiesJson).jsonObject
+        assertEquals("apache-2.0", metadata["license_text"]?.jsonPrimitive?.content)
+        assertEquals("sha-license", metadata["license_digest"]?.jsonPrimitive?.content)
+        assertEquals("sha-model", metadata["version"]?.jsonPrimitive?.content)
     }
 }

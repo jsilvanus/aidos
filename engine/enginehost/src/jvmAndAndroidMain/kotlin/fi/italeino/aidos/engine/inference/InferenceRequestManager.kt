@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -93,9 +94,15 @@ class InferenceRequestManager(
                 // Model doesn't exist; load will fail anyway with a more specific error
                 return Result.failure(IllegalArgumentException("Model $modelId not found"))
             }
-            val version = descriptor.metadata["version"] ?: ""
-            val licenseDigest = descriptor.metadata["license_digest"] ?: ""
-            val licenseText = descriptor.metadata["license_text"] ?: ""
+            val licenseText = descriptor.metadata["license_text"] ?: descriptor.metadata["license"] ?: ""
+            val licenseDigest = descriptor.metadata["license_digest"]
+                ?: descriptor.metadata["license_text_digest"]
+                ?: licenseText.takeIf { it.isNotBlank() }?.let(::sha256Hex)
+                ?: ""
+            val version = descriptor.metadata["version"]
+                ?: descriptor.metadata["model_version"]
+                ?: descriptor.digest
+                ?: ""
             val accepted = licenseStore.isAccepted(descriptor.id, version, licenseDigest)
             if (!accepted && licenseDigest.isNotEmpty()) {
                 return Result.failure(
@@ -358,4 +365,9 @@ class InferenceRequestManager(
     // shutdownAndDrain time out. NonCancellable guarantees the release always happens.
     private suspend fun <T> withBookkeepingLock(action: () -> T): T =
         withContext(NonCancellable) { stateMutex.withLock(action = action) }
+
+    private fun sha256Hex(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 }

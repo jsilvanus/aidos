@@ -43,6 +43,8 @@ import fi.italeino.aidos.engine.inference.AndroidOnnxDecisionBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxVisionBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxSttBackend
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
+import fi.italeino.aidos.engine.license.EncryptedLicenseAcceptanceStore
+import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
 import fi.italeino.aidos.engine.notification.AppNotificationManager
 import fi.italeino.aidos.engine.ui.DeviceProfileProvider
 import io.ktor.client.HttpClient
@@ -130,6 +132,9 @@ class EngineService : LifecycleService() {
     /** Persisted per-app approval decisions; the Home and Connected Apps screens read this. */
     var approvalStore: AppApprovalStore? = null
         private set
+    /** Persisted per-model license acceptances (RFC-0103). */
+    var licenseAcceptanceStore: LicenseAcceptanceStore? = null
+        private set
     private lateinit var approvalManager: AppApprovalManager
     private var _isRunning = false
     val isRunning: Boolean get() = _isRunning
@@ -148,7 +153,9 @@ class EngineService : LifecycleService() {
 
         tokenManager = TokenManager()
         val approvals = EncryptedAppApprovalStore(this)
+        val licenses = EncryptedLicenseAcceptanceStore(this)
         approvalStore = approvals
+        licenseAcceptanceStore = licenses
         approvalManager = AppApprovalManager(this, approvals, AppNotificationManager(this))
         binder = EngineHandshakeImpl(
             context = this,
@@ -253,7 +260,10 @@ class EngineService : LifecycleService() {
                     runSettings = RunSettingsSource { id -> SettingsStore.getRunSettings(this@EngineService, id) },
                     isModelActive = { id -> runBlocking { inferenceManager.isModelActive(id) } },
                 )
-                inferenceManager = InferenceRequestManager(runtime)
+                inferenceManager = InferenceRequestManager(
+                    modelRuntime = runtime,
+                    licenseStore = licenseAcceptanceStore,
+                )
                 modelRuntime = runtime
 
                 // Reconcile stale installed rows before exposing the Engine to clients: orphan

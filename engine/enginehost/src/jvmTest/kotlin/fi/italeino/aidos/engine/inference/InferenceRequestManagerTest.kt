@@ -286,9 +286,12 @@ class InferenceRequestManagerTest {
         assertTrue(result.isFailure)
         val ex = result.exceptionOrNull()
         assertTrue(ex is LicenseNotAcceptedException)
-        val licenseEx = ex as LicenseNotAcceptedException
-        assertEquals(modelId, licenseEx.modelId)
-        assertEquals(modelVersion, licenseEx.modelVersion)
+        assertEquals(modelId, ex.modelId)
+        assertEquals(modelVersion, ex.modelVersion)
+        val metrics = manager.snapshotMetrics()
+        assertEquals(0, metrics.totalRequests, "license failures must happen before queue admission")
+        assertEquals(0, metrics.queueDepth)
+        assertEquals(0, metrics.runningRequests)
     }
 
     @Test
@@ -361,6 +364,31 @@ class InferenceRequestManagerTest {
         // This would require runtime returning a descriptor with the new digest
         // For now, just verify the store behavior
         assertFalse(licenseStore.isAccepted(modelId, modelVersion, newDigest))
+    }
+
+    @Test
+    fun execute_rejectsWhenOnlyLicenseTextMetadataExists() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(
+            adapter = CountingAdapter(),
+            descriptorMetadata = mapOf(
+                "version" to "1.0",
+                "license" to "apache-2.0",
+            ),
+        )
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = Int.MAX_VALUE,
+            licenseStore = licenseStore
+        )
+
+        val result = manager.execute("test-model") { adapter ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is LicenseNotAcceptedException)
     }
 
     // RFC-0103 §4.2: Queue policy tests
@@ -451,6 +479,11 @@ private class FakeRuntime(
     private val adapter: ModelAdapter,
     private val deleteStarted: CompletableDeferred<Unit>? = null,
     private val deleteGate: CompletableDeferred<Unit>? = null,
+    private val descriptorMetadata: Map<String, String> = mapOf(
+        "version" to "1.0",
+        "license_digest" to "sha256-abc123",
+        "license_text" to "Test License - Accept to use",
+    ),
 ) : ModelRuntime {
     var deleteCalls: Int = 0
         private set
@@ -469,11 +502,7 @@ private class FakeRuntime(
             contextWindow = 2048,
             sizeBytes = 1234,
             digest = null,
-            metadata = mapOf(
-                "version" to "1.0",
-                "license_digest" to "sha256-abc123",
-                "license_text" to "Test License - Accept to use",
-            ),
+            metadata = descriptorMetadata,
         )
     )
 

@@ -55,6 +55,12 @@ data class ModelDownloadRequest(
     val backend: String? = null,
     /** Kept for compatibility with the existing GGUF-oriented Android UI. */
     val quantization: String? = null,
+    /** Optional license text/id shown at download time; when present, inference is gated on acceptance. */
+    val licenseText: String? = null,
+    /** Stable digest of [licenseText] that keys acceptance records and re-prompts on change. */
+    val licenseTextDigest: String? = null,
+    /** Model version/revision used with [licenseTextDigest] in acceptance records. */
+    val modelVersion: String? = null,
 )
 
 /** One file of a [ModelPackageDownloadRequest], saved as `<destinationDir>/<name>`. */
@@ -75,6 +81,12 @@ data class ModelPackageDownloadRequest(
     val kind: ModelKind,
     val format: String,
     val backend: String? = null,
+    /** Optional license text/id shown at download time; when present, inference is gated on acceptance. */
+    val licenseText: String? = null,
+    /** Stable digest of [licenseText] that keys acceptance records and re-prompts on change. */
+    val licenseTextDigest: String? = null,
+    /** Model version/revision used with [licenseTextDigest] in acceptance records. */
+    val modelVersion: String? = null,
 )
 
 interface ModelInstallerWorkflow {
@@ -119,6 +131,9 @@ class DefaultModelInstallerWorkflow(
                 request.quantization?.let { put("quantization", it) }
                 put("destination", request.destination)
                 request.expectedDigest?.let { put("sha256", it) }
+                request.licenseText?.takeIf { it.isNotBlank() }?.let { put("license_text", it) }
+                request.licenseTextDigest?.takeIf { it.isNotBlank() }?.let { put("license_digest", it) }
+                request.modelVersion?.takeIf { it.isNotBlank() }?.let { put("version", it) }
             }.toString()
             catalogManager.addToCatalog(
                 CatalogEntry(request.modelId, request.modelId, request.kind, "huggingface", request.downloadUrl, metadata, "")
@@ -182,6 +197,9 @@ class DefaultModelInstallerWorkflow(
                 request.backend?.let { put("backend", it) }
                 put("destination", request.destinationDir)
                 put("files", names.joinToString(","))
+                request.licenseText?.takeIf { it.isNotBlank() }?.let { put("license_text", it) }
+                request.licenseTextDigest?.takeIf { it.isNotBlank() }?.let { put("license_digest", it) }
+                request.modelVersion?.takeIf { it.isNotBlank() }?.let { put("version", it) }
             }.toString()
             catalogManager.addToCatalog(
                 CatalogEntry(request.modelId, request.modelId, request.kind, "huggingface", request.files.first().downloadUrl, metadata, "")
@@ -229,7 +247,26 @@ class DefaultModelInstallerWorkflow(
             val backend = metadata["backend"]?.jsonPrimitive?.content
             val quantization = metadata["quantization"]?.jsonPrimitive?.content
             val digest = metadata["sha256"]?.jsonPrimitive?.content
-            install(ModelDownloadRequest(modelId, artifactName, url, digest, destination, catalog.kind, format, backend, quantization), onProgress)
+            val licenseText = metadata["license_text"]?.jsonPrimitive?.content
+            val licenseDigest = metadata["license_digest"]?.jsonPrimitive?.content
+            val modelVersion = metadata["version"]?.jsonPrimitive?.content
+            install(
+                ModelDownloadRequest(
+                    modelId = modelId,
+                    artifactName = artifactName,
+                    downloadUrl = url,
+                    expectedDigest = digest,
+                    destination = destination,
+                    kind = catalog.kind,
+                    format = format,
+                    backend = backend,
+                    quantization = quantization,
+                    licenseText = licenseText,
+                    licenseTextDigest = licenseDigest,
+                    modelVersion = modelVersion,
+                ),
+                onProgress,
+            )
         } catch (e: Exception) {
             Result.failure(e)
         }

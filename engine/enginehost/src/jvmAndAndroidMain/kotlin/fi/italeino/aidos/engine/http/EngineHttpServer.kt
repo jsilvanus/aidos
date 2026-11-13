@@ -35,6 +35,7 @@ import fi.italeino.aidos.engine.inference.ResolvedCandidateRoute
 import fi.italeino.aidos.engine.inference.VirtualModelConfig
 import fi.italeino.aidos.engine.inference.VirtualModelRouter
 import fi.italeino.aidos.engine.inference.placementOf
+import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -85,6 +86,7 @@ data class EngineApiPolicy(
 )
 
 class EngineRequestTimeoutException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+private val http451UnavailableForLegalReasons = HttpStatusCode(451, "Unavailable For Legal Reasons")
 
 private val wireJson = Json {
     prettyPrint = false
@@ -1903,6 +1905,13 @@ class EngineHttpServer(
                     "Model is not installed",
                     "model_error",
                     code = "model_not_installed"
+                )
+            error is LicenseNotAcceptedException ->
+                http451UnavailableForLegalReasons to ErrorDetail(
+                    "Model license terms must be accepted before use",
+                    "license_error",
+                    code = "license_not_accepted",
+                    param = "model"
                 )
             rawMessage.contains("MODEL_INTEGRITY_MISSING") ->
                 HttpStatusCode.UnprocessableEntity to ErrorDetail(

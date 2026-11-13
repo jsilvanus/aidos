@@ -20,6 +20,7 @@ import fi.italeino.aidos.engine.handshake.HandshakeWire
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import fi.italeino.aidos.engine.inference.Locality
+import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -443,6 +444,12 @@ class EngineHttpServerHardeningTest {
         val (timeoutStatus, timeoutDetail) = server.classifyError(EngineRequestTimeoutException("timed out"))
         assertEquals(HttpStatusCode.GatewayTimeout, timeoutStatus)
         assertEquals("request_timeout", timeoutDetail.code)
+
+        val (licenseStatus, licenseDetail) = server.classifyError(
+            LicenseNotAcceptedException("test-model", "1.0", "apache-2.0", "digest")
+        )
+        assertEquals(HttpStatusCode(451, "Unavailable For Legal Reasons"), licenseStatus)
+        assertEquals("license_not_accepted", licenseDetail.code)
     }
 
     // -------------------------------------------------------------------------
