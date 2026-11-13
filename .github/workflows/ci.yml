@@ -1,5 +1,11 @@
 name: ci
 
+# RFC-0105 Phase 3 (Layer Split):
+# - Emulation tests: `SplitInferenceTest` runs in `test-engine` with JVM-emulated child processes
+# - Native validation: See `llama-rpc-native.yml` which builds pinned llama.cpp with GGML_RPC=ON
+#   and runs `NativeSplitInferenceTest` (skipped without AIDOS_LLAMA_RPC_DIR). Both workflows
+#   trigger on changes to `engine/aidin/**`.
+
 on:
   push:
     paths: ['agent/**', 'engine/**', 'kernel/**', 'sdk/**', '.github/workflows/ci.yml']

@@ -1,9 +1,16 @@
 name: llama-rpc-native
 
-# RFC-0105 phase 3: one pinned llama.cpp build with GGML_RPC=ON, packaged as the two programs the
-# Engine supervises for layer split: `llama-server` (anchor) and `ggml-rpc-server` (helper). The RPC
-# protocol changes between releases, so every node must run binaries from this one tag; the tag is
-# what nodes advertise as their llama.cpp build id.
+# RFC-0105 Phase 3: One pinned llama.cpp build with GGML_RPC=ON for layer-split inference.
+# Builds `llama-server` (anchor) and `ggml-rpc-server` (helper) on Linux/Windows/Android.
+# The RPC protocol changes between releases, so all nodes must run binaries from tag LLAMA_TAG.
+#
+# Tests:
+# - Loopback smoke test (Linux only): real llama-server + ggml-rpc-server split inference
+# - NativeSplitInferenceTest: Engine supervisors + AIDIN tunnel + real binaries
+# - SplitHostingTest: Supervision lifecycle and policy enforcement
+# 
+# Fallback: On systems without native binaries, `SplitInferenceTest` runs with JVM emulation.
+# Native validation is in this job; emulation validation is in the main `ci.yml` test-engine job.
 
 on:
   workflow_dispatch:

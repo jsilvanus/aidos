@@ -2,7 +2,7 @@
 
 Status: Accepted 2026-10-26 by the owner. Owner choices settled the same day (D50): child-process
 split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
-Implementation status (audited 2026-11-09): phases 1 (pairing, groups) and 2 (virtual models, delegation) are built and tested; phase 3 (layer split) has the planner and supervisors, but the child processes are emulators unless native `llama-server`/`ggml-rpc-server` binaries are supplied, the supervisors are only constructed in tests, and no CI job builds llama.cpp with `GGML_RPC`. See [STATUS.md](STATUS.md).
+Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Production integration (Engine supervising real models) is future work (Phase 4). See [STATUS.md](STATUS.md).
 
 Related: RFC-0103 (Aidos Engine), RFC-0104 (inference locality, D47), RFC-0003 (security),
 RFC-0046 (identity), `docs/aidin.md` (AIDIN design background), `IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md`
@@ -286,3 +286,59 @@ model attestation (identity proposal §4); allowing a specific remote provider r
   admin to members.
 - How node keys relate to the Aidos installation identity once the identity proposal becomes an RFC
   (this RFC keeps them separate keys; they may later be bound by a signed statement).
+
+## Phase 3 Testing (Layer Split Implementation)
+
+### Test Coverage
+
+**Emulation tests** (JVM, run on any platform):
+- `SplitInferenceTest` (engine/aidin/src/jvmTest): Planner correctness, policy enforcement, supervision, helper kill recovery
+- Tests run with JVM child-process emulators (`LoopbackRpcServerChildMain`, `LoopbackLlamaServerChildMain`) for cross-platform CI
+
+**Native llama.cpp tests** (Linux, Linux-x64):
+- `NativeSplitInferenceTest` (engine/aidin/src/jvmTest): Same scenarios with real llama.cpp binaries
+- Requires `AIDOS_LLAMA_RPC_DIR` environment variable pointing to pinned `llama-rpc-native` build
+- Runs rot13-gguf fixture through AIDIN tunnel
+
+### Running Phase 3 Tests Locally
+
+**With JVM emulation (all platforms):**
+
+```bash
+cd engine
+./gradlew :aidin:jvmTest --tests 'dev.aidos.aidin.SplitInferenceTest'
+```
+
+Expected: all tests pass, no native binaries required
+
+**With native llama.cpp (Linux/macOS/Windows only):**
+
+1. Build llama.cpp with GGML_RPC (or download prebuilt from `llama-rpc-native` CI):
+
+```bash
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+git checkout b11901
+cmake -B build -DGGML_RPC=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+cmake --build build --config Release -j 4 --target llama-server ggml-rpc-server
+```
+
+2. Point Engine tests to the binaries:
+
+```bash
+cd engine
+export AIDOS_LLAMA_RPC_DIR=/path/to/llama.cpp/build/bin
+./gradlew :aidin:jvmTest --tests 'dev.aidos.aidin.NativeSplitInferenceTest'
+```
+
+### CI Integration
+
+- `llama-rpc-native.yml` (`.github/workflows/`) builds pinned llama.cpp on Linux/Windows/Android and runs native tests
+- Triggered on: PR with changes to `engine/aidin/**` or `.github/workflows/llama-rpc-native.yml`
+- Linux job: builds binaries, runs loopback smoke test, runs `NativeSplitInferenceTest` and `SplitHostingTest`
+- Artifacts: `llama-rpc-{platform}-b11901` published for 90 days
+
+**Verification:**
+- Phase 3 emulation tests: `engine` CI runs `SplitInferenceTest` on every PR
+- Phase 3 native validation: `llama-rpc-native` CI runs `NativeSplitInferenceTest` on demand and on PR changes to aidin
+
