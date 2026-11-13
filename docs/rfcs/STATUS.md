@@ -1,6 +1,6 @@
 # RFC implementation status
 
-Audited 2026-11-09 against the code (not against status lines or milestone checkmarks). One read-only audit per Accepted RFC; test files were read, not run.
+Audited 2026-11-13 against the code (not against status lines or milestone checkmarks). One read-only audit per Accepted RFC; test files were read, not run. Key changes 2026-11-13: RFC-0037 reclassified from NOT_IMPLEMENTED to PARTIAL (CrashHandler/MetricsCollector implementation exists but not production-wired); RFC-0104 status updated to Accepted; RFC-0103 test-count note clarified.
 
 **Accepted** (the status in each RFC) means the design is approved. This table says how much of it exists in code. `IMPLEMENTED` = the RFC's MVP is built and tested; `PARTIAL` = some of it is built and tested, gaps listed; `NOT_IMPLEMENTED` = schema/DDL at most; `NOT_APPLICABLE` = the RFC's MVP is a decision, not code.
 
@@ -40,7 +40,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0034 | IMPLEMENTED | RelPath + symlink-aware containment + read/write/list/search+diff preview; delete/move/mkdir operations with .git/ protection; atomic writes for mkdir |
 | 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore is not built (the vault is JVM-only and the Android host does not run it yet) |
 | 0036 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0036 requirement map](#rfc-0036-requirement-map) below |
-| 0037 | NOT_IMPLEMENTED | metric_samples/crash_records DDL only; no logger, metrics, crash writer, diagnostic bundle, tests |
+| 0037 | PARTIAL | CrashHandler writes crash_records with stack hash and detail files; MetricsCollector writes metric_samples with run outcomes/duration/model-load-time; tests exist; not wired into production daemon (no Thread.setDefaultUncaughtExceptionHandler); no logger, diagnostic bundle, or telemetry |
 | 0038 | PARTIAL | CrashRecoveryTest 4 seeded boundaries, injection suite, RelPath tests; no shared fakes, no fixtures tree, no profile matrix, no concurrency tests |
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
 | 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, PRAGMA synchronous=NORMAL, auto_vacuum=INCREMENTAL, wal_autocheckpoint=1000; MigrationRunner v1; forward migrations foundation |
@@ -60,7 +60,8 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0055 | PARTIAL | ProjectLock+stale detection, 0600 socket+token, interactive gate, env scrub; heartbeat never called, lock_breaks no writer, no release on shutdown |
 | 0056 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0056 requirement map](#rfc-0056-requirement-map) below |
 | 0057 | PARTIAL | RunSummaryComputer, spoken summary, voice approval tested; no UI uses them, no STT/TTS wired, approval_channel null |
-| 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client 38 tests, desktop+Android host; no LicenseAcceptance, queue-never-reject violated at 8 queued |
+| 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; missing LicenseAcceptance, queue-never-reject violated at 8 queued, test count discrepancy noted |
+| 0104 | PARTIAL | Placement derivation and enforcement implemented and tested; X-Aidos-Locality/X-Aidos-Placement headers, LocalityViolationException; missing per-app limit toggle, Engine-wide limit UI, refusal audit, non-local placements UI |
 | 0105 | PARTIAL | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split: planner+supervisors exist but emulated children, supervisors only in tests, no GGML_RPC CI; header stale 'Not implemented yet' |
 
 ## Not Accepted
@@ -72,7 +73,6 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0051 Desktop | Draft | No code matching this RFC; desktop engine app exists under RFC-0103. |
 | 0051 LAN Engine Sharing | Proposed | No LAN/HTTPS sharing code; only AIDIN peer links (RFC-0105). |
 | 0060 Plugin SDK | Draft | Not scheduled for v1. |
-| 0104 Inference Locality | Proposed | Placement derivation and enforcement built (D47 settled). Not done: per-app limit toggle, Engine-wide limit UI, refusal audit, non-local placements. |
 | 0106 Desktop Generative UI | Draft | No code. |
 | 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
 | 0108 AIDIN Remote Routes | Draft | Phase 3a built: standalone `agent/ssh-tunnel` library (JVM; sshj and MINA transports pass one shared suite against an in-process server). Phase 4a: sshj transport written for Android but never run on a device or emulator. Not built: route hints, remote-access switch, Engine tunnel manager and key page, Android keystore-backed `KeyProvider`. |
