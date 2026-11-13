@@ -5,7 +5,6 @@ import dev.aidos.api.RuntimeEvent
 /**
  * Approval, preview, and memory review (M30, RFC-0018, RFC-0027, RFC-0030, RFC-0026).
  */
-
 data class ApprovalCard(
     val approvalId: String,
     val toolName: String,
@@ -42,14 +41,8 @@ object ApprovalPresenter {
             else -> ApprovalKind.MUTATION
         }
 
-        val untrustedSource = if (isEscalation) {
-            event.previewDescription
-        } else null
-
-        val providerRetention = if (isEgress) {
-            "Provider retention policy: see run details"
-        } else null
-
+        val untrustedSource = if (isEscalation) event.previewDescription else null
+        val providerRetention = if (isEgress) "Provider retention policy: see run details" else null
         val safeForVoice = kind == ApprovalKind.MUTATION && untrustedSource == null && providerRetention == null
 
         return ApprovalCard(

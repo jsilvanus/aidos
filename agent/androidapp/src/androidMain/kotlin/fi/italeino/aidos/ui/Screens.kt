@@ -152,8 +152,9 @@ fun RunDetailScreen(
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     Text("Started ${formatInstant(run.startedAt)}")
-                                    if (run.endedAt != null) {
-                                        Text("Ended ${formatInstant(run.endedAt)}")
+                                    val endedAt = run.endedAt
+                                    if (endedAt != null) {
+                                        Text("Ended ${formatInstant(endedAt)}")
                                     }
                                 }
                             }
@@ -217,6 +218,50 @@ fun ApprovalCard(
                 Button(onClick = onReject, modifier = Modifier.weight(1f)) {
                     Text("Reject")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun CommitReviewScreen(
+    @Suppress("UNUSED_PARAMETER") commitPresenter: CommitPresenter,
+    onCommit: (String) -> Unit,
+) {
+    Scaffold { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Commit review", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Review changes and commit from this screen.")
+            Button(onClick = { onCommit("Commit from Android UI") }) {
+                Text("Commit")
+            }
+        }
+    }
+}
+
+@Composable
+fun EditorScreen(
+    filePath: String,
+    onSave: (String) -> Unit,
+) {
+    Scaffold { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Editor", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(filePath)
+            Button(onClick = { onSave("Saved from Android UI editor") }) {
+                Text("Save")
             }
         }
     }

@@ -53,6 +53,7 @@ import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.sdk.client.AidosEngineClient
 import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
+import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.AndroidAidin
