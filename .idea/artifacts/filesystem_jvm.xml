@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="filesystem-jvm">
+    <output-path>$PROJECT_DIR$/agent/filesystem/build/libs</output-path>
+    <root id="archive" name="filesystem-jvm.jar">
+      <element id="module-output" name="aidos-agent.filesystem.jvmMain" />
+    </root>
+  </artifact>
+</component>

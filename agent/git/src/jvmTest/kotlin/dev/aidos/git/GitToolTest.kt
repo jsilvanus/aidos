@@ -55,6 +55,9 @@ class GitToolTest {
         override suspend fun write(relative: RelPath, content: ByteArray) = Result.failure<Unit>(UnsupportedOperationException())
         override suspend fun list(relative: RelPath) = Result.success<List<DirEntry>>(emptyList())
         override suspend fun exists(relative: RelPath) = false
+        override suspend fun delete(relative: RelPath, recursive: Boolean) = Result.failure<Int>(UnsupportedOperationException())
+        override suspend fun move(from: RelPath, to: RelPath, overwrite: Boolean) = Result.failure<Unit>(UnsupportedOperationException())
+        override suspend fun mkdir(relative: RelPath) = Result.failure<Unit>(UnsupportedOperationException())
     }
 
     @Test

@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="capability-jvm">
+    <output-path>$PROJECT_DIR$/agent/capability/build/libs</output-path>
+    <root id="archive" name="capability-jvm.jar">
+      <element id="module-output" name="aidos-agent.capability.jvmMain" />
+    </root>
+  </artifact>
+</component>

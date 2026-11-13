@@ -60,9 +60,9 @@ class SqliteDirHandle(
         var count = 0
         
         when {
-            !target.exists() -> 0
+            !target.exists() -> count = 0
             target.isFile -> {
-                if (target.delete()) 1 else throw IOException("Failed to delete file: ${target.path}")
+                count = if (target.delete()) 1 else throw IOException("Failed to delete file: ${target.path}")
             }
             target.isDirectory -> {
                 if (recursive) {
@@ -72,7 +72,7 @@ class SqliteDirHandle(
                     if (contents != null && contents.isNotEmpty()) {
                         throw IOException("Directory not empty: ${target.path}")
                     }
-                    if (target.delete()) 1 else throw IOException("Failed to delete directory: ${target.path}")
+                    count = if (target.delete()) 1 else throw IOException("Failed to delete directory: ${target.path}")
                 }
             }
         }

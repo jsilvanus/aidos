@@ -230,4 +230,32 @@ class InMemoryDirHandle(override val capabilityId: CapabilityId) : DirHandle {
     }
 
     override suspend fun exists(relative: RelPath): Boolean = files.containsKey(relative.value)
+
+    override suspend fun delete(relative: RelPath, recursive: Boolean): Result<Int> {
+        val prefix = if (relative.value.isEmpty()) "" else "${relative.value}/"
+        val keysToDelete = if (relative.value.isEmpty() || files.containsKey(relative.value)) {
+            if (relative.value.isEmpty()) emptyList() else listOf(relative.value)
+        } else {
+            files.keys.filter { it.startsWith(prefix) }
+        }
+        
+        val count = keysToDelete.size
+        keysToDelete.forEach { files.remove(it) }
+        return Result.success(count)
+    }
+
+    override suspend fun move(from: RelPath, to: RelPath, overwrite: Boolean): Result<Unit> {
+        val content = files[from.value] ?: return Result.failure(IllegalArgumentException("not found: ${from.value}"))
+        if (!overwrite && files.containsKey(to.value)) {
+            return Result.failure(IllegalArgumentException("destination exists: ${to.value}"))
+        }
+        files.remove(from.value)
+        files[to.value] = content
+        return Result.success(Unit)
+    }
+
+    override suspend fun mkdir(relative: RelPath): Result<Unit> {
+        // In-memory filesystem doesn't need to create directories explicitly
+        return Result.success(Unit)
+    }
 }

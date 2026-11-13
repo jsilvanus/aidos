@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="memory-jvm">
+    <output-path>$PROJECT_DIR$/agent/memory/build/libs</output-path>
+    <root id="archive" name="memory-jvm.jar">
+      <element id="module-output" name="aidos-agent.memory.jvmMain" />
+    </root>
+  </artifact>
+</component>

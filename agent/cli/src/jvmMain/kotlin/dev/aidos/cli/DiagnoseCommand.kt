@@ -10,6 +10,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -32,6 +33,7 @@ import kotlinx.serialization.json.putJsonObject
  * User selects which Runs to include (default: recent failures in past 7 days).
  * Prompts and file contents excluded by default.
  */
+@OptIn(ExperimentalSerializationApi::class)
 class DiagnoseCommand(
     private val runtimeClient: RuntimeClient,
 ) {

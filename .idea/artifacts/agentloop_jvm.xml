@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="agentloop-jvm">
+    <output-path>$PROJECT_DIR$/agent/agentloop/build/libs</output-path>
+    <root id="archive" name="agentloop-jvm.jar">
+      <element id="module-output" name="aidos-agent.agentloop.jvmMain" />
+    </root>
+  </artifact>
+</component>

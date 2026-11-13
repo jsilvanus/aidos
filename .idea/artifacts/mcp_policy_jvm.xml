@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="mcp-policy-jvm">
+    <output-path>$PROJECT_DIR$/agent/mcp-policy/build/libs</output-path>
+    <root id="archive" name="mcp-policy-jvm.jar">
+      <element id="module-output" name="aidos-agent.mcp-policy.jvmMain" />
+    </root>
+  </artifact>
+</component>

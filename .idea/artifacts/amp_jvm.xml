@@ -1,0 +1,6 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="amp-jvm">
+    <output-path>$PROJECT_DIR$/agent/amp/build/libs</output-path>
+    <root id="archive" name="amp-jvm.jar" />
+  </artifact>
+</component>
