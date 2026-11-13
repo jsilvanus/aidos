@@ -383,6 +383,12 @@ class RuntimeCompositionRoot(
                     val serverId = outcome.load.registration.serverId
                     val adoptedSpecs = adoptionStore.adoptedCatalog(projectId.value, serverId)
                     if (adoptedSpecs.isNotEmpty()) {
+                        ensureMcpServerCapability(
+                            capabilityManager = capabilityManager,
+                            projectId = projectId,
+                            serverId = serverId,
+                            transport = outcome.load.registration.transport,
+                        )
                         val lazyTool = LazyMcpTool(
                             serverId = serverId,
                             projectId = projectId.value,
