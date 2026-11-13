@@ -26,6 +26,7 @@ import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.modelruntime.RunSettingsSource
 import fi.italeino.aidos.engine.ui.SettingsStore
+import fi.italeino.aidos.engine.inference.Locality
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.ModelBrowser
@@ -301,6 +302,18 @@ class EngineService : LifecycleService() {
                     },
                     isSubjectApproved = { pkg ->
                         approvalStore?.getApproval(pkg)?.status == AppApprovalStatus.APPROVED
+                    },
+                    subjectLocality = { subject ->
+                        approvalStore?.getApproval(subject)?.localityLimit?.let(Locality::parse)
+                    },
+                    engineLocality = {
+                        SettingsStore.getEngineLocalityLimit(this@EngineService)
+                    },
+                    onLocalityViolation = { subject, required, placement, _ ->
+                        val pkg = subject
+                        if (pkg != null && pkg != TokenManager.ENGINE_SUBJECT) {
+                            approvalStore?.recordLocalityRefusal(pkg, required.wire, placement.wire)
+                        }
                     },
                     onClientVersions = { pkg, sdk, api -> approvalStore?.recordClientVersions(pkg, sdk, api) },
                     aidinNode = { _aidin.value },

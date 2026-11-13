@@ -61,7 +61,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0056 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0056 requirement map](#rfc-0056-requirement-map) below |
 | 0057 | PARTIAL | RunSummaryComputer, spoken summary, voice approval tested; no UI uses them, no STT/TTS wired, approval_channel null |
 | 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence and inference gating now wired (including HTTP `license_not_accepted` 451 mapping), queue default is unbounded (no depth rejection by default); broader Android instrumentation and full multi-app UX validation still pending |
-| 0104 | PARTIAL | Placement derivation and enforcement implemented and tested; X-Aidos-Locality/X-Aidos-Placement headers, LocalityViolationException; missing per-app limit toggle, Engine-wide limit UI, refusal audit, non-local placements UI |
+| 0104 | PARTIAL | Placement derivation/enforcement implemented and tested; Connected Apps now has per-app locality caps plus refusal counters, Settings exposes Engine-wide locality cap, and refusals trigger an audit hook; still missing production non-local execution paths (remote providers/delegation in Android UI flow) |
 | 0105 | PARTIAL | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split: planner+supervisors+GGML_RPC integration all IMPLEMENTED and tested; native CI job validates real llama.cpp binaries; supervisors tested via `SplitInferenceTest`/`NativeSplitInferenceTest`; missing production integration (Engine not yet running supervisors on real models) |
 
 ## Not Accepted

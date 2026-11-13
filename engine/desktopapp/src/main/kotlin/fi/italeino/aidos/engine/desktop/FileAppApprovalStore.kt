@@ -62,6 +62,21 @@ class FileAppApprovalStore(
     override suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord? =
         update(packageName) { it.copy(agentAllowed = allowed) }
 
+    override suspend fun setLocalityLimit(packageName: String, localityLimit: String?): AppApprovalRecord? =
+        update(packageName) { it.copy(localityLimit = localityLimit) }
+
+    override suspend fun recordLocalityRefusal(
+        packageName: String,
+        requiredLocality: String,
+        placement: String,
+    ): AppApprovalRecord? = update(packageName) {
+        it.copy(
+            localityRefusalCount = it.localityRefusalCount + 1,
+            lastLocalityRefusalAt = now().toString(),
+            lastLocalityRefusalCode = "required_$requiredLocality|placement_$placement",
+        )
+    }
+
     override suspend fun recordFirstHandshake(packageName: String, displayName: String): AppApprovalRecord =
         mutex.withLock {
             val stamp = now().toString()

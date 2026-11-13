@@ -228,6 +228,7 @@ private fun AppsColumn(models: DesktopModels, modifier: Modifier) {
             onRevoke = models.apps::revoke,
             onUndoDeny = models.apps::undoDeny,
             onSetAgentAllowed = models.apps::setAgentAllowed,
+            onSetLocalityLimit = models.apps::setLocalityLimit,
             notRunningText = "The Engine is not running. Start it above to manage app access.",
         )
     }

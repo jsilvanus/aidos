@@ -132,6 +132,8 @@ class EngineHttpServer(
      * refused over its version. Not called for Engine's own subject, or when neither header is sent.
      */
     private val onClientVersions: (suspend (subject: String, sdkVersion: String?, apiVersion: Int?) -> Unit)? = null,
+    /** RFC-0104 audit hook for locality refusals at the HTTP boundary. */
+    private val onLocalityViolation: (suspend (subject: String?, requiredLocality: Locality, placement: Placement, path: String) -> Unit)? = null,
     /** Hardening limits, generation caps, and timeout policy (PIPELINE.md §2.7). */
     val policy: EngineApiPolicy = EngineApiPolicy(),
     /** Optional AIDIN node for peer delegation and inference group routing (RFC-0105). */
@@ -1826,6 +1828,14 @@ class EngineHttpServer(
         error: Throwable?,
         sensitivePrompts: Collection<String> = emptyList(),
     ) {
+        if (error is LocalityViolationException) {
+            onLocalityViolation?.invoke(
+                call.principal<UserIdPrincipal>()?.name,
+                error.required,
+                error.placement,
+                call.request.path()
+            )
+        }
         val (status, detail) = classifyError(error, sensitivePrompts)
         call.respond(status, ErrorResponse(detail))
     }

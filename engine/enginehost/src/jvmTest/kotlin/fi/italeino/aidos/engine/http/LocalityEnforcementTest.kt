@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
 
 private val testJson = Json { encodeDefaults = true }
 
@@ -81,8 +82,15 @@ class LocalityEnforcementTest {
         runtime: ModelRuntime,
         engineLocality: () -> Locality = { Locality.ANY },
         subjectLocality: (suspend (String) -> Locality?)? = null,
+        onLocalityViolation: (suspend (String?, Locality, Placement, String) -> Unit)? = null,
     ) = TokenManager().let { tokens ->
-        EngineHttpServer(tokens, runtime, engineLocality = engineLocality, subjectLocality = subjectLocality) to tokens
+        EngineHttpServer(
+            tokens,
+            runtime,
+            engineLocality = engineLocality,
+            subjectLocality = subjectLocality,
+            onLocalityViolation = onLocalityViolation,
+        ) to tokens
     }
 
     // --- placementOf ---------------------------------------------------------------------------
@@ -280,6 +288,30 @@ class LocalityEnforcementTest {
         }
         assertEquals(HttpStatusCode.Forbidden, ask(limited).status)
         assertEquals(HttpStatusCode.OK, ask(free).status)
+    }
+
+    @Test
+    fun localityRefusalAuditHook_receivesSubjectLimitAndPlacement() = testApplication {
+        var observed: Triple<String?, Locality, Placement>? = null
+        val (server, tokens) = server(
+            PlacementRuntime(listOf(remote)),
+            onLocalityViolation = { subject, required, placement, _ ->
+                observed = Triple(subject, required, placement)
+            }
+        )
+        application { server.installInto(this) }
+        val response = client.post("/v1/chat/completions") {
+            bearerAuth(tokens.generateNewToken(subject = "org.example.dictator").token)
+            header(LOCALITY_HEADER, "local_only")
+            contentType(ContentType.Application.Json)
+            setBody(chatBody("remote-model"))
+        }
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        val seen = observed
+        assertNotNull(seen)
+        assertEquals("org.example.dictator", seen.first)
+        assertEquals(Locality.LOCAL_ONLY, seen.second)
+        assertEquals(Placement.REMOTE, seen.third)
     }
 
     @Test

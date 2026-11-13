@@ -53,6 +53,8 @@ fun SettingsContent(
     ramBaseline: RamBaselineState? = null,
     onSetRamBaseline: (Int?) -> Unit = {},
     onRefreshRamBaseline: () -> Unit = {},
+    engineLocalityLimit: String? = null,
+    onSetEngineLocalityLimit: ((String?) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier,
@@ -257,6 +259,10 @@ fun SettingsContent(
             RamBaselineSection(ramBaseline, onSetRamBaseline, onRefreshRamBaseline)
         }
 
+        if (onSetEngineLocalityLimit != null) {
+            EngineLocalitySection(engineLocalityLimit, onSetEngineLocalityLimit)
+        }
+
         Text(
             "Suggested Models",
             fontSize = 13.sp,
@@ -285,6 +291,42 @@ fun SettingsContent(
                 ) {
                     Text("Restore suggestions")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EngineLocalitySection(currentLimit: String?, onSet: (String?) -> Unit) {
+    Text(
+        "Inference locality",
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 16.dp)
+    )
+    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Engine-wide cap for where inference may run. Requests and app limits can only narrow this further.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Current: ${when (currentLimit) {
+                    "local_only" -> "local only"
+                    "trusted_cluster" -> "trusted cluster"
+                    "any" -> "any"
+                    else -> "none (any)"
+                }}",
+                fontSize = 11.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onSet("local_only") }, modifier = Modifier.weight(1f)) { Text("Local only") }
+                OutlinedButton(onClick = { onSet("trusted_cluster") }, modifier = Modifier.weight(1f)) { Text("Cluster") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onSet("any") }, modifier = Modifier.weight(1f)) { Text("Any") }
+                OutlinedButton(onClick = { onSet(null) }, modifier = Modifier.weight(1f)) { Text("Clear cap") }
             }
         }
     }

@@ -1045,7 +1045,7 @@ private fun ProvidersPane(state: ModelsPaneState, actions: ModelsPaneActions) {
 
                 Text(
 
-                    "Configure API keys and remote models. Inference routing through remote providers will be enabled in a future update.",
+                    "Configure API keys and remote models. Provider-backed models are `remote` placement and will be gated by locality controls once routing is enabled.",
 
                     fontSize = 12.sp,
 

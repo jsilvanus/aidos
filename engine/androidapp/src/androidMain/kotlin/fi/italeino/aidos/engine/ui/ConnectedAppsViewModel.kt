@@ -68,6 +68,10 @@ class ConnectedAppsViewModel : ViewModel() {
         act { store -> store.undoDenyApp(packageName) }
     }
 
+    fun setLocalityLimit(packageName: String, localityLimit: String?) {
+        act { store -> store.setLocalityLimit(packageName, localityLimit) }
+    }
+
     private fun act(action: suspend (AppApprovalStore) -> Unit) {
         val store = EngineService.instance?.approvalStore ?: return
         viewModelScope.launch {

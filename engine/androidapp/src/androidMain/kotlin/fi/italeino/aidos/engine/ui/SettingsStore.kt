@@ -2,6 +2,7 @@ package fi.italeino.aidos.engine.ui
 
 import android.content.Context
 import dev.aidos.modelruntime.ModelRunSettings
+import fi.italeino.aidos.engine.inference.Locality
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,6 +13,7 @@ private const val KEY_RAM_BASELINE_USED_MB = "ram_baseline_used_mb"
 private const val KEY_HF_TOKEN = "hf_token"
 private const val KEY_HF_TOKEN_VALIDATED_MS = "hf_token_validated_ms"
 private const val KEY_GROUP_SHARING = "group_sharing_enabled"
+private const val KEY_ENGINE_LOCALITY_LIMIT = "engine_locality_limit"
 
 enum class ProviderConfigStatus {
     ENABLED,
@@ -36,6 +38,21 @@ data class ProviderDetail(
 )
 
 object SettingsStore {
+    /** Engine-wide RFC-0104 cap. Null means no extra cap (effectively `any`). */
+    fun getEngineLocalityLimit(context: Context): Locality =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ENGINE_LOCALITY_LIMIT, null)
+            ?.let(Locality::parse)
+            ?: Locality.ANY
+
+    fun getEngineLocalityLimitRaw(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ENGINE_LOCALITY_LIMIT, null)
+
+    fun setEngineLocalityLimit(context: Context, localityWire: String?) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (localityWire == null) prefs.edit().remove(KEY_ENGINE_LOCALITY_LIMIT).apply()
+        else prefs.edit().putString(KEY_ENGINE_LOCALITY_LIMIT, localityWire).apply()
+    }
+
     /** Device groups (RFC-0105): discover and link to other Engines on this network. Off by default. */
     fun isGroupSharingEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_GROUP_SHARING, false)

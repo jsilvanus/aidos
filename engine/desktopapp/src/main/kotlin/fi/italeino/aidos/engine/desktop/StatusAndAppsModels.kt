@@ -103,6 +103,7 @@ class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: C
     fun deny(id: String) = act { it.denyApp(id) }
     fun revoke(id: String) = act { it.revokeApproval(id) }
     fun setAgentAllowed(id: String, allowed: Boolean) = act { it.setAgentAllowed(id, allowed) }
+    fun setLocalityLimit(id: String, localityLimit: String?) = act { it.setLocalityLimit(id, localityLimit) }
     fun undoDeny(id: String) = act { it.undoDenyApp(id) }
 
     private fun act(action: suspend (fi.italeino.aidos.engine.approval.AppApprovalStore) -> Unit) {

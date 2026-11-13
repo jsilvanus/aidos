@@ -56,7 +56,22 @@ data class AppApprovalRecord(
      * Separate from [status], which only covers inference; default false, so an inference-only app
      * cannot start agent runs until the user grants it. Cleared when approval is revoked.
      */
-    val agentAllowed: Boolean = false
+    val agentAllowed: Boolean = false,
+
+    /**
+     * RFC-0104 per-app locality limit: null means no extra cap, otherwise one of
+     * `local_only`, `trusted_cluster`, `any`.
+     */
+    val localityLimit: String? = null,
+
+    /** Number of times this app hit a locality refusal (HTTP 403 locality_violation). */
+    val localityRefusalCount: Int = 0,
+
+    /** Timestamp of the latest locality refusal, or null if none. */
+    val lastLocalityRefusalAt: String? = null,
+
+    /** Latest locality refusal code (`placement_local|cluster|remote`), for audit/debug visibility. */
+    val lastLocalityRefusalCode: String? = null
 )
 
 /**
@@ -140,6 +155,16 @@ interface AppApprovalStore {
      * Grant or withdraw the agent permission (D49). Returns null for an unknown app.
      */
     suspend fun setAgentAllowed(packageName: String, allowed: Boolean): AppApprovalRecord?
+
+    /**
+     * Set or clear this app's RFC-0104 locality cap. Null means no extra app-level cap.
+     */
+    suspend fun setLocalityLimit(packageName: String, localityLimit: String?): AppApprovalRecord?
+
+    /**
+     * Record a locality refusal seen at the Engine boundary for this app.
+     */
+    suspend fun recordLocalityRefusal(packageName: String, requiredLocality: String, placement: String): AppApprovalRecord?
 
     /**
      * Delete all records (for testing, or if Engine is uninstalled).

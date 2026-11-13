@@ -34,6 +34,7 @@ fun ConnectedAppsScreen(viewModel: ConnectedAppsViewModel = viewModel()) {
             onDeny = viewModel::denyApp,
             onRevoke = viewModel::revokeApproval,
             onUndoDeny = viewModel::undoDenyApp,
+            onSetLocalityLimit = viewModel::setLocalityLimit,
             modifier = Modifier
                 .padding(innerPadding)
                 .padding(16.dp),

@@ -113,6 +113,24 @@ class AppApprovalStoreTest {
             return current.copy(agentAllowed = allowed).also { records[packageName] = it }
         }
 
+        override suspend fun setLocalityLimit(packageName: String, localityLimit: String?): AppApprovalRecord? {
+            val current = records[packageName] ?: return null
+            return current.copy(localityLimit = localityLimit).also { records[packageName] = it }
+        }
+
+        override suspend fun recordLocalityRefusal(
+            packageName: String,
+            requiredLocality: String,
+            placement: String,
+        ): AppApprovalRecord? {
+            val current = records[packageName] ?: return null
+            return current.copy(
+                localityRefusalCount = current.localityRefusalCount + 1,
+                lastLocalityRefusalAt = "2026-08-15T13:32:00Z",
+                lastLocalityRefusalCode = "required_$requiredLocality|placement_$placement",
+            ).also { records[packageName] = it }
+        }
+
         override suspend fun recordClientVersions(packageName: String, sdkVersion: String?, apiVersion: Int?): AppApprovalRecord? {
             val current = records[packageName] ?: return null
             return current.copy(sdkVersion = sdkVersion ?: current.sdkVersion, apiVersion = apiVersion ?: current.apiVersion)
@@ -208,5 +226,17 @@ class AppApprovalStoreTest {
         val updated = store.updateRequestCount("com.example.app", 3)
         
         assertEquals(8, updated?.requestCount)
+    }
+
+    @Test
+    fun localityLimitAndRefusalAuditArePersisted() = runBlocking {
+        val store = InMemoryAppApprovalStore()
+        store.recordFirstHandshake("com.example.app", "Example App")
+        val capped = store.setLocalityLimit("com.example.app", "local_only")
+        assertEquals("local_only", capped?.localityLimit)
+        val refused = store.recordLocalityRefusal("com.example.app", "local_only", "remote")
+        assertEquals(1, refused?.localityRefusalCount)
+        assertEquals("required_local_only|placement_remote", refused?.lastLocalityRefusalCode)
+        assertEquals(null, store.setLocalityLimit("never.seen", "local_only"))
     }
 }

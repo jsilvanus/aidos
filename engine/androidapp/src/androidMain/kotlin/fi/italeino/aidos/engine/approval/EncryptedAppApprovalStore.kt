@@ -132,6 +132,32 @@ class EncryptedAppApprovalStore(context: Context) : AppApprovalStore {
             emitUpdate()
             updated
         }
+
+    override suspend fun setLocalityLimit(packageName: String, localityLimit: String?): AppApprovalRecord? =
+        withContext(Dispatchers.IO) {
+            val current = getApproval(packageName) ?: return@withContext null
+            if (current.localityLimit == localityLimit) return@withContext current
+            val updated = current.copy(localityLimit = localityLimit)
+            saveRecord(updated)
+            emitUpdate()
+            updated
+        }
+
+    override suspend fun recordLocalityRefusal(
+        packageName: String,
+        requiredLocality: String,
+        placement: String,
+    ): AppApprovalRecord? = withContext(Dispatchers.IO) {
+        val current = getApproval(packageName) ?: return@withContext null
+        val updated = current.copy(
+            localityRefusalCount = current.localityRefusalCount + 1,
+            lastLocalityRefusalAt = Instant.now().toString(),
+            lastLocalityRefusalCode = "required_$requiredLocality|placement_$placement",
+        )
+        saveRecord(updated)
+        emitUpdate()
+        updated
+    }
     
     override suspend fun recordFirstHandshake(
         packageName: String,

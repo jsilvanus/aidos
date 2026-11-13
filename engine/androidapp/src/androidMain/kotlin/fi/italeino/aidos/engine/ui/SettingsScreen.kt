@@ -36,6 +36,7 @@ fun SettingsScreen() {
     val dismissedSuggestions by suggestionPrefs.dismissed.collectAsState()
     var ramNow by remember { mutableStateOf(readRam(appContext)) }
     var ramBaselineMb by remember { mutableStateOf(SettingsStore.getRamBaselineUsedMb(appContext)) }
+    var engineLocalityLimit by remember { mutableStateOf(SettingsStore.getEngineLocalityLimitRaw(appContext)) }
     var state by remember {
         val hfToken = SettingsStore.getHfToken(appContext)
         mutableStateOf(
@@ -70,6 +71,11 @@ fun SettingsScreen() {
                 ramBaselineMb = SettingsStore.getRamBaselineUsedMb(appContext)
             },
             onRefreshRamBaseline = { ramNow = readRam(appContext) },
+            engineLocalityLimit = engineLocalityLimit,
+            onSetEngineLocalityLimit = { limit ->
+                SettingsStore.setEngineLocalityLimit(appContext, limit)
+                engineLocalityLimit = SettingsStore.getEngineLocalityLimitRaw(appContext)
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)

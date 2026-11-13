@@ -33,6 +33,8 @@ fun ConnectedAppsPane(
     modifier: Modifier = Modifier,
     /** D49: when the host runs agents, lets the user grant or withdraw an approved app's agent access; null hides it. */
     onSetAgentAllowed: ((String, Boolean) -> Unit)? = null,
+    /** RFC-0104: set/clear a per-app locality cap (`local_only`, `trusted_cluster`, `any`, or null for no extra cap). */
+    onSetLocalityLimit: ((String, String?) -> Unit)? = null,
     notRunningText: String = "The Engine is not running. Start it from Home to manage app access.",
 ) {
     val pending = approvals.filter { it.status == AppApprovalStatus.PENDING }
@@ -76,6 +78,12 @@ fun ConnectedAppsPane(
         } else {
             items(approved, key = { it.packageName }) { app ->
                 AppCard(app) {
+                    if (onSetLocalityLimit != null) {
+                        OutlinedButton(
+                            onClick = { onSetLocalityLimit(app.packageName, nextLocalityLimit(app.localityLimit)) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Locality: ${localityLimitLabel(app.localityLimit)}", fontSize = 12.sp) }
+                    }
                     if (onSetAgentAllowed != null) {
                         OutlinedButton(
                             onClick = { onSetAgentAllowed(app.packageName, !app.agentAllowed) },
@@ -140,6 +148,13 @@ private fun AppCard(app: AppApprovalRecord, actions: @Composable RowScope.() -> 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
             )
+            Text(
+                "Locality cap: ${localityLimitLabel(app.localityLimit)} · locality refusals: ${app.localityRefusalCount}" +
+                    (app.lastLocalityRefusalAt?.let { " (last ${formatIsoAgo(it)})" } ?: ""),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -162,3 +177,17 @@ internal fun clientVersionsSuffix(app: AppApprovalRecord): String =
     if (app.sdkVersion == null && app.apiVersion == null) ""
     else listOfNotNull(app.sdkVersion?.let { "SDK $it" }, app.apiVersion?.let { "API v$it" })
         .joinToString(separator = " · ", prefix = " · ")
+
+private fun localityLimitLabel(limit: String?): String = when (limit) {
+    "local_only" -> "local only"
+    "trusted_cluster" -> "trusted cluster"
+    "any" -> "any"
+    else -> "engine default"
+}
+
+private fun nextLocalityLimit(current: String?): String? = when (current) {
+    null -> "local_only"
+    "local_only" -> "trusted_cluster"
+    "trusted_cluster" -> "any"
+    else -> null
+}

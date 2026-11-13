@@ -42,6 +42,18 @@ class InMemoryAppApprovalStore : AppApprovalStore {
     override suspend fun setAgentAllowed(packageName: String, allowed: Boolean) =
         set(packageName) { it.copy(agentAllowed = allowed) }
 
+    override suspend fun setLocalityLimit(packageName: String, localityLimit: String?) =
+        set(packageName) { it.copy(localityLimit = localityLimit) }
+
+    override suspend fun recordLocalityRefusal(packageName: String, requiredLocality: String, placement: String) =
+        set(packageName) {
+            it.copy(
+                localityRefusalCount = it.localityRefusalCount + 1,
+                lastLocalityRefusalAt = now(),
+                lastLocalityRefusalCode = "required_$requiredLocality|placement_$placement",
+            )
+        }
+
     override suspend fun recordFirstHandshake(packageName: String, displayName: String): AppApprovalRecord {
         val t = now()
         return AppApprovalRecord(
