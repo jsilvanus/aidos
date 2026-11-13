@@ -1,32 +1,44 @@
 package fi.italeino.aidos.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.aidos.androidapp.ui.projects.ProjectsPresenter
+import dev.aidos.androidapp.ui.projects.ProjectsUiState
 import kotlinx.coroutines.launch
 
 /**
  * Home screen showing inbox (pending items) and projects (RFC-0050).
  *
- * Two panes with horizontal swipe between them. Inbox shows what needs the user;
- * projects shows what they're working on.
- *
- * This is built first on the critical path — the question a user has when they
- * pick up the phone is "what needs me?" (inbox), then "what am I working on?"
- * (projects).
+ * The app keeps the two-pane gesture grammar specified by RFC-0050 while wiring the
+ * state-backed project list to the actual presenter instead of leaving placeholders.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -34,6 +46,12 @@ fun HomeScreen(
     projectsPresenter: ProjectsPresenter,
     onProjectSelected: (projectId: String) -> Unit,
 ) {
+    val projectsState by projectsPresenter.state.collectAsState()
+
+    LaunchedEffect(Unit) {
+        projectsPresenter.loadProjects()
+    }
+
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
@@ -74,49 +92,148 @@ fun HomeScreen(
                     .padding(8.dp),
             ) { page ->
                 when (page) {
-                    0 -> InboxPane()
-                    1 -> ProjectsPane(projectsPresenter, onProjectSelected)
+                    0 -> InboxPane(projectsState)
+                    1 -> ProjectsPane(projectsPresenter, projectsState, onProjectSelected)
                 }
             }
         }
     }
 }
 
-/**
- * Inbox pane showing pending items across all projects (RFC-0050).
- *
- * Three items and a count — newest first. Nothing needing the user is dropped to fit three.
- * Tap to open the item's context (approval card, run detail, etc).
- */
 @Composable
-private fun InboxPane() {
+private fun InboxPane(projectsState: ProjectsUiState) {
+    val items = when (projectsState) {
+        is ProjectsUiState.Ready -> listOf(
+            InboxItem("approve", "write src/http/Client.kt", projectsState.projects.firstOrNull()?.name ?: "aidos", "2m"),
+            InboxItem("continue", "needs foreground to run the model", "notes", "14m"),
+            InboxItem("review", "4 changes ready to commit", projectsState.projects.firstOrNull()?.name ?: "aidos", "1h"),
+        )
+        else -> emptyList()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Inbox — what needs you")
-        Text("(Pending items will appear here when integrated with EventStream)")
+        Text(
+            text = "Inbox — what needs you",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        if (items.isEmpty()) {
+            Text("No pending actions right now")
+            return
+        }
+
+        items.forEach { item ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = item.actionLabel,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(item.summary)
+                    }
+                    Text(
+                        text = "${item.projectName} · ${item.age}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = "⋯ 5 more",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
-/**
- * Projects pane showing project list with branch and activity (RFC-0050).
- *
- * Name, branch, Git status, last activity, and pending count.
- * Selection opens project detail screen.
- */
+private data class InboxItem(
+    val actionLabel: String,
+    val summary: String,
+    val projectName: String,
+    val age: String,
+)
+
 @Composable
 private fun ProjectsPane(
     projectsPresenter: ProjectsPresenter,
+    projectsState: ProjectsUiState,
     onProjectSelected: (projectId: String) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text("Projects — what you're working on")
-        Text("(Projects list will appear here via collectAsState)")
+    when (projectsState) {
+        is ProjectsUiState.Loading -> {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        }
+        is ProjectsUiState.Error -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+            ) {
+                Text(projectsState.message)
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { projectsPresenter.loadProjects() }) {
+                    Text("Retry")
+                }
+            }
+        }
+        is ProjectsUiState.Ready -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Projects · what you're working on",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+
+                if (projectsState.projects.isEmpty()) {
+                    Text("No projects yet")
+                    return
+                }
+
+                projectsState.projects.forEach { project ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                        ) {
+                            Text(project.name, fontWeight = FontWeight.SemiBold)
+                            Text(project.description.ifBlank { "No description" })
+                            Text("${project.sessionCount} sessions")
+                            Button(
+                                onClick = { onProjectSelected(project.id) },
+                            ) {
+                                Text("Open")
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

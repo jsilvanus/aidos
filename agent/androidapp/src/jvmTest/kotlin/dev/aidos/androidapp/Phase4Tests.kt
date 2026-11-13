@@ -148,6 +148,7 @@ class Phase4Tests {
         val card = ApprovalPresenter.toCard(event)
 
         assertEquals(ApprovalKind.ESCALATION, card.kind)
+        assertFalse(card.voiceSafe, "Escalations require eyes on")
         assertNotNull(card.untrustedSourceDescription,
             "Escalation card must name the untrusted source")
     }
@@ -161,6 +162,7 @@ class Phase4Tests {
         val card = ApprovalPresenter.toCard(event)
 
         assertEquals(ApprovalKind.EGRESS, card.kind)
+        assertFalse(card.voiceSafe, "Egress approvals require eyes on")
         assertNotNull(card.providerRetentionStatement,
             "Egress card must state what the provider retains (RFC-0026)")
     }
