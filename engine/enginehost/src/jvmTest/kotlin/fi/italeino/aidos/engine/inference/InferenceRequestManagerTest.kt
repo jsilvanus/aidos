@@ -336,9 +336,9 @@ class InferenceRequestManagerTest {
     fun execute_changedLicenseText_requiresReacceptance() = runTest {
         val licenseStore = InMemoryLicenseAcceptanceStore()
         val runtime = FakeRuntime(CountingAdapter())
-        val modelId = "gpt-model"
-        val modelVersion = "2.0"
-        val oldDigest = "sha256-v1"
+        val modelId = "test-model"
+        val modelVersion = "1.0"
+        val oldDigest = "sha256-abc123"
         val newDigest = "sha256-v2"
 
         // Accept old version

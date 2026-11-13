@@ -1,35 +1,33 @@
 package dev.aidos.daemon
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
 
 /**
  * Tests for CrashHandler (RFC-0037).
  */
 class CrashHandlerTest {
-    
-    @TempDir
+
     lateinit var tempDir: File
     
     private lateinit var driver: SqlDriver
     private lateinit var crashHandler: CrashHandler
 
-    @BeforeEach
+    @BeforeTest
     fun setUp() {
+        tempDir = Files.createTempDirectory("crash-handler-test").toFile()
         val userDb = AidosStorage.openUser(
-            File(tempDir, "user.db"),
+            DesktopPaths.userDb(tempDir.path),
             "0.1.0-alpha",
             { java.time.Instant.now().toString() }
         )
@@ -62,9 +60,10 @@ class CrashHandlerTest {
             sql = "SELECT COUNT(*) FROM crash_records",
             mapper = { cursor ->
                 if (cursor.next().value) count = cursor.getLong(0) ?: 0L
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         assertTrue(count > 0, "Crash record should be written")
     }
@@ -102,9 +101,10 @@ class CrashHandlerTest {
                 if (cursor.next().value) {
                     stackHash = cursor.getString(0) ?: ""
                 }
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         // Note: We need to first write a crash record
         val exception = RuntimeException("Test")
@@ -121,9 +121,10 @@ class CrashHandlerTest {
                 if (cursor.next().value) {
                     stackHash = cursor.getString(0) ?: ""
                 }
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         assertTrue(stackHash.isNotEmpty(), "Stack hash should be computed")
         assertEquals(64, stackHash.length, "SHA-256 hash should be 64 hex chars")
@@ -151,9 +152,10 @@ class CrashHandlerTest {
                     runtimeVersion = cursor.getString(1) ?: ""
                     platformProfile = cursor.getString(2) ?: ""
                 }
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         assertTrue(occurredAt.isNotEmpty(), "occurred_at should be recorded")
         assertEquals("0.1.0-alpha", runtimeVersion)
@@ -168,9 +170,9 @@ class CrashHandlerTest {
             Pair(NullPointerException("NPE"), "runtime.null_pointer"),
         )
 
-        for ((exception, expectedCode) in exceptions) {
+        for ((exception, _) in exceptions) {
             try {
-                crashHandler.uncaughtException(Thread.currentThread(), exception as Throwable)
+                crashHandler.uncaughtException(Thread.currentThread(), exception)
             } catch (e: Exception) {
                 // Expected
             }
@@ -184,9 +186,10 @@ class CrashHandlerTest {
                 while (cursor.next().value) {
                     errorCodes.add(cursor.getString(0))
                 }
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         assertTrue(errorCodes.isNotEmpty(), "Error codes should be captured")
     }
@@ -208,9 +211,10 @@ class CrashHandlerTest {
                 if (cursor.next().value) {
                     inflightRunIds = cursor.getString(0) ?: "[]"
                 }
+                QueryResult.Value(Unit)
             },
             parameters = 0,
-        ) { }
+        )
 
         // Should be valid JSON array (at least "[]")
         assertTrue(inflightRunIds.startsWith("["), "in_flight_run_ids should be JSON array")

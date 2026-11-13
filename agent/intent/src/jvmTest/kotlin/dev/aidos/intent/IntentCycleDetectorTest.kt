@@ -1,8 +1,7 @@
 package dev.aidos.intent
 
-import app.cash.sqldelight.sqlite.driver.JdbcSqliteDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.aidos.broker.AuditLog
-import dev.aidos.identity.DeviceIdentity
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
 import org.junit.Test
@@ -14,42 +13,45 @@ class IntentCycleDetectorTest {
 
     private fun setupDb(init: String = ""): Pair<JdbcSqliteDriver, IntentCycleDetector> {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-
-        // Create schema
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE projects (id TEXT PRIMARY KEY);
-                CREATE TABLE audit_log (
-                    id TEXT PRIMARY KEY, project_id TEXT, sequence INTEGER,
-                    occurred_at TEXT, kind TEXT, actor_kind TEXT, actor_id TEXT,
-                    device_id TEXT, subject_ref TEXT, capability_id TEXT, detail_json TEXT
-                );
-                CREATE TABLE intent_nodes (
-                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
-                    title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 100,
-                    lifecycle TEXT DEFAULT 'ACTIVE', parent_id TEXT,
-                    asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
-                    assertion_note TEXT, check_kind TEXT, check_spec TEXT,
-                    verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
-                    verified_at TEXT, created_at TEXT, created_by_kind TEXT, created_by_id TEXT,
-                    modified_at TEXT, modified_by_kind TEXT, modified_by_id TEXT, tags TEXT,
-                    row_version INTEGER,
-                    FOREIGN KEY (project_id) REFERENCES projects(id),
-                    FOREIGN KEY (parent_id) REFERENCES intent_nodes(id),
-                    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
-                );
-                CREATE TABLE intent_edges (
-                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT,
-                    to_node_id TEXT, edge_kind TEXT NOT NULL, created_at TEXT,
-                    FOREIGN KEY (project_id) REFERENCES projects(id),
-                    FOREIGN KEY (from_node_id) REFERENCES intent_nodes(id),
-                    FOREIGN KEY (to_node_id) REFERENCES intent_nodes(id)
-                );
-                INSERT INTO projects VALUES ('proj1');
-            """,
-            parameters = 0,
-        ) {}
+        val statements = listOf(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY)",
+            """
+            CREATE TABLE audit_log (
+                id TEXT PRIMARY KEY, project_id TEXT, sequence INTEGER,
+                occurred_at TEXT, kind TEXT, actor_kind TEXT, actor_id TEXT,
+                device_id TEXT, subject_ref TEXT, capability_id TEXT, detail_json TEXT
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE intent_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
+                title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 100,
+                lifecycle TEXT DEFAULT 'ACTIVE', parent_id TEXT,
+                asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
+                assertion_note TEXT, check_kind TEXT, check_spec TEXT,
+                verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
+                verified_at TEXT, created_at TEXT, created_by_kind TEXT, created_by_id TEXT,
+                modified_at TEXT, modified_by_kind TEXT, modified_by_id TEXT, tags TEXT,
+                row_version INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id),
+                FOREIGN KEY (parent_id) REFERENCES intent_nodes(id),
+                CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE intent_edges (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT,
+                to_node_id TEXT, edge_kind TEXT NOT NULL, created_at TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id),
+                FOREIGN KEY (from_node_id) REFERENCES intent_nodes(id),
+                FOREIGN KEY (to_node_id) REFERENCES intent_nodes(id)
+            )
+            """.trimIndent(),
+            "INSERT INTO projects VALUES ('proj1')",
+        )
+        statements.forEach { statement ->
+            driver.execute(identifier = null, sql = statement, parameters = 0) {}
+        }
 
         // Execute init if provided
         if (init.isNotEmpty()) {

@@ -1,6 +1,7 @@
 package dev.aidos.executor
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.kernel.Budget
 import dev.aidos.kernel.BudgetLedger
 import dev.aidos.kernel.BudgetScope
@@ -104,41 +105,45 @@ class SqlBudgetLedger(
         var result: Budget? = null
 
         driver.executeQuery(
-            null,
-            """
+            identifier = null,
+            sql = """
             SELECT model_calls, input_tokens, output_tokens, cost_units, steps, tool_invocations, limit_json
             FROM budget_ledger
             WHERE scope = ? AND scope_id = ?
             LIMIT 1
             """,
-            2
-        ) { cursor ->
-            if (cursor.next().value) {
-                val consumed = Budget(
-                    modelCalls = cursor.getLong(0)?.toInt(),
-                    inputTokens = cursor.getLong(1),
-                    outputTokens = cursor.getLong(2),
-                    costUnits = cursor.getLong(3),
-                    steps = cursor.getLong(4)?.toInt(),
-                    toolInvocations = cursor.getLong(5)?.toInt(),
-                    wallClockSeconds = null
-                )
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    val consumed = Budget(
+                        modelCalls = cursor.getLong(0)?.toInt(),
+                        inputTokens = cursor.getLong(1),
+                        outputTokens = cursor.getLong(2),
+                        costUnits = cursor.getLong(3),
+                        steps = cursor.getLong(4)?.toInt(),
+                        toolInvocations = cursor.getLong(5)?.toInt(),
+                        wallClockSeconds = null,
+                    )
 
-                val limitJson = cursor.getString(6)
-                val limits = if (limitJson != null) {
-                    Json.decodeFromString<Budget>(limitJson)
+                    val limitJson = cursor.getString(6)
+                    val limits = if (limitJson != null) {
+                        Json.decodeFromString<Budget>(limitJson)
+                    } else {
+                        null
+                    }
+
+                    result = calculateRemaining(limits, consumed)
                 } else {
-                    null
+                    // No ledger entry yet — unlimited
+                    result = null
                 }
-
-                result = calculateRemaining(limits, consumed)
-            } else {
-                // No ledger entry yet — unlimited
-                result = null
-            }
-            bindString(0, scope.name)
-            bindString(1, scopeId)
-        }
+                QueryResult.Value(Unit)
+            },
+            parameters = 2,
+            binders = {
+                bindString(0, scope.name)
+                bindString(1, scopeId)
+            },
+        )
 
         return result
     }
@@ -167,14 +172,26 @@ class SqlBudgetLedger(
 
     private fun canAfford(remaining: Budget?, estimate: Budget): Boolean {
         if (remaining == null) return true
+        val remainingModelCalls = remaining.modelCalls
+        val remainingInputTokens = remaining.inputTokens
+        val remainingOutputTokens = remaining.outputTokens
+        val remainingCostUnits = remaining.costUnits
+        val remainingSteps = remaining.steps
+        val remainingToolInvocations = remaining.toolInvocations
+        val estimateModelCalls = estimate.modelCalls
+        val estimateInputTokens = estimate.inputTokens
+        val estimateOutputTokens = estimate.outputTokens
+        val estimateCostUnits = estimate.costUnits
+        val estimateSteps = estimate.steps
+        val estimateToolInvocations = estimate.toolInvocations
 
         // Check each dimension; any null means unlimited
-        if (estimate.modelCalls != null && remaining.modelCalls != null && estimate.modelCalls > remaining.modelCalls) return false
-        if (estimate.inputTokens != null && remaining.inputTokens != null && estimate.inputTokens > remaining.inputTokens) return false
-        if (estimate.outputTokens != null && remaining.outputTokens != null && estimate.outputTokens > remaining.outputTokens) return false
-        if (estimate.costUnits != null && remaining.costUnits != null && estimate.costUnits > remaining.costUnits) return false
-        if (estimate.steps != null && remaining.steps != null && estimate.steps > remaining.steps) return false
-        if (estimate.toolInvocations != null && remaining.toolInvocations != null && estimate.toolInvocations > remaining.toolInvocations) return false
+        if (estimateModelCalls != null && remainingModelCalls != null && estimateModelCalls > remainingModelCalls) return false
+        if (estimateInputTokens != null && remainingInputTokens != null && estimateInputTokens > remainingInputTokens) return false
+        if (estimateOutputTokens != null && remainingOutputTokens != null && estimateOutputTokens > remainingOutputTokens) return false
+        if (estimateCostUnits != null && remainingCostUnits != null && estimateCostUnits > remainingCostUnits) return false
+        if (estimateSteps != null && remainingSteps != null && estimateSteps > remainingSteps) return false
+        if (estimateToolInvocations != null && remainingToolInvocations != null && estimateToolInvocations > remainingToolInvocations) return false
 
         return true
     }

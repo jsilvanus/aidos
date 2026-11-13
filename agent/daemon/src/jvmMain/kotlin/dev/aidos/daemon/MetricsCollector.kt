@@ -1,14 +1,11 @@
 package dev.aidos.daemon
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.identity.UuidV7Generator
 import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlin.math.sqrt
 
 /**
  * Aggregates metrics to metric_samples table (RFC-0037).
@@ -52,6 +49,7 @@ class MetricsCollector(
     private fun collectRunOutcomes(bucket: String) {
         try {
             // Query run outcomes grouped by state and error class
+            val results = mutableListOf<Tuple4<String, String, Long, String?>>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -64,7 +62,6 @@ class MetricsCollector(
                     GROUP BY runs.project_id, runs.state, runs.error_code
                 """,
                 mapper = { cursor ->
-                    val results = mutableListOf<Tuple4<String, String, Long, String?>>()
                     while (cursor.next().value) {
                         val state = cursor.getString(0) ?: "unknown"
                         val errorCode = cursor.getString(1) ?: "none"
@@ -72,10 +69,12 @@ class MetricsCollector(
                         val projectId = cursor.getString(3)
                         results.add(Tuple4(state, errorCode, count, projectId))
                     }
-                    results
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { (state, errorCode, count, projectId) ->
+                binders = null,
+            )
+            results.forEach { (state, errorCode, count, projectId) ->
                 writeSample(
                     name = "run.outcomes",
                     value = count.toDouble(),
@@ -93,6 +92,7 @@ class MetricsCollector(
     private fun collectStepDuration(bucket: String) {
         try {
             // Query task durations (started_at to ended_at)
+            val result = mutableListOf<Tuple4<Double, Double, Double, Long>>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -105,7 +105,6 @@ class MetricsCollector(
                     WHERE tasks.started_at IS NOT NULL AND tasks.ended_at IS NOT NULL
                 """,
                 mapper = { cursor ->
-                    val result = mutableListOf<Tuple4<Double, Double, Double, Long>>()
                     if (cursor.next().value) {
                         val avg = cursor.getDouble(0) ?: 0.0
                         val min = cursor.getDouble(1) ?: 0.0
@@ -113,10 +112,12 @@ class MetricsCollector(
                         val count = cursor.getLong(3) ?: 0L
                         result.add(Tuple4(avg, min, max, count))
                     }
-                    result
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { (avg, min, max, count) ->
+                binders = null,
+            )
+            result.forEach { (avg, min, max, _) ->
                 writeSample("step.duration.avg", avg, "ms", null, mapOf(), bucket)
                 writeSample("step.duration.min", min, "ms", null, mapOf(), bucket)
                 writeSample("step.duration.max", max, "ms", null, mapOf(), bucket)
@@ -129,6 +130,7 @@ class MetricsCollector(
     private fun collectModelLoadTime(bucket: String) {
         try {
             // Query audit_log for ModelLoaded events
+            val results = mutableListOf<Tuple3<Double, String, Long>>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -141,17 +143,18 @@ class MetricsCollector(
                     GROUP BY json_extract(detail_json, '$.model_id')
                 """,
                 mapper = { cursor ->
-                    val results = mutableListOf<Tuple3<Double, String, Long>>()
                     while (cursor.next().value) {
                         val duration = cursor.getDouble(0) ?: 0.0
                         val modelId = cursor.getString(1) ?: "unknown"
                         val count = cursor.getLong(2) ?: 0L
                         results.add(Tuple3(duration, modelId, count))
                     }
-                    results
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { (duration, modelId, count) ->
+                binders = null,
+            )
+            results.forEach { (duration, modelId, _) ->
                 writeSample("model.load_time", duration, "ms", null, mapOf("model_id" to modelId), bucket)
             }
         } catch (e: Exception) {
@@ -162,6 +165,7 @@ class MetricsCollector(
     private fun collectStoragePerProject(bucket: String) {
         try {
             // Query total storage per project using blob_refs
+            val results = mutableListOf<Long>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -170,15 +174,16 @@ class MetricsCollector(
                     FROM blob_refs
                 """,
                 mapper = { cursor ->
-                    val results = mutableListOf<Long>()
                     if (cursor.next().value) {
                         val size = cursor.getLong(0) ?: 0L
                         results.add(size)
                     }
-                    results
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { size ->
+                binders = null,
+            )
+            results.forEach { size ->
                 writeSample("storage.total", size.toDouble(), "bytes", null, mapOf(), bucket)
             }
         } catch (e: Exception) {
@@ -189,6 +194,7 @@ class MetricsCollector(
     private fun collectTokensAndCost(bucket: String) {
         try {
             // Query tokens and cost by model
+            val results = mutableListOf<Tuple3<String, Long, Long>>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -201,17 +207,18 @@ class MetricsCollector(
                     GROUP BY attempts.model_provider
                 """,
                 mapper = { cursor ->
-                    val results = mutableListOf<Tuple3<String, Long, Long>>()
                     while (cursor.next().value) {
                         val model = cursor.getString(0) ?: "unknown"
                         val tokens = cursor.getLong(1) ?: 0L
                         val cost = cursor.getLong(2) ?: 0L
                         results.add(Tuple3(model, tokens, cost))
                     }
-                    results
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { (model, tokens, cost) ->
+                binders = null,
+            )
+            results.forEach { (model, tokens, cost) ->
                 writeSample("tokens.used", tokens.toDouble(), "tokens", null, 
                     mapOf("model" to model), bucket)
                 writeSample("cost.units", cost.toDouble(), "cost_units", null, 
@@ -225,6 +232,7 @@ class MetricsCollector(
     private fun collectCallRatio(bucket: String) {
         try {
             // Query local vs remote call ratio from tool_calls
+            val result = mutableListOf<Long>()
             driver.executeQuery(
                 identifier = null,
                 sql = """
@@ -232,14 +240,15 @@ class MetricsCollector(
                     FROM tool_calls
                 """,
                 mapper = { cursor ->
-                    val result = mutableListOf<Long>()
                     if (cursor.next().value) {
                         result.add(cursor.getLong(0) ?: 0L)
                     }
-                    result
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }.forEach { totalCalls ->
+                binders = null,
+            )
+            result.forEach { totalCalls ->
                 if (totalCalls > 0) {
                     // For now, report total calls; a more sophisticated metric would
                     // distinguish local vs remote based on tool_name patterns
@@ -275,7 +284,7 @@ class MetricsCollector(
                 """,
                 parameters = 7,
             ) {
-                bindString(0, idGenerator.generate())
+                bindString(0, idGenerator.next())
                 bindString(1, projectId)
                 bindString(2, name)
                 bindDouble(3, value)

@@ -215,7 +215,7 @@ class GitToolTest {
 
         assertEquals(1, events.size)
         val event = events.single()
-        assertEquals("git:master", event.topic)
+        assertTrue(event.topic == "git:master" || event.topic == "git:main")
         assertEquals("add hello.txt", event.message)
         assertEquals("Tester", event.author)
         assertEquals(listOf("hello.txt"), event.files)

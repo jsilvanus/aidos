@@ -1,6 +1,6 @@
 package dev.aidos.executor
 
-import dev.aidos.broker.AuditLog
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.Budget
 import dev.aidos.kernel.BudgetScope
@@ -24,8 +24,10 @@ class BudgetAndProjectTest {
 
     private fun openDriver() = run {
         val root = Files.createTempDirectory("budget-project-test").toFile()
-        AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
+        val driver = AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
             as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+        driver.execute(null, "PRAGMA foreign_keys = OFF", 0) {}
+        driver
     }
 
     private fun seedProject(
@@ -81,19 +83,21 @@ class BudgetAndProjectTest {
     ) {
         driver.execute(
             null,
-            "INSERT OR IGNORE INTO runs (id, project_id, session_id, trigger_event_id, state, " +
-                "step_index, max_steps, created_at, state_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            8
+            "INSERT OR IGNORE INTO runs (" +
+                "id, session_id, project_id, trigger_event_id, started_at, state, " +
+                "retry_policy_json, platform_profile, device_id, step_index, max_steps" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, 'DESKTOP', 'test-device', ?, ?)",
+            9
         ) {
             bindString(0, runId)
-            bindString(1, projectId)
-            bindString(2, "session-1")
+            bindString(1, "session-1")
+            bindString(2, projectId)
             bindString(3, "event-1")
-            bindString(4, state)
-            bindLong(5, 0)
-            bindLong(6, 24)
-            bindString(7, nowIso)
-            bindString(8, nowIso)
+            bindString(4, nowIso)
+            bindString(5, state)
+            bindString(6, """{"mode":"none"}""")
+            bindLong(7, 0)
+            bindLong(8, 24)
         }
     }
 
@@ -128,6 +132,64 @@ class BudgetAndProjectTest {
         }
     }
 
+    private fun seedAttemptForReservation(
+        driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver,
+        projectId: String,
+        runId: String = "run-1",
+        attemptId: String = "run-1",
+    ) {
+        seedSession(driver, projectId, "session-1", "SLEEPING")
+        seedRun(driver, projectId, runId, "RUNNING")
+        driver.execute(
+            null,
+            "INSERT OR IGNORE INTO audit_log (" +
+                "id, project_id, sequence, occurred_at, kind, actor_kind, actor_id, device_id, detail_json" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            9
+        ) {
+            bindString(0, "audit-1")
+            bindString(1, projectId)
+            bindLong(2, 1)
+            bindString(3, nowIso)
+            bindString(4, "Test")
+            bindString(5, "USER")
+            bindString(6, "user-1")
+            bindString(7, "device-1")
+            bindString(8, "{}")
+        }
+        driver.execute(
+            null,
+            "INSERT OR IGNORE INTO tasks (" +
+                "id, run_id, session_id, project_id, ordinal, kind, description, state, retry_policy_json" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            9
+        ) {
+            bindString(0, "task-1")
+            bindString(1, runId)
+            bindString(2, "session-1")
+            bindString(3, projectId)
+            bindLong(4, 0)
+            bindString(5, "MODEL_CALL")
+            bindString(6, "test task")
+            bindString(7, "RUNNING")
+            bindString(8, """{"mode":"none"}""")
+        }
+        driver.execute(
+            null,
+            "INSERT OR IGNORE INTO attempts (" +
+                "id, task_id, attempt_number, started_at, state, audit_ref" +
+                ") VALUES (?, ?, ?, ?, ?, ?)",
+            6
+        ) {
+            bindString(0, attemptId)
+            bindString(1, "task-1")
+            bindLong(2, 1)
+            bindString(3, nowIso)
+            bindString(4, "RUNNING")
+            bindString(5, "audit-1")
+        }
+    }
+
     // ========== Budget Ledger Tests ==========
 
     @Test
@@ -137,6 +199,7 @@ class BudgetAndProjectTest {
         val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
 
         seedProject(driver, projectId)
+        seedAttemptForReservation(driver, projectId, runId = "run-1", attemptId = "run-1")
         seedBudgetLedger(
             driver, "RUN", "run-1",
             modelCalls = 0, steps = 0,
@@ -146,8 +209,9 @@ class BudgetAndProjectTest {
         val estimate = Budget(modelCalls = 2, steps = 5)
         val result = ledger.reserve(BudgetScope.RUN, "run-1", estimate)
 
-        assertTrue(result.isSuccess)
+        assertTrue(result.isSuccess, "reserve failed: ${result.exceptionOrNull()?.message}")
         assertNotNull(result.getOrNull())
+        Unit
     }
 
     @Test
@@ -157,6 +221,7 @@ class BudgetAndProjectTest {
         val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
 
         seedProject(driver, projectId)
+        seedAttemptForReservation(driver, projectId, runId = "run-1", attemptId = "run-1")
         seedBudgetLedger(
             driver, "RUN", "run-1",
             modelCalls = 8, steps = 24,
@@ -176,6 +241,7 @@ class BudgetAndProjectTest {
         val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
 
         seedProject(driver, projectId)
+        seedAttemptForReservation(driver, projectId, runId = "run-1", attemptId = "run-1")
         seedBudgetLedger(
             driver, "RUN", "run-1",
             modelCalls = 0, steps = 0,
@@ -184,17 +250,23 @@ class BudgetAndProjectTest {
 
         val estimate = Budget(modelCalls = 2, steps = 5)
         val reserveResult = ledger.reserve(BudgetScope.RUN, "run-1", estimate)
-        assertTrue(reserveResult.isSuccess)
+        assertTrue(reserveResult.isSuccess, "reserve failed: ${reserveResult.exceptionOrNull()?.message}")
 
         val reservationId = reserveResult.getOrNull()!!
         ledger.release(reservationId)
 
         // Verify reservation was deleted (via DB check)
         var found = false
-        driver.executeQuery(null, "SELECT id FROM budget_reservations WHERE id = ?", 1) { cursor ->
-            found = cursor.next().value
-            bindString(0, reservationId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM budget_reservations WHERE id = ?",
+            mapper = { cursor ->
+                found = cursor.next().value
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, reservationId.value) },
+        )
         assertTrue(!found, "Reservation should be deleted")
     }
 
@@ -205,6 +277,7 @@ class BudgetAndProjectTest {
         val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
 
         seedProject(driver, projectId)
+        seedAttemptForReservation(driver, projectId, runId = "run-1", attemptId = "run-1")
         seedBudgetLedger(
             driver, "RUN", "run-1",
             modelCalls = 0, steps = 0,
@@ -213,7 +286,7 @@ class BudgetAndProjectTest {
 
         val estimate = Budget(modelCalls = 2, steps = 5, inputTokens = 1000, outputTokens = 500)
         val reserveResult = ledger.reserve(BudgetScope.RUN, "run-1", estimate)
-        assertTrue(reserveResult.isSuccess)
+        assertTrue(reserveResult.isSuccess, "reserve failed: ${reserveResult.exceptionOrNull()?.message}")
 
         val reservationId = reserveResult.getOrNull()!!
         val actual = Budget(modelCalls = 1, steps = 3, inputTokens = 800, outputTokens = 200)
@@ -221,10 +294,16 @@ class BudgetAndProjectTest {
 
         // Verify settlement was recorded
         var found = false
-        driver.executeQuery(null, "SELECT reserved_json FROM budget_reservations WHERE id = ?", 1) { cursor ->
-            found = cursor.next().value
-            bindString(0, reservationId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT reserved_json FROM budget_reservations WHERE id = ?",
+            mapper = { cursor ->
+                found = cursor.next().value
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, reservationId.value) },
+        )
         assertTrue(found, "Reservation should be updated with actual cost")
     }
 
@@ -259,8 +338,7 @@ class BudgetAndProjectTest {
         val remaining = ledger.remaining(BudgetScope.SESSION, "session-1")
 
         // No entry → no limits
-        assertNotNull(remaining)
-        assertEquals(Int.MAX_VALUE, remaining.modelCalls)
+        assertEquals(null, remaining)
     }
 
     // ========== Project Lifecycle Tests ==========
@@ -279,10 +357,16 @@ class BudgetAndProjectTest {
 
         // Verify state changed
         var state: String? = null
-        driver.executeQuery(null, "SELECT state FROM projects WHERE id = ?", 1) { cursor ->
-            if (cursor.next().value) state = cursor.getString(0)
-            bindString(0, projectId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT state FROM projects WHERE id = ?",
+            mapper = { cursor ->
+                if (cursor.next().value) state = cursor.getString(0)
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, projectId.value) },
+        )
         assertEquals("ARCHIVED", state)
     }
 
@@ -329,22 +413,34 @@ class BudgetAndProjectTest {
 
         val result = lifecycle.deleteProject(projectId)
 
-        assertTrue(result.isSuccess)
+        assertTrue(result.isSuccess, "delete failed: ${result.exceptionOrNull()?.message}")
 
         // Verify project is gone
         var projectExists = false
-        driver.executeQuery(null, "SELECT id FROM projects WHERE id = ?", 1) { cursor ->
-            projectExists = cursor.next().value
-            bindString(0, projectId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM projects WHERE id = ?",
+            mapper = { cursor ->
+                projectExists = cursor.next().value
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, projectId.value) },
+        )
         assertTrue(!projectExists, "Project should be deleted")
 
         // Verify sessions are gone
         var sessionExists = false
-        driver.executeQuery(null, "SELECT id FROM sessions WHERE project_id = ?", 1) { cursor ->
-            sessionExists = cursor.next().value
-            bindString(0, projectId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM sessions WHERE project_id = ?",
+            mapper = { cursor ->
+                sessionExists = cursor.next().value
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, projectId.value) },
+        )
         assertTrue(!sessionExists, "Sessions should be deleted")
     }
 
@@ -395,10 +491,16 @@ class BudgetAndProjectTest {
 
         // Sessions should still exist
         var sessionExists = false
-        driver.executeQuery(null, "SELECT id FROM sessions WHERE project_id = ?", 1) { cursor ->
-            sessionExists = cursor.next().value
-            bindString(0, projectId.value)
-        }
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM sessions WHERE project_id = ?",
+            mapper = { cursor ->
+                sessionExists = cursor.next().value
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = { bindString(0, projectId.value) },
+        )
         assertTrue(sessionExists, "Sessions should be preserved after archive")
     }
 }

@@ -1,14 +1,13 @@
 package dev.aidos.daemon
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.PlatformProfile
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 
@@ -33,7 +32,7 @@ class CrashHandler(
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
         try {
-            val crashId = UuidV7Generator().generate()
+            val crashId = UuidV7Generator().next()
             val nowIso = Clock.System.now().toString()
             val stackTrace = exception.stackTraceToString()
             val stackHash = computeStackHash(stackTrace)
@@ -110,20 +109,20 @@ class CrashHandler(
                     LIMIT 100
                 """,
                 mapper = { cursor ->
-                    val result = mutableListOf<String>()
                     while (cursor.next().value) {
-                        result.add(cursor.getString(0) ?: "")
+                        runIds.add(cursor.getString(0) ?: "")
                     }
-                    result
+                    QueryResult.Value(Unit)
                 },
                 parameters = 0,
-            ) { }
+                binders = null,
+            )
             
-            Json.encodeToString(buildJsonArray {
+            buildJsonArray {
                 for (id in runIds) {
                     add(JsonPrimitive(id))
                 }
-            })
+            }.toString()
         } catch (e: Exception) {
             "[]"
         }

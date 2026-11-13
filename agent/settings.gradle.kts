@@ -10,7 +10,10 @@ dependencyResolutionManagement {
     repositories {
         // The MCP Binder library, until it is published (kotlin-mcp-android-binder: publishToMavenLocal).
         mavenLocal {
-            content { includeGroup("fi.italeino.mcp") }
+            content {
+                includeGroup("fi.italeino.mcp")
+                includeGroup("io.github.jsilvanus")
+            }
         }
         mavenCentral()
         // AGP dependencies (e.g. lint, core-ktx) come from Google Maven.

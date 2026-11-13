@@ -103,8 +103,8 @@ class MetricsCollector(
         }
         recordMetric("model.inference.latency_ms", inferenceLatencyMs.toDouble(), "ms", labels)
         recordMetric("model.inference.total_ms", totalLatencyMs.toDouble(), "ms", labels)
-        recordMetric("model.tokens.generated", tokensGenerated.toDouble(), "tokens", labels)
-        recordMetric("model.memory.peak_mb", peakMemoryMb.toDouble(), "mb", labels)
+        recordMetric("model.inference.tokens_generated", tokensGenerated.toDouble(), "tokens", labels)
+        recordMetric("model.inference.peak_memory_mb", peakMemoryMb.toDouble(), "mb", labels)
     }
 
     /**
@@ -121,7 +121,7 @@ class MetricsCollector(
     ) {
         val labels = buildLabels { put("model_id", modelId) }
         recordMetric("model.load.time_ms", loadTimeMs.toDouble(), "ms", labels)
-        recordMetric("model.size.bytes", sizeBytes.toDouble(), "bytes", labels)
+        recordMetric("model.load.size_bytes", sizeBytes.toDouble(), "bytes", labels)
     }
 
     /**

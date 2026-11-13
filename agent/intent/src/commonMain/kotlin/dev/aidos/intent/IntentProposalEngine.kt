@@ -1,6 +1,7 @@
 package dev.aidos.intent
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.ActorKind
@@ -87,7 +88,9 @@ class IntentProposalEngine(
     private val nowIso: () -> String,
 ) {
 
-    private val json = Json
+    private val json = Json {
+        classDiscriminator = "_kind"
+    }
 
     /**
      * Proposes a batch of intent modifications.
@@ -116,49 +119,29 @@ class IntentProposalEngine(
                     // Node existence: id must be unique (checked at insert time)
                     // Parent exists check (if parent is specified)
                     if (op.parentId != null && !nodeExists(op.parentId, projectId)) {
-                        throw AidosError(
-                            "intent.invalid_parent",
-                            ErrorClass.INVALID,
-                            "Parent node ${op.parentId} does not exist",
-                        )
+                        throw IllegalArgumentException("intent.invalid_parent: Parent node ${op.parentId} does not exist")
                     }
                 }
 
                 is IntentOperation.ModifyNode -> {
                     // Node must exist
                     if (!nodeExists(op.id, projectId)) {
-                        throw AidosError(
-                            "intent.node_not_found",
-                            ErrorClass.NOT_FOUND,
-                            "Node ${op.id} does not exist",
-                        )
+                        throw NoSuchElementException("intent.node_not_found: Node ${op.id} does not exist")
                     }
                 }
 
                 is IntentOperation.AddDependency -> {
                     // Both nodes must exist
                     if (!nodeExists(op.fromNodeId, projectId)) {
-                        throw AidosError(
-                            "intent.node_not_found",
-                            ErrorClass.NOT_FOUND,
-                            "Node ${op.fromNodeId} does not exist",
-                        )
+                        throw NoSuchElementException("intent.node_not_found: Node ${op.fromNodeId} does not exist")
                     }
                     if (!nodeExists(op.toNodeId, projectId)) {
-                        throw AidosError(
-                            "intent.node_not_found",
-                            ErrorClass.NOT_FOUND,
-                            "Node ${op.toNodeId} does not exist",
-                        )
+                        throw NoSuchElementException("intent.node_not_found: Node ${op.toNodeId} does not exist")
                     }
 
                     // No self-dependencies
                     if (op.fromNodeId == op.toNodeId) {
-                        throw AidosError(
-                            "intent.self_dependency",
-                            ErrorClass.INVALID,
-                            "A node cannot depend on itself",
-                        )
+                        throw IllegalArgumentException("intent.self_dependency: A node cannot depend on itself")
                     }
 
                     // Check for cycles
@@ -169,18 +152,14 @@ class IntentProposalEngine(
                         actor,
                     )
                     if (cycleError != null) {
-                        throw cycleError
+                        throw IllegalArgumentException("${cycleError.code}: ${cycleError.message}")
                     }
                 }
 
                 is IntentOperation.ArchiveNode -> {
                     // Node must exist
                     if (!nodeExists(op.id, projectId)) {
-                        throw AidosError(
-                            "intent.node_not_found",
-                            ErrorClass.NOT_FOUND,
-                            "Node ${op.id} does not exist",
-                        )
+                        throw NoSuchElementException("intent.node_not_found: Node ${op.id} does not exist")
                     }
                 }
             }
@@ -243,9 +222,10 @@ class IntentProposalEngine(
             parameters = 2,
             binders = { bindString(0, nodeId); bindString(1, projectId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    exists = resultSet.getLong(0) > 0
+                if (resultSet.next().value) {
+                    exists = (resultSet.getLong(0) ?: 0L) > 0
                 }
+                QueryResult.Value(Unit)
             },
         )
         return exists

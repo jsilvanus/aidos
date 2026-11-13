@@ -61,7 +61,8 @@ class InMemoryLicenseAcceptanceStore : LicenseAcceptanceStore {
     }
 
     override suspend fun listAllAcceptances(): List<LicenseAcceptanceRecord> {
-        return records.values.sortedByDescending { it.acceptedAt }
+        return records.values
+            .sortedWith(compareByDescending<LicenseAcceptanceRecord> { it.acceptedAt }.thenByDescending { it.modelId })
     }
 
     override fun watchAcceptances(): Flow<List<LicenseAcceptanceRecord>> {

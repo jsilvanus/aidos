@@ -1,23 +1,17 @@
 package dev.aidos.daemon
 
-import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.vault.Redactor
 import dev.aidos.vault.RedactionBoundary
 import java.io.File
 import java.io.FileWriter
 import java.nio.file.Files
-import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.datetime.Clock
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -48,7 +42,7 @@ class StructuredLogger(
 ) {
     enum class Level { ERROR, WARN, INFO, DEBUG, TRACE }
 
-    private data class LogRecord(
+    data class LogRecord(
         val timestamp: String,
         val level: Level,
         val key: String,
@@ -65,8 +59,6 @@ class StructuredLogger(
     
     // Level configuration
     private val enabledLevels = mutableSetOf<Level>(Level.ERROR, Level.WARN, Level.INFO)
-    private val traceFile = Paths.get(homeDir, ".aidos", "logs", "diagnostic-trace.log")
-
     init {
         Files.createDirectories(logsDir)
         if (platformProfile == PlatformProfile.DESKTOP) {

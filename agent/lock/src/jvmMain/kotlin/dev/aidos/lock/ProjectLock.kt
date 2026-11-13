@@ -29,6 +29,8 @@ class ProjectLock private constructor(
     val acquiredAt: String,
 ) {
     companion object {
+        private val inProcessHolders = mutableMapOf<String, String>()
+
         /** File path within a project root (RFC-0055). */
         const val LOCK_FILE_REL = ".aidos/instance.lock"
 
@@ -60,10 +62,11 @@ class ProjectLock private constructor(
                 channel.tryLock()
             } catch (_: java.nio.channels.OverlappingFileLockException) {
                 // Same JVM process holds the lock (e.g. in tests). Treat as AlreadyHeld.
+                val meta = readMeta(raf)
+                val holder = inProcessHolders[lockKey(lockFile)]
                 raf.close()
-                val meta = readMeta(lockFile)
                 return AcquireResult.AlreadyHeld(
-                    instanceId = meta["instance_id"] ?: "unknown",
+                    instanceId = meta["instance_id"] ?: holder ?: "unknown",
                     acquiredAt = meta["acquired_at"] ?: "unknown",
                     heartbeatAt = meta["heartbeat_at"] ?: "unknown",
                 )
@@ -71,8 +74,8 @@ class ProjectLock private constructor(
 
             if (fileLock == null) {
                 // OS lock held by another process.
+                val meta = readMeta(raf)
                 raf.close()
-                val meta = readMeta(lockFile)
                 return AcquireResult.AlreadyHeld(
                     instanceId = meta["instance_id"] ?: "unknown",
                     acquiredAt = meta["acquired_at"] ?: "unknown",
@@ -82,13 +85,14 @@ class ProjectLock private constructor(
 
             // We hold the OS lock. Check if the file has stale content from a prior owner
             // that lost the OS lock without cleanup (e.g. network FS).
-            val meta = readMeta(lockFile)
+            val meta = readMeta(raf)
             val heartbeatAt = meta["heartbeat_at"]
             if (heartbeatAt != null && isStale(heartbeatAt, nowIso())) {
                 // Stale — we have the OS lock, so we can just overwrite.
                 // Return StaleBreakable so the caller gets a log record.
                 val prevId = meta["instance_id"] ?: "unknown"
                 writeMeta(raf, instanceId, nowIso())
+                inProcessHolders[lockKey(lockFile)] = instanceId
                 return AcquireResult.StaleBreakable(
                     lock = ProjectLock(lockFile, raf, fileLock, instanceId, nowIso()),
                     previousInstanceId = prevId,
@@ -97,6 +101,7 @@ class ProjectLock private constructor(
             }
 
             writeMeta(raf, instanceId, nowIso())
+            inProcessHolders[lockKey(lockFile)] = instanceId
             return AcquireResult.Acquired(
                 ProjectLock(lockFile, raf, fileLock, instanceId, nowIso())
             )
@@ -106,7 +111,15 @@ class ProjectLock private constructor(
         fun readMeta(lockFile: File): Map<String, String> {
             if (!lockFile.exists()) return emptyMap()
             return try {
-                lockFile.readLines()
+                RandomAccessFile(lockFile, "r").use { raf -> readMeta(raf) }
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+
+        private fun readMeta(raf: RandomAccessFile): Map<String, String> {
+            return try {
+                raf.readLines()
                     .filter { it.contains('=') }
                     .associate { line ->
                         val idx = line.indexOf('=')
@@ -139,6 +152,8 @@ class ProjectLock private constructor(
                 true // Unparseable heartbeat → treat as stale
             }
         }
+
+        private fun lockKey(lockFile: File): String = lockFile.absoluteFile.normalize().path
     }
 
     /**
@@ -167,6 +182,7 @@ class ProjectLock private constructor(
         try {
             fileLock.release()
         } finally {
+            inProcessHolders.remove(lockFile.absoluteFile.normalize().path)
             try {
                 raf.close()
             } catch (_: Exception) { }

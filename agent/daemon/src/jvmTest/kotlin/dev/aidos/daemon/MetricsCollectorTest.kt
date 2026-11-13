@@ -2,27 +2,28 @@ package dev.aidos.daemon
 
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.storage.AidosStorage
+import dev.aidos.storage.DesktopPaths
 import java.io.File
+import java.nio.file.Files
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
 
 /**
  * Tests for MetricsCollector (RFC-0037).
  */
 class MetricsCollectorTest {
-    
-    @TempDir
+
     lateinit var tempDir: File
     
     private lateinit var driver: SqlDriver
     private lateinit var collector: MetricsCollector
 
-    @BeforeEach
+    @BeforeTest
     fun setUp() {
+        tempDir = Files.createTempDirectory("metrics-collector-test").toFile()
         val userDb = AidosStorage.openUser(
-            File(tempDir, "user.db"),
+            DesktopPaths.userDb(tempDir.path),
             "0.1.0-alpha",
             { java.time.Instant.now().toString() }
         )
@@ -32,8 +33,7 @@ class MetricsCollectorTest {
 
     @Test
     fun testMetricsCollectorInitializes() {
-        // Just verify initialization works
-        assertTrue(collector != null)
+        assertTrue(::collector.isInitialized)
     }
 
     @Test

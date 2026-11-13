@@ -1,6 +1,7 @@
 package dev.aidos.intent
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
@@ -60,8 +61,8 @@ class IntentCycleDetector(
 
         return AidosError(
             code = "intent.cycle_rejected",
-            errorClass = ErrorClass.INVALID,
-            detail = "Adding edge $fromNodeId → $toNodeId would create a cycle",
+            errorClass = ErrorClass.INVALID_INPUT,
+            message = "Adding edge $fromNodeId → $toNodeId would create a cycle",
         )
     }
 
@@ -113,9 +114,10 @@ class IntentCycleDetector(
             parameters = 2,
             binders = { bindString(0, projectId); bindString(1, nodeId) },
             mapper = { resultSet ->
-                while (resultSet.next()) {
-                    result.add(resultSet.getString(0))
+                while (resultSet.next().value) {
+                    resultSet.getString(0)?.let { result.add(it) }
                 }
+                QueryResult.Value(Unit)
             },
         )
         return result

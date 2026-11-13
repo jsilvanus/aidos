@@ -61,7 +61,7 @@ class CrashHandler(
             |Occurred: $occurredAt
             |Thread: ${thread.name} (${thread.id})
             |Error: $errorCode
-            |Stack Hash: $stackHash
+            |stack_hash: $stackHash
             |
             |$stackTrace
         """.trimMargin()

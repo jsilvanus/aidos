@@ -94,14 +94,17 @@ class ProjectLockTest {
         val result = ProjectLock.tryAcquire(root, instanceId = "inst-1")
         assertIs<AcquireResult.Acquired>(result)
         val lock = result.lock
+        var released = false
         try {
             val newTime = Instant.now().plusSeconds(60).toString()
             lock.heartbeat(newTime)
+            lock.release()
+            released = true
             val meta = ProjectLock.readMeta(File(root, ProjectLock.LOCK_FILE_REL))
             assertEquals(newTime, meta["heartbeat_at"],
                 "heartbeat_at should be updated to $newTime but got ${meta["heartbeat_at"]}")
         } finally {
-            lock.release()
+            if (!released) lock.release()
         }
     }
 }

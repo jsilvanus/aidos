@@ -1,6 +1,6 @@
 package dev.aidos.intent
 
-import app.cash.sqldelight.sqlite.driver.JdbcSqliteDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.junit.Test
 import kotlin.test.assertEquals
 
@@ -8,36 +8,37 @@ class DerivedStatusComputerTest {
 
     private fun setupDb(): Pair<JdbcSqliteDriver, DerivedStatusComputer> {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
-
-        // Create minimal schema for testing
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE intent_nodes (
-                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
-                    title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 100,
-                    lifecycle TEXT DEFAULT 'ACTIVE', parent_id TEXT,
-                    asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
-                    assertion_note TEXT, check_kind TEXT, check_spec TEXT,
-                    verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
-                    verified_at TEXT, created_at TEXT, created_by_kind TEXT, created_by_id TEXT,
-                    modified_at TEXT, modified_by_kind TEXT, modified_by_id TEXT, tags TEXT,
-                    row_version INTEGER
-                );
-                CREATE TABLE intent_edges (
-                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT,
-                    to_node_id TEXT, edge_kind TEXT NOT NULL, created_at TEXT
-                );
-                CREATE TABLE execution_graph (
-                    id TEXT PRIMARY KEY, run_id TEXT NOT NULL, target_intent_node_id TEXT,
-                    edge_kind TEXT NOT NULL, created_at TEXT
-                );
-                CREATE TABLE runs (
-                    id TEXT PRIMARY KEY, state TEXT NOT NULL
-                );
-            """,
-            parameters = 0,
-        ) {}
+        val schemaStatements = listOf(
+            """
+            CREATE TABLE intent_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
+                title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 100,
+                lifecycle TEXT DEFAULT 'ACTIVE', parent_id TEXT,
+                asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
+                assertion_note TEXT, check_kind TEXT, check_spec TEXT,
+                verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
+                verified_at TEXT, created_at TEXT, created_by_kind TEXT, created_by_id TEXT,
+                modified_at TEXT, modified_by_kind TEXT, modified_by_id TEXT, tags TEXT,
+                row_version INTEGER
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE intent_edges (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT,
+                to_node_id TEXT, edge_kind TEXT NOT NULL, created_at TEXT
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE execution_graph (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL, target_intent_node_id TEXT,
+                edge_kind TEXT NOT NULL, created_at TEXT
+            )
+            """.trimIndent(),
+            "CREATE TABLE runs (id TEXT PRIMARY KEY, state TEXT NOT NULL)",
+        )
+        schemaStatements.forEach { statement ->
+            driver.execute(identifier = null, sql = statement, parameters = 0) {}
+        }
 
         val computer = DerivedStatusComputer(driver)
         return Pair(driver, computer)

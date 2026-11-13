@@ -270,7 +270,9 @@ class InferenceRequestManager(
                 return@withLock Result.failure<Unit>(EngineModelBusyException("Model $modelId is being closed or deleted"))
             }
             val inSystem = queueDepth + runningRequests
-            if (inSystem >= maxConcurrentRequests + maxQueuedRequests) {
+            val queueIsBounded = maxQueuedRequests != Int.MAX_VALUE
+            val queueLimit = maxConcurrentRequests.toLong() + maxQueuedRequests.toLong()
+            if (queueIsBounded && inSystem.toLong() >= queueLimit) {
                 return@withLock Result.failure<Unit>(EngineBusyException("Engine is busy (running=$runningRequests, queued=$queueDepth, max=$maxConcurrentRequests+$maxQueuedRequests)"))
             }
             queueDepth++

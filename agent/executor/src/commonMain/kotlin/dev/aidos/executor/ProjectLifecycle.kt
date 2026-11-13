@@ -1,6 +1,7 @@
 package dev.aidos.executor
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 import dev.aidos.kernel.ProjectId
 
 /**
@@ -119,10 +120,30 @@ class ProjectLifecycle(
             // Note: audit_log entries for this project are preserved (permanent record)
 
             // Delete runs and their associated data
-            driver.execute(null, "DELETE FROM execution_edges WHERE run_id IN (SELECT id FROM runs WHERE project_id = ?)", 1) {
+            driver.execute(null, "DELETE FROM execution_edges WHERE project_id = ?", 1) {
                 bindString(0, projectId.value)
             }
-            driver.execute(null, "DELETE FROM attempts WHERE run_id IN (SELECT id FROM runs WHERE project_id = ?)", 1) {
+            driver.execute(
+                null,
+                "DELETE FROM budget_reservations WHERE attempt_id IN (" +
+                    "SELECT a.id FROM attempts a " +
+                    "JOIN tasks t ON a.task_id = t.id " +
+                    "JOIN runs r ON t.run_id = r.id " +
+                    "WHERE r.project_id = ?" +
+                    ")",
+                1
+            ) {
+                bindString(0, projectId.value)
+            }
+            driver.execute(
+                null,
+                "DELETE FROM attempts WHERE task_id IN (" +
+                    "SELECT t.id FROM tasks t " +
+                    "JOIN runs r ON t.run_id = r.id " +
+                    "WHERE r.project_id = ?" +
+                    ")",
+                1
+            ) {
                 bindString(0, projectId.value)
             }
             driver.execute(null, "DELETE FROM tasks WHERE run_id IN (SELECT id FROM runs WHERE project_id = ?)", 1) {
@@ -136,7 +157,7 @@ class ProjectLifecycle(
             }
 
             // Delete content graph
-            driver.execute(null, "DELETE FROM provenance_edges WHERE source_node_id IN (SELECT id FROM content_nodes WHERE project_id = ?) OR target_node_id IN (SELECT id FROM content_nodes WHERE project_id = ?)", 2) {
+            driver.execute(null, "DELETE FROM provenance_edges WHERE from_node_id IN (SELECT id FROM content_nodes WHERE project_id = ?) OR to_node_id IN (SELECT id FROM content_nodes WHERE project_id = ?)", 2) {
                 bindString(0, projectId.value)
                 bindString(1, projectId.value)
             }
@@ -145,11 +166,10 @@ class ProjectLifecycle(
             }
 
             // Delete intent graph
-            driver.execute(null, "DELETE FROM intent_edges WHERE source_node_id IN (SELECT id FROM intent_nodes WHERE project_id = ?) OR target_node_id IN (SELECT id FROM intent_nodes WHERE project_id = ?)", 2) {
+            driver.execute(null, "DELETE FROM intent_edges WHERE project_id = ?", 1) {
                 bindString(0, projectId.value)
-                bindString(1, projectId.value)
             }
-            driver.execute(null, "DELETE FROM intent_proposals WHERE intent_node_id IN (SELECT id FROM intent_nodes WHERE project_id = ?)", 1) {
+            driver.execute(null, "DELETE FROM intent_proposals WHERE project_id = ?", 1) {
                 bindString(0, projectId.value)
             }
             driver.execute(null, "DELETE FROM intent_nodes WHERE project_id = ?", 1) {
@@ -157,9 +177,6 @@ class ProjectLifecycle(
             }
 
             // Delete budget ledger
-            driver.execute(null, "DELETE FROM budget_reservations WHERE attempt_id IN (SELECT id FROM attempts WHERE run_id IN (SELECT id FROM runs WHERE project_id = ?))", 1) {
-                bindString(0, projectId.value)
-            }
             driver.execute(null, "DELETE FROM budget_ledger WHERE scope_id = ?", 1) {
                 bindString(0, projectId.value)
             }
@@ -204,33 +221,41 @@ class ProjectLifecycle(
     private fun countActiveSessions(projectId: ProjectId): Long {
         var count = 0L
         driver.executeQuery(
-            null,
-            "SELECT COUNT(*) FROM sessions WHERE project_id = ? AND state = 'RUNNING'",
-            1
-        ) { cursor ->
-            if (cursor.next().value) {
-                count = cursor.getLong(0) ?: 0
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM sessions WHERE project_id = ? AND state = 'RUNNING'",
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    count = cursor.getLong(0) ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = {
+                bindString(0, projectId.value)
             }
-            bindString(0, projectId.value)
-        }
+        )
         return count
     }
 
     private fun countOpenRuns(projectId: ProjectId): Long {
         var count = 0L
         driver.executeQuery(
-            null,
-            """
+            identifier = null,
+            sql = """
             SELECT COUNT(*) FROM runs 
             WHERE project_id = ? AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
             """,
-            1
-        ) { cursor ->
-            if (cursor.next().value) {
-                count = cursor.getLong(0) ?: 0
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    count = cursor.getLong(0) ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+            binders = {
+                bindString(0, projectId.value)
             }
-            bindString(0, projectId.value)
-        }
+        )
         return count
     }
 }

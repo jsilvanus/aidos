@@ -2,30 +2,31 @@ package dev.aidos.daemon
 
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.vault.Redactor
-import dev.aidos.vault.RedactionBoundary
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
 
 /**
  * Tests for StructuredLogger (RFC-0037).
  */
 class StructuredLoggerTest {
-    
-    @TempDir
+
     lateinit var tempDir: File
     
     private lateinit var logger: StructuredLogger
     private lateinit var redactor: Redactor
 
-    @BeforeEach
+    @BeforeTest
     fun setUp() {
+        tempDir = Files.createTempDirectory("structured-logger-test").toFile()
         redactor = Redactor()
         logger = StructuredLogger(
             redactor = redactor,
@@ -195,9 +196,9 @@ class StructuredLoggerTest {
     }
 
     @Test
-    fun testLogJson Format() {
+    fun `testLogJson Format`() {
         logger.error("test.json") {
-            field("key", "value")
+            field("custom_key", "value")
             field("number", "42")
         }
 
@@ -207,8 +208,9 @@ class StructuredLoggerTest {
 
         val content = Files.readAllLines(logFile)
         assertTrue(content.isNotEmpty())
-        val line = content[0]
-        assertTrue(line.contains("\"level\":\"ERROR\""))
-        assertTrue(line.contains("\"key\":\"test.json\""))
+        val line = content.last()
+        val parsed = Json.parseToJsonElement(line).jsonObject
+        assertEquals("ERROR", parsed["level"]?.jsonPrimitive?.content)
+        assertEquals("test.json", parsed["key"]?.jsonPrimitive?.content)
     }
 }
