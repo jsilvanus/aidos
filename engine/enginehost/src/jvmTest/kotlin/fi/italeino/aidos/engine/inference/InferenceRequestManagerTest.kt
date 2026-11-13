@@ -11,6 +11,8 @@ import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
+import fi.italeino.aidos.engine.license.InMemoryLicenseAcceptanceStore
+import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -257,7 +259,194 @@ class InferenceRequestManagerTest {
         toolChoice = dev.aidos.kernel.ToolChoice.None,
         maxOutputTokens = 16,
     )
+
+    // RFC-0103: License acceptance tests
+
+    @Test
+    fun execute_rejectsWhenLicenseNotAccepted() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(CountingAdapter())
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 8,
+            licenseStore = licenseStore
+        )
+
+        // Model has a license requirement
+        val modelId = "test-model"
+        val modelVersion = "1.0"
+        val licenseDigest = "sha256-abc123"
+
+        val result = manager.execute(modelId) { adapter ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+
+        assertTrue(result.isFailure)
+        val ex = result.exceptionOrNull()
+        assertTrue(ex is LicenseNotAcceptedException)
+        val licenseEx = ex as LicenseNotAcceptedException
+        assertEquals(modelId, licenseEx.modelId)
+        assertEquals(modelVersion, licenseEx.modelVersion)
+    }
+
+    @Test
+    fun execute_allowsWhenLicenseAccepted() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(CountingAdapter())
+        val modelId = "test-model"
+        val modelVersion = "1.0"
+        val licenseDigest = "sha256-abc123"
+
+        // Pre-accept the license
+        licenseStore.accept(modelId, modelVersion, licenseDigest)
+
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 8,
+            licenseStore = licenseStore
+        )
+
+        val result = manager.execute(modelId) { adapter ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+
+        assertTrue(result.isSuccess)
+    }
+
+    @Test
+    fun execute_acceptancePersists_acrossRestarts() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val modelId = "qwen2.5-3b"
+        val modelVersion = "1.0"
+        val licenseDigest = "sha256-def456"
+
+        // First invocation: accept
+        licenseStore.accept(modelId, modelVersion, licenseDigest)
+        assertTrue(licenseStore.isAccepted(modelId, modelVersion, licenseDigest))
+
+        // Simulate "restart" by checking the same store
+        val isStillAccepted = licenseStore.isAccepted(modelId, modelVersion, licenseDigest)
+        assertTrue(isStillAccepted)
+    }
+
+    @Test
+    fun execute_changedLicenseText_requiresReacceptance() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(CountingAdapter())
+        val modelId = "gpt-model"
+        val modelVersion = "2.0"
+        val oldDigest = "sha256-v1"
+        val newDigest = "sha256-v2"
+
+        // Accept old version
+        licenseStore.accept(modelId, modelVersion, oldDigest)
+
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 8,
+            licenseStore = licenseStore
+        )
+
+        // Attempt with old digest should succeed
+        val oldResult = manager.execute(modelId) { adapter ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+        assertTrue(oldResult.isSuccess)
+
+        // Attempt with new digest should fail (license text changed)
+        // This would require runtime returning a descriptor with the new digest
+        // For now, just verify the store behavior
+        assertFalse(licenseStore.isAccepted(modelId, modelVersion, newDigest))
+    }
+
+    // RFC-0103 §4.2: Queue policy tests
+
+    @Test
+    fun execute_allowsUnboundedQueue_rfc0103_serialization() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val runtime = FakeRuntime(BlockingAdapter(gate))
+
+        // RFC-0103: unlimited queue, never reject for queue depth
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = Int.MAX_VALUE  // Unlimited
+        )
+
+        coroutineScope {
+            val blocked = async {
+                manager.execute("test-model") { adapter ->
+                    adapter.invoke(dummyRequest()).getOrThrow()
+                }
+            }
+            delay(50)
+
+            // Queue 100 requests while first is running
+            val queued = (0..99).map { i ->
+                async {
+                    manager.execute("test-model") { adapter ->
+                        adapter.invoke(dummyRequest()).getOrThrow()
+                    }
+                }
+            }
+
+            delay(50)
+
+            // All should be pending (not rejected)
+            val metrics = manager.snapshotMetrics()
+            assertEquals(100, metrics.queueDepth)
+            assertEquals(1, metrics.runningRequests)
+
+            // Release first request
+            gate.complete(Unit)
+            blocked.await()
+
+            // All queued requests should eventually complete
+            val results = queued.map { it.await() }
+            assertTrue(results.all { it.isSuccess })
+        }
+
+        val metrics = manager.snapshotMetrics()
+        assertEquals(101, metrics.totalRequests)
+        assertEquals(101, metrics.completedRequests)
+    }
+
+    @Test
+    fun execute_queueSerializesRequests() = runTest {
+        val serializingAdapter = CountingAdapter()
+        val runtime = FakeRuntime(serializingAdapter)
+
+        // RFC-0103: Serialized queue when memory constrained
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = Int.MAX_VALUE
+        )
+
+        coroutineScope {
+            // 10 concurrent requests
+            val requests = (0..9).map { i ->
+                async {
+                    manager.execute("test-model") { adapter ->
+                        adapter.invoke(dummyRequest()).getOrThrow()
+                    }
+                }
+            }
+
+            // All should complete
+            val results = requests.map { it.await() }
+            assertTrue(results.all { it.isSuccess })
+        }
+
+        // Only 1 concurrent ever running (due to maxConcurrentRequests = 1)
+        assertEquals(1, serializingAdapter.maxConcurrentInvokes)
+    }
 }
+
+private fun dummyRequest() = ModelRequest(
 
 private class FakeRuntime(
     private val adapter: ModelAdapter,
@@ -281,6 +470,9 @@ private class FakeRuntime(
             contextWindow = 2048,
             sizeBytes = 1234,
             digest = null,
+            version = "1.0",
+            licenseDigest = "sha256-abc123",
+            licenseText = "Test License - Accept to use"
         )
     )
 

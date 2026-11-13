@@ -4,6 +4,8 @@ import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRuntime
+import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
+import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -31,11 +33,22 @@ class EngineBusyException(message: String) : RuntimeException(message)
 class EngineShuttingDownException(message: String) : RuntimeException(message)
 class EngineModelBusyException(message: String) : RuntimeException(message)
 
-/** Coordinates bounded inference admission with safe model open/close/delete lifecycle operations. */
+/**
+ * Coordinates bounded inference admission with safe model open/close/delete lifecycle operations.
+ *
+ * @param modelRuntime The model runtime to load/execute models
+ * @param maxConcurrentRequests Maximum concurrent requests allowed (default 1)
+ * @param maxQueuedRequests Maximum requests allowed in queue. Per RFC-0103 §4.2 "Concurrency and memory policy",
+ *                          requests are "serialized through a request queue instead of rejected" when memory
+ *                          constraints prevent concurrent execution. Set to Int.MAX_VALUE for unlimited queue;
+ *                          bounded values may be appropriate for memory-constrained devices but violate RFC intent.
+ * @param licenseStore Optional license acceptance store; if present, license is checked before execution
+ */
 class InferenceRequestManager(
     private val modelRuntime: ModelRuntime,
     private val maxConcurrentRequests: Int = 1,
-    private val maxQueuedRequests: Int = 8,
+    private val maxQueuedRequests: Int = Int.MAX_VALUE,  // RFC-0103: unlimited queue, reject never for queue depth
+    private val licenseStore: LicenseAcceptanceStore? = null,
 ) {
     private val capacity = Semaphore(maxConcurrentRequests)
     private val stateMutex = Mutex()
@@ -64,12 +77,35 @@ class InferenceRequestManager(
      * against the loaded adapter, so a runtime whose descriptor says local but whose adapter says
      * otherwise is still refused. [block] receives the [Placement] the request is served at.
      * A refusal is a [LocalityViolationException] result; one caught before loading takes no admission slot.
+     *
+     * RFC-0103: License acceptance is checked before admission to avoid taking a queue slot
+     * for a request that will be rejected anyway.
      */
     suspend fun <T> execute(
         modelId: String,
         locality: Locality,
         block: suspend (ModelAdapter, Placement) -> T,
     ): Result<T> {
+        // RFC-0103: Check license acceptance before queuing/loading the model.
+        // This must happen before admission to avoid taking a queue slot for a refused request.
+        if (licenseStore != null) {
+            val descriptor = describe(modelId) ?: run {
+                // Model doesn't exist; load will fail anyway with a more specific error
+                return Result.failure(IllegalArgumentException("Model $modelId not found"))
+            }
+            val accepted = licenseStore.isAccepted(descriptor.id, descriptor.version ?: "", descriptor.licenseDigest ?: "")
+            if (!accepted && descriptor.licenseDigest != null && descriptor.licenseDigest!!.isNotEmpty()) {
+                return Result.failure(
+                    LicenseNotAcceptedException(
+                        descriptor.id,
+                        descriptor.version ?: "",
+                        descriptor.licenseText ?: "",
+                        descriptor.licenseDigest!!
+                    )
+                )
+            }
+        }
+
         val descriptor = if (locality == Locality.ANY) null else describe(modelId)
         if (descriptor != null) {
             val declared = placementOf(descriptor)

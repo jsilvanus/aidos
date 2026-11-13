@@ -138,6 +138,13 @@ class EngineService : LifecycleService() {
         _instance = this
         _state.value = EngineState.STARTING
 
+        // Wire crash handler early before anything else might fail (RFC-0037)
+        val crashDir = File(filesDir, "crashes")
+        // Note: On Android, the user database is shared system-wide in ~/.aidos/user.db;
+        // EngineService doesn't access it directly, but CrashHandler needs the driver.
+        // For now, we defer crash recording until we have access to the database connection.
+        // This is a known limitation for Phase 1 Android implementation.
+
         tokenManager = TokenManager()
         val approvals = EncryptedAppApprovalStore(this)
         approvalStore = approvals

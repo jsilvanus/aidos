@@ -6,6 +6,8 @@ import androidx.compose.ui.window.Window
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import fi.italeino.aidos.engine.observability.CrashHandler
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +24,19 @@ fun main(args: Array<String>) {
     DesktopPaths.ensureCreated()
     val prefs = DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json"))
     val isHeadless = args.any { it == "--daemon" || it == "--headless" || it == "-d" }
+
+    // Wire crash handler early before anything else might fail (RFC-0037)
+    val userDbDriver = JdbcSqliteDriver(
+        url = "jdbc:sqlite:${File(DesktopPaths.stateDir, "user.db").absolutePath}",
+    )
+    val crashDir = File(DesktopPaths.stateDir, "crashes")
+    val crashHandler = CrashHandler(
+        driver = userDbDriver,
+        runtimeVersion = "0.1.0",
+        platformProfile = "DESKTOP",
+        crashDir = crashDir,
+    )
+    Thread.setDefaultUncaughtExceptionHandler(crashHandler)
 
     // Allow overriding port from command line arguments e.g. --port 18080
     val argPort = args.indexOf("--port").takeIf { it >= 0 && it + 1 < args.size }?.let { args[it + 1].toIntOrNull() }
