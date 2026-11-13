@@ -209,6 +209,9 @@ interface DirHandle : ResourceHandle {
     suspend fun write(relative: RelPath, content: ByteArray): Result<Unit>
     suspend fun list(relative: RelPath): Result<List<DirEntry>>
     suspend fun exists(relative: RelPath): Boolean
+    suspend fun delete(relative: RelPath, recursive: Boolean = false): Result<Int>  // returns count of files deleted
+    suspend fun move(from: RelPath, to: RelPath, overwrite: Boolean = false): Result<Unit>
+    suspend fun mkdir(relative: RelPath): Result<Unit>
 }
 
 data class DirEntry(val name: String, val isDirectory: Boolean, val sizeBytes: Long)

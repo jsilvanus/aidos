@@ -53,4 +53,74 @@ class SqliteDirHandle(
 
     override suspend fun exists(relative: RelPath): Boolean =
         resolve(relative).exists()
+
+    override suspend fun delete(relative: RelPath, recursive: Boolean): Result<Int> = runCatching {
+        val target = resolve(relative)
+        var count = 0
+        
+        when {
+            !target.exists() -> 0
+            target.isFile -> {
+                if (target.delete()) 1 else throw IOException("Failed to delete file: ${target.path}")
+            }
+            target.isDirectory -> {
+                if (recursive) {
+                    count = deleteRecursively(target)
+                } else {
+                    val contents = target.listFiles()
+                    if (contents != null && contents.isNotEmpty()) {
+                        throw IOException("Directory not empty: ${target.path}")
+                    }
+                    if (target.delete()) 1 else throw IOException("Failed to delete directory: ${target.path}")
+                }
+            }
+        }
+        count
+    }
+
+    override suspend fun move(from: RelPath, to: RelPath, overwrite: Boolean): Result<Unit> = runCatching {
+        val source = resolve(from)
+        val dest = resolve(to)
+        
+        if (!source.exists()) {
+            throw IOException("Source does not exist: ${source.path}")
+        }
+        
+        if (dest.exists() && !overwrite) {
+            throw IOException("Destination already exists: ${dest.path}")
+        }
+        
+        if (dest.exists()) {
+            dest.delete()
+        }
+        
+        dest.parentFile?.mkdirs()
+        if (!source.renameTo(dest)) {
+            throw IOException("Failed to move ${source.path} to ${dest.path}")
+        }
+    }
+
+    override suspend fun mkdir(relative: RelPath): Result<Unit> = runCatching {
+        val target = resolve(relative)
+        if (!target.exists()) {
+            if (!target.mkdirs()) {
+                throw IOException("Failed to create directory: ${target.path}")
+            }
+        }
+    }
+
+    private fun deleteRecursively(file: File): Int {
+        var count = 0
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { child ->
+                count += deleteRecursively(child)
+            }
+        }
+        if (file.delete()) {
+            count++
+        } else {
+            throw IOException("Failed to delete: ${file.path}")
+        }
+        return count
+    }
 }
