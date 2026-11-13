@@ -138,3 +138,46 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - RFC-0042: tunnel server as a scoped egress destination.
 - RFC-0105: route hints in pair records; remote routes never carry helper roles.
 - RFC-0107: the bounded continue-then-cancel rule.
+
+## Phase 3 Implementation Status (2026-11-13)
+
+### Completed
+
+**Standalone SSH tunnel library** (`agent:ssh-tunnel`, `fi.italeino.sshtunnel`):
+- ✅ `TunnelSpec` (host, user, port, forward kind, keepalive, backoff)
+- ✅ `KeyProvider` interface (key resolution on every attempt, caller owns lifetime)
+- ✅ `HostKeyPolicy` interface (fingerprint verification, pinning support)
+- ✅ `SshTunnel` class (lifecycle: start, stop, state flow; reconnect with backoff; terminal vs. retry logic)
+- ✅ `SshTransport` interface with two implementations:
+  - `SshjTransport` (sshj, pure Java, chosen for both desktop and Android phase 4)
+  - `MinaTransport` (Apache MINA SSHD, used for in-process SSH server in tests)
+- ✅ `KeyGen.ed25519()` (generates key pair, returns private key once, public line for `authorized_keys`)
+- ✅ `AuthorizedKeys.forReverse()` and `forLocal()` (restricts key to one port/forward, prevents injection)
+- ✅ Comprehensive test suite (`TransportContract`): reverse forward, local forward, wrong host key, unknown key, refused forward, reconnect. Uses in-process SSH server, no external server.
+- ✅ No kernel dependencies; reusable by other projects.
+
+**Engine adapter layer** (`agent:tunnel-manager`, `dev.aidos.tunnel`):
+- ✅ `ManagedTunnel` class (wraps SshTunnel with vault + pinning + audit + remote-access switch)
+- ✅ `HostKeyPinningPolicy` (saves fingerprint on first connection, terminal on change)
+- ✅ `VaultKeyProvider` (resolves tunnel key from vault on every connection, never stores)
+- ✅ `TunnelManager` (orchestrates multiple tunnels, create/delete/rotate)
+- ✅ `TunnelStorage` interface (load configs, save state, pin host keys) — implementation deferred to Engine storage layer
+- ✅ `TunnelAuditLog` interface — integration with RFC-0042 deferred
+- ✅ Unit tests for tunnel manager lifecycle
+
+### Deferred to later PRs
+
+1. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
+2. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
+3. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
+4. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
+5. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
+6. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
+7. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
+8. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
+
+### Module locations
+
+- `agent/ssh-tunnel`: Standalone library (kernel-free)
+- `agent/tunnel-manager`: Engine adapter (depends on vault, capability, but not kernel directly)
+- `agent/settings.gradle.kts`: Both modules included
