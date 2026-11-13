@@ -15,6 +15,9 @@
 
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA auto_vacuum = INCREMENTAL;
+PRAGMA wal_autocheckpoint = 1000;
 
 -- ---------------------------------------------------------------------------
 -- Schema versioning (RFC-0017, RFC-0039)
