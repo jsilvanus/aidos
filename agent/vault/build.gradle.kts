@@ -5,6 +5,8 @@ plugins {
 
 kotlin {
     jvm()
+    // android() target deferred to Phase 4: waiting for Google Maven access in CI environment
+    // Android Keystore implementation is ready in src/androidMain, ready to activate when plugin available
 
     sourceSets {
         commonMain.dependencies {
@@ -31,6 +33,13 @@ kotlin {
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
             }
         }
+
+        // RFC-0108 Phase 4: Android target created but not activated (awaiting Google Maven access)
+        // val androidMain by getting {
+        //     dependencies {
+        //         implementation("androidx.security:security-crypto:1.1.0-alpha06")
+        //     }
+        // }
 
         val jvmTest by getting {
             dependencies {
