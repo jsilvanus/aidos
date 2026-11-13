@@ -210,10 +210,10 @@ class RouteHintCodecTest {
 
     @Test
     fun parseDirectRouteSuccess() {
-        val route = RouteHintCodec.parseDirectRoute("direct://example.com:8766")
-        assertTrue(route is Route.Direct)
-        assertEquals("example.com", route?.host)
-        assertEquals(8766, route?.port)
+        val route = RouteHintCodec.parseDirectRoute("direct://example.com:8766") as? Route.Direct
+        assertNotNull(route)
+        assertEquals("example.com", route.host)
+        assertEquals(8766, route.port)
     }
 
     @Test
@@ -225,11 +225,11 @@ class RouteHintCodecTest {
 
     @Test
     fun parseSshRouteSuccess() {
-        val route = RouteHintCodec.parseSshRoute("ssh://home:example.com:47100")
-        assertTrue(route is Route.SshReverse)
-        assertEquals("home", route?.tunnelId)
-        assertEquals("example.com", route?.serverHost)
-        assertEquals(47100, route?.serverPort)
+        val route = RouteHintCodec.parseSshRoute("ssh://home:example.com:47100") as? Route.SshReverse
+        assertNotNull(route)
+        assertEquals("home", route.tunnelId)
+        assertEquals("example.com", route.serverHost)
+        assertEquals(47100, route.serverPort)
     }
 
     @Test
