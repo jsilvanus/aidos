@@ -25,8 +25,8 @@ class CrashHandlerTest {
 
             // Initialize crash_records table (this would be done by migration in real code)
             dbDriver.execute(
-                null,
-                """
+                identifier = null,
+                sql = """
                 CREATE TABLE IF NOT EXISTS crash_records (
                     id TEXT PRIMARY KEY,
                     occurred_at TEXT NOT NULL,
@@ -39,9 +39,8 @@ class CrashHandlerTest {
                     reported INTEGER NOT NULL DEFAULT 0
                 )
                 """,
-                0,
-                {}
-            )
+                parameters = 0,
+            ) {}
 
             val handler = CrashHandler(
                 driver = dbDriver,
@@ -81,8 +80,8 @@ class CrashHandlerTest {
 
             // Initialize crash_records table
             dbDriver.execute(
-                null,
-                """
+                identifier = null,
+                sql = """
                 CREATE TABLE IF NOT EXISTS crash_records (
                     id TEXT PRIMARY KEY,
                     occurred_at TEXT NOT NULL,
@@ -95,9 +94,8 @@ class CrashHandlerTest {
                     reported INTEGER NOT NULL DEFAULT 0
                 )
                 """,
-                0,
-                {}
-            )
+                parameters = 0,
+            ) {}
 
             val handler = CrashHandler(
                 driver = dbDriver,
@@ -111,12 +109,15 @@ class CrashHandlerTest {
 
             // Verify record was written to database
             var recordCount = 0
-            dbDriver.execute(
-                null,
-                "SELECT COUNT(*) as cnt FROM crash_records",
-                0,
-                { recordCount = getInt(0) }
-            )
+            dbDriver.executeQuery(
+                identifier = null,
+                sql = "SELECT COUNT(*) as cnt FROM crash_records",
+                mapper = { c ->
+                    if (c.next().value) recordCount = c.getLong(0)!!.toInt()
+                    app.cash.sqldelight.db.QueryResult.Value(Unit)
+                },
+                parameters = 0,
+            ) {}
             assertTrue(recordCount > 0, "No crash record written to database")
         } finally {
             tempDir.deleteRecursively()
@@ -134,8 +135,8 @@ class CrashHandlerTest {
 
             // Initialize crash_records table
             dbDriver.execute(
-                null,
-                """
+                identifier = null,
+                sql = """
                 CREATE TABLE IF NOT EXISTS crash_records (
                     id TEXT PRIMARY KEY,
                     occurred_at TEXT NOT NULL,
@@ -148,9 +149,8 @@ class CrashHandlerTest {
                     reported INTEGER NOT NULL DEFAULT 0
                 )
                 """,
-                0,
-                {}
-            )
+                parameters = 0,
+            ) {}
 
             val handler = CrashHandler(
                 driver = dbDriver,
@@ -165,13 +165,18 @@ class CrashHandlerTest {
             handler.uncaughtException(Thread.currentThread(), exception)
 
             // Both should have the same stack hash (but different IDs)
-            var stackHashes = mutableListOf<String>()
-            dbDriver.execute(
-                null,
-                "SELECT stack_hash FROM crash_records",
-                0,
-                { stackHashes.add(getString(0)) }
-            )
+            val stackHashes = mutableListOf<String>()
+            dbDriver.executeQuery(
+                identifier = null,
+                sql = "SELECT stack_hash FROM crash_records",
+                mapper = { c ->
+                    while (c.next().value) {
+                        stackHashes.add(c.getString(0)!!)
+                    }
+                    app.cash.sqldelight.db.QueryResult.Value(Unit)
+                },
+                parameters = 0,
+            ) {}
             assertTrue(stackHashes.size >= 2, "Not enough crash records")
             assertTrue(stackHashes[0] == stackHashes[1], "Stack hashes should match for same exception")
         } finally {

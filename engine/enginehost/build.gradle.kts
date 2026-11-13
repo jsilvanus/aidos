@@ -44,6 +44,8 @@ kotlin {
                 // KtorEffectBroker takes an HttpClient; each host supplies its own client engine.
                 api("io.ktor:ktor-client-core:3.5.2")
                 implementation("commons-codec:commons-codec:1.16.0")
+                // RFC-0037: Crash reporting and metrics collection
+                api("app.cash.sqldelight:runtime:2.0.1")
             }
         }
 

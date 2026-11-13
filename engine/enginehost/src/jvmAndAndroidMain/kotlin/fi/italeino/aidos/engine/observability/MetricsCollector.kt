@@ -192,25 +192,23 @@ class MetricsCollector(
     ) {
         // Raw SQL since the schema is defined in schema/project.sql.
         // This matches the metric_samples table schema from RFC-0037.
-        val projectIdParam = projectId ?: "NULL"
         driver.execute(
-            null,
-            """
+            identifier = null,
+            sql = """
             INSERT INTO metric_samples (
                 id, project_id, name, value, unit, labels_json, bucket_start
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            5,
-            { 
-                bindString(1, id)
-                if (projectId != null) bindString(2, projectId) else bindNull(2)
-                bindString(3, name)
-                bindDouble(4, value)
-                bindString(5, unit)
-                bindString(6, labelsJson)
-                bindString(7, bucketStart)
-            }
-        )
+            parameters = 7,
+        ) {
+            bindString(0, id)
+            if (projectId != null) bindString(1, projectId) else bindNull(1)
+            bindString(2, name)
+            bindDouble(3, value)
+            bindString(4, unit)
+            bindString(5, labelsJson)
+            bindString(6, bucketStart)
+        }
     }
 
     private fun buildLabels(block: MutableMap<String, String>.() -> Unit): String {

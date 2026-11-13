@@ -95,16 +95,25 @@ class CrashHandler(
         // Raw SQL since the schema is defined in schema/user.sql and managed separately.
         // This matches the crash_records table schema from RFC-0037.
         driver.execute(
-            null,
-            """
+            identifier = null,
+            sql = """
             INSERT INTO crash_records (
                 id, occurred_at, runtime_version, platform_profile, error_code,
                 stack_hash, detail_path, in_flight_run_ids, reported
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            5,
-            { bindString(1, id); bindString(2, occurredAt); bindString(3, runtimeVersion); bindString(4, platformProfile); bindString(5, errorCode ?: "unknown"); bindString(6, stackHash); bindString(7, detailPath); bindString(8, inFlightJson); bindLong(9, 0) }
-        )
+            parameters = 9,
+        ) {
+            bindString(0, id)
+            bindString(1, occurredAt)
+            bindString(2, runtimeVersion)
+            bindString(3, platformProfile)
+            bindString(4, errorCode ?: "unknown")
+            bindString(5, stackHash)
+            bindString(6, detailPath)
+            bindString(7, inFlightJson)
+            bindLong(8, 0)
+        }
     }
 
     private fun getFullStackTrace(exception: Throwable): String {
