@@ -35,7 +35,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0028 | PARTIAL | Budget type+split, causal depth, step ceiling; BudgetLedger interface only, no writers, budgetRemaining=null; causal depth 16 not 8 |
 | 0029 | PARTIAL | AidosError/ErrorClass + RetryPolicy + INDETERMINATE real; isModelAudience test-only; most registry codes never emitted, ad hoc codes used |
 | 0030 | IMPLEMENTED | ToolBroker capability check+audit+preview; JSON-schema validation MVP (type, required, properties, constraints); budget tracking foundation |
-| 0031 | PARTIAL | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests; no MCP_SERVER capability issuance at enable, no mcp_servers write path; DEFECT: validateHttpEndpoint loopback string-prefix match lets http://localhost.evil.example pass on DESKTOP |
+| 0031 | PARTIAL | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests; no MCP_SERVER capability issuance at enable, no mcp_servers write path; Binder transport for Android is future work (RFC-0107 Phase 2) |
 | 0032 | PARTIAL | JGit GitTool 14 tests, Reconciliation, TreelessWorker CAS; no fetch/merge_ff/switch, no worker-ref pruning, per-op capabilities differ |
 | 0034 | IMPLEMENTED | RelPath + symlink-aware containment + read/write/list/search+diff preview; delete/move/mkdir operations with .git/ protection; atomic writes for mkdir |
 | 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore is not built (the vault is JVM-only and the Android host does not run it yet) |
