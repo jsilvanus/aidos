@@ -170,6 +170,18 @@ class SqliteCapabilityManager(
             return Result.failure(RuntimeException("parent capability ${parent.value} does not allow delegation"))
         }
 
+        // RFC-0018: Validate scope narrowing (attenuation).
+        val scopeValidation = validateScopeAttenuation(parentCap.scope, attenuatedScope)
+        if (scopeValidation != null) {
+            return Result.failure(RuntimeException("scope validation failed: $scopeValidation"))
+        }
+
+        // RFC-0018: Validate constraint attenuation (narrower or equal).
+        val constraintValidation = validateConstraintAttenuation(parentCap.constraints, attenuatedConstraints)
+        if (constraintValidation != null) {
+            return Result.failure(RuntimeException("constraint validation failed: $constraintValidation"))
+        }
+
         val id = CapabilityId(ids.next())
         val auditId = AuditId(ids.next())
         val now = nowIso()
@@ -310,6 +322,15 @@ class SqliteCapabilityManager(
         // it can't reuse EffectBroker.invoke() (runtime/kernel/ is frozen at G0).
         if (cap.constraints.requiresApprovalPerUse) {
             return CapabilityCheckResult.Denied(DenialReason.REQUIRES_APPROVAL)
+        }
+
+        // RFC-0018: maxExerciseCount enforcement. Load current usage count and check limit.
+        val maxCount = cap.constraints.maxExerciseCount
+        if (maxCount != null && maxCount > 0) {
+            val currentCount = loadCapabilityUsageCount(capabilityId)
+            if (currentCount >= maxCount) {
+                return CapabilityCheckResult.Denied(DenialReason.CONSTRAINT_EXCEEDED)
+            }
         }
 
         return CapabilityCheckResult.Allowed
@@ -557,6 +578,247 @@ class SqliteCapabilityManager(
             bindString(6, actorId)
             bindString(7, deviceId)
         }
+    }
+
+    /** RFC-0018: Validate that delegated scope is contained within parent scope. */
+    private fun validateScopeAttenuation(parentScope: CapabilityScope, delegatedScope: CapabilityScope): String? {
+        // Scopes must be the same type and same project (where applicable).
+        return when {
+            parentScope is CapabilityScope.Filesystem && delegatedScope is CapabilityScope.Filesystem -> {
+                if (parentScope.projectId != delegatedScope.projectId) {
+                    "filesystem scope cross-project delegation denied"
+                } else if (!isPathContained(parentScope.rootRelativePath, delegatedScope.rootRelativePath)) {
+                    "filesystem delegated path ${delegatedScope.rootRelativePath} not contained in parent ${parentScope.rootRelativePath}"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Shell && delegatedScope is CapabilityScope.Shell -> {
+                if (parentScope.projectId != delegatedScope.projectId) {
+                    "shell scope cross-project delegation denied"
+                } else if (parentScope.allowedCommands != null && delegatedScope.allowedCommands != null) {
+                    // Delegated commands must be a subset of parent's allowed commands.
+                    val parentCmds = parentScope.allowedCommands.toSet()
+                    val delegatedCmds = delegatedScope.allowedCommands.toSet()
+                    if (!delegatedCmds.all { it in parentCmds }) {
+                        "shell delegated commands not contained in parent"
+                    } else {
+                        null
+                    }
+                } else if (parentScope.allowedCommands != null && delegatedScope.allowedCommands == null) {
+                    // Cannot expand from restricted to unrestricted.
+                    "shell delegation cannot expand commands from restricted to unrestricted"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Git && delegatedScope is CapabilityScope.Git -> {
+                if (parentScope.projectId != delegatedScope.projectId) {
+                    "git scope cross-project delegation denied"
+                } else if (!delegatedScope.allowedOperations.all { it in parentScope.allowedOperations }) {
+                    "git delegated operations not contained in parent"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Network && delegatedScope is CapabilityScope.Network -> {
+                // Delegated hosts must be a subset of parent's allowed hosts.
+                val parentHosts = parentScope.allowedHosts.toSet()
+                val delegatedHosts = delegatedScope.allowedHosts.toSet()
+                if (!delegatedHosts.all { host -> hostMatched(host, parentHosts) }) {
+                    "network delegated hosts not contained in parent"
+                } else if (delegatedScope.allowedPorts != null && parentScope.allowedPorts != null) {
+                    val parentPorts = parentScope.allowedPorts.toSet()
+                    val delegatedPorts = delegatedScope.allowedPorts.toSet()
+                    if (!delegatedPorts.all { it in parentPorts }) {
+                        "network delegated ports not contained in parent"
+                    } else {
+                        null
+                    }
+                } else if (delegatedScope.allowedPorts != null && parentScope.allowedPorts == null) {
+                    // Cannot restrict ports if parent allows all.
+                    null
+                } else if (delegatedScope.allowedPorts == null && parentScope.allowedPorts != null) {
+                    // Cannot expand from restricted to unrestricted ports.
+                    "network delegation cannot expand ports from restricted to unrestricted"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Model && delegatedScope is CapabilityScope.Model -> {
+                if (delegatedScope.allowedKinds.any { it !in parentScope.allowedKinds }) {
+                    "model delegated kinds not contained in parent"
+                } else if (delegatedScope.allowedProviders != null && parentScope.allowedProviders != null) {
+                    val parentProvs = parentScope.allowedProviders.toSet()
+                    val delegatedProvs = delegatedScope.allowedProviders.toSet()
+                    if (!delegatedProvs.all { it in parentProvs }) {
+                        "model delegated providers not contained in parent"
+                    } else {
+                        null
+                    }
+                } else if (delegatedScope.allowedProviders != null && parentScope.allowedProviders == null) {
+                    // Cannot expand from all to restricted.
+                    "model delegation cannot restrict providers when parent allows all"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Secrets && delegatedScope is CapabilityScope.Secrets -> {
+                if (parentScope.projectId != delegatedScope.projectId) {
+                    "secrets scope cross-project delegation denied"
+                } else if (parentScope.allowedSecretIds.isEmpty()) {
+                    // Parent allows no secrets; delegation cannot add any.
+                    if (delegatedScope.allowedSecretIds.isNotEmpty()) {
+                        "secrets delegated cannot add ids when parent allows none"
+                    } else {
+                        null
+                    }
+                } else if (delegatedScope.allowedSecretIds.isEmpty()) {
+                    // Delegated allows all; cannot expand from restricted to all.
+                    "secrets delegation cannot expand from restricted to all"
+                } else {
+                    val parentIds = parentScope.allowedSecretIds.toSet()
+                    val delegatedIds = delegatedScope.allowedSecretIds.toSet()
+                    if (!delegatedIds.all { it in parentIds }) {
+                        "secrets delegated ids not contained in parent"
+                    } else {
+                        null
+                    }
+                }
+            }
+            parentScope is CapabilityScope.Worker && delegatedScope is CapabilityScope.Worker -> {
+                if (delegatedScope.maxWorkerCount > parentScope.maxWorkerCount) {
+                    "worker delegation cannot expand max worker count"
+                } else if (!delegatedScope.allowedRoles.all { it in parentScope.allowedRoles }) {
+                    "worker delegated roles not contained in parent"
+                } else {
+                    null
+                }
+            }
+            parentScope is CapabilityScope.Events && delegatedScope is CapabilityScope.Events -> {
+                // Events scope: all topic patterns in delegated must match patterns in parent.
+                val parentPatterns = parentScope.topicPatterns.toSet()
+                val delegatedPatterns = delegatedScope.topicPatterns.toSet()
+                if (!delegatedPatterns.all { it in parentPatterns }) {
+                    "events delegated patterns not contained in parent"
+                } else {
+                    null
+                }
+            }
+            parentScope::class != delegatedScope::class -> {
+                "scope type mismatch: parent is ${parentScope::class.simpleName}, delegated is ${delegatedScope::class.simpleName}"
+            }
+            else -> null
+        }
+    }
+
+    /** Check if a path is contained within a parent path pattern. Simple substring containment. */
+    private fun isPathContained(parentPath: String, childPath: String): Boolean {
+        // Normalize trailing slashes for comparison.
+        val parent = parentPath.trimEnd('/')
+        val child = childPath.trimEnd('/')
+        return child.startsWith(parent)
+    }
+
+    /** Check if a delegated host matches a parent host pattern (supports wildcards). */
+    private fun hostMatched(delegated: String, parentHosts: Set<String>): Boolean {
+        return parentHosts.any { pattern ->
+            when {
+                pattern == delegated -> true
+                pattern.startsWith("*.") -> {
+                    // Wildcard: *.example.com matches api.example.com
+                    val suffix = pattern.substring(1) // ".example.com"
+                    delegated.endsWith(suffix) && delegated != pattern.substring(2)
+                }
+                else -> false
+            }
+        }
+    }
+
+    /** RFC-0018: Validate that delegated constraints are equal or more restrictive. */
+    private fun validateConstraintAttenuation(parentConstraints: CapabilityConstraints, delegatedConstraints: CapabilityConstraints): String? {
+        // maxDurationSeconds: delegated must be <= parent (or null = unlimited).
+        val parentDur = parentConstraints.maxDurationSeconds
+        val delegatedDur = delegatedConstraints.maxDurationSeconds
+        if (parentDur != null && delegatedDur != null && delegatedDur > parentDur) {
+            return "delegated maxDurationSeconds $delegatedDur exceeds parent $parentDur"
+        }
+        if (parentDur != null && delegatedDur == null) {
+            return "delegated maxDurationSeconds cannot be unlimited when parent is $parentDur"
+        }
+
+        // maxBytesRead: delegated must be <= parent.
+        val parentBytesRead = parentConstraints.maxBytesRead
+        val delegatedBytesRead = delegatedConstraints.maxBytesRead
+        if (parentBytesRead != null && delegatedBytesRead != null && delegatedBytesRead > parentBytesRead) {
+            return "delegated maxBytesRead $delegatedBytesRead exceeds parent $parentBytesRead"
+        }
+        if (parentBytesRead != null && delegatedBytesRead == null) {
+            return "delegated maxBytesRead cannot be unlimited when parent is $parentBytesRead"
+        }
+
+        // maxBytesWritten: delegated must be <= parent.
+        val parentBytesWritten = parentConstraints.maxBytesWritten
+        val delegatedBytesWritten = delegatedConstraints.maxBytesWritten
+        if (parentBytesWritten != null && delegatedBytesWritten != null && delegatedBytesWritten > parentBytesWritten) {
+            return "delegated maxBytesWritten $delegatedBytesWritten exceeds parent $parentBytesWritten"
+        }
+        if (parentBytesWritten != null && delegatedBytesWritten == null) {
+            return "delegated maxBytesWritten cannot be unlimited when parent is $parentBytesWritten"
+        }
+
+        // maxExerciseCount: delegated must be <= parent.
+        val parentCount = parentConstraints.maxExerciseCount
+        val delegatedCount = delegatedConstraints.maxExerciseCount
+        if (parentCount != null && delegatedCount != null && delegatedCount > parentCount) {
+            return "delegated maxExerciseCount $delegatedCount exceeds parent $parentCount"
+        }
+        if (parentCount != null && delegatedCount == null) {
+            return "delegated maxExerciseCount cannot be unlimited when parent is $parentCount"
+        }
+
+        // requiresApprovalPerUse: if parent doesn't require it, delegated cannot require it.
+        if (!parentConstraints.requiresApprovalPerUse && delegatedConstraints.requiresApprovalPerUse) {
+            return "delegated cannot require approval when parent does not"
+        }
+
+        // budget: check that delegated budget dimensions are <= parent (RFC-0028).
+        val parentBudget = parentConstraints.budget
+        val delegatedBudget = delegatedConstraints.budget
+        if (parentBudget != null && delegatedBudget != null) {
+            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls != null && delegatedBudget.modelCalls > parentBudget.modelCalls) {
+                return "delegated budget.modelCalls ${delegatedBudget.modelCalls} exceeds parent ${parentBudget.modelCalls}"
+            }
+            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls == null) {
+                return "delegated budget.modelCalls cannot be unlimited when parent is ${parentBudget.modelCalls}"
+            }
+            // Similar checks for other budget dimensions...
+            if (parentBudget.steps != null && delegatedBudget.steps != null && delegatedBudget.steps > parentBudget.steps) {
+                return "delegated budget.steps ${delegatedBudget.steps} exceeds parent ${parentBudget.steps}"
+            }
+            if (parentBudget.steps != null && delegatedBudget.steps == null) {
+                return "delegated budget.steps cannot be unlimited when parent is ${parentBudget.steps}"
+            }
+        }
+
+        return null
+    }
+
+    /** Load the current exercise count for a capability from capability_usage table. */
+    private fun loadCapabilityUsageCount(capabilityId: CapabilityId): Int {
+        var count = 0
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT exercised_count FROM capability_usage WHERE capability_id = ?",
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    count = cursor.getLong(0)?.toInt() ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, capabilityId.value) }
+        return count
     }
 
 }
