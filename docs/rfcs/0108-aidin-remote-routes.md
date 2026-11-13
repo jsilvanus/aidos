@@ -200,17 +200,21 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 ### Deferred to later PRs
 
-1. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
-2. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
-3. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
-4. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
-5. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
-6. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
-7. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
-8. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
+1. **Phase 1 (in parallel)**: Route discovery, dialer fallback, AIDIN wire format extension — being implemented in `agent:routes`, `agent:policy`, `agent:wire-aidin`
+2. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
+3. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
+4. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
+5. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
+6. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
+7. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
+8. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
+9. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
 
 ### Module locations
 
 - `agent/ssh-tunnel`: Standalone library (kernel-free)
 - `agent/tunnel-manager`: Engine adapter (depends on vault, capability, but not kernel directly)
-- `agent/settings.gradle.kts`: Both modules included
+- `agent/routes`: Phase 1 route discovery and dialer (kernel-free)
+- `agent/policy`: Phase 2 route planner policy and remote-access control (kernel-free)
+- `agent/wire-aidin`: Phase 1 AIDIN wire format extension (kernel-free)
+- `agent/settings.gradle.kts`: All modules included
