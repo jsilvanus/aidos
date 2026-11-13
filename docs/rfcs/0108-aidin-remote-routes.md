@@ -172,6 +172,38 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 - `agent/routes`: Kernel-free route model and dialer library
 
+## Phase 2 Implementation Status (2026-11-13)
+
+### Completed
+
+**Route planner policy and remote-access control** (`agent:policy`, `dev.aidos.policy`):
+- ✅ `RoutePlannerPolicy` interface (decide whether to offer layer split per route)
+- ✅ `LocalNetworkPolicy` implementation (LAN only: RTT < 50ms, no layer split on WAN)
+- ✅ `splitMutex` (serialize split-only operations to prevent simultaneous remote and local splits)
+- ✅ Session scope enforcement via `SessionCapability` (only tunnel origin's sessions can access split)
+- ✅ Remote-access control via "route grants" (origin declares which routes are safe for split)
+- ✅ Integration with RFC-0003 (permissions) and RFC-0042 (audit)
+- ✅ Unit tests: policy evaluation per route, capability checks, split serialization
+- ✅ Kernel-free (depends only on routes module)
+
+**AIDIN wire format extension** (`agent:wire-aidin`, `dev.aidos.wire`):
+- ✅ `RouteHintCodec` (serialize/deserialize route hints in AIDIN format)
+- ✅ Format: `lan`, `direct://host:port`, `ssh://tunnelId:serverHost:serverPort`
+- ✅ Extend `PairingInvite` with route hints (sender provides preferred routes to peer)
+- ✅ Round-trip serialization tests
+- ✅ Kernel-free
+
+### Deferred to later PRs
+
+1. **Phase 1 wire extension**: Integrate `RouteHintCodec` into actual pairing protocol (send hints in `PairingInvite`, parse on receive).
+2. **Policy integration**: Wire planner to policy layer; enforce RTT threshold before offering split.
+3. **UI**: Settings page to add/remove direct routes, manage tunnel hints.
+
+### Module locations
+
+- `agent/policy`: Route planner policy library (kernel-free)
+- `agent/wire-aidin`: AIDIN wire format extension (kernel-free)
+
 ## Phase 3 Implementation Status (2026-11-13)
 
 ### Completed
@@ -200,15 +232,14 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 ### Deferred to later PRs
 
-1. **Phase 1 (in parallel)**: Route discovery, dialer fallback, AIDIN wire format extension — being implemented in `agent:routes`, `agent:policy`, `agent:wire-aidin`
-2. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
-3. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
-4. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
-5. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
-6. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
-7. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
-8. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
-9. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
+1. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
+2. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
+3. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
+4. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
+5. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
+6. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
+7. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
+8. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
 
 ### Module locations
 
