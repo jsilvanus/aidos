@@ -5,8 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import java.time.Instant
 
 class LicenseAcceptanceStoreTest {
 
@@ -133,7 +133,7 @@ class LicenseAcceptanceStoreTest {
         val updates = mutableListOf<List<LicenseAcceptanceRecord>>()
 
         val flow = store.watchAcceptances()
-        val job = kotlinx.coroutines.launch {
+        val job = backgroundScope.launch {
             flow.collect { updates.add(it) }
         }
 

@@ -1,6 +1,7 @@
 package dev.aidos.intent
 
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.QueryResult
 
 /**
  * Computes derived status for intent nodes based on graph state (RFC-0012).
@@ -81,9 +82,10 @@ class DerivedStatusComputer(
             parameters = 3,
             binders = { bindString(0, projectId); bindString(1, nodeId); bindString(2, projectId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    count = resultSet.getLong(0).toInt()
+                if (resultSet.next().value) {
+                    count = resultSet.getLong(0)?.toInt() ?: 0
                 }
+                QueryResult.Value(Unit)
             },
         )
         return count > 0
@@ -116,9 +118,10 @@ class DerivedStatusComputer(
             parameters = 1,
             binders = { bindString(0, nodeId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    count = resultSet.getLong(0).toInt()
+                if (resultSet.next().value) {
+                    count = resultSet.getLong(0)?.toInt() ?: 0
                 }
+                QueryResult.Value(Unit)
             },
         )
         return count > 0
@@ -149,9 +152,10 @@ class DerivedStatusComputer(
             parameters = 2,
             binders = { bindString(0, nodeId); bindString(1, nodeId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    count = resultSet.getLong(0).toInt()
+                if (resultSet.next().value) {
+                    count = resultSet.getLong(0)?.toInt() ?: 0
                 }
+                QueryResult.Value(Unit)
             },
         )
         return count > 0
@@ -179,10 +183,11 @@ class DerivedStatusComputer(
             parameters = 2,
             binders = { bindString(0, nodeId); bindString(1, nodeId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    val count = resultSet.getLong(0).toInt()
+                if (resultSet.next().value) {
+                    val count = resultSet.getLong(0)?.toInt() ?: 0
                     hasConfirmedImpl = count > 0
                 }
+                QueryResult.Value(Unit)
             },
         )
 
@@ -207,9 +212,10 @@ class DerivedStatusComputer(
             parameters = 2,
             binders = { bindString(0, projectId); bindString(1, nodeId) },
             mapper = { resultSet ->
-                if (resultSet.next()) {
-                    unmetCount = resultSet.getLong(0).toInt()
+                if (resultSet.next().value) {
+                    unmetCount = resultSet.getLong(0)?.toInt() ?: 0
                 }
+                QueryResult.Value(Unit)
             },
         )
 

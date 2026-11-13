@@ -57,6 +57,7 @@ kotlin {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 implementation("io.ktor:ktor-server-test-host:3.5.2")
+                implementation("app.cash.sqldelight:sqlite-driver:2.0.1")
             }
         }
     }
