@@ -34,9 +34,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val connected = dialer.state.first { it is DialerState.Connected }
-            assertTrue(connected is DialerState.Connected)
-            assertEquals(route, (connected as DialerState.Connected).route)
+            val connected = dialer.state.first { it is DialerState.Connected } as DialerState.Connected
+            assertEquals(route, connected.route)
         }
     }
 
@@ -59,9 +58,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val connected = dialer.state.first { it is DialerState.Connected }
-            assertTrue(connected is DialerState.Connected)
-            assertEquals(directRoute, (connected as DialerState.Connected).route)
+            val connected = dialer.state.first { it is DialerState.Connected } as DialerState.Connected
+            assertEquals(directRoute, connected.route)
             assertEquals(1, lanAttempts, "LAN was tried and failed")
         }
     }
