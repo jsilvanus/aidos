@@ -216,7 +216,9 @@ class RouteModelsTest {
         val success = DialResult.Success(Route.Lan, 42)
         val failure = DialResult.Failure(Route.Lan, "no LAN available")
 
-        assertTrue(success is DialResult.Success)
-        assertTrue(failure is DialResult.Failure)
+        assertEquals(Route.Lan, success.route)
+        assertEquals(42, success.rttMillis)
+        assertEquals(Route.Lan, failure.route)
+        assertEquals("no LAN available", failure.reason)
     }
 }
