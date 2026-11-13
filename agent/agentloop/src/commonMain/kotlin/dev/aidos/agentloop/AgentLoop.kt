@@ -83,11 +83,18 @@ class AgentLoop(
         var runTaint = TrustLevel.TRUSTED
         var taintSourceDescription: String? = null
         var steps = 0
+        var budgetUsed = 0L
         val consecutiveCalls = mutableListOf<String>()
 
         checkpoint(StepEvent.RunStarted(instructionSetHash = pkg.instructionSetHash))
 
         while (steps < maxSteps) {
+            // RFC-0008: Check budget exhaustion before each step (RFC-0028)
+            if (request.budgetRemaining != null && budgetUsed >= request.budgetRemaining) {
+                checkpoint(StepEvent.RunFailed(step = steps, reason = "Budget exhausted"))
+                return RunOutcome.Failed("Budget exhausted after $steps steps")
+            }
+
             steps++
             checkpoint(StepEvent.StepStarted(step = steps))
             val modelReq = ModelRequest(
@@ -100,6 +107,9 @@ class AgentLoop(
                 checkpoint(StepEvent.StepFailed(step = steps, reason = err.message ?: "model error"))
                 return RunOutcome.Failed("Model invocation failed: ${err.message}")
             }
+
+            // RFC-0028: Account for model response tokens consumed
+            budgetUsed += response.outputs.toString().length.toLong()
 
             val responseText = response.outputs
                 .filterIsInstance<dev.aidos.kernel.TextOutput>()
@@ -152,6 +162,8 @@ data class RunRequest(
     val tools: List<ToolDescriptor> = emptyList(),
     val knowledgeContext: List<ContextItem> = emptyList(),
     val instructionSet: InstructionSet? = null,
+    /** RFC-0028: Budget remaining for this run. If null, no budget limit enforced. */
+    val budgetRemaining: Long? = null,
 )
 
 sealed interface RunOutcome {

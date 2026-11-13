@@ -11,6 +11,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":api"))
+            implementation(project(":intent"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
         }
 

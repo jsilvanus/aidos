@@ -79,6 +79,22 @@ class ToolBroker(
             )
         val descriptor = tool.operations().first { it.name == call.toolName }
 
+        // Step 1a: validate arguments against the operation's JSON Schema (RFC-0030, RFC-0008)
+        val schemaValidationResult = validateArgumentSchema(call, descriptor)
+        if (schemaValidationResult.isFailure) {
+            return auditAndReturn(
+                subjectId = subjectId,
+                call = call,
+                kind = "ToolFailed",
+                capabilityId = call.capabilityId,
+                result = denied(
+                    call,
+                    "arguments.invalid",
+                    schemaValidationResult.exceptionOrNull()?.message ?: "arguments do not match schema"
+                ),
+            )
+        }
+
         // Step 2: capability is named in the call.
         val capId = call.capabilityId
             ?: return auditAndReturn(
@@ -233,6 +249,14 @@ class ToolBroker(
             nowIso = nowIso(),
         )
         return result
+    }
+
+    private fun validateArgumentSchema(
+        call: ToolCall,
+        descriptor: ToolDescriptor,
+    ): Result<Unit> {
+        val validator = JsonSchemaValidator()
+        return validator.validate(call.arguments, descriptor.inputSchema)
     }
 
     private fun denied(call: ToolCall, code: String, message: String): ToolCallResult =

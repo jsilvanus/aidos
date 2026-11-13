@@ -28,6 +28,7 @@ import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
@@ -38,7 +39,7 @@ import kotlinx.serialization.json.put
  * ([RelPath.of] rejects `..`, absolute paths, and drive-letter prefixes). Tools never receive
  * a client-side absolute path. Every `Mutate` returns a real [Preview.Diff].
  *
- * Operations: `fs:read`, `fs:write`, `fs:list`, `fs:search`.
+ * Operations: `fs:read`, `fs:write`, `fs:list`, `fs:search`, `fs:delete`, `fs:move`, `fs:mkdir`.
  */
 class FilesystemTool(
     /**
@@ -46,8 +47,7 @@ class FilesystemTool(
      * `FileModified`/`FileCreated` examples. No `EventStore`/`executor` dependency and no
      * `projectId` — same reasoning as `GitTool.onCommit`: the caller decides whether/how to
      * publish it, and owns mapping [FileChangeEvent.created] to the right `EventTypes` constant.
-     * Not yet exercised by any live caller — see PIPELINE.md's Group 1 notes. There is no
-     * `fs:delete` operation on this tool, so `FileDeleted` has no emission point here to wire.
+     * Not yet exercised by any live caller — see PIPELINE.md's Group 1 notes.
      */
     private val onWrite: (FileChangeEvent) -> Unit = {},
     /** RFC-0027: labels what a read returns. Default: RFC defaults for `trust.untrusted_paths`. */
@@ -139,6 +139,74 @@ class FilesystemTool(
             recoveryClass = RecoveryClass.PURE,
             availability = UNIVERSAL,
         ),
+        ToolDescriptor(
+            name = "fs:delete",
+            title = "Delete file or directory",
+            description = "Deletes a file or directory (recursively if requested). Irreversible. Path must be relative to the project root and not inside .git/.",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                put("required", kotlinx.serialization.json.buildJsonArray {
+                    add(kotlinx.serialization.json.JsonPrimitive("path"))
+                })
+                put("properties", buildJsonObject {
+                    put("path", buildJsonObject { put("type", "string") })
+                    put("recursive", buildJsonObject { 
+                        put("type", "boolean")
+                        put("default", false)
+                    })
+                    put("force", buildJsonObject {
+                        put("type", "boolean")
+                        put("default", false)
+                    })
+                })
+            },
+            effect = EffectKind.Mutate(MutationScope.IN_PROJECT, reversible = false),
+            requiredPermission = Permission.FS_WRITE,
+            recoveryClass = RecoveryClass.CHECKABLE,
+            availability = UNIVERSAL,
+        ),
+        ToolDescriptor(
+            name = "fs:move",
+            title = "Move or rename file/directory",
+            description = "Moves or renames a file or directory. Paths must be relative to project root and not target .git/.",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                put("required", kotlinx.serialization.json.buildJsonArray {
+                    add(kotlinx.serialization.json.JsonPrimitive("from"))
+                    add(kotlinx.serialization.json.JsonPrimitive("to"))
+                })
+                put("properties", buildJsonObject {
+                    put("from", buildJsonObject { put("type", "string") })
+                    put("to", buildJsonObject { put("type", "string") })
+                    put("overwrite", buildJsonObject {
+                        put("type", "boolean")
+                        put("default", false)
+                    })
+                })
+            },
+            effect = EffectKind.Mutate(MutationScope.IN_PROJECT),
+            requiredPermission = Permission.FS_WRITE,
+            recoveryClass = RecoveryClass.CHECKABLE,
+            availability = UNIVERSAL,
+        ),
+        ToolDescriptor(
+            name = "fs:mkdir",
+            title = "Create directory",
+            description = "Creates a directory (and missing parent directories if needed). Path must be relative to project root.",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                put("required", kotlinx.serialization.json.buildJsonArray {
+                    add(kotlinx.serialization.json.JsonPrimitive("path"))
+                })
+                put("properties", buildJsonObject {
+                    put("path", buildJsonObject { put("type", "string") })
+                })
+            },
+            effect = EffectKind.Mutate(MutationScope.IN_PROJECT),
+            requiredPermission = Permission.FS_WRITE,
+            recoveryClass = RecoveryClass.IDEMPOTENT,
+            availability = UNIVERSAL,
+        ),
     )
 
     override suspend fun execute(
@@ -154,6 +222,9 @@ class FilesystemTool(
             "fs:write"  -> write(dir, arguments)
             "fs:list"   -> list(dir, arguments)
             "fs:search" -> search(dir, arguments)
+            "fs:delete" -> delete(dir, arguments)
+            "fs:move"   -> move(dir, arguments)
+            "fs:mkdir"  -> mkdir(dir, arguments)
             else        -> error(operation, "unknown operation: $operation")
         }
     }
@@ -248,6 +319,69 @@ class FilesystemTool(
                 }
             }
         }
+    }
+
+    private suspend fun delete(dir: DirHandle, args: JsonObject): ToolCallResult {
+        val path = relPath(args, "path") ?: return error("fs:delete", "missing or invalid 'path'")
+        
+        // RFC-0034: Refuse deletion inside .git/
+        if (path.value.startsWith(".git/") || path.value == ".git") {
+            return error("fs:delete", ".git/ is read-only and cannot be deleted")
+        }
+        
+        val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
+        val force = args["force"]?.jsonPrimitive?.booleanOrNull ?: false
+        
+        val result = dir.delete(path, recursive).getOrElse {
+            val message = it.message ?: "delete failed"
+            if (force) ok(listOf(ContentBlock.Text("delete skipped: $message")), TrustLevel.TRUSTED)
+            else error("fs:delete", message)
+        }
+        
+        val count = result
+        return ok(
+            listOf(ContentBlock.Text("deleted $count file(s) at ${path.value}")),
+            TrustLevel.TRUSTED
+        )
+    }
+
+    private suspend fun move(dir: DirHandle, args: JsonObject): ToolCallResult {
+        val from = relPath(args, "from") ?: return error("fs:move", "missing or invalid 'from'")
+        val to = relPath(args, "to") ?: return error("fs:move", "missing or invalid 'to'")
+        
+        // RFC-0034: Refuse move into .git/
+        if (to.value.startsWith(".git/") || to.value == ".git") {
+            return error("fs:move", ".git/ is read-only and cannot be written to")
+        }
+        
+        val overwrite = args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
+        
+        dir.move(from, to, overwrite).getOrElse {
+            return error("fs:move", it.message ?: "move failed")
+        }
+        
+        return ok(
+            listOf(ContentBlock.Text("moved ${from.value} to ${to.value}")),
+            TrustLevel.TRUSTED
+        )
+    }
+
+    private suspend fun mkdir(dir: DirHandle, args: JsonObject): ToolCallResult {
+        val path = relPath(args, "path") ?: return error("fs:mkdir", "missing or invalid 'path'")
+        
+        // RFC-0034: Refuse mkdir inside .git/
+        if (path.value.startsWith(".git/") || path.value == ".git") {
+            return error("fs:mkdir", ".git/ is read-only and cannot be written to")
+        }
+        
+        dir.mkdir(path).getOrElse {
+            return error("fs:mkdir", it.message ?: "mkdir failed")
+        }
+        
+        return ok(
+            listOf(ContentBlock.Text("created directory ${path.value}")),
+            TrustLevel.TRUSTED
+        )
     }
 
     // ── Preview ────────────────────────────────────────────────────────────────

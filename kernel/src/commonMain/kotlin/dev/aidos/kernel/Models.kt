@@ -130,6 +130,10 @@ sealed interface RoutingDecision {
     data class Local(val adapter: ModelAdapter) : RoutingDecision
     data class RemoteApproved(val adapter: ModelAdapter) : RoutingDecision
     data class RemotePendingApproval(val adapter: ModelAdapter, val reason: String) : RoutingDecision
+    data class RemoteAdapterPipeline(
+        val adapters: List<ModelAdapter>,
+        val reason: String = "Multi-adapter pipeline sequencing (RFC-0045)"
+    ) : RoutingDecision
     data class UnavailableOffline(val kind: ModelKind) : RoutingDecision
     data class DisabledByPolicy(val reason: String) : RoutingDecision
     data object ForegroundRequired : RoutingDecision

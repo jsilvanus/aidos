@@ -7,7 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Global model runtime with admission queue and LRU eviction (RFC-0022, M20, PIPELINE.md §2.2).
+ * Global model runtime with admission queue and LRU eviction (RFC-0020, RFC-0022, M20, PIPELINE.md §2.2).
  *
  * Invariants enforced here:
  * - Weights are user-scope, not per-project. This runtime is a singleton per process.
@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withLock
  * - LRU context eviction bounds simultaneously resident models while protecting active requests
  *   and warm fallback candidates (RFC-0105).
  * - Deterministic native disposal: evicted models are unloaded immediately.
+ * - Idle timeout: Models unloaded if unused for configurable duration (default 5 minutes, RFC-0020).
  */
 class GlobalModelRuntime(
     private val backend: InferenceBackend,
@@ -24,6 +25,7 @@ class GlobalModelRuntime(
     private val maxResidentModels: Int = Int.MAX_VALUE,
     private val isModelActive: (String) -> Boolean = { false },
     private val memoryAdmissionCheck: (suspend (modelId: String, descriptor: ModelDescriptor?) -> Result<Unit>)? = null,
+    private val idleTimeoutMillis: Long = 5 * 60 * 1000, // 5 minutes default (RFC-0020)
 ) : ModelRuntime {
 
     private val admissionQueue = Mutex()
@@ -62,6 +64,30 @@ class GlobalModelRuntime(
             setWarmFallbackPinned(modelId, false)
         }
         return res
+    }
+
+    /**
+     * Periodic check for idle models and unload them to free memory (RFC-0020).
+     * Called on a timer (e.g., every 30 seconds) to enforce idle timeout.
+     * Models unused for longer than [idleTimeoutMillis] are unloaded.
+     */
+    suspend fun checkAndUnloadIdleModels() {
+        val now = nowMillis()
+        val modelsToUnload = mutableListOf<String>()
+
+        loadedModels.forEach { (modelId, loadedModel) ->
+            val idleTimeMs = now - loadedModel.lastAccessedAtMillis
+            if (idleTimeMs > idleTimeoutMillis && !isModelActive(modelId) && modelId !in warmPinnedModels) {
+                modelsToUnload.add(modelId)
+            }
+        }
+
+        modelsToUnload.forEach { modelId ->
+            admissionQueue.withLock {
+                loadedModels = loadedModels - modelId
+                backend.unload(modelId)
+            }
+        }
     }
 
     /** Loads a model using the backend's normal model-id resolution and digest verification. */
@@ -168,6 +194,11 @@ class GlobalModelRuntime(
 
     /** The settings a resident model was loaded with, or null when it is not loaded. */
     fun loadedSettings(modelId: String): ModelRunSettings? = loadedModels[modelId]?.settings
+
+    /** Idle time in milliseconds for a loaded model, or null if not loaded. */
+    fun idleTimeMs(modelId: String): Long? = loadedModels[modelId]?.let {
+        System.currentTimeMillis() - it.lastAccessedAtMillis
+    }
 
     override suspend fun delete(modelId: String) {
         admissionQueue.withLock {

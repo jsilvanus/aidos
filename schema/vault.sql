@@ -7,6 +7,10 @@
 -- Nothing outside this file holds a secret value. Consumers hold a secret_ref.
 
 PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA auto_vacuum = INCREMENTAL;
+PRAGMA wal_autocheckpoint = 1000;
 
 CREATE TABLE schema_versions (
     id              INTEGER PRIMARY KEY CHECK (id = 1),

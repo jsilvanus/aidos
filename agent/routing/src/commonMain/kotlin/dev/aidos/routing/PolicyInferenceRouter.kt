@@ -54,13 +54,29 @@ data class RoutingPolicy(
  * 5. If allowRemote is true and network is up but no candidate matches the allowlist:
  *    [RoutingDecision.DisabledByPolicy].
  * 6. If taint is UNTRUSTED and the only option is egress: [RoutingDecision.RemotePendingApproval].
- * 7. Otherwise: [RoutingDecision.RemoteApproved].
+ * 7. Consider budget (RFC-0028): prefer cheaper/smaller models when budget is limited.
+ * 8. Otherwise: [RoutingDecision.RemoteApproved].
  */
 class PolicyInferenceRouter(
     private val policy: RoutingPolicy,
     private val localAdapters: List<ModelAdapter> = emptyList(),
     private val remoteAdapters: List<ModelAdapter> = emptyList(),
 ) : InferenceRouter {
+
+    /**
+     * Estimates relative cost for an adapter (lower is cheaper).
+     * Used when budget is constrained to prefer smaller/cheaper models.
+     * Returns a score where 0 is local (free), and higher values indicate costlier options.
+     * This is a heuristic; exact cost depends on the provider's pricing.
+     */
+    private fun estimateAdapterCost(adapter: ModelAdapter): Long {
+        // Local models have zero cost (they're already downloaded/loaded).
+        if (adapter.isLocal) return 0L
+
+        // Remote models have relative cost based on context window (proxy for model size/capability).
+        // Larger models typically cost more; this is a rough heuristic.
+        return adapter.contextWindow.toLong()
+    }
 
     override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
         // MOBILE foreground service check (D24): a local inference requires foreground.
@@ -122,9 +138,18 @@ class PolicyInferenceRouter(
             return RoutingDecision.DisabledByPolicy("No allowed remote adapter available for kind $kind")
         }
 
-        val remoteAdapter = remoteCandidates.first()
+        // 5. RFC-0028: Budget-aware routing. When budget is constrained, prefer cheaper models.
+        // If costUnits budget is low, select the model with the lowest estimated cost.
+        val remoteAdapter = if (context.budgetRemaining?.costUnits != null && context.budgetRemaining.costUnits <= 1000) {
+            // Budget is tight; prefer the cheapest option.
+            // Sort by estimated cost and take the first (cheapest).
+            remoteCandidates.minByOrNull { estimateAdapterCost(it) } ?: remoteCandidates.first()
+        } else {
+            // Budget is ample or unconstrained; prefer first candidate.
+            remoteCandidates.first()
+        }
 
-        // 5. Tainted run crossing network boundary requires user confirmation (RFC-0027).
+        // 6. Tainted run crossing network boundary requires user confirmation (RFC-0027).
         // Only UNTRUSTED attenuates: a Run that merely read project files is PROJECT-tainted
         // and must not be asked about every model call.
         return if (context.runTaint == TrustLevel.UNTRUSTED) {
