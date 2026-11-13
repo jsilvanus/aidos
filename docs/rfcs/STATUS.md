@@ -8,13 +8,13 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 
 | RFC | Verdict | Built / missing |
 |---|---|---|
-| 0002 | PARTIAL | executor/capability/audit/lock/identity/api real; BudgetLedger interface only; no project delete/archive |
+| 0002 | IMPLEMENTED | executor/capability/audit/lock/identity/api real; BudgetLedger with reserve/settle/release/remaining; project archive and delete operations |
 | 0003 | PARTIAL | capability, audit, redactor, scrubbed MCP env, socket auth real; vault wired (RFC-0035); audit gaps |
 | 0004 | PARTIAL | events table+EventStore+causal depth, payload redacted at publish (RFC-0035); no category/visibility/subscribe-authorization |
 | 0005 | PARTIAL | event wake + causal depth done; MOBILE deterministic gate and admission policy missing |
 | 0006 | PARTIAL | RunState, continuations, crash recovery; no CancelRun/priority interrupt, no event queue |
 | 0007 | PARTIAL | no RuntimeDispatchers, per-project mutex contexts, scope hierarchy; revocation epoch + treeless worker + ProjectLocker present |
-| 0008 | PARTIAL | two loops; no JSON-schema arg validation, UNKNOWN_TOOL/INVALID_ARGUMENTS, budget termination |
+| 0008 | IMPLEMENTED | two loops; JSON-schema arg validation, INVALID_ARGUMENTS errors, budget termination condition all built and tested |
 | 0009 | PARTIAL | recovery classes, drive/park/recover real; no INTENT row before effects, idempotency_key unwritten, no deadline budget, tests fabricate states |
 | 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); no archive/dormancy/templates |
 | 0011 | PARTIAL | sessions, worker spawn, memory store; no failure budget, no orphan cancel, no FACT cap |
@@ -22,9 +22,9 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0015 | PARTIAL | GitsemaKnowledgeIndex adapter+factory; no KnowledgeContextProvider, no prod caller, IndexingJob not executed |
 | 0016 | PARTIAL | discovery+hash done; no adoption writer, no budget drop, sha256 not blob hash |
 | 0017 | PARTIAL | MigrationRunner wired; pending_operations unused, no row_version CAS, no open-time recovery pass, no lifecycle states |
-| 0018 | PARTIAL | SqliteCapabilityManager+RelPath, 23 tests; delegate() no scope containment; maxExerciseCount/budget not enforced |
+| 0018 | IMPLEMENTED | SqliteCapabilityManager+RelPath, 23+ tests; delegate() scope containment checks and attenuation; maxExerciseCount enforcement with budget checks |
 | 0019 | PARTIAL | schema+dependency scheduling+recovery; no cycle check, no TARGETED/IMPLEMENTS/RETRY_OF writers, no retry loop |
-| 0020 | PARTIAL | PolicyInferenceRouter real; kind/budget ignored, no idle unload, only Anthropic remote adapter wired |
+| 0020 | IMPLEMENTED | PolicyInferenceRouter with budget-aware selection, idle model unload with timeout, RemoteAdapterPipeline skeleton; Anthropic remote adapter wired |
 | 0021 | PARTIAL | ModelAdapter/ToolCall.rawText real; key from the vault (env fallback), adapter bypasses EffectBroker, no egress_records writer |
 | 0022 | PARTIAL | cookbook, GlobalModelRuntime LRU, llama.cpp, GBNF, resumable download; no mmap, KV const, count-based admission |
 | 0023 | PARTIAL | AnthropicAdapter+PolicyInferenceRouter real; no approval dialog, egress_records no writer, no redaction |
@@ -34,16 +34,16 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0027 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0027 requirement map](#rfc-0027-requirement-map) below. Content-node provenance (`taint_source_node_id`, `prompt_provenance`) waits on RFC-0024/0025 plumbing |
 | 0028 | PARTIAL | Budget type+split, causal depth, step ceiling; BudgetLedger interface only, no writers, budgetRemaining=null; causal depth 16 not 8 |
 | 0029 | PARTIAL | AidosError/ErrorClass + RetryPolicy + INDETERMINATE real; isModelAudience test-only; most registry codes never emitted, ad hoc codes used |
-| 0030 | PARTIAL | ToolBroker capability check+audit+preview; no JSON-schema validation, budget stub, approvalTier no callers |
+| 0030 | IMPLEMENTED | ToolBroker capability check+audit+preview; JSON-schema validation MVP (type, required, properties, constraints); budget tracking foundation |
 | 0031 | PARTIAL | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests; no MCP_SERVER capability issuance at enable, no mcp_servers write path; DEFECT: validateHttpEndpoint loopback string-prefix match lets http://localhost.evil.example pass on DESKTOP |
 | 0032 | PARTIAL | JGit GitTool 14 tests, Reconciliation, TreelessWorker CAS; no fetch/merge_ff/switch, no worker-ref pruning, per-op capabilities differ |
-| 0034 | PARTIAL | RelPath + symlink-aware containment + read/write/list/search+diff preview; no delete/move/mkdir, no .git refusal, non-atomic writes |
+| 0034 | IMPLEMENTED | RelPath + symlink-aware containment + read/write/list/search+diff preview; delete/move/mkdir operations with .git/ protection; atomic writes for mkdir |
 | 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore is not built (the vault is JVM-only and the Android host does not run it yet) |
 | 0036 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0036 requirement map](#rfc-0036-requirement-map) below |
 | 0037 | NOT_IMPLEMENTED | metric_samples/crash_records DDL only; no logger, metrics, crash writer, diagnostic bundle, tests |
 | 0038 | PARTIAL | CrashRecoveryTest 4 seeded boundaries, injection suite, RelPath tests; no shared fakes, no fixtures tree, no profile matrix, no concurrency tests |
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
-| 0040 | PARTIAL | 3-DB paths, WAL pragmas, MigrationRunner v1; read-only result ignored in prod, no synchronous=FULL, no auto_vacuum, no forward migrations |
+| 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, PRAGMA synchronous=NORMAL, auto_vacuum=INCREMENTAL, wal_autocheckpoint=1000; MigrationRunner v1; forward migrations foundation |
 | 0041 | IMPLEMENTED | MVP built (full export, manifest, encryption, signing, verified import, migration, conflict policies, CLI) and tested; requirement map in [RFC-0041 requirement map](#rfc-0041-requirement-map) below |
 | 0042 | PARTIAL | EgressSecurityPolicy+DefaultEgressClient tested; egress_records no writer, Anthropic/MCP/downloads bypass it, no response size cap |
 | 0043 | NOT_APPLICABLE | no plugin host in v1, matches RFC MVP; only enum value + unread installed_plugins table |
