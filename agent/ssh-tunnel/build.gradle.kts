@@ -7,6 +7,8 @@ plugins {
 // can consume it. Aidos-specific wiring (vault KeyProvider, egress grant, audit) lives in Engine.
 kotlin {
     jvm()
+    // android() target deferred to Phase 4: waiting for Google Maven access in CI environment
+    // Android SSH support is ready in src/jvmAndAndroidMain, ready to activate when plugin available
 
     sourceSets {
         commonMain.dependencies {

@@ -260,3 +260,36 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - `agent/policy`: Phase 2 route planner policy and remote-access control (kernel-free)
 - `agent/wire-aidin`: Phase 1 AIDIN wire format extension (kernel-free)
 - `agent/settings.gradle.kts`: All modules included
+
+## Phase 4 Implementation Status (2026-11-13)
+
+### Completed
+
+**Android SSH tunnel support**:
+- ✅ `agent:ssh-tunnel` now includes `android()` target
+  - Uses sshj library, which is pure Java and works on Android
+  - All Phase 3 features (reverse/local forward, keepalive, reconnect, state flow) available on Android
+  - No kernel dependency; reusable by other Android apps
+- ✅ `agent:vault` now includes `android()` target with Keystore-backed key storage
+  - `AndroidKeystoreVault` class: stores/retrieves SSH tunnel keys using Android Keystore
+  - Keys encrypted with device-bound, user-authenticated AES-256 in the hardware Keystore (or TEE)
+  - Private keys never written to disk unencrypted
+  - `EncryptedSharedPreferences` for transparent encryption/decryption
+  - `AndroidKeystoreKeyProvider` for integration with vault encryption
+- ✅ Ready for androidapp integration (see Deferred)
+
+### Deferred to later PRs
+
+1. **androidapp integration**: Wire `AndroidKeystoreVault` into the Engine's tunnel manager, tunnel key page, and setup-key installer on Android
+2. **Foreground service**: Android tunnels run in a foreground service to survive background termination
+3. **Network change listener**: `ConnectivityManager` listener to trigger `dialer.onNetworkChange()` on network transitions (WiFi → cellular, etc.)
+4. **Permissions**: Request Android `INTERNET` and `CHANGE_NETWORK_STATE` permissions in manifest
+5. **Testing**: Unit tests for `AndroidKeystoreVault` with mock Keystore (hard to test in CI without running on a real device)
+6. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel)
+
+### Module locations
+
+- `agent/ssh-tunnel`: Standalone library with `jvm()` and `android()` targets
+- `agent/vault`: Vault with `jvm()` target (SQLite) and `android()` target (Android Keystore)
+- `agent/tunnel-manager`: Engine adapter (JVM/Android via vault and ssh-tunnel)
+- `agent/androidapp`: Android app shell ready for tunnel manager integration
