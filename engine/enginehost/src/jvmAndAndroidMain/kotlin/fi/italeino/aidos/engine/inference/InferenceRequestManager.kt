@@ -93,14 +93,17 @@ class InferenceRequestManager(
                 // Model doesn't exist; load will fail anyway with a more specific error
                 return Result.failure(IllegalArgumentException("Model $modelId not found"))
             }
-            val accepted = licenseStore.isAccepted(descriptor.id, descriptor.version ?: "", descriptor.licenseDigest ?: "")
-            if (!accepted && descriptor.licenseDigest != null && descriptor.licenseDigest!!.isNotEmpty()) {
+            val version = descriptor.metadata["version"] ?: ""
+            val licenseDigest = descriptor.metadata["license_digest"] ?: ""
+            val licenseText = descriptor.metadata["license_text"] ?: ""
+            val accepted = licenseStore.isAccepted(descriptor.id, version, licenseDigest)
+            if (!accepted && licenseDigest.isNotEmpty()) {
                 return Result.failure(
                     LicenseNotAcceptedException(
                         descriptor.id,
-                        descriptor.version ?: "",
-                        descriptor.licenseText ?: "",
-                        descriptor.licenseDigest!!
+                        version,
+                        licenseText,
+                        licenseDigest,
                     )
                 )
             }

@@ -446,8 +446,6 @@ class InferenceRequestManagerTest {
     }
 }
 
-private fun dummyRequest() = ModelRequest(
-
 private class FakeRuntime(
     private val adapter: ModelAdapter,
     private val deleteStarted: CompletableDeferred<Unit>? = null,
@@ -470,9 +468,11 @@ private class FakeRuntime(
             contextWindow = 2048,
             sizeBytes = 1234,
             digest = null,
-            version = "1.0",
-            licenseDigest = "sha256-abc123",
-            licenseText = "Test License - Accept to use"
+            metadata = mapOf(
+                "version" to "1.0",
+                "license_digest" to "sha256-abc123",
+                "license_text" to "Test License - Accept to use",
+            ),
         )
     )
 

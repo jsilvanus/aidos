@@ -22,8 +22,7 @@ class DiagnoseCommandTest {
 
     private fun setUp() {
         // Create a mock runtime client that returns desktop profile
-        mockRuntimeClient = object : MockRuntimeClient() {
-        }
+        mockRuntimeClient = MockRuntimeClient()
 
         diagnoseCommand = DiagnoseCommand(mockRuntimeClient)
     }

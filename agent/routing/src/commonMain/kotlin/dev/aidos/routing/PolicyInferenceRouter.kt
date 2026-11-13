@@ -141,7 +141,8 @@ class PolicyInferenceRouter(
         // 5. RFC-0028: Budget-aware routing. When budget is constrained, prefer cheaper models.
         // If costUnits budget is low, select the model with the lowest estimated cost.
         val budgetRemaining = context.budgetRemaining
-        val remoteAdapter = if (budgetRemaining != null && budgetRemaining.costUnits != null && budgetRemaining.costUnits <= 1000) {
+        val budgetCostUnits = budgetRemaining?.costUnits
+        val remoteAdapter = if (budgetCostUnits != null && budgetCostUnits <= 1000) {
             // Budget is tight; prefer the cheapest option.
             // Sort by estimated cost and take the first (cheapest).
             remoteCandidates.minByOrNull { estimateAdapterCost(it) } ?: remoteCandidates.first()
