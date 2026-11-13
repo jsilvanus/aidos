@@ -367,7 +367,7 @@ class CapabilityTestNewFeatures {
         val parent = mgr.grant(
             subjectId = "session-parent",
             subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
-            permission = Permission.MODEL_RUN,
+            permission = Permission.MODEL_QUERY,
             scope = CapabilityScope.Model(null, setOf(dev.aidos.kernel.ModelKind.LLM)),
             constraints = CapabilityConstraints(budget = parentBudget),
             expiresAt = null,
@@ -409,7 +409,7 @@ class CapabilityTestNewFeatures {
         val parent = mgr.grant(
             subjectId = "session-parent",
             subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
-            permission = Permission.MODEL_RUN,
+            permission = Permission.MODEL_QUERY,
             scope = CapabilityScope.Model(null, setOf(dev.aidos.kernel.ModelKind.LLM)),
             constraints = CapabilityConstraints(budget = parentBudget),
             expiresAt = null,

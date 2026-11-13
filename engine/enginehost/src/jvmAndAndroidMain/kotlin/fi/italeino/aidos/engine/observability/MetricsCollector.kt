@@ -202,7 +202,7 @@ class MetricsCollector(
             parameters = 7,
         ) {
             bindString(0, id)
-            if (projectId != null) bindString(1, projectId) else bindNull(1)
+            bindString(1, projectId)
             bindString(2, name)
             bindDouble(3, value)
             bindString(4, unit)

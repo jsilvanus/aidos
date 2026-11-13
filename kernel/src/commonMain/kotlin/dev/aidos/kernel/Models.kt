@@ -162,6 +162,12 @@ data class ModelDescriptor(
     /** Authoritative artifact format / quantization from the catalog, when known. */
     val format: String? = null,
     val quantization: String? = null,
+    /** Optional model version for license-acceptance and compatibility checks. */
+    val version: String? = null,
+    /** SHA-256 digest of the license text currently associated with this model. */
+    val licenseDigest: String? = null,
+    /** Human-readable license text that the user must accept before inference. */
+    val licenseText: String? = null,
     val metadata: Map<String, String> = emptyMap(),
 )
 

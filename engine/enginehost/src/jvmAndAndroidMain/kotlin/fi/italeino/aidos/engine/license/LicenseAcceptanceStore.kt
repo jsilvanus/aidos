@@ -2,7 +2,6 @@ package fi.italeino.aidos.engine.license
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
-import java.time.Instant
 
 /**
  * License/ToS acceptance record per model+version (RFC-0103, Data Model section).
