@@ -2,7 +2,7 @@
 
 Status: Accepted 2026-10-26 by the owner. Owner choices settled the same day (D50): child-process
 split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
-Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Production integration (Engine supervising real models) is future work (Phase 4). See [STATUS.md](STATUS.md).
+Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested, with host-path production integration wired**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Host integration now resolves split GGUF artifacts from installed model records (not filename guesses) and is covered by desktop host tests. See [STATUS.md](STATUS.md).
 
 Related: RFC-0103 (Aidos Engine), RFC-0104 (inference locality, D47), RFC-0003 (security),
 RFC-0046 (identity), `docs/aidin.md` (AIDIN design background), `IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md`

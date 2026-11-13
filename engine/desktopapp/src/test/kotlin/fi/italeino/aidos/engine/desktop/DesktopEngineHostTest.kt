@@ -3,6 +3,8 @@ package fi.italeino.aidos.engine.desktop
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.FileAidinStateStore
 import dev.aidos.aidin.FileNodeKeyStore
+import dev.aidos.kernel.ModelKind
+import dev.aidos.models.CatalogEntry
 import fi.italeino.aidos.engine.EngineState
 import kotlinx.coroutines.runBlocking
 import java.net.URI
@@ -144,5 +146,34 @@ class DesktopEngineHostTest {
         } finally {
             shared.close()
         }
+    }
+
+    @Test
+    fun splittableModelsUseInstalledCatalogPathsInsteadOfModelIdFilenameGuess() = runBlocking {
+        val artifact = root.resolve("models").resolve("qwen2_5_3b_instruct_q4.gguf").apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(0x47, 0x47, 0x55, 0x46))
+        }
+        host.catalogManager.addToCatalog(
+            CatalogEntry(
+                id = "qwen2.5-3b-instruct",
+                name = "Qwen2.5 3B Instruct",
+                kind = ModelKind.LLM,
+                provider = "huggingface",
+                remoteUrl = null,
+                propertiesJson = """{"format":"gguf"}""",
+                discoveredAt = "2026-11-13T00:00:00Z",
+            )
+        ).getOrThrow()
+        host.catalogManager.markInstalled(
+            modelId = "qwen2.5-3b-instruct",
+            digest = "deadbeef",
+            path = artifact.absolutePath,
+            sizeBytes = artifact.length(),
+            quantization = "Q4_K_M",
+        ).getOrThrow()
+
+        val models = host.splittableModels()
+        assertEquals(listOf("qwen2.5-3b-instruct"), models)
     }
 }

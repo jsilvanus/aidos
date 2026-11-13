@@ -31,6 +31,7 @@ import dev.aidos.modelruntime.RunSettingsSource
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.modelruntime.create
 import dev.aidos.models.DatabaseModelCatalogManager
+import dev.aidos.models.InstalledModel
 import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
@@ -302,9 +303,26 @@ class DesktopEngineHost(
         return _split.value?.heartbeat(base) ?: base
     }
 
-    /** Installed GGUF models this machine could anchor as a split, by model id. */
-    fun splittableModels(): List<String> =
-        modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".gguf") }?.map { it.name.removeSuffix(".gguf") }?.sorted().orEmpty()
+    /**
+     * Installed GGUF models this machine could anchor as a split, by model id.
+     *
+     * Uses the installed-model records first (RFC-0105 production integration): installers can save a
+     * GGUF under a quantized filename that is not `<modelId>.gguf`, so filename guesses alone are not
+     * authoritative. Falls back to legacy `<modelId>.gguf` discovery only when no install record exists.
+     */
+    fun splittableModels(): List<String> {
+        val installed = runCatching { kotlinx.coroutines.runBlocking { catalogManager.listInstalled().getOrThrow() } }.getOrDefault(emptyList())
+        val byCatalog = installed
+            .filter { it.path.endsWith(".gguf", ignoreCase = true) }
+            .filter { File(it.path).isFile }
+            .map { it.modelId }
+            .toMutableSet()
+        if (byCatalog.isEmpty()) {
+            modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".gguf") }
+                ?.mapTo(byCatalog) { it.name.removeSuffix(".gguf") }
+        }
+        return byCatalog.sorted()
+    }
 
     /**
      * Serves installed model [modelId] across [group] with this machine as anchor (RFC-0105 phase 3).
@@ -312,7 +330,7 @@ class DesktopEngineHost(
      */
     fun startSplitModel(group: GroupId, modelId: String): String {
         val split = _split.value ?: return "Turn on sharing first."
-        val file = File(modelsDir, "$modelId.gguf")
+        val file = resolveSplitModelArtifact(modelId) ?: return "$modelId is not installed as a GGUF model."
         val meta = GgufLoader.loadMetadata(file) ?: return "Could not read $modelId."
         if (meta.blockCount < 2) return "$modelId has too few layers to split."
         val outcome = split.start(
@@ -324,6 +342,29 @@ class DesktopEngineHost(
             contextLength = meta.contextWindow.takeIf { it > 0 }?.coerceAtMost(4096) ?: 4096,
         )
         return split.status.value ?: (outcome as? SplitPlanOutcome.Refused)?.reason.orEmpty()
+    }
+
+    private fun resolveSplitModelArtifact(modelId: String): File? {
+        val installed = runCatching { kotlinx.coroutines.runBlocking { catalogManager.listInstalled().getOrThrow() } }.getOrDefault(emptyList())
+        val installedPath = installed.firstOrNull { it.modelId == modelId }?.path
+        if (installedPath != null) {
+            val fromCatalog = File(installedPath)
+            if (fromCatalog.isFile && fromCatalog.extension.equals("gguf", ignoreCase = true)) return fromCatalog
+        }
+        val exactLegacy = File(modelsDir, "$modelId.gguf")
+        if (exactLegacy.isFile) return exactLegacy
+        return legacyQuantizedMatch(modelId, installed)
+    }
+
+    private fun legacyQuantizedMatch(modelId: String, installed: List<InstalledModel>): File? {
+        if (installed.any { it.modelId == modelId }) return null
+        val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return modelsDir.listFiles()
+            ?.firstOrNull {
+                it.isFile &&
+                    it.extension.equals("gguf", ignoreCase = true) &&
+                    it.nameWithoutExtension.startsWith("${safeId}_")
+            }
     }
 
     private fun writeDiscoveryFile(port: Int, token: String) {
