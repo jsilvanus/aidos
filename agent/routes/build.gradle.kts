@@ -5,21 +5,27 @@ plugins {
 // RFC-0108 Phase 1: Route model and dialer fallback logic.
 // Kernel-free, reusable for any discovery/dialing system.
 kotlin {
-    commonMain.dependencies {
-        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    }
+    jvm()
 
-    jvm {
-        testFramework = org.jetbrains.kotlin.gradle.targets.jvm.JvmTestFramework.JUnit
-    }
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+            }
+        }
 
-    commonTest.dependencies {
-        implementation(kotlin("test"))
-        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-    }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+            }
+        }
 
-    jvmTest.dependencies {
-        implementation(kotlin("test-junit"))
+        val jvmTest by getting {
+            dependencies {
+                implementation(kotlin("test-junit"))
+            }
+        }
     }
 
     compilerOptions {

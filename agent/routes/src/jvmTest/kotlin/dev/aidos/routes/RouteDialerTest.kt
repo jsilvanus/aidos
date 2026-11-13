@@ -3,6 +3,7 @@ package dev.aidos.routes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -33,9 +34,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val connected = dialer.state.first { it is DialerState.Connected }
-            assertTrue(connected is DialerState.Connected)
-            assertEquals(route, (connected as DialerState.Connected).route)
+            val connected = dialer.state.first { it is DialerState.Connected } as DialerState.Connected
+            assertEquals(route, connected.route)
         }
     }
 
@@ -58,9 +58,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val connected = dialer.state.first { it is DialerState.Connected }
-            assertTrue(connected is DialerState.Connected)
-            assertEquals(directRoute, (connected as DialerState.Connected).route)
+            val connected = dialer.state.first { it is DialerState.Connected } as DialerState.Connected
+            assertEquals(directRoute, connected.route)
             assertEquals(1, lanAttempts, "LAN was tried and failed")
         }
     }
@@ -148,9 +147,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val failed = dialer.state.first { it is DialerState.AllFailed }
-            assertTrue(failed is DialerState.AllFailed)
-            assertEquals(1, (failed as DialerState.AllFailed).routeCount)
+            val failed = dialer.state.first { it is DialerState.AllFailed } as DialerState.AllFailed
+            assertEquals(1, failed.routeCount)
         }
     }
 
@@ -215,7 +213,9 @@ class RouteModelsTest {
         val success = DialResult.Success(Route.Lan, 42)
         val failure = DialResult.Failure(Route.Lan, "no LAN available")
 
-        assertTrue(success is DialResult.Success)
-        assertTrue(failure is DialResult.Failure)
+        assertEquals(Route.Lan, success.route)
+        assertEquals(42, success.rttMillis)
+        assertEquals(Route.Lan, failure.route)
+        assertEquals("no LAN available", failure.reason)
     }
 }

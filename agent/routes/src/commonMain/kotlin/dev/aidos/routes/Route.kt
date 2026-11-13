@@ -81,6 +81,8 @@ value class RouteHints(val hints: List<Route> = listOf(Route.Lan)) {
  * Round-trip time measured for each route. Used by the planner to decide whether to
  * offer layer split over a route (only if RTT is low enough for LAN; high WAN RTT means
  * the overhead is too large).
+ *
+ * `rttMillis = -1` indicates that the route failed to connect (unmeasured).
  */
 data class RouteLatency(
     val route: Route,
@@ -88,7 +90,7 @@ data class RouteLatency(
     val measuredAt: Long = System.currentTimeMillis(),
 ) {
     init {
-        require(rttMillis >= 0) { "RTT must be non-negative" }
+        require(rttMillis == -1L || rttMillis >= 0) { "RTT must be -1 (failure) or non-negative" }
     }
 }
 

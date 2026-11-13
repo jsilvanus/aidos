@@ -159,18 +159,60 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - ✅ No kernel dependencies; reusable by other projects
 - ✅ Kotlin Multiplatform (commonMain for core, jvmTest for tests)
 
+**AIDIN wire format extension** (`agent:wire-aidin`, `dev.aidos.wire`):
+- ✅ `RouteHintCodec` for encoding/decoding route hints to/from PairingInvite.addresses
+  - Backward compatible (old clients ignore "direct://", "ssh://")
+  - Forward compatible (unknown route types skipped)
+  - No PairingInvite API changes
+- ✅ Individual route parsing helpers
+- ✅ 21 comprehensive tests covering encoding, decoding, round-trip, error cases
+
 ### Deferred to later PRs
 
-1. **AIDIN wire format extension**: Add route hints to `PairingInvite`, serialize/deserialize on pairing.
+1. **Engine PairingInvite integration**: Modify PairingInvite serialization to auto-encode/decode route hints
 2. **Desktop UI**: "Add address" UI to manually add direct routes (Tailscale, router port, etc.)
 3. **Android UI**: Same address entry, plus network-change listener setup.
-4. **Phase 2 (per-route RTT)**: Planner integration — measure RTT continuously, refuse layer split on WAN, cache per route.
-5. **Phase 4 (Android SSH)**: Phone-side SSH tunnel (Android Keystore vault, foreground service, network change handler).
-6. **Network change detection**: Platform-specific listeners (Android `ConnectivityManager`, Desktop platform APIs) to trigger `dialer.onNetworkChange()`.
+4. **Network change detection**: Platform-specific listeners (Android `ConnectivityManager`, Desktop platform APIs) to trigger `dialer.onNetworkChange()`.
 
 ### Module locations
 
 - `agent/routes`: Kernel-free route model and dialer library
+- `agent:wire-aidin`: AIDIN wire format extension
+
+## Phase 2 Implementation Status (2026-11-13)
+
+### Completed
+
+**Route planner policy** (`agent:policy`, `dev.aidos.policy`):
+- ✅ `RoutePlannerPolicy` class:
+  - LAN routes always safe for split (no RTT threshold)
+  - Direct/SSH routes safe only if measured RTT ≤ 50ms (LAN speed)
+  - Conservatively refuses unmeasured routes (RTT = -1 indicates failure)
+  - Filters routes to safe subset, sorted by speed
+  - Selects best local route (fastest)
+- ✅ `RemoteAccessPolicy` class:
+  - Per-peer allow/disallow/toggle for using remote routes
+  - Filter routes based on permission (if not allowed and remote routes exist, return only Lan)
+  - Observable state flows for UI integration
+  - Supports getting all allowed peers and clearing permissions
+- ✅ `RemoteAccessAuditEvent` data class for logging permission changes
+- ✅ `RouteClass` enum (Lan, Direct, SshTunnel) for policy branching and UI
+- ✅ Comprehensive tests: 14 tests covering split safety, RTT thresholds, sorting, filtering, permission transitions
+- ✅ No kernel dependencies; reusable by other projects
+- ✅ Kotlin Multiplatform (commonMain for core, jvmTest for tests)
+
+### Deferred to later PRs
+
+1. **Engine split planner integration**: Modify `SplitModelPlanner` to call `RoutePlannerPolicy.isSafeForSplit()` when evaluating which peers can participate in split
+2. **Peer listener integration**: Listener checks `RemoteAccessPolicy.filterAllowedRoutes()` before accepting connections from remote routes
+3. **Audit subsystem integration**: Log `RemoteAccessAuditEvent` when user changes remote-access switch in UI
+4. **Desktop UI**: Remote-access toggle in peer list / peer details, shown only if peer has remote routes
+5. **Android UI**: Same toggle, plus network-change listener integration
+6. **Planner caching**: Per-peer latency cache (RFC-0108 Phase 2 Future Work section)
+
+### Module locations
+
+- `agent:policy`: Kernel-free route planner policy and remote-access control library
 
 ## Phase 3 Implementation Status (2026-11-13)
 
@@ -200,17 +242,21 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 ### Deferred to later PRs
 
-1. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
-2. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
-3. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
-4. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
-5. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
-6. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
-7. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
-8. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
+1. **Phase 1 (in parallel)**: Route discovery, dialer fallback, AIDIN wire format extension — being implemented in `agent:routes`, `agent:policy`, `agent:wire-aidin`
+2. **RFC-0035 vault amendments**: Add `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY`, `SSH_SETUP_KEY` enum values and metadata. Currently vault has only `SSH_KEY` and `GENERIC`.
+3. **Storage implementation**: Implement `TunnelStorage` backed by Engine database, with schema for configs and pinned keys.
+4. **Audit integration**: Connect `TunnelAuditLog` to Engine audit trail (RFC-0042).
+5. **Desktop UI (settings page)**: Tunnel key page (generate, show public key, setup-key installer, state display, rotation, deletion). Needs Engine UI module integration.
+6. **Egress grant (RFC-0042)**: Gate tunnel server connection to scoped destinations (host:port pair).
+7. **Phase 4 (Android)**: Keystore-backed key storage, `android()` target compilation.
+8. **Setup-key installer**: Allow user to supply admin SSH key to auto-append tunnel key to `authorized_keys` on server.
+9. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel).
 
 ### Module locations
 
 - `agent/ssh-tunnel`: Standalone library (kernel-free)
 - `agent/tunnel-manager`: Engine adapter (depends on vault, capability, but not kernel directly)
-- `agent/settings.gradle.kts`: Both modules included
+- `agent/routes`: Phase 1 route discovery and dialer (kernel-free)
+- `agent/policy`: Phase 2 route planner policy and remote-access control (kernel-free)
+- `agent/wire-aidin`: Phase 1 AIDIN wire format extension (kernel-free)
+- `agent/settings.gradle.kts`: All modules included
