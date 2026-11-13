@@ -5,7 +5,6 @@ import dev.aidos.routes.RouteHints
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -211,9 +210,8 @@ class RouteHintCodecTest {
 
     @Test
     fun parseDirectRouteSuccess() {
-        val route = RouteHintCodec.parseDirectRoute("direct://example.com:8766") as? Route.Direct
-        assertNotNull(route)
-        assertEquals("example.com", route!!.host)
+        val route = (RouteHintCodec.parseDirectRoute("direct://example.com:8766") as Route.Direct)
+        assertEquals("example.com", route.host)
         assertEquals(8766, route.port)
     }
 
@@ -226,9 +224,8 @@ class RouteHintCodecTest {
 
     @Test
     fun parseSshRouteSuccess() {
-        val route = RouteHintCodec.parseSshRoute("ssh://home:example.com:47100") as? Route.SshReverse
-        assertNotNull(route)
-        assertEquals("home", route!!.tunnelId)
+        val route = (RouteHintCodec.parseSshRoute("ssh://home:example.com:47100") as Route.SshReverse)
+        assertEquals("home", route.tunnelId)
         assertEquals("example.com", route.serverHost)
         assertEquals(47100, route.serverPort)
     }
