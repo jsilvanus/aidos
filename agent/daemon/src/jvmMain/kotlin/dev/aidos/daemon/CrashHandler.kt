@@ -28,6 +28,7 @@ class CrashHandler(
     private val platformProfile: PlatformProfile,
     private val runtimeVersion: String,
     private val homeDir: String = System.getProperty("user.home"),
+    private val previousHandler: Thread.UncaughtExceptionHandler? = Thread.getDefaultUncaughtExceptionHandler(),
 ) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
@@ -81,8 +82,8 @@ class CrashHandler(
             e.printStackTrace(System.err)
         }
 
-        // Re-throw to let default handler (system exit) take over
-        Thread.getDefaultUncaughtExceptionHandler()?.uncaughtException(thread, exception)
+        // Forward to the previously installed handler (if any).
+        previousHandler?.uncaughtException(thread, exception)
     }
 
     private fun computeStackHash(stackTrace: String): String {

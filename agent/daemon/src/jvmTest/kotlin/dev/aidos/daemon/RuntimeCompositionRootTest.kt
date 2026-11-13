@@ -274,6 +274,40 @@ class RuntimeCompositionRootTest {
     }
 
     @Test
+    fun `drive() writes observability metric samples`() = runTest {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid)
+        val runId = createRun(driver, pid, sid)
+
+        RuntimeCompositionRoot(anthropicApiKey = { null }).drive(
+            projectDriver = driver,
+            runId = runId,
+            projectId = ProjectId(pid),
+            sessionId = sid,
+            deviceId = "dev-1",
+            platformProfile = PlatformProfile.DESKTOP,
+            networkAvailable = false,
+            idGen = { nextId() },
+            nowIso = { nowIso },
+        )
+
+        val names = mutableListOf<String>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT name FROM metric_samples",
+            mapper = { c ->
+                while (c.next().value) names += c.getString(0) ?: ""
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            parameters = 0,
+            binders = null,
+        )
+        assertTrue(names.isNotEmpty(), "drive() should collect at least one metric sample")
+        assertTrue("run.outcomes" in names, "run outcomes metric should be present")
+    }
+
+    @Test
     fun `resolveEgressPolicy ignores a project snapshot that carries a SECURITY value`() {
         val userDriver = openUserDriver()
         val snapshot = dev.aidos.settings.ProjectSettingsSnapshot(

@@ -37,7 +37,7 @@ class DaemonCliIntegrationTest {
     @Test
     fun `daemon provides RuntimeClient that CLI can use`() = runTest {
         // Create daemon's runtime client
-        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path)
+        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path, installCrashHandler = false)
 
         // CLI connects to daemon (in this test, directly to the in-process client)
         val cli = AidosCli(runtimeClient)
@@ -61,7 +61,7 @@ class DaemonCliIntegrationTest {
 
     @Test
     fun `daemon can grant voice capabilities via CLI`() = runTest {
-        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path)
+        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path, installCrashHandler = false)
         val cli = AidosCli(runtimeClient)
 
         // Create project and session

@@ -144,6 +144,9 @@ class RuntimeCompositionRoot(
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
         buildExecutor(projectDriver, projectId, sessionId, rootPath, deviceId, platformProfile, idGen, nowIso).drive(runId)
+        // RFC-0037 MVP: collect local, aggregated observability metrics after each driven Run.
+        runCatching { MetricsCollector(projectDriver).collect() }
+            .onFailure { DaemonLog.err("aidos: metrics collection failed: ${it.message}") }
         // RFC-0056: compaction runs after the Run, on a background dispatcher; it never fails a Run.
         runCatching { retention.schedule(projectDriver, projectId.value, rootPath, userDriver, idGen, nowIso) }
     }

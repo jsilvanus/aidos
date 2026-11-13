@@ -37,9 +37,26 @@ object RuntimeClientFactory {
      * [home] defaults to the real user home directory; tests override it with a temp directory
      * so they don't read or write `~/.aidos` on the machine actually running them.
      */
-    fun createRuntimeClient(home: String = System.getProperty("user.home")): RuntimeClient {
+    fun createRuntimeClient(
+        home: String = System.getProperty("user.home"),
+        installCrashHandler: Boolean = true,
+    ): RuntimeClient {
         val nowIso = { Clock.System.now().toString() }
         val userDb = AidosStorage.openUser(DesktopPaths.userDb(home), RUNTIME_VERSION, nowIso)
+        if (installCrashHandler) {
+            val existing = Thread.getDefaultUncaughtExceptionHandler()
+            if (existing !is CrashHandler) {
+                Thread.setDefaultUncaughtExceptionHandler(
+                    CrashHandler(
+                        driver = userDb.driver,
+                        platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
+                        runtimeVersion = RUNTIME_VERSION,
+                        homeDir = home,
+                        previousHandler = existing,
+                    )
+                )
+            }
+        }
         val deviceIdentityStore = dev.aidos.identity.DeviceIdentityStore(userDb.driver, dev.aidos.identity.UuidV7Generator(), nowIso)
         val deviceIdentity = deviceIdentityStore.getOrRegister(
             platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
