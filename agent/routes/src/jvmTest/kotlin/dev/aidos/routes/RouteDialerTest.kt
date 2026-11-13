@@ -147,9 +147,8 @@ class RouteDialerTest {
         dialer.startDial()
 
         withTimeout(10.seconds) {
-            val failed = dialer.state.first { it is DialerState.AllFailed }
-            assertTrue(failed is DialerState.AllFailed)
-            assertEquals(1, (failed as DialerState.AllFailed).routeCount)
+            val failed = dialer.state.first { it is DialerState.AllFailed } as DialerState.AllFailed
+            assertEquals(1, failed.routeCount)
         }
     }
 
