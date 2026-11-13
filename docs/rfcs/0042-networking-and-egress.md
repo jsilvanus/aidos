@@ -1,6 +1,6 @@
 # RFC-0042: Networking and Egress
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
 
 ## Abstract
 

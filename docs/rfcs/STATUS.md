@@ -35,7 +35,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0028 | PARTIAL | Budget type+split, causal depth, step ceiling; BudgetLedger interface only, no writers, budgetRemaining=null; causal depth 16 not 8 |
 | 0029 | PARTIAL | AidosError/ErrorClass + RetryPolicy + INDETERMINATE real; isModelAudience test-only; most registry codes never emitted, ad hoc codes used |
 | 0030 | IMPLEMENTED | ToolBroker capability check+audit+preview; JSON-schema validation MVP (type, required, properties, constraints); budget tracking foundation |
-| 0031 | PARTIAL | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests; no MCP_SERVER capability issuance at enable, no mcp_servers write path; Binder transport for Android is future work (RFC-0107 Phase 2) |
+| 0031 | IMPLEMENTED | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests, MCP_SERVER capability issuance on adopted-server activation, and user-scope `mcp_servers` write path are implemented; Binder transport for Android remains tracked as RFC-0107 Phase 2 (separate scope) |
 | 0032 | PARTIAL | JGit GitTool 14 tests, Reconciliation, TreelessWorker CAS; no fetch/merge_ff/switch, no worker-ref pruning, per-op capabilities differ |
 | 0034 | IMPLEMENTED | RelPath + symlink-aware containment + read/write/list/search+diff preview; delete/move/mkdir operations with .git/ protection; atomic writes for mkdir |
 | 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore is not built (the vault is JVM-only and the Android host does not run it yet) |
@@ -45,7 +45,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
 | 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, PRAGMA synchronous=NORMAL, auto_vacuum=INCREMENTAL, wal_autocheckpoint=1000; MigrationRunner v1; forward migrations foundation |
 | 0041 | IMPLEMENTED | MVP built (full export, manifest, encryption, signing, verified import, migration, conflict policies, CLI) and tested; requirement map in [RFC-0041 requirement map](#rfc-0041-requirement-map) below |
-| 0042 | PARTIAL | EgressSecurityPolicy+DefaultEgressClient tested; egress_records no writer, Anthropic/MCP/downloads bypass it, no response size cap |
+| 0042 | IMPLEMENTED | EgressSecurityPolicy+DefaultEgressClient enforcement is production-wired, Anthropic/OpenAI-style provider calls run through mediated egress transport, daemon writes `egress_records`, and response-size limits/rejections are enforced and tested |
 | 0043 | NOT_APPLICABLE | no plugin host in v1, matches RFC MVP; only enum value + unread installed_plugins table |
 | 0044 | PARTIAL | TriggerCalculator, ScheduledJobManager, NotificationManager tested; NotificationBudget unused, no timer/WorkManager calls scheduler |
 | 0045 | PARTIAL | DegradationLadder + event store, tests only, not called in prod; no admission check, resource_budgets DDL only |

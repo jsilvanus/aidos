@@ -1,6 +1,6 @@
 # RFC-0046: Identity, Actors, and Future Collaboration
 
-Status: Accepted 2026-08-04
+Status: Implemented 2026-11-13 (Accepted 2026-08-04). Implementation evidence: [STATUS.md](STATUS.md).
 
 ## Abstract
 

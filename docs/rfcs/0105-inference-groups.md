@@ -1,6 +1,6 @@
 # RFC-0105: Inference Groups — Delegation and Layer-Split Inference Across Aidos Engines (AIDIN, first slice)
 
-Status: Accepted 2026-10-26 by the owner. Owner choices settled the same day (D50): child-process
+Status: Implemented 2026-11-13 (Accepted 2026-10-26 by the owner). Owner choices settled the same day (D50): child-process
 split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
 Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested, with host-path production integration wired**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Host integration now resolves split GGUF artifacts from installed model records (not filename guesses) and is covered by desktop host tests. See [STATUS.md](STATUS.md).
 

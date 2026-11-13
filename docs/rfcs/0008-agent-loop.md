@@ -1,6 +1,6 @@
 # RFC-0008: Agent Loop and Tool-Use Protocol
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
 
 ## Abstract
 
