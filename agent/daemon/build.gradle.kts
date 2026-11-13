@@ -23,6 +23,8 @@ kotlin {
                 implementation(project(":git"))
                 implementation(project(":prompt"))
                 implementation(project(":routing"))
+                implementation(project(":http"))
+                implementation(project(":amp"))
                 implementation(project(":vault"))
                 implementation(project(":settings"))
                 implementation(project(":retention"))

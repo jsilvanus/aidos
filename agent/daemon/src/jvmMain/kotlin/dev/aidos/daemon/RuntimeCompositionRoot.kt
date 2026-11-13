@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.broker.ToolBroker
+import dev.aidos.amp.OpenAiHttpModelAdapter
 import dev.aidos.mcp.LazyMcpTool
 import dev.aidos.mcp.McpClientFactory
 import dev.aidos.mcp.McpLifecycleManager
@@ -46,6 +47,8 @@ import dev.aidos.vault.RedactionBoundary
 import dev.aidos.vault.Redactor
 import dev.aidos.vault.SecretRequest
 import dev.aidos.vault.SqliteSecretsVault
+import dev.aidos.http.DefaultEgressClient
+import dev.aidos.http.EgressClient
 import java.io.File
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
@@ -354,6 +357,7 @@ class RuntimeCompositionRoot(
         // output_snapshot or log that could echo it back is already covered.
         val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
         vault?.registerAllWith(redactor)
+        val egressClient: EgressClient = DefaultEgressClient(recordSink = SqliteEgressRecorder(projectDriver))
         val redactingMcpSecretResolver = object : McpSecretResolver {
             override suspend fun resolve(reference: String): Result<CharArray> = resolveFor("runtime", reference)
 
@@ -394,10 +398,19 @@ class RuntimeCompositionRoot(
         }
 
         val providerKey = vaultAnthropicKey(audit, projectId.value, nowIso, idGen) ?: anthropicApiKey()
-        val remoteAdapters = providerKey?.let { key ->
-            redactor.register(id = "anthropic-api-key", name = ANTHROPIC_KEY_SECRET, value = key)
-            listOf(AnthropicAdapter(key))
-        } ?: emptyList()
+        val remoteAdapters = mutableListOf<dev.aidos.kernel.ModelAdapter>()
+        if (providerKey != null) {
+            redactor.register(id = "anthropic-api-key", name = ANTHROPIC_KEY_SECRET, value = providerKey)
+            remoteAdapters += AnthropicAdapter(
+                apiKeyChars = providerKey,
+                transport = EgressJsonTransport(
+                    egressClient = egressClient,
+                    scope = anthropicScope(),
+                    projectId = projectId.value,
+                ),
+            )
+        }
+        openAiAdapter(projectId.value, egressClient)?.let { remoteAdapters += it }
         // Loading aidos.toml (above) reports and audits a project's attempt at
         // routing.remote_egress (SECURITY); resolving the policy against the project scope here
         // makes that attempt provably not apply.
@@ -495,6 +508,23 @@ class RuntimeCompositionRoot(
                 subjectRef = "secret:$secretName", detailJson = "{\"consumer\":\"$actorKind:$consumerId\"}", nowIso = nowIso(),
             )
         }
+    }
+
+    private fun openAiAdapter(projectId: String, egressClient: EgressClient): OpenAiHttpModelAdapter? {
+        val base = System.getenv("OPENAI_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val model = System.getenv("OPENAI_MODEL")?.trim()?.takeIf { it.isNotEmpty() } ?: "gpt-4o-mini"
+        val key = System.getenv("OPENAI_API_KEY")?.trim().orEmpty()
+        val scope = runCatching { openAiScope(base) }.getOrNull() ?: return null
+        return OpenAiHttpModelAdapter(
+            baseUrl = base,
+            modelId = model,
+            apiKey = key,
+            transport = EgressJsonTransport(
+                egressClient = egressClient,
+                scope = scope,
+                projectId = projectId,
+            ),
+        )
     }
 
     private fun projectRootPath(driver: SqlDriver, projectId: String): String? =

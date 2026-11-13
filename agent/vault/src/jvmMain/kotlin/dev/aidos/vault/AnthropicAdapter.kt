@@ -16,15 +16,13 @@ import dev.aidos.kernel.TrainingUse
 import dev.aidos.kernel.Turn
 import kotlinx.datetime.Clock
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.headers
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -54,6 +52,7 @@ class AnthropicAdapter(
     override val modelId: String = "claude-3-5-haiku-20241022",
     override val modelVersion: String = "claude-3-5-haiku-20241022",
     override val contextWindow: Int = 200_000,
+    private val transport: AnthropicTransport = KtorAnthropicTransport(),
 ) : ModelAdapter, AutoCloseable {
 
     override val providerId = "anthropic"
@@ -77,31 +76,25 @@ class AnthropicAdapter(
         isLenient = true
     }
 
-    private val client = HttpClient(CIO) {
-        install(ContentNegotiation) { json(json) }
-    }
-
     override fun supportsNativeToolCalls(): Boolean = true
 
     override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = runCatching {
         val body = buildRequestBody(request)
         val apiKey = String(apiKeyChars)
-        val response = client.post("https://api.anthropic.com/v1/messages") {
-            headers {
-                append("x-api-key", apiKey)
-                append("anthropic-version", "2023-06-01")
-            }
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }
-        // Zero the in-scope String representation ASAP — strings are immutable on the JVM heap
-        // so we cannot truly zero it, but we minimise its lifetime as much as we can here.
-        parseResponse(response.body<AnthropicResponse>())
+        val responseText = transport.postJson(
+            url = "https://api.anthropic.com/v1/messages",
+            headers = mapOf(
+                "x-api-key" to apiKey,
+                "anthropic-version" to "2023-06-01",
+            ),
+            bodyJson = body.toString(),
+        )
+        parseResponse(json.decodeFromString(AnthropicResponse.serializer(), responseText))
     }
 
     override fun close() {
         apiKeyChars.fill('\u0000')
-        client.close()
+        (transport as? AutoCloseable)?.close()
     }
 
     // ── Request / Response mapping ─────────────────────────────────────────────
@@ -253,4 +246,23 @@ class AnthropicAdapter(
         @SerialName("input_tokens") val inputTokens: Int = 0,
         @SerialName("output_tokens") val outputTokens: Int = 0,
     )
+}
+
+fun interface AnthropicTransport {
+    suspend fun postJson(url: String, headers: Map<String, String>, bodyJson: String): String
+}
+
+class KtorAnthropicTransport(
+    private val client: HttpClient = HttpClient(CIO),
+) : AnthropicTransport, AutoCloseable {
+    override suspend fun postJson(url: String, headers: Map<String, String>, bodyJson: String): String {
+        val response = client.post(url) {
+            headers.forEach { (k, v) -> header(k, v) }
+            contentType(ContentType.Application.Json)
+            setBody(bodyJson)
+        }
+        return response.bodyAsText()
+    }
+
+    override fun close() = client.close()
 }

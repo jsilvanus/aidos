@@ -1,5 +1,6 @@
 package dev.aidos.http
 
+import com.sun.net.httpserver.HttpServer
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.CapabilityScope
@@ -9,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -206,5 +208,38 @@ class EgressSecurityPolicyTest {
         assertEquals("169.254.169.254", record.destinationHost)
         assertEquals(EgressOutcome.BLOCKED_PRE_DNS, record.outcome)
         assertEquals("GET", record.method)
+    }
+
+    @Test
+    fun `DefaultEgressClient rejects responses larger than maxResponseBytes`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/large") { exchange ->
+            val body = "0123456789abcdefghijklmnopqrstuvwxyz".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val port = server.address.port
+            val scope = CapabilityScope.Network(
+                allowedHosts = listOf("127.0.0.1"),
+                allowedPorts = listOf(port),
+                allowPrivateAddresses = true,
+                maxResponseBytes = 8,
+            )
+            val client = DefaultEgressClient(policy = policy)
+            val result = client.request(
+                EgressRequest(
+                    capabilityId = CapabilityId("cap-response-size"),
+                    url = "http://127.0.0.1:$port/large",
+                ),
+                scope = scope,
+            )
+            assertTrue(result.isFailure)
+            val record = client.getAuditRecords().last()
+            assertEquals(EgressOutcome.BLOCKED_RESPONSE_SIZE, record.outcome)
+        } finally {
+            server.stop(0)
+        }
     }
 }
