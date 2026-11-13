@@ -83,13 +83,14 @@ class DiagnoseCommand(
 
     private suspend fun writeManifest(zip: ZipOutputStream) {
         try {
-            val profile = runtimeClient.runtime.profile()
+            val runtimeVersion = runtimeClient.runtime.version()
             val timestamp = Clock.System.now().toString()
             
             val json = buildJsonObject {
                 put("timestamp", timestamp)
-                put("runtime_version", "0.1.0-alpha")  // Should query this
-                put("platform_profile", profile.name)
+                put("runtime_version", runtimeVersion.version)
+                put("api_version", runtimeVersion.apiVersion)
+                put("platform_profile", runtimeVersion.profile)
                 put("os_name", System.getProperty("os.name"))
                 put("os_version", System.getProperty("os.version"))
                 putJsonObject("enabled_features") {

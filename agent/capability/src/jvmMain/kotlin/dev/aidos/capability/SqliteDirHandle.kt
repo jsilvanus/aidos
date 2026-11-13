@@ -5,6 +5,7 @@ import dev.aidos.kernel.DirEntry
 import dev.aidos.kernel.DirHandle
 import dev.aidos.kernel.RelPath
 import java.io.File
+import java.io.IOException
 import java.nio.file.Path
 
 /**

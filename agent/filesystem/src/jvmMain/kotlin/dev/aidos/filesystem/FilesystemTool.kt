@@ -28,6 +28,7 @@ import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 

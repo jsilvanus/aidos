@@ -598,8 +598,8 @@ class SqliteCapabilityManager(
                     "shell scope cross-project delegation denied"
                 } else if (parentScope.allowedCommands != null && delegatedScope.allowedCommands != null) {
                     // Delegated commands must be a subset of parent's allowed commands.
-                    val parentCmds = parentScope.allowedCommands.toSet()
-                    val delegatedCmds = delegatedScope.allowedCommands.toSet()
+                    val parentCmds = (parentScope.allowedCommands as Iterable<String>).toSet()
+                    val delegatedCmds = (delegatedScope.allowedCommands as Iterable<String>).toSet()
                     if (!delegatedCmds.all { it in parentCmds }) {
                         "shell delegated commands not contained in parent"
                     } else {
@@ -628,8 +628,8 @@ class SqliteCapabilityManager(
                 if (!delegatedHosts.all { host -> hostMatched(host, parentHosts) }) {
                     "network delegated hosts not contained in parent"
                 } else if (delegatedScope.allowedPorts != null && parentScope.allowedPorts != null) {
-                    val parentPorts = parentScope.allowedPorts.toSet()
-                    val delegatedPorts = delegatedScope.allowedPorts.toSet()
+                    val parentPorts = (parentScope.allowedPorts as Iterable<Int>).toSet()
+                    val delegatedPorts = (delegatedScope.allowedPorts as Iterable<Int>).toSet()
                     if (!delegatedPorts.all { it in parentPorts }) {
                         "network delegated ports not contained in parent"
                     } else {
@@ -649,8 +649,8 @@ class SqliteCapabilityManager(
                 if (delegatedScope.allowedKinds.any { it !in parentScope.allowedKinds }) {
                     "model delegated kinds not contained in parent"
                 } else if (delegatedScope.allowedProviders != null && parentScope.allowedProviders != null) {
-                    val parentProvs = parentScope.allowedProviders.toSet()
-                    val delegatedProvs = delegatedScope.allowedProviders.toSet()
+                    val parentProvs = (parentScope.allowedProviders as Iterable<String>).toSet()
+                    val delegatedProvs = (delegatedScope.allowedProviders as Iterable<String>).toSet()
                     if (!delegatedProvs.all { it in parentProvs }) {
                         "model delegated providers not contained in parent"
                     } else {
@@ -786,14 +786,14 @@ class SqliteCapabilityManager(
         val parentBudget = parentConstraints.budget
         val delegatedBudget = delegatedConstraints.budget
         if (parentBudget != null && delegatedBudget != null) {
-            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls != null && delegatedBudget.modelCalls > parentBudget.modelCalls) {
+            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls != null && (delegatedBudget.modelCalls as Int) > (parentBudget.modelCalls as Int)) {
                 return "delegated budget.modelCalls ${delegatedBudget.modelCalls} exceeds parent ${parentBudget.modelCalls}"
             }
             if (parentBudget.modelCalls != null && delegatedBudget.modelCalls == null) {
                 return "delegated budget.modelCalls cannot be unlimited when parent is ${parentBudget.modelCalls}"
             }
             // Similar checks for other budget dimensions...
-            if (parentBudget.steps != null && delegatedBudget.steps != null && delegatedBudget.steps > parentBudget.steps) {
+            if (parentBudget.steps != null && delegatedBudget.steps != null && (delegatedBudget.steps as Int) > (parentBudget.steps as Int)) {
                 return "delegated budget.steps ${delegatedBudget.steps} exceeds parent ${parentBudget.steps}"
             }
             if (parentBudget.steps != null && delegatedBudget.steps == null) {

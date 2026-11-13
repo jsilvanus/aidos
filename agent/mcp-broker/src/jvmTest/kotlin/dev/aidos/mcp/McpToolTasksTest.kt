@@ -36,6 +36,9 @@ class McpToolTasksTest {
         override suspend fun write(relative: RelPath, content: ByteArray): Result<Unit> = Result.failure(UnsupportedOperationException())
         override suspend fun list(relative: RelPath): Result<List<DirEntry>> = Result.failure(UnsupportedOperationException())
         override suspend fun exists(relative: RelPath): Boolean = false
+        override suspend fun delete(relative: RelPath, recursive: Boolean): Result<Int> = Result.failure(UnsupportedOperationException())
+        override suspend fun move(from: RelPath, to: RelPath, overwrite: Boolean): Result<Unit> = Result.failure(UnsupportedOperationException())
+        override suspend fun mkdir(relative: RelPath): Result<Unit> = Result.failure(UnsupportedOperationException())
     }
     private val registration = McpServerRegistration("srv", McpTransport.Stdio("x"), listOf(McpToolSpec("slow", "")))
     private val ok = McpCallResult(listOf(McpContent.Text("result")), false)
