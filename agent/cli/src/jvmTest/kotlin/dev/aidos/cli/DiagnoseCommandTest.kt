@@ -2,7 +2,6 @@ package dev.aidos.cli
 
 import dev.aidos.api.MockRuntimeClient
 import dev.aidos.kernel.PlatformProfile
-import dev.aidos.kernel.RuntimeProfile
 import dev.aidos.kernel.RuntimeVersion
 import java.io.File
 import java.util.zip.ZipFile
@@ -11,27 +10,19 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
 
 /**
  * Tests for DiagnoseCommand (RFC-0037).
  */
 class DiagnoseCommandTest {
     
-    @TempDir
-    lateinit var tempDir: File
-    
+    private lateinit var tempDir: File
     private lateinit var diagnoseCommand: DiagnoseCommand
     private lateinit var mockRuntimeClient: MockRuntimeClient
 
-    @BeforeEach
-    fun setUp() {
+    private fun setUp() {
         // Create a mock runtime client that returns desktop profile
         mockRuntimeClient = object : MockRuntimeClient() {
-            override suspend fun profile(): PlatformProfile {
-                return PlatformProfile.DESKTOP
-            }
         }
 
         diagnoseCommand = DiagnoseCommand(mockRuntimeClient)
@@ -39,6 +30,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testDiagnoseCreatesBundleFile() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -50,6 +43,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleContainsManifest() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -64,6 +59,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleContainsRedactionReport() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -82,6 +79,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleContainsMetrics() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -96,6 +95,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleContainsSchema() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -110,6 +111,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleStructure() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -129,6 +132,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testIncludeTraceFlag() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic-trace.zip").absolutePath
         
         runBlocking {
@@ -141,6 +146,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testSelectedRuns() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic-runs.zip").absolutePath
         val selectedRuns = listOf("run-123", "run-456")
         
@@ -153,6 +160,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testBundleIsValidZip() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -173,6 +182,8 @@ class DiagnoseCommandTest {
 
     @Test
     fun testManifestContentIsJson() {
+        setUp()
+        tempDir = File.createTempFile("diagnostic", "").parentFile
         val bundlePath = File(tempDir, "diagnostic.zip").absolutePath
         
         runBlocking {
@@ -186,18 +197,5 @@ class DiagnoseCommandTest {
             assertTrue(content.contains("timestamp"))
             assertTrue(content.contains("runtime_version") || content.contains("platform"))
         }
-    }
-}
-
-/**
- * Mock implementation of RuntimeClient for testing.
- * Subclasses can override methods to customize behavior.
- */
-open class MockRuntimeClient : dev.aidos.api.RuntimeClient {
-    override suspend fun profile(): PlatformProfile = PlatformProfile.DESKTOP
-    
-    // Add other required methods if needed from the RuntimeClient interface
-    override suspend fun version(): RuntimeVersion {
-        return RuntimeVersion("0.1.0-alpha", "0.1.0-alpha", PlatformProfile.DESKTOP)
     }
 }

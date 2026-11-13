@@ -80,12 +80,6 @@ class JsonSchemaValidator {
                     else -> "string"
                 }
             }
-            else -> {
-                when (value) {
-                    is JsonElement -> value::class.simpleName ?: "unknown"
-                    else -> "unknown"
-                }
-            }
         }
 
         // Allow "number" for integer values (JSON Schema permits this)

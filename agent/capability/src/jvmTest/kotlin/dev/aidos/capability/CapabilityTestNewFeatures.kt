@@ -8,6 +8,7 @@ import dev.aidos.kernel.MutationScope
 import dev.aidos.kernel.Operation
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.UserId
 import dev.aidos.identity.UuidV7Generator
@@ -26,6 +27,12 @@ import kotlinx.coroutines.runBlocking
  * 2. delegate() scope containment checks
  */
 class CapabilityTestNewFeatures {
+
+    private fun op(effect: EffectKind) = object : Operation<Unit> {
+        override val name = "test.op"
+        override val effect = effect
+        override val recoveryClass = RecoveryClass.PURE
+    }
 
     private fun openProjectDriver(): app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver {
         val root = Files.createTempDirectory("capability-test").toFile()
@@ -77,8 +84,7 @@ class CapabilityTestNewFeatures {
         ).getOrThrow()
 
         // First validation should succeed
-        val op = Operation<MutationScope>("fs:read", EffectKind.READ)
-        val result1 = mgr.validate("session-limited", granted.id, op, TrustLevel.PROJECT)
+        val result1 = mgr.validate("session-limited", granted.id, op(EffectKind.Read), TrustLevel.PROJECT)
         assertIs<dev.aidos.kernel.CapabilityCheckResult.Allowed>(result1)
 
         // Insert a usage record to simulate one exercise
@@ -87,7 +93,7 @@ class CapabilityTestNewFeatures {
             1
         ) { bindString(0, granted.id.value) }
 
-        val result2 = mgr.validate("session-limited", granted.id, op, TrustLevel.PROJECT)
+        val result2 = mgr.validate("session-limited", granted.id, op(EffectKind.Read), TrustLevel.PROJECT)
         assertIs<dev.aidos.kernel.CapabilityCheckResult.Allowed>(result2)
 
         // Update usage to reach the limit
@@ -97,7 +103,7 @@ class CapabilityTestNewFeatures {
         ) { bindString(0, granted.id.value) }
 
         // Third validation should fail with CONSTRAINT_EXCEEDED
-        val result3 = mgr.validate("session-limited", granted.id, op, TrustLevel.PROJECT)
+        val result3 = mgr.validate("session-limited", granted.id, op(EffectKind.Read), TrustLevel.PROJECT)
         assertIs<dev.aidos.kernel.CapabilityCheckResult.Denied>(result3)
         assertEquals(DenialReason.CONSTRAINT_EXCEEDED, result3.reason)
     }
@@ -121,8 +127,6 @@ class CapabilityTestNewFeatures {
             grantedBy = UserId("user-1"),
         ).getOrThrow()
 
-        val op = Operation<MutationScope>("fs:read", EffectKind.READ)
-
         // Set usage to a very high number
         driver.execute(null,
             "INSERT INTO capability_usage (capability_id, exercised_count) VALUES (?, 1000)",
@@ -130,7 +134,7 @@ class CapabilityTestNewFeatures {
         ) { bindString(0, granted.id.value) }
 
         // Validation should still succeed
-        val result = mgr.validate("session-unlimited", granted.id, op, TrustLevel.PROJECT)
+        val result = mgr.validate("session-unlimited", granted.id, op(EffectKind.Read), TrustLevel.PROJECT)
         assertIs<dev.aidos.kernel.CapabilityCheckResult.Allowed>(result)
     }
 
