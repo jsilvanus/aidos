@@ -1,6 +1,10 @@
 # RFC-0012: Intent Graph
 
-Status: Accepted 2026-08-04
+Status: **Superseded by RFC-0110**
+
+> **This RFC is retained for its motivation and core invariants, not as a standalone implementation target.**
+>
+> **[RFC-0110: Dual-Mode Intent Graph (Life & Coding Management)](0110-dual-mode-intent-graph.md)** retains derived-only status (`DerivedStatusComputer`), the session proposal gate (`IntentProposalEngine`), and cycle detection (`IntentCycleDetector`), while expanding the Intent Graph to support dual actor ownership (`HUMAN` / `AGENT` / `HYBRID`), hierarchical dispatch policies (`INHERIT` / `MANUAL_START` / `AUTO_WHEN_READY`), atomic coding decomposition (`granularity`, `target_profile`, `min_locality`, `estimated_steps`, `scope_paths_json`), and dual Git-snapshot + live Runtime API synchronization. Implement RFC-0110.
 
 ## Abstract
 
@@ -543,37 +547,50 @@ Run on a human who is asleep holds resources for nothing.
 ```sql
 -- Note the absence of a `status` column. Status is derived (see "Status is derived").
 CREATE TABLE intent_nodes (
-    id                  TEXT PRIMARY KEY,             -- UUIDv7 (RFC-0054)
-    project_id          TEXT NOT NULL,
-    type                TEXT NOT NULL,                -- GOAL|SUB_GOAL|CONSTRAINT|ACCEPTANCE_CRITERION
-    title               TEXT NOT NULL,
-    description         TEXT,
-    priority            INTEGER NOT NULL DEFAULT 100,
-    lifecycle           TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE|ARCHIVED (authorship, not progress)
-    parent_id           TEXT,
+    id                   TEXT PRIMARY KEY,             -- UUIDv7 (RFC-0054)
+    project_id           TEXT NOT NULL,
+    type                 TEXT NOT NULL,                -- GROUP|GOAL|SUB_GOAL|ATOMIC_TASK|CONSTRAINT|ACCEPTANCE_CRITERION
+    title                TEXT NOT NULL,
+    description          TEXT,
+    priority             INTEGER NOT NULL DEFAULT 100,
+    lifecycle            TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE|ARCHIVED (authorship, not progress)
+    parent_id            TEXT,
+    -- dual-mode ownership, dispatch & atomic sizing (RFC-0110)
+    actor_kind           TEXT NOT NULL DEFAULT 'AGENT',   -- HUMAN|AGENT|HYBRID
+    dispatch_policy      TEXT NOT NULL DEFAULT 'INHERIT', -- INHERIT|MANUAL_START|AUTO_WHEN_READY
+    granularity          TEXT NOT NULL DEFAULT 'GOAL',    -- GROUP|GOAL|SUB_GOAL|ATOMIC
+    target_profile       TEXT,                            -- MOBILE|DESKTOP|HEADLESS_SERVER|ANY
+    min_locality         TEXT,                            -- LOCAL_ONLY|TRUSTED_CLUSTER|ANY
+    estimated_steps      INTEGER,
+    scope_paths_json     TEXT NOT NULL DEFAULT '[]',
+    due_at               TEXT,
+    recurrence_json      TEXT,
     -- user override of derived status, stored as a timestamped claim
-    asserted_status     TEXT,
-    asserted_at         TEXT,
-    asserted_by_user_id TEXT,
-    assertion_note      TEXT,
+    asserted_status      TEXT,
+    asserted_at          TEXT,
+    asserted_by_user_id  TEXT,
+    assertion_note       TEXT,
     -- acceptance criteria only
-    check_kind          TEXT,
-    check_spec          TEXT,
-    verification_met    INTEGER,
-    verified_by_kind    TEXT,                         -- USER | CHECK. never SESSION.
-    verified_by_id      TEXT,
-    verified_at         TEXT,
-    created_at          TEXT NOT NULL,
-    created_by_kind     TEXT NOT NULL,
-    created_by_id       TEXT NOT NULL,
-    modified_at         TEXT NOT NULL,
-    modified_by_kind    TEXT NOT NULL,
-    modified_by_id      TEXT NOT NULL,
-    tags                TEXT NOT NULL DEFAULT '[]',
-    row_version         INTEGER NOT NULL DEFAULT 1,
+    check_kind           TEXT,
+    check_spec           TEXT,
+    verification_met     INTEGER,
+    verified_by_kind     TEXT,                         -- USER | CHECK. never SESSION (RFC-0012)
+    verified_by_id       TEXT,
+    verified_at          TEXT,
+    created_at           TEXT NOT NULL,
+    created_by_kind      TEXT NOT NULL,
+    created_by_id        TEXT NOT NULL,
+    modified_at          TEXT NOT NULL,
+    modified_by_kind     TEXT NOT NULL,
+    modified_by_id       TEXT NOT NULL,
+    tags                 TEXT NOT NULL DEFAULT '[]',
+    row_version          INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (project_id) REFERENCES projects(id),
     FOREIGN KEY (parent_id)  REFERENCES intent_nodes(id),
-    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK')),
+    CHECK (actor_kind IN ('HUMAN', 'AGENT', 'HYBRID')),
+    CHECK (dispatch_policy IN ('INHERIT', 'MANUAL_START', 'AUTO_WHEN_READY')),
+    CHECK (granularity IN ('GROUP', 'GOAL', 'SUB_GOAL', 'ATOMIC'))
 );
 
 -- Dependencies only. `dependents` is derived by reverse lookup.
@@ -593,6 +610,7 @@ CREATE TABLE intent_edges (
 
 CREATE INDEX idx_intent_project    ON intent_nodes(project_id, lifecycle, priority);
 CREATE INDEX idx_intent_parent     ON intent_nodes(parent_id);
+CREATE INDEX idx_intent_actor      ON intent_nodes(project_id, actor_kind, lifecycle);
 CREATE INDEX idx_intent_edges_from ON intent_edges(from_node_id, edge_kind);
 CREATE INDEX idx_intent_edges_to   ON intent_edges(to_node_id, edge_kind);
 ```

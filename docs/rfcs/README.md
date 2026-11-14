@@ -150,10 +150,10 @@ Reading fifty documents at equal authority is not a good introduction. This is t
 | [0019 Execution Graph](0019-execution-graph.md) | Run/Task/Attempt — not a log, the program itself |
 | [0049 Platform Profiles](0049-platform-capability-profiles.md) | what Android-first actually means |
 
-**Then, by interest:** concepts (0010, 0011, 0024, 0012), context and AI (0025, 0027, 0020),
-tools (0030, 0032, 0053), operations (0017, 0054, 0055, 0056, 0028).
+**Then, by interest:** concepts (0010, 0011, 0024, 0110), context and AI (0025, 0027, 0020),
+tools (0030, 0032, 0053), operations (0017, 0054, 0055, 0056, 0028), UI & topologies (0050, 0051, 0106, 0111, 0112, 0113).
 
-**Superseded — do not implement:** RFC-0013 (Resources) and RFC-0014 (Artifacts) are replaced
+**Superseded — do not implement:** RFC-0012 (Intent Graph) is replaced by [RFC-0110 (Dual-Mode Intent Graph)](0110-dual-mode-intent-graph.md), and RFC-0013 (Resources) and RFC-0014 (Artifacts) are replaced
 by RFC-0024 (Resource Graph). They are retained for their motivation.
 
 **Reviews** live in `docs/reviews/` and in RFC-0100–0102. They are *input*, not architecture.

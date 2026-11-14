@@ -18,7 +18,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0009 | PARTIAL | recovery classes, drive/park/recover real; no INTENT row before effects, idempotency_key unwritten, no deadline budget, tests fabricate states |
 | 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); no archive/dormancy/templates |
 | 0011 | PARTIAL | sessions, worker spawn, memory store; no failure budget, no orphan cancel, no FACT cap |
-| 0012 | PARTIAL | flat intent store + status fn, tests only; no proposal gate, edges, acyclicity; not wired in prod |
+| 0012 | Superseded by 0110 | Superseded by [RFC-0110](0110-dual-mode-intent-graph.md) (dual Life & Coding Intent Graph implemented in `agent/intent`, `agent/settings`, `agent/prompt`, `agent/executor`, `agent/api`) |
 | 0015 | PARTIAL | GitsemaKnowledgeIndex adapter+factory; no KnowledgeContextProvider, no prod caller, IndexingJob not executed |
 | 0016 | PARTIAL | discovery+hash done; no adoption writer, no budget drop, sha256 not blob hash |
 | 0017 | PARTIAL | MigrationRunner wired; pending_operations unused, no row_version CAS, no open-time recovery pass, no lifecycle states |
@@ -63,6 +63,10 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence and inference gating now wired (including HTTP `license_not_accepted` 451 mapping), queue default is unbounded (no depth rejection by default); broader Android instrumentation and full multi-app UX validation still pending |
 | 0104 | PARTIAL | Placement derivation/enforcement implemented and tested; Connected Apps now has per-app locality caps plus refusal counters, Settings exposes Engine-wide locality cap, and refusals trigger an audit hook; still missing production non-local execution paths (remote providers/delegation in Android UI flow) |
 | 0105 | IMPLEMENTED | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split (planner+supervisors+GGML_RPC) IMPLEMENTED and tested; production integration wired in host path using installed model records (no `<modelId>.gguf` filename assumption), with desktop host coverage for split-model discovery and selection |
+| 0110 | IMPLEMENTED | Dual-Mode Intent Graph (Life + Code) fully specified and implemented in agent/intent, agent/settings, agent/prompt, agent/executor, agent/api with 100% test coverage |
+| 0111 | Accepted | Intent Graph 7 presentation paradigms, multi-agent pill overlay (Red/Blue/Green/Violet), and Android dual-launcher topology codified |
+| 0112 | Accepted | Universal Adaptive UI Architecture (Desktop & Android OTG/DeX responsive layout switching) |
+| 0113 | IMPLEMENTED | The Blinded Egress Bridge: Information Flow Control for cross-domain messaging with zero-egress Life projects fully implemented in agent/bridge with 100% test coverage |
 
 ## Not Accepted
 
@@ -77,6 +81,8 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
 | 0108 AIDIN Remote Routes | Draft | Phase 3a built: standalone `agent/ssh-tunnel` library (JVM; sshj and MINA transports pass one shared suite against an in-process server). Phase 4a: sshj transport written for Android but never run on a device or emulator. Not built: route hints, remote-access switch, Engine tunnel manager and key page, Android keystore-backed `KeyProvider`. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
+| 0110 Dual-Mode Intent Graph | Draft | Core engine (`agent/intent`, `schema/project.sql`), `intent.default_dispatch_policy` setting, prompt renderer, executor coordinator, and `RuntimeClient.intents` implemented; UI and socket wire transport remain follow-up work. |
+| 0111 Intent Graph UI Presentation Paradigms & Mobile Topology | Draft | Specifies 7 presentation paradigms for Dual-Mode Intent Graph, Dictator Red/Worker Pill mapping, and 2-APK Engine/Agent multi-launcher topology. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map

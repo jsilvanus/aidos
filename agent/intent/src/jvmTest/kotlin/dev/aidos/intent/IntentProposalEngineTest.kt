@@ -1,19 +1,22 @@
 package dev.aidos.intent
 
-import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
-import org.junit.Test
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class IntentProposalEngineTest {
 
     private fun setupDb(): Pair<JdbcSqliteDriver, IntentProposalEngine> {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val statements = listOf(
+            "PRAGMA foreign_keys = ON",
             "CREATE TABLE projects (id TEXT PRIMARY KEY)",
             "CREATE TABLE runs (id TEXT PRIMARY KEY)",
             """
@@ -26,36 +29,51 @@ class IntentProposalEngineTest {
             """
             CREATE TABLE intent_nodes (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
-                title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 100,
-                lifecycle TEXT DEFAULT 'ACTIVE', parent_id TEXT,
+                title TEXT NOT NULL, description TEXT, priority INTEGER NOT NULL DEFAULT 100,
+                lifecycle TEXT NOT NULL DEFAULT 'ACTIVE', parent_id TEXT,
+                actor_kind TEXT NOT NULL DEFAULT 'AGENT',
+                dispatch_policy TEXT NOT NULL DEFAULT 'INHERIT',
+                granularity TEXT NOT NULL DEFAULT 'GOAL',
+                target_profile TEXT,
+                min_locality TEXT,
+                estimated_steps INTEGER,
+                scope_paths_json TEXT NOT NULL DEFAULT '[]',
+                due_at TEXT,
+                recurrence_json TEXT,
                 asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
                 assertion_note TEXT, check_kind TEXT, check_spec TEXT,
                 verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
-                verified_at TEXT, created_at TEXT, created_by_kind TEXT, created_by_id TEXT,
-                modified_at TEXT, modified_by_kind TEXT, modified_by_id TEXT, tags TEXT,
-                row_version INTEGER,
+                verified_at TEXT, created_at TEXT NOT NULL, created_by_kind TEXT NOT NULL, created_by_id TEXT NOT NULL,
+                modified_at TEXT NOT NULL, modified_by_kind TEXT NOT NULL, modified_by_id TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                row_version INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY (project_id) REFERENCES projects(id),
                 FOREIGN KEY (parent_id) REFERENCES intent_nodes(id),
-                CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+                CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK')),
+                CHECK (actor_kind IN ('HUMAN', 'AGENT', 'HYBRID')),
+                CHECK (dispatch_policy IN ('INHERIT', 'MANUAL_START', 'AUTO_WHEN_READY')),
+                CHECK (granularity IN ('GROUP', 'GOAL', 'SUB_GOAL', 'ATOMIC'))
             )
             """.trimIndent(),
             """
             CREATE TABLE intent_edges (
-                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT,
-                to_node_id TEXT, edge_kind TEXT NOT NULL, created_at TEXT,
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT NOT NULL,
+                to_node_id TEXT NOT NULL, edge_kind TEXT NOT NULL, created_at TEXT NOT NULL,
                 FOREIGN KEY (project_id) REFERENCES projects(id),
                 FOREIGN KEY (from_node_id) REFERENCES intent_nodes(id),
-                FOREIGN KEY (to_node_id) REFERENCES intent_nodes(id)
+                FOREIGN KEY (to_node_id) REFERENCES intent_nodes(id),
+                UNIQUE (from_node_id, to_node_id, edge_kind)
             )
             """.trimIndent(),
             """
             CREATE TABLE intent_proposals (
-                id TEXT PRIMARY KEY, project_id TEXT, operations_json TEXT,
-                rationale TEXT, proposed_by_run_id TEXT, proposed_at TEXT,
-                run_taint TEXT, state TEXT, resolved_by_user_id TEXT, resolved_at TEXT,
-                expires_at TEXT, audit_ref TEXT,
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, operations_json TEXT NOT NULL,
+                rationale TEXT NOT NULL, proposed_by_run_id TEXT NOT NULL, proposed_at TEXT NOT NULL,
+                run_taint TEXT NOT NULL, state TEXT NOT NULL, resolved_by_user_id TEXT, resolved_at TEXT,
+                expires_at TEXT NOT NULL, audit_ref TEXT NOT NULL,
                 FOREIGN KEY (project_id) REFERENCES projects(id),
-                FOREIGN KEY (proposed_by_run_id) REFERENCES runs(id)
+                FOREIGN KEY (proposed_by_run_id) REFERENCES runs(id),
+                FOREIGN KEY (audit_ref) REFERENCES audit_log(id)
             )
             """.trimIndent(),
             "INSERT INTO projects VALUES ('proj1')",
@@ -127,7 +145,6 @@ class IntentProposalEngineTest {
 
         assertNotNull(proposalId)
 
-        // Verify proposal was inserted
         var count = 0
         driver.executeQuery(
             identifier = null,
@@ -205,7 +222,6 @@ class IntentProposalEngineTest {
         val (driver, engine) = setupDb()
         val actor = ActorRef(ActorKind.SESSION, "sess1")
 
-        // Insert a parent goal
         insertNode(driver, "parent-goal")
 
         val ops = listOf(
@@ -239,7 +255,6 @@ class IntentProposalEngineTest {
 
         assertNotNull(proposalId)
 
-        // Verify proposal was inserted with all ops
         var state = ""
         driver.executeQuery(
             identifier = null,
@@ -280,7 +295,6 @@ class IntentProposalEngineTest {
             expiresAtIso = "2025-02-01T00:00:00Z",
         )
 
-        // Verify resolved_by_user_id is NULL (no session can resolve)
         var resolvedBy: String? = null
         driver.executeQuery(
             identifier = null,
@@ -295,5 +309,170 @@ class IntentProposalEngineTest {
             binders = { bindString(0, proposalId) },
         )
         assertEquals(null, resolvedBy, "resolved_by_user_id should be NULL for new proposal")
+    }
+
+    @Test
+    fun testAtomicCodingDecompositionBatchAndAcceptanceMaterializesOnAccept() {
+        val (driver, engine) = setupDb()
+        val actor = ActorRef(ActorKind.SESSION, "desktop-planner")
+
+        val ops = listOf(
+            IntentOperation.AddNode(
+                parentId = null,
+                id = "epic-auth",
+                type = "GOAL",
+                title = "Harden token refresh",
+                description = "Split into mobile-safe atomic edits",
+                priority = 10,
+                actorKind = "AGENT",
+                dispatchPolicy = "MANUAL_START",
+                granularity = "GOAL",
+            ),
+            IntentOperation.AddNode(
+                parentId = "epic-auth",
+                id = "leaf-1",
+                type = "ATOMIC_TASK",
+                title = "Add null guard to refreshToken",
+                description = "Small scoped change",
+                priority = 10,
+                actorKind = "AGENT",
+                dispatchPolicy = "AUTO_WHEN_READY",
+                granularity = "ATOMIC",
+                targetProfile = "MOBILE",
+                minLocality = "LOCAL_ONLY",
+                estimatedSteps = 5,
+                scopePaths = listOf("src/Auth.kt"),
+            ),
+            IntentOperation.AddNode(
+                parentId = "epic-auth",
+                id = "leaf-2",
+                type = "ATOMIC_TASK",
+                title = "Update session expiry caller",
+                description = "Depends on leaf-1",
+                priority = 20,
+                actorKind = "AGENT",
+                granularity = "ATOMIC",
+                targetProfile = "MOBILE",
+                minLocality = "LOCAL_ONLY",
+                estimatedSteps = 6,
+                scopePaths = listOf("src/Session.kt"),
+            ),
+            IntentOperation.AddNode(
+                parentId = "epic-auth",
+                id = "crit-1",
+                type = "ACCEPTANCE_CRITERION",
+                title = "Auth tests pass",
+                description = null,
+                priority = 10,
+                checkKind = "SHELL_COMMAND",
+                checkSpec = "./gradlew :auth:jvmTest",
+            ),
+            IntentOperation.AddDependency(fromNodeId = "leaf-2", toNodeId = "leaf-1"),
+            IntentOperation.AddEdge(fromNodeId = "leaf-1", toNodeId = "crit-1", edgeKind = "ACCEPTS"),
+        )
+
+        val proposalId = engine.propose(
+            projectId = "proj1",
+            runId = "run1",
+            operations = ops,
+            rationale = "Decompose auth hardening into atomic mobile tasks",
+            runTaint = "TRUSTED",
+            actor = actor,
+            expiresAtIso = "2025-02-01T00:00:00Z",
+        )
+
+        val repo = IntentGraphRepository(driver, idGen = { "repo-id" }, nowIso = { "2025-01-01T00:00:00Z" })
+        assertNull(repo.getNode("proj1", "leaf-1"), "Proposal must not materialize before user resolution")
+
+        val resolved = engine.resolve(
+            projectId = "proj1",
+            proposalId = proposalId,
+            decision = ProposalResolutionDecision.ACCEPTED,
+            resolvedByUserId = "user1",
+        )
+        assertEquals("ACCEPTED", resolved.state)
+        assertEquals("user1", resolved.resolvedByUserId)
+
+        val leaf1 = repo.getNode("proj1", "leaf-1")!!
+        assertEquals(IntentGranularity.ATOMIC, leaf1.granularity)
+        assertEquals(IntentTargetProfile.MOBILE, leaf1.targetProfile)
+        assertEquals(IntentMinLocality.LOCAL_ONLY, leaf1.minLocality)
+        assertEquals(5, leaf1.estimatedSteps)
+        assertEquals(listOf("src/Auth.kt"), leaf1.scopePaths)
+
+        assertEquals(1, repo.listEdges("proj1", fromNodeId = "leaf-2", edgeKind = IntentEdgeKind.DEPENDS_ON).size)
+        assertEquals(1, repo.listEdges("proj1", fromNodeId = "leaf-1", edgeKind = IntentEdgeKind.ACCEPTS).size)
+
+        // Verify IntentProposalResolved was written to audit_log
+        var auditCount = 0
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM audit_log WHERE kind = 'IntentProposalResolved' AND subject_ref = ?",
+            mapper = { cursor ->
+                if (cursor.next().value) auditCount = cursor.getLong(0)?.toInt() ?: 0
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) {
+            bindString(0, proposalId)
+        }
+        assertEquals(1, auditCount)
+    }
+
+    @Test
+    fun testIntraBatchCycleIsRejected() {
+        val (_, engine) = setupDb()
+        val actor = ActorRef(ActorKind.SESSION, "sess1")
+
+        val ops = listOf(
+            IntentOperation.AddNode(null, "a", "ATOMIC_TASK", "Task A", null, 1),
+            IntentOperation.AddNode(null, "b", "ATOMIC_TASK", "Task B", null, 2),
+            IntentOperation.AddDependency("a", "b"),
+            IntentOperation.AddDependency("b", "a"),
+        )
+
+        var thrown: Exception? = null
+        try {
+            engine.propose(
+                projectId = "proj1",
+                runId = "run1",
+                operations = ops,
+                rationale = "Cyclic batch",
+                runTaint = "TRUSTED",
+                actor = actor,
+                expiresAtIso = "2025-02-01T00:00:00Z",
+            )
+        } catch (e: Exception) {
+            thrown = e
+        }
+        assertNotNull(thrown)
+        assertTrue(thrown.message?.contains("intent.cycle_rejected") == true)
+    }
+
+    @Test
+    fun testProposalRejectedLeavesGraphUntouched() {
+        val (driver, engine) = setupDb()
+        val actor = ActorRef(ActorKind.SESSION, "sess1")
+
+        val proposalId = engine.propose(
+            projectId = "proj1",
+            runId = "run1",
+            operations = listOf(IntentOperation.AddNode(null, "unwanted", "GOAL", "Unwanted", null, 1)),
+            rationale = "Suggest extra goal",
+            runTaint = "TRUSTED",
+            actor = actor,
+            expiresAtIso = "2025-02-01T00:00:00Z",
+        )
+
+        val rejected = engine.resolve(
+            projectId = "proj1",
+            proposalId = proposalId,
+            decision = ProposalResolutionDecision.REJECTED,
+            resolvedByUserId = "user1",
+        )
+        assertEquals("REJECTED", rejected.state)
+
+        val repo = IntentGraphRepository(driver, idGen = { "x" }, nowIso = { "2025-01-01T00:00:00Z" })
+        assertNull(repo.getNode("proj1", "unwanted"))
     }
 }

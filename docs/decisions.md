@@ -580,15 +580,23 @@ Tools belong to the calling app. A run that needs one returns `status: "tool_cal
 
 ---
 
-### D49 — On Android, Engine and Agent Runtime share one host app and one foreground service; desktop stays joined · `SETTLED`
+### D49 — On Android, Engine and Agent Runtime share one host app with multi-process native isolation; desktop stays joined (split later if needed) · `SETTLED`
 
-On Android the always-on host is **one app, initially Aidos Engine**, running **one coordinating foreground service** that hosts Engine Core and the Agent Runtime as separate modules. The second always-on app (Aidos Agent as a persistent host) is dropped as a starting point. Other apps remain clients: the Aidos SDK handshake still gives them inference, and an inference grant is **not** an agent or tool grant.
+On Android the always-on host is **one app (`fi.italeino.aidos.engine`)**, presenting **two user-facing launchers** (Aidos Tasks for the `personal` life project, and Aidos Projects for coding/git workspaces) plus the **System Assistant (`VoiceInteractionService`)**.
 
-On desktop, D48 already hosts both in one process behind the loopback API; that stays. Whether the agent runtime later moves into a separate Aidos Desktop app, with the Engine standing alone, is decided when that app is created.
+**Process isolation & crash resilience (amended 2026-11-14 by owner decision):**
+To achieve high crash resilience and isolate native C++ segfaults (llama.cpp / whisper.cpp) and Linux Out-Of-Memory (LMK) events from terminating the user interface and SQLite intent/runtime state:
+1. **Host App**: Single APK (`fi.italeino.aidos.engine`), maintaining **one single user-facing persistent notification** and avoiding notification tray clutter.
+2. **Process Split**:
+   - **Main Process (Default)**: Lightweight process (~120–150 MB RSS) hosting UI activities (`TasksMainActivity`, `AidosMainActivity`), the System Assistant overlay, Project Management (`.aidos/state.db`), and the Dual-Mode Intent Graph engine.
+   - **Native Inference Process (`:native_inference`)**: Dedicated isolated process hosting heavy model weights (llama.cpp, whisper.cpp, ~2–4 GB RSS).
+3. **Resilience Contract**: If native inference segfaults or Android's Low Memory Killer terminates `:native_inference` under memory pressure, the Main Process (UI, Intent Graph, and active documents) **remains alive**. The runtime catches the dead Binder link (`DeadObjectException`), logs the fault, alerts the user gracefully, and warm-restarts the native inference service without losing user typing or SQLite transactional state.
 
-**Why:** two always-on apps mean two permanent notifications, two lifecycles to start, recover and explain, and two things the user can dismiss (Juha, 2026-10-26: "because of the foreground notification issue"). The Agent is postponed, so merging now costs nothing. The cost is real: RFC-0103's separate-app design gave an OS-enforced boundary between inference and agent authority; in one process that boundary is code. Hence the module split, explicit authorization at the module/API boundary, and tests that an inference-only client cannot start agent jobs or tools (RFC-0103-CHANGE-RATIONALE.md).
+On desktop, D48 hosts both in one process behind the loopback API; that stays. Desktop remains joined initially, with the architectural option to proceed with one process and split into one, two, or multiple dedicated processes/apps later as multi-window or standalone server needs emerge.
 
-**Settled by the owner 2026-11-09:** the one-host direction, and that the host app keeps the name and package `fi.italeino.aidos.engine` (apps are `fi.italeino…`; module names may differ).
+**Why:** Combines the UX benefits of a single installed APK and single notification with the crash-isolation guarantees of separate OS processes.
+
+**Settled by the owner 2026-11-09 & 2026-11-14:** the one-host multi-process direction; package stays `fi.italeino.aidos.engine`. Desktop proceeds joined initially and can split later.
 
 **Open (must be done before the Android host ships):**
 - Foreground service type. The Engine declares `FOREGROUND_SERVICE_TYPE_DATA_SYNC`; recent Android versions time that type out. Verify against the target API level and pick the type (or a different keep-alive design) accordingly; do not promise indefinite background execution.
@@ -688,6 +696,19 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 
 **RFCs:** 0108 (draft), 0105, 0107, 0035, 0042; D47, D50, D52.
 
+## D54. Universal Adaptive UI & Blinded Egress Bridge · `SETTLED`
+
+**Decision.**
+1. **Universal UI Parity:** Every UI presentation paradigm (Mind-Map / 2D Canvas, Tree-List, Pipeline, Kanban, Timeline, Radar, Living Document) exists in the single APK (`fi.italeino.aidos.engine`) as well as the Desktop app. On Android handheld screens, compact touch-friendly views (Action Inbox, Tree-List) are default, while expansive spatial views are tucked into an expander or automatically activated when docked via OTG / USB-C / Samsung DeX / Motorola Ready For (`WindowSizeClass` $\ge 840\text{dp}$).
+2. **Crash Resilience:** The single APK runs two processes (`:main` for UI, Agent Runtime, and SQLite; `:native_inference` for C++ `llama.cpp` and `whisper.cpp`), isolating native crashes and enabling independent recovery.
+3. **Blinded Egress Bridge:** Solves the conflict between zero-egress `LIFE` projects (`routing.remote_egress = never`) and cross-domain messaging (Matrix, Signal, SMS).
+   - Ingress into Life projects flows freely inward through the In-Flight Privacy Vault as proposed tasks.
+   - Outward queries from Messaging agents to Life are strictly **blinded** (strongly-typed Boolean / availability checks only, e.g. `{ busy: true }`, never leaking raw descriptions or notes).
+   - Any actual network transmission originating from a Life intent is gated behind an explicit on-screen **Human Egress Gate** approving only the specific declassified message buffer.
+
+**Forecloses:** Siloing desktop and mobile codebases into separate UI features; leaking private life context over network messaging channels; native inference crashes bringing down the UI or Git repositories.  
+**RFCs:** 0027, 0042, 0047, 0050, 0051, 0106, 0110, 0111, 0112; D42, D49.
+
 ---
 
 ## Revision history
@@ -711,3 +732,5 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 | 2026-10-26 | D50 settled: inference groups (RFC-0105); child-process layer split, pairing and group certificates, delegation first, local unless stated. |
 | 2026-11-09 | D51 proposed: MCP Binder transport (apps on the device as MCP servers). |
 | 2026-11-10 | D53 proposed: remote routes; a tunnel is a transport, not a placement; layer split LAN only; Engine-managed SSH tunnels. |
+| 2026-11-14 | D49 amended: Single APK with multi-process native isolation (`:main` and `:native_inference`) for crash resilience and Android system assistant integration. |
+| 2026-11-14 | D54 settled: Universal UI parity across Desktop and Android (OTG/DeX responsive switching) and Blinded Egress Bridge for messaging across zero-egress Life and Code projects (RFC-0112). |

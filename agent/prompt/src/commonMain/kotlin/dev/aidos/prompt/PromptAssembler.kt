@@ -108,6 +108,10 @@ class PromptAssembler(
         if (request.runtimeInstructions.isNotBlank()) {
             systemParts.add(request.runtimeInstructions)
         }
+        // RFC-0025 precedence 5 / RFC-0110: include active intent graph section in system turn.
+        if (request.intentInstructions.isNotBlank()) {
+            systemParts.add(request.intentInstructions)
+        }
         // Unadopted instruction sets never reach the system turn (RFC-0016).
         val instructionSet = request.instructionSet
         if (instructionSet != null && instructionSet.adopted) {
@@ -382,4 +386,5 @@ data class AssemblyRequest(
     val knowledgeContext: List<ContextItem> = emptyList(),
     val instructionSet: InstructionSet? = null,
     val runtimeInstructions: String = "",
+    val intentInstructions: String = "",
 )

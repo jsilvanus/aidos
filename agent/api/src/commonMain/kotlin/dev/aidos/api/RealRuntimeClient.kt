@@ -2,8 +2,27 @@ package dev.aidos.api
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.broker.AuditLog
 import dev.aidos.identity.ProjectRegistry
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.intent.DerivedStatusComputer
+import dev.aidos.intent.EffectiveDispatchPolicy
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentCycleDetector
+import dev.aidos.intent.IntentEdgeKind
+import dev.aidos.intent.IntentEdgeRecord
+import dev.aidos.intent.IntentGraphRepository
+import dev.aidos.intent.IntentMinLocality
+import dev.aidos.intent.IntentNodeRecord
+import dev.aidos.intent.IntentNodeStatusView
+import dev.aidos.intent.IntentOperation
+import dev.aidos.intent.IntentProposal
+import dev.aidos.intent.IntentProposalEngine
+import dev.aidos.intent.IntentSnapshotCodec
+import dev.aidos.intent.ProposalResolutionDecision
+import dev.aidos.intent.SnapshotReconcileResult
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.FileDiff
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
@@ -129,9 +148,49 @@ class RealRuntimeClient : RuntimeClient {
     private val runIdGen = UuidV7Generator()
 
     private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
+    private val _inMemoryIntents = InMemoryIntentCommands(
+        nextId = ::nextId,
+        nowIso = { Clock.System.now().toString() },
+    )
 
     private fun projectRegistry(): ProjectRegistry? =
         userDriver?.let { ProjectRegistry(it, projectIdGen) }
+
+    private fun resolveProjectDriver(projectId: String): SqlDriver? {
+        _openProjectDrivers[projectId]?.let { return it }
+        val path = _projectPaths[projectId]
+            ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
+            ?: return null
+        return ensureProjectDriverOpen(projectId, path)
+    }
+
+    private fun intentCycleDetector(driver: SqlDriver): IntentCycleDetector = IntentCycleDetector(
+        driver = driver,
+        audit = AuditLog(driver, resolvedDeviceId),
+        idGen = ::nextId,
+        nowIso = { Clock.System.now().toString() },
+    )
+
+    private fun intentRepository(driver: SqlDriver): IntentGraphRepository = IntentGraphRepository(
+        driver = driver,
+        cycleDetector = intentCycleDetector(driver),
+        idGen = ::nextId,
+        nowIso = { Clock.System.now().toString() },
+    )
+
+    private fun intentProposalEngine(driver: SqlDriver): IntentProposalEngine = IntentProposalEngine(
+        driver = driver,
+        audit = AuditLog(driver, resolvedDeviceId),
+        cycleDetector = intentCycleDetector(driver),
+        idGen = ::nextId,
+        nowIso = { Clock.System.now().toString() },
+    )
+
+    private fun intentSnapshotCodec(driver: SqlDriver): IntentSnapshotCodec = IntentSnapshotCodec(
+        driver = driver,
+        nowIso = { Clock.System.now().toString() },
+        cycleDetector = intentCycleDetector(driver),
+    )
 
     /** Opens (or reuses an already-open) driver for a project's own state.db. */
     private fun ensureProjectDriverOpen(id: String, path: String): SqlDriver? {
@@ -701,6 +760,245 @@ class RealRuntimeClient : RuntimeClient {
         private fun matchesFilter(event: RuntimeEvent, filter: EventFilter): Boolean =
             (filter.projectIds.isEmpty() || (event.projectId != null && event.projectId in filter.projectIds)) &&
                 (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds))
+    }
+
+    override val intents: IntentCommands = object : IntentCommands {
+        override suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord {
+            val driver = resolveProjectDriver(request.projectId)
+                ?: return _inMemoryIntents.createNode(request)
+            return intentRepository(driver).createNode(
+                projectId = request.projectId,
+                title = request.title,
+                type = request.type,
+                id = request.id ?: nextId(),
+                description = request.description,
+                priority = request.priority,
+                parentId = request.parentId,
+                actorKind = request.actorKind,
+                dispatchPolicy = request.dispatchPolicy,
+                granularity = request.granularity,
+                targetProfile = request.targetProfile,
+                minLocality = request.minLocality,
+                estimatedSteps = request.estimatedSteps,
+                scopePaths = request.scopePaths,
+                dueAt = request.dueAt,
+                recurrenceJson = request.recurrenceJson,
+                checkKind = request.checkKind,
+                checkSpec = request.checkSpec,
+                tags = request.tags,
+                createdBy = ActorRef(ActorKind.USER, "local-user"),
+            )
+        }
+
+        override suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord {
+            val driver = resolveProjectDriver(request.projectId)
+                ?: return _inMemoryIntents.updateNode(request)
+            return intentRepository(driver).updateNode(
+                projectId = request.projectId,
+                nodeId = request.nodeId,
+                title = request.title,
+                description = request.description,
+                clearDescription = request.clearDescription,
+                priority = request.priority,
+                parentId = request.parentId,
+                clearParentId = request.clearParentId,
+                actorKind = request.actorKind,
+                dispatchPolicy = request.dispatchPolicy,
+                granularity = request.granularity,
+                targetProfile = request.targetProfile,
+                clearTargetProfile = request.clearTargetProfile,
+                minLocality = request.minLocality,
+                clearMinLocality = request.clearMinLocality,
+                estimatedSteps = request.estimatedSteps,
+                clearEstimatedSteps = request.clearEstimatedSteps,
+                scopePaths = request.scopePaths,
+                dueAt = request.dueAt,
+                clearDueAt = request.clearDueAt,
+                recurrenceJson = request.recurrenceJson,
+                clearRecurrenceJson = request.clearRecurrenceJson,
+                checkKind = request.checkKind,
+                checkSpec = request.checkSpec,
+                tags = request.tags,
+                modifiedBy = ActorRef(ActorKind.USER, "local-user"),
+            )
+        }
+
+        override suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.archiveNode(projectId, nodeId)
+            return intentRepository(driver).archiveNode(projectId, nodeId)
+        }
+
+        override suspend fun getNodeStatus(
+            projectId: String,
+            nodeId: String,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+        ): IntentNodeStatusView? {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.getNodeStatus(projectId, nodeId, projectDefaultPolicy)
+            val node = intentRepository(driver).getNode(projectId, nodeId) ?: return null
+            return DerivedStatusComputer(driver).statusView(node, projectDefaultPolicy)
+        }
+
+        override suspend fun listNodes(
+            projectId: String,
+            includeArchived: Boolean,
+            actorKind: IntentActorKind?,
+            parentId: String?,
+            filterByParent: Boolean,
+        ): List<IntentNodeRecord> {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.listNodes(projectId, includeArchived, actorKind, parentId, filterByParent)
+            return intentRepository(driver).listNodes(
+                projectId = projectId,
+                includeArchived = includeArchived,
+                actorKind = actorKind,
+                parentId = parentId,
+                filterByParent = filterByParent,
+            )
+        }
+
+        override suspend fun listActionableForHuman(
+            projectId: String,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+        ): List<IntentNodeStatusView> {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.listActionableForHuman(projectId, projectDefaultPolicy)
+            return DerivedStatusComputer(driver).listActionableForHuman(projectId, projectDefaultPolicy)
+        }
+
+        override suspend fun listReadyForAgent(
+            projectId: String,
+            profile: PlatformProfile,
+            locality: IntentMinLocality,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+            onlyAutoDispatch: Boolean,
+        ): List<IntentNodeStatusView> {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.listReadyForAgent(projectId, profile, locality, projectDefaultPolicy, onlyAutoDispatch)
+            return DerivedStatusComputer(driver).listReadyForAgent(
+                projectId = projectId,
+                profile = profile,
+                locality = locality,
+                projectDefaultPolicy = projectDefaultPolicy,
+                onlyAutoDispatch = onlyAutoDispatch,
+            )
+        }
+
+        override suspend fun completeHumanNode(
+            projectId: String,
+            nodeId: String,
+            userId: String,
+            note: String?,
+        ): IntentNodeRecord {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.completeHumanNode(projectId, nodeId, userId, note)
+            return intentRepository(driver).completeHumanNode(projectId, nodeId, userId, note)
+        }
+
+        override suspend fun addEdge(
+            projectId: String,
+            fromNodeId: String,
+            toNodeId: String,
+            edgeKind: IntentEdgeKind,
+        ): IntentEdgeRecord {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.addEdge(projectId, fromNodeId, toNodeId, edgeKind)
+            return intentRepository(driver).addEdge(projectId, fromNodeId, toNodeId, edgeKind)
+        }
+
+        override suspend fun removeEdge(
+            projectId: String,
+            fromNodeId: String,
+            toNodeId: String,
+            edgeKind: IntentEdgeKind,
+        ): Boolean {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.removeEdge(projectId, fromNodeId, toNodeId, edgeKind)
+            return intentRepository(driver).removeEdge(projectId, fromNodeId, toNodeId, edgeKind)
+        }
+
+        override suspend fun listEdges(
+            projectId: String,
+            fromNodeId: String?,
+            toNodeId: String?,
+            edgeKind: IntentEdgeKind?,
+        ): List<IntentEdgeRecord> {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.listEdges(projectId, fromNodeId, toNodeId, edgeKind)
+            return intentRepository(driver).listEdges(projectId, fromNodeId, toNodeId, edgeKind)
+        }
+
+        override suspend fun propose(request: CreateIntentProposalRequest): String {
+            val driver = resolveProjectDriver(request.projectId)
+                ?: return _inMemoryIntents.propose(request)
+            return intentProposalEngine(driver).propose(
+                projectId = request.projectId,
+                runId = request.runId,
+                operations = request.operations,
+                rationale = request.rationale,
+                runTaint = request.runTaint,
+                actor = request.actor,
+                expiresAtIso = request.expiresAtIso,
+            )
+        }
+
+        override suspend fun listProposals(projectId: String, state: String?): List<IntentProposal> {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.listProposals(projectId, state)
+            return intentProposalEngine(driver).listProposals(projectId, state)
+        }
+
+        override suspend fun resolveProposal(
+            projectId: String,
+            proposalId: String,
+            decision: ProposalResolutionDecision,
+            resolvedByUserId: String,
+            editedOperations: List<IntentOperation>?,
+        ): IntentProposal {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.resolveProposal(projectId, proposalId, decision, resolvedByUserId, editedOperations)
+            return intentProposalEngine(driver).resolve(
+                projectId = projectId,
+                proposalId = proposalId,
+                decision = decision,
+                resolvedByUserId = resolvedByUserId,
+                editedOperations = editedOperations,
+            )
+        }
+
+        override suspend fun confirmImplementation(
+            projectId: String,
+            nodeId: String,
+            confirmedByKind: String,
+            confirmedById: String,
+            criterionIds: List<String>?,
+        ) {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.confirmImplementation(projectId, nodeId, confirmedByKind, confirmedById, criterionIds)
+            intentRepository(driver).confirmPendingImplementation(
+                projectId = projectId,
+                nodeId = nodeId,
+                confirmedByKind = confirmedByKind,
+                confirmedById = confirmedById,
+                criterionIds = criterionIds,
+            )
+        }
+
+        override suspend fun exportSnapshotJson(projectId: String): String {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.exportSnapshotJson(projectId)
+            return intentSnapshotCodec(driver).exportJson(projectId)
+        }
+
+        override suspend fun importAndReconcileSnapshot(
+            projectId: String,
+            snapshotJson: String,
+        ): SnapshotReconcileResult {
+            val driver = resolveProjectDriver(projectId)
+                ?: return _inMemoryIntents.importAndReconcileSnapshot(projectId, snapshotJson)
+            return intentSnapshotCodec(driver).importAndReconcile(projectId, snapshotJson)
+        }
     }
 
     override val runtime: RuntimeInfo = object : RuntimeInfo {

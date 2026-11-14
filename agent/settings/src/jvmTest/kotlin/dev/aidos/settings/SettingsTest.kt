@@ -283,4 +283,28 @@ class SettingsTest {
         assertTrue(offDecoded.isSuccess)
         assertEquals(VoiceApprovalsLevel.OFF, offDecoded.getOrNull())
     }
+
+    @Test
+    fun `intent default dispatch policy defaults to MANUAL_START and overrides at project scope`() {
+        val userDriver = openUserDriver()
+        val projectDriver = openProjectDriver()
+        val store = SettingsStore(userDriver, projectDriver)
+
+        assertEquals(IntentDispatchPolicy.MANUAL_START, store.resolve(Settings.intentDefaultDispatchPolicy, projectId = "proj-life").value)
+        assertNotNull(Settings.forKey("intent.default_dispatch_policy"))
+
+        val writer = SettingsWriter(userDriver, projectDriver)
+        val written = writer.writeProject(
+            Settings.intentDefaultDispatchPolicy,
+            "proj-life",
+            JsonPrimitive("AUTO_WHEN_READY"),
+            SettingSetByKind.USER,
+            "2026-11-14T00:00:00Z",
+        )
+        assertTrue(written.isSuccess)
+
+        val resolved = store.resolve(Settings.intentDefaultDispatchPolicy, projectId = "proj-life")
+        assertEquals(IntentDispatchPolicy.AUTO_WHEN_READY, resolved.value)
+        assertEquals(SettingOrigin.PROJECT, resolved.origin)
+    }
 }

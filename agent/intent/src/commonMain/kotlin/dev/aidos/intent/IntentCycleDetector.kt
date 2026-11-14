@@ -31,6 +31,8 @@ class IntentCycleDetector(
      * Checks if adding a dependency edge would create a cycle.
      *
      * Returns null if the edge is safe. Returns [AidosError] if a cycle would be created.
+     * Optionally considers in-flight [additionalEdges] and [removedEdges] from an unapplied
+     * atomic proposal batch (RFC-0110).
      *
      * If a cycle is detected, writes an audit row with kind=IntentCycleDetected.
      */
@@ -39,10 +41,12 @@ class IntentCycleDetector(
         fromNodeId: String,
         toNodeId: String,
         actor: ActorRef,
+        additionalEdges: List<Pair<String, String>> = emptyList(),
+        removedEdges: Set<Pair<String, String>> = emptySet(),
     ): AidosError? {
         // Reachability check: is there a path from toNodeId to fromNodeId?
         // If yes, adding fromNodeId → toNodeId creates a cycle.
-        val canReach = canReachViaGraph(toNodeId, fromNodeId, projectId)
+        val canReach = canReachViaGraph(toNodeId, fromNodeId, projectId, additionalEdges, removedEdges)
         if (!canReach) {
             return null  // Safe
         }
@@ -75,9 +79,11 @@ class IntentCycleDetector(
         source: String,
         target: String,
         projectId: String,
+        additionalEdges: List<Pair<String, String>>,
+        removedEdges: Set<Pair<String, String>>,
     ): Boolean {
         val visited = mutableSetOf<String>()
-        return dfs(source, target, projectId, visited)
+        return dfs(source, target, projectId, visited, additionalEdges, removedEdges)
     }
 
     private fun dfs(
@@ -85,6 +91,8 @@ class IntentCycleDetector(
         target: String,
         projectId: String,
         visited: MutableSet<String>,
+        additionalEdges: List<Pair<String, String>>,
+        removedEdges: Set<Pair<String, String>>,
     ): Boolean {
         if (current == target) return true
         if (current in visited) return false
@@ -92,9 +100,9 @@ class IntentCycleDetector(
         visited.add(current)
 
         // Get all nodes that current depends on (outgoing edges with kind='DEPENDS_ON')
-        val nextNodes = getOutgoingNodes(current, projectId)
+        val nextNodes = getOutgoingNodes(current, projectId, additionalEdges, removedEdges)
         for (next in nextNodes) {
-            if (dfs(next, target, projectId, visited)) {
+            if (dfs(next, target, projectId, visited, additionalEdges, removedEdges)) {
                 return true
             }
         }
@@ -105,7 +113,12 @@ class IntentCycleDetector(
     /**
      * Returns all nodes that [nodeId] points to via DEPENDS_ON edges.
      */
-    private fun getOutgoingNodes(nodeId: String, projectId: String): List<String> {
+    private fun getOutgoingNodes(
+        nodeId: String,
+        projectId: String,
+        additionalEdges: List<Pair<String, String>>,
+        removedEdges: Set<Pair<String, String>>,
+    ): List<String> {
         val result = mutableListOf<String>()
         driver.executeQuery(
             identifier = null,
@@ -115,11 +128,20 @@ class IntentCycleDetector(
             binders = { bindString(0, projectId); bindString(1, nodeId) },
             mapper = { resultSet ->
                 while (resultSet.next().value) {
-                    resultSet.getString(0)?.let { result.add(it) }
+                    resultSet.getString(0)?.let { target ->
+                        if ((nodeId to target) !in removedEdges) {
+                            result.add(target)
+                        }
+                    }
                 }
                 QueryResult.Value(Unit)
             },
         )
+        for ((from, to) in additionalEdges) {
+            if (from == nodeId && (from to to) !in removedEdges) {
+                result.add(to)
+            }
+        }
         return result
     }
 }
