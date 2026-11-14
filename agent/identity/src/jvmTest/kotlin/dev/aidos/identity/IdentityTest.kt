@@ -2,6 +2,7 @@ package dev.aidos.identity
 
 import dev.aidos.kernel.ProjectId
 import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.IntentDispatchPolicy
 import dev.aidos.settings.SettingOrigin
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingSetByKind
@@ -26,6 +27,12 @@ class IdentityTest {
     private fun openUserDriver() = run {
         val root = Files.createTempDirectory("identity-test").toFile()
         AidosStorage.openUser(DesktopPaths.userDb(root.path), "test-1.0") { "2026-08-05T00:00:00Z" }.driver
+            as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+    }
+
+    private fun openProjectDriver() = run {
+        val root = Files.createTempDirectory("identity-project-test").toFile()
+        AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { "2026-08-05T00:00:00Z" }.driver
             as app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
     }
 
@@ -156,6 +163,55 @@ class IdentityTest {
         val store = SettingsStore(driver, null)
         val r = store.resolve(Settings.routingRemoteEgress)
         assertEquals(SettingOrigin.DEFAULT, r.origin)
+    }
+
+    @Test
+    fun `ProjectType WORK is defined and resolves case-insensitively`() {
+        assertEquals(ProjectType.WORK, ProjectType.fromValue("work"))
+        assertEquals(ProjectType.WORK, ProjectType.fromValue("WORK"))
+        assertEquals("work", ProjectType.WORK.value)
+    }
+
+    @Test
+    fun `work type default sets remote egress to ask at user scope`() {
+        val driver = openUserDriver()
+        val writer = SettingsWriter(driver)
+
+        applyTypeDefaults(ProjectType.WORK, "proj-work-1", writer, "2026-11-14T00:00:00Z")
+
+        val store = SettingsStore(driver, null)
+        val egress = store.resolve(Settings.routingRemoteEgress)
+        assertEquals(EgressPolicy.ASK, egress.value)
+        assertEquals(SettingOrigin.USER, egress.origin)
+    }
+
+    @Test
+    fun `work type default writes dispatch policy and untrusted paths at project scope`() {
+        val userDriver = openUserDriver()
+        val projectDriver = openProjectDriver()
+        val writer = SettingsWriter(userDriver, projectDriver)
+        val projectId = "proj-work-2"
+
+        applyTypeDefaults(ProjectType.WORK, projectId, writer, "2026-11-14T00:00:00Z")
+
+        val store = SettingsStore(userDriver, projectDriver)
+
+        // Egress policy: ASK at user scope (RFC-0114)
+        val egress = store.resolve(Settings.routingRemoteEgress, projectId = projectId)
+        assertEquals(EgressPolicy.ASK, egress.value)
+        assertEquals(SettingOrigin.USER, egress.origin)
+
+        // Default dispatch policy: AUTO_WHEN_READY at project scope (RFC-0110, RFC-0114)
+        val dispatch = store.resolve(Settings.intentDefaultDispatchPolicy, projectId = projectId)
+        assertEquals(IntentDispatchPolicy.AUTO_WHEN_READY, dispatch.value)
+        assertEquals(SettingOrigin.PROJECT, dispatch.origin)
+
+        // Untrusted paths: includes vendor drops, client_drop/**, dist/** at project scope (RFC-0027, RFC-0114)
+        val untrusted = store.resolve(Settings.trustUntrustedPaths, projectId = projectId)
+        assertEquals(SettingOrigin.PROJECT, untrusted.origin)
+        assertTrue(untrusted.value.contains("client_drop/**"), "must contain client_drop/**")
+        assertTrue(untrusted.value.contains("dist/**"), "must contain dist/**")
+        assertTrue(untrusted.value.contains("build/**"), "must contain build/**")
     }
 
     // --- DeviceIdentity (RFC-0046) ------------------------------------------

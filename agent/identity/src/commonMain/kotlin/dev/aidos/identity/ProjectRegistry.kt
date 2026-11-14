@@ -8,13 +8,15 @@ import dev.aidos.kernel.ErrorCodes
 import dev.aidos.kernel.IdGenerator
 import dev.aidos.kernel.ProjectId
 import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.IntentDispatchPolicy
 import dev.aidos.settings.SettingSetByKind
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsWriter
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Project types and their default settings (RFC-0047, M2 done-when).
+ * Project types and their default settings (RFC-0047, RFC-0114, M2 done-when).
  *
  * Types set **defaults**, never constraints. A user may always override a type default at
  * user scope.
@@ -25,12 +27,13 @@ enum class ProjectType(val value: String) {
     RESEARCH("research"),
     WRITING("writing"),
     PLANNING("planning"),
+    WORK("work"),
     GENERIC("generic"),
     ;
 
     companion object {
         fun fromValue(v: String): ProjectType =
-            entries.firstOrNull { it.value == v } ?: GENERIC
+            entries.firstOrNull { it.value.equals(v, ignoreCase = true) || it.name.equals(v, ignoreCase = true) } ?: GENERIC
     }
 }
 
@@ -201,6 +204,41 @@ fun applyTypeDefaults(
             // choice) every time a personal project is created or its type changes to PERSONAL —
             // see PIPELINE.md's outstanding-work notes for the unresolved "one-time suggestion,
             // not a standing override" question this still leaves.
+        }
+        ProjectType.WORK -> {
+            // Work projects contain confidential/proprietary client and business data (RFC-0114).
+            // routing.remote_egress = ask: user approval required before external transmission;
+            // never silently broadcast proprietary data to remote clouds.
+            writer.writeUser(
+                Settings.routingRemoteEgress,
+                JsonPrimitive(EgressPolicy.ASK.name),
+                SettingSetByKind.RUNTIME,
+                nowIso,
+            ).getOrThrow()
+
+            // intent.default_dispatch_policy = AUTO_WHEN_READY: autonomous agent tasks proceed
+            // once prerequisite dependencies are DONE (RFC-0110, RFC-0114).
+            writer.writeProject(
+                Settings.intentDefaultDispatchPolicy,
+                projectId,
+                JsonPrimitive(IntentDispatchPolicy.AUTO_WHEN_READY.name),
+                SettingSetByKind.RUNTIME,
+                nowIso,
+            )
+
+            // trust.untrusted_paths: client drops, build, and dist outputs are treated as UNTRUSTED
+            // to guard against prompt injection and malicious vendor/client attachments (RFC-0027, RFC-0114).
+            val untrustedPaths = listOf(
+                "node_modules/**", "vendor/**", "third_party/**", ".venv/**",
+                "target/**", "build/**", "dist/**", "client_drop/**"
+            )
+            writer.writeProject(
+                Settings.trustUntrustedPaths,
+                projectId,
+                JsonArray(untrustedPaths.map { JsonPrimitive(it) }),
+                SettingSetByKind.RUNTIME,
+                nowIso,
+            )
         }
         ProjectType.CODING -> {
             // coding → trust.untrusted_paths has a useful default in Settings; no override needed.

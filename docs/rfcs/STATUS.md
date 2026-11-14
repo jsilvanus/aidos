@@ -67,6 +67,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0111 | Accepted | Intent Graph 7 presentation paradigms, multi-agent pill overlay (Red/Blue/Green/Violet), and Android dual-launcher topology codified |
 | 0112 | Accepted | Universal Adaptive UI Architecture (Desktop & Android OTG/DeX responsive layout switching) |
 | 0113 | IMPLEMENTED | The Blinded Egress Bridge: Information Flow Control for cross-domain messaging with zero-egress Life projects fully implemented in agent/bridge with 100% test coverage |
+| 0114 | IMPLEMENTED | Work Project Type & Privacy Specification: proprietary work defaults (egress=ASK, dispatch=AUTO_WHEN_READY, untrusted client drops, cluster locality, AGENTS.md) |
 
 ## Not Accepted
 
