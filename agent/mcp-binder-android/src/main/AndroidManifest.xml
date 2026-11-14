@@ -1,1 +1,8 @@
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android 11+ package visibility: allow discovery of installed apps exposing MCP over Binder. -->
+    <queries>
+        <intent>
+            <action android:name="fi.italeino.mcp.action.BINDER_SERVER" />
+        </intent>
+    </queries>
+</manifest>

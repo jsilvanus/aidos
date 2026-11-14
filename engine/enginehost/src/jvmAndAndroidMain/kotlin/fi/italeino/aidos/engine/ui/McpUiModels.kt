@@ -16,10 +16,13 @@ import kotlinx.serialization.json.jsonPrimitive
 data class McpServerUiModel(
     val id: String,
     val name: String,
-    val transport: String, // "stdio" or "http"
+    val transport: String, // "stdio", "http", or "binder"
     val command: String? = null,
     val args: List<String> = emptyList(),
     val endpointUrl: String? = null,
+    val packageName: String? = null,
+    val serviceClass: String? = null,
+    val signingCertSha256: Set<String> = emptySet(),
     val profiles: Set<String> = setOf("DESKTOP"),
     val secretRefs: Map<String, String> = emptyMap(),
     val status: String = "Configured",
@@ -60,6 +63,7 @@ enum class McpTransportFilter {
     ALL,
     STDIO,
     HTTP,
+    BINDER,
 }
 
 enum class McpAdoptionFilter {

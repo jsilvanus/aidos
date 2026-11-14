@@ -35,6 +35,7 @@ import androidx.compose.ui.window.Dialog
 
 private val StdioColor = Color(0xFF10B981) // Emerald Green
 private val HttpColor = Color(0xFF6366F1)  // Indigo
+private val BinderColor = Color(0xFF3B82F6) // Electric Blue
 private val AdoptedColor = Color(0xFF22C55E) // Green
 private val UnadoptedColor = Color(0xFF94A3B8) // Slate Gray
 
@@ -69,12 +70,15 @@ fun McpServersPane(
             val matchesSearch = state.searchQuery.isBlank() ||
                 server.name.contains(state.searchQuery, ignoreCase = true) ||
                 (server.command?.contains(state.searchQuery, ignoreCase = true) == true) ||
-                (server.endpointUrl?.contains(state.searchQuery, ignoreCase = true) == true)
+                (server.endpointUrl?.contains(state.searchQuery, ignoreCase = true) == true) ||
+                (server.packageName?.contains(state.searchQuery, ignoreCase = true) == true) ||
+                (server.serviceClass?.contains(state.searchQuery, ignoreCase = true) == true)
 
             val matchesTransport = when (state.transportFilter) {
                 McpTransportFilter.ALL -> true
                 McpTransportFilter.STDIO -> server.transport.equals("stdio", ignoreCase = true)
                 McpTransportFilter.HTTP -> server.transport.equals("http", ignoreCase = true)
+                McpTransportFilter.BINDER -> server.transport.equals("binder", ignoreCase = true)
             }
 
             matchesSearch && matchesTransport
@@ -127,11 +131,15 @@ fun McpServersPane(
             val totalServers = state.servers.size
             val stdioCount = state.servers.count { it.transport.equals("stdio", ignoreCase = true) }
             val httpCount = state.servers.count { it.transport.equals("http", ignoreCase = true) }
+            val binderCount = state.servers.count { it.transport.equals("binder", ignoreCase = true) }
             val totalAdopted = state.servers.sumOf { it.adoptedCount }
 
             McpMetricCard(title = "Total Servers", value = totalServers.toString(), subtitle = "Registered", modifier = Modifier.weight(1f))
             McpMetricCard(title = "stdio (Local)", value = stdioCount.toString(), subtitle = "Subprocess", color = StdioColor, modifier = Modifier.weight(1f))
             McpMetricCard(title = "HTTP (Remote)", value = httpCount.toString(), subtitle = "Streamable SSE", color = HttpColor, modifier = Modifier.weight(1f))
+            if (binderCount > 0) {
+                McpMetricCard(title = "Binder (App)", value = binderCount.toString(), subtitle = "Android IPC", color = BinderColor, modifier = Modifier.weight(1f))
+            }
             McpMetricCard(title = "Adopted Tools", value = totalAdopted.toString(), subtitle = "Active in LLM", color = AdoptedColor, modifier = Modifier.weight(1f))
         }
 
@@ -170,6 +178,12 @@ fun McpServersPane(
                 selected = state.transportFilter == McpTransportFilter.HTTP,
                 onClick = { onTransportFilterChange(McpTransportFilter.HTTP) },
                 label = { Text("HTTP", fontSize = 11.sp) },
+                shape = RoundedCornerShape(8.dp),
+            )
+            FilterChip(
+                selected = state.transportFilter == McpTransportFilter.BINDER,
+                onClick = { onTransportFilterChange(McpTransportFilter.BINDER) },
+                label = { Text("Binder", fontSize = 11.sp) },
                 shape = RoundedCornerShape(8.dp),
             )
         }
@@ -252,7 +266,17 @@ private fun McpServerCard(
     onDelete: () -> Unit,
 ) {
     val isStdio = server.transport.equals("stdio", ignoreCase = true)
-    val transportColor = if (isStdio) StdioColor else HttpColor
+    val isBinder = server.transport.equals("binder", ignoreCase = true)
+    val transportColor = when {
+        isBinder -> BinderColor
+        isStdio -> StdioColor
+        else -> HttpColor
+    }
+    val transportLabel = when {
+        isBinder -> "BINDER IPC"
+        isStdio -> "STDIO"
+        else -> "HTTP SSE"
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -281,7 +305,7 @@ private fun McpServerCard(
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
                         Text(
-                            text = if (isStdio) "STDIO" else "HTTP SSE",
+                            text = transportLabel,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = transportColor,
@@ -311,13 +335,13 @@ private fun McpServerCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Command / Endpoint Preview in Monospace
+            // Command / Endpoint / Package Preview in Monospace
             SelectionContainer {
                 Text(
-                    text = if (isStdio) {
-                        "${server.command.orEmpty()} ${server.args.joinToString(" ")}"
-                    } else {
-                        server.endpointUrl.orEmpty()
+                    text = when {
+                        isBinder -> "${server.packageName.orEmpty()} / ${server.serviceClass?.substringAfterLast('.').orEmpty()}"
+                        isStdio -> "${server.command.orEmpty()} ${server.args.joinToString(" ")}"
+                        else -> server.endpointUrl.orEmpty()
                     },
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
