@@ -91,10 +91,16 @@ class PackageInstallTest {
     @Test
     fun refusesFileNamesThatCouldEscapeTheDirectory() = runBlocking {
         val workflow = DefaultModelInstallerWorkflow(FakeDownloads(), FakeCatalog())
-        for (bad in listOf("../evil", "a/b", "..", "")) {
+        for (bad in listOf("../evil", "a/b", "..", ".", "", "..\\evil", "C:evil", "bad\u0000name")) {
             assertTrue(workflow.installPackage(request(File(root, "x"), bad to "u/x")).isFailure, "'$bad'")
         }
+        assertTrue(
+            workflow.installPackage(
+                request(File(root, "../escape-dir"), "model.onnx" to "u/m")
+            ).isFailure
+        )
         assertFalse(File(root, "evil").exists())
+        assertFalse(File(root, "escape-dir").exists())
     }
 
     @Test

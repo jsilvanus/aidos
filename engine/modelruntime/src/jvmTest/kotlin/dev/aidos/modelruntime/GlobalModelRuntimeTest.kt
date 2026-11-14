@@ -9,11 +9,18 @@ import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.Usage
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -226,5 +233,141 @@ class GlobalModelRuntimeTest {
         runtime.unload("test-7b")
 
         assertEquals(null, runtime.loadedAtMillis("test-7b"))
+    }
+
+    @Test
+    fun `idleTimeMs and checkAndUnloadIdleModels use injected clock`() = runTest {
+        var clock = 1_000L
+        val backend = fakeBackend(listOf(descriptor("test-7b")))
+        val runtime = GlobalModelRuntime(
+            backend = backend,
+            nowMillis = { clock },
+            idleTimeoutMillis = 5_000L,
+        )
+
+        assertNull(runtime.idleTimeMs("test-7b"))
+
+        runtime.load("test-7b").getOrThrow()
+        assertEquals(0L, runtime.idleTimeMs("test-7b"))
+
+        clock = 4_000L
+        assertEquals(3_000L, runtime.idleTimeMs("test-7b"))
+
+        // Still within idleTimeoutMillis (3000 <= 5000); remains resident.
+        runtime.checkAndUnloadIdleModels()
+        assertEquals(listOf("test-7b"), runtime.loaded())
+
+        // Cache-hit load refreshes lastAccessedAtMillis via injected clock.
+        runtime.load("test-7b").getOrThrow()
+        assertEquals(0L, runtime.idleTimeMs("test-7b"))
+
+        clock = 8_000L
+        assertEquals(4_000L, runtime.idleTimeMs("test-7b"))
+        runtime.checkAndUnloadIdleModels()
+        assertEquals(listOf("test-7b"), runtime.loaded())
+
+        // Advancing past idleTimeoutMillis triggers unload on sweep.
+        clock = 9_001L
+        assertEquals(5_001L, runtime.idleTimeMs("test-7b"))
+        runtime.checkAndUnloadIdleModels()
+        assertEquals(emptyList(), runtime.loaded())
+        assertNull(runtime.idleTimeMs("test-7b"))
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `concurrent load cannot race with checkAndUnloadIdleModels`() = runTest {
+        var clock = 0L
+        var m2Loads = 0
+        val unloadM1Started = CompletableDeferred<Unit>()
+        val allowUnloadM1Finish = CompletableDeferred<Unit>()
+        val models = listOf(descriptor("m1"), descriptor("m2"))
+        val backend = object : InferenceBackend {
+            override suspend fun catalog() = models
+            override suspend fun installed() = models
+            override suspend fun computeDigest(modelId: String) = ""
+            override suspend fun delete(modelId: String) {}
+            override suspend fun load(modelId: String): Result<ModelAdapter> {
+                if (modelId == "m2") m2Loads += 1
+                return Result.success(fakeAdapter)
+            }
+            override suspend fun unload(modelId: String) {
+                if (modelId == "m1") {
+                    unloadM1Started.complete(Unit)
+                    allowUnloadM1Finish.await()
+                }
+            }
+        }
+        val runtime = GlobalModelRuntime(
+            backend = backend,
+            nowMillis = { clock },
+            idleTimeoutMillis = 1_000L,
+        )
+
+        runtime.load("m1").getOrThrow()
+        runtime.load("m2").getOrThrow()
+        clock = 2_000L
+
+        // Start idle sweep; it suspends inside admissionQueue.withLock while unloading m1.
+        val sweepJob = launch { runtime.checkAndUnloadIdleModels() }
+        unloadM1Started.await()
+
+        // Concurrent load("m2") must wait on admissionQueue instead of mutating loadedModels unlocked.
+        val acquireJob = async { runtime.load("m2") }
+        runCurrent()
+        assertFalse(acquireJob.isCompleted, "load must serialize behind admissionQueue during idle sweep")
+
+        allowUnloadM1Finish.complete(Unit)
+        sweepJob.join()
+        val acquireResult = acquireJob.await()
+
+        assertTrue(acquireResult.isSuccess)
+        assertTrue("m2" in runtime.loaded(), "acquired model must remain resident after sweep finishes")
+        assertFalse("m1" in runtime.loaded())
+        assertEquals(2, m2Loads)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `checkAndUnloadIdleModels re-checks active predicate under lock before unloading`() = runTest {
+        var clock = 0L
+        var m2Active = false
+        val unloadM1Started = CompletableDeferred<Unit>()
+        val allowUnloadM1Finish = CompletableDeferred<Unit>()
+        val models = listOf(descriptor("m1"), descriptor("m2"))
+        val unloaded = mutableListOf<String>()
+        val backend = object : InferenceBackend {
+            override suspend fun catalog() = models
+            override suspend fun installed() = models
+            override suspend fun computeDigest(modelId: String) = ""
+            override suspend fun delete(modelId: String) {}
+            override suspend fun load(modelId: String) = Result.success(fakeAdapter)
+            override suspend fun unload(modelId: String) {
+                if (modelId == "m1") {
+                    unloadM1Started.complete(Unit)
+                    allowUnloadM1Finish.await()
+                }
+                unloaded.add(modelId)
+            }
+        }
+        val runtime = GlobalModelRuntime(
+            backend = backend,
+            nowMillis = { clock },
+            isModelActive = { id -> id == "m2" && m2Active },
+            idleTimeoutMillis = 1_000L,
+        )
+
+        runtime.load("m1").getOrThrow()
+        runtime.load("m2").getOrThrow()
+        clock = 2_000L
+
+        val sweepJob = launch { runtime.checkAndUnloadIdleModels() }
+        unloadM1Started.await()
+        m2Active = true
+        allowUnloadM1Finish.complete(Unit)
+        sweepJob.join()
+
+        assertEquals(listOf("m1"), unloaded)
+        assertEquals(listOf("m2"), runtime.loaded())
     }
 }

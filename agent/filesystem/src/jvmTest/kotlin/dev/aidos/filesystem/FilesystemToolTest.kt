@@ -1,8 +1,10 @@
 package dev.aidos.filesystem
 
 import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.DirEntry
 import dev.aidos.kernel.DirHandle
+import dev.aidos.kernel.FileChangeKind
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.RelPath
 import dev.aidos.kernel.ToolOutcome
@@ -11,8 +13,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -181,6 +185,180 @@ class FilesystemToolTest {
         val result = watchedTool.execute(handle, "fs:write", buildJsonObject { put("path", "no-content.txt") })
         assertIs<ToolOutcome.Failed>(result.outcome)
         assertTrue(events.isEmpty(), "a failed write must not fire onWrite")
+    }
+
+    @Test
+    fun `delete preview returns Deleted diff for file without mutating`() = runTest {
+        handle.seed("obsolete.txt", "line 1\nline 2\n")
+        val preview = tool.preview(
+            handle, "fs:delete",
+            buildJsonObject { put("path", "obsolete.txt") }
+        )
+        assertTrue(preview.isSuccess, "expected success, got $preview")
+        val p = assertIs<Preview.Diff>(preview.getOrThrow())
+        assertEquals(FileChangeKind.DELETED, p.fileDiff.file.kind)
+        assertEquals("obsolete.txt", p.fileDiff.file.path)
+        assertEquals("line 1\nline 2\n", handle.readText("obsolete.txt"))
+    }
+
+    @Test
+    fun `delete preview returns Deleted diff for empty file`() = runTest {
+        handle.seed("empty.txt", "")
+        val preview = tool.preview(
+            handle, "fs:delete",
+            buildJsonObject { put("path", "empty.txt") }
+        )
+        assertTrue(preview.isSuccess)
+        val p = assertIs<Preview.Diff>(preview.getOrThrow())
+        assertEquals(FileChangeKind.DELETED, p.fileDiff.file.kind)
+    }
+
+    @Test
+    fun `delete preview returns Description for directory and NoChange for missing path`() = runTest {
+        handle.seed("dir/a.txt", "a")
+        handle.seed("dir/sub/b.txt", "b")
+
+        val dirPreview = tool.preview(
+            handle, "fs:delete",
+            buildJsonObject { put("path", "dir"); put("recursive", true) }
+        )
+        assertTrue(dirPreview.isSuccess)
+        val desc = assertIs<Preview.Description>(dirPreview.getOrThrow())
+        assertTrue(desc.text.contains("dir"))
+        assertEquals("a", handle.readText("dir/a.txt"))
+
+        val missingPreview = tool.preview(
+            handle, "fs:delete",
+            buildJsonObject { put("path", "does-not-exist.txt") }
+        )
+        assertTrue(missingPreview.isSuccess)
+        assertIs<Preview.NoChange>(missingPreview.getOrThrow())
+    }
+
+    @Test
+    fun `move preview returns Renamed diff for file and NoChange for same normalized path`() = runTest {
+        handle.seed("src/old.kt", "class Old")
+        val preview = tool.preview(
+            handle, "fs:move",
+            buildJsonObject { put("from", "src/old.kt"); put("to", "src/new.kt") }
+        )
+        assertTrue(preview.isSuccess, "expected move preview success, got $preview")
+        val diff = assertIs<Preview.Diff>(preview.getOrThrow())
+        assertEquals(FileChangeKind.RENAMED, diff.fileDiff.file.kind)
+        assertEquals("src/old.kt", diff.fileDiff.file.previousPath)
+        assertEquals("src/new.kt", diff.fileDiff.file.path)
+        assertEquals("class Old", handle.readText("src/old.kt"))
+        assertNull(handle.readText("src/new.kt"))
+
+        val samePreview = tool.preview(
+            handle, "fs:move",
+            buildJsonObject { put("from", "src/old.kt"); put("to", "./src/old.kt"); put("overwrite", true) }
+        )
+        assertTrue(samePreview.isSuccess)
+        assertIs<Preview.NoChange>(samePreview.getOrThrow())
+    }
+
+    @Test
+    fun `move preview returns Description for directory`() = runTest {
+        handle.seed("pkg/a.kt", "class A")
+        val preview = tool.preview(
+            handle, "fs:move",
+            buildJsonObject { put("from", "pkg"); put("to", "pkg2") }
+        )
+        assertTrue(preview.isSuccess)
+        val desc = assertIs<Preview.Description>(preview.getOrThrow())
+        assertTrue(desc.text.contains("pkg"))
+        assertTrue(desc.text.contains("pkg2"))
+        assertEquals("class A", handle.readText("pkg/a.kt"))
+    }
+
+    @Test
+    fun `mkdir preview returns Description and NoChange if directory already exists`() = runTest {
+        val preview = tool.preview(
+            handle, "fs:mkdir",
+            buildJsonObject { put("path", "newdir/sub") }
+        )
+        assertTrue(preview.isSuccess)
+        val desc = assertIs<Preview.Description>(preview.getOrThrow())
+        assertTrue(desc.text.contains("newdir/sub"))
+
+        handle.seed("existingdir/file.txt", "x")
+        val existingPreview = tool.preview(
+            handle, "fs:mkdir",
+            buildJsonObject { put("path", "existingdir") }
+        )
+        assertTrue(existingPreview.isSuccess)
+        assertIs<Preview.NoChange>(existingPreview.getOrThrow())
+    }
+
+    @Test
+    fun `git paths are rejected across write delete move and mkdir in execute and preview`() = runTest {
+        val gitPaths = listOf(
+            ".git",
+            ".git/config",
+            ".GIT/HEAD",
+            "./.git/hooks/pre-commit",
+            "sub/.git/config",
+            "sub\\.git\\HEAD",
+        )
+        for (p in gitPaths) {
+            handle.seed(p, "original")
+
+            val writeRes = tool.execute(handle, "fs:write", buildJsonObject { put("path", p); put("content", "hack") })
+            assertIs<ToolOutcome.Failed>(writeRes.outcome, "fs:write must reject $p")
+            assertTrue(tool.preview(handle, "fs:write", buildJsonObject { put("path", p); put("content", "hack") }).isFailure,
+                "preview fs:write must reject $p")
+
+            val delRes = tool.execute(handle, "fs:delete", buildJsonObject { put("path", p); put("recursive", true) })
+            assertIs<ToolOutcome.Failed>(delRes.outcome, "fs:delete must reject $p")
+            assertTrue(tool.preview(handle, "fs:delete", buildJsonObject { put("path", p) }).isFailure,
+                "preview fs:delete must reject $p")
+
+            val moveToRes = tool.execute(handle, "fs:move", buildJsonObject { put("from", "safe.txt"); put("to", p) })
+            assertIs<ToolOutcome.Failed>(moveToRes.outcome, "fs:move to $p must be rejected")
+            assertTrue(tool.preview(handle, "fs:move", buildJsonObject { put("from", "safe.txt"); put("to", p) }).isFailure,
+                "preview fs:move to $p must be rejected")
+
+            val moveFromRes = tool.execute(handle, "fs:move", buildJsonObject { put("from", p); put("to", "out.txt") })
+            assertIs<ToolOutcome.Failed>(moveFromRes.outcome, "fs:move from $p must be rejected")
+            assertTrue(tool.preview(handle, "fs:move", buildJsonObject { put("from", p); put("to", "out.txt") }).isFailure,
+                "preview fs:move from $p must be rejected")
+
+            val mkdirRes = tool.execute(handle, "fs:mkdir", buildJsonObject { put("path", p) })
+            assertIs<ToolOutcome.Failed>(mkdirRes.outcome, "fs:mkdir must reject $p")
+            assertTrue(tool.preview(handle, "fs:mkdir", buildJsonObject { put("path", p) }).isFailure,
+                "preview fs:mkdir must reject $p")
+        }
+
+        // Non-.git dotfiles like .gitignore and .github/ remain writable.
+        val gitignoreRes = tool.execute(handle, "fs:write", buildJsonObject { put("path", ".gitignore"); put("content", "*.log\n") })
+        assertIs<ToolOutcome.Ok>(gitignoreRes.outcome)
+        val githubRes = tool.execute(handle, "fs:mkdir", buildJsonObject { put("path", ".github/workflows") })
+        assertIs<ToolOutcome.Ok>(githubRes.outcome)
+    }
+
+    @Test
+    fun `delete returns Failed on handle failure when force is false and Ok skipped when force is true`() = runTest {
+        val failingHandle = object : DirHandle by handle {
+            override suspend fun delete(relative: RelPath, recursive: Boolean): Result<Int> =
+                Result.failure(IllegalStateException("Directory not empty"))
+        }
+
+        val failedRes = tool.execute(
+            failingHandle, "fs:delete",
+            buildJsonObject { put("path", "nonempty"); put("force", false) }
+        )
+        assertIs<ToolOutcome.Failed>(failedRes.outcome)
+        val errText = failedRes.content.filterIsInstance<ContentBlock.Text>().first().text
+        assertFalse(errText.contains("ToolCallResult"), "must not fall through after failure: $errText")
+
+        val forcedRes = tool.execute(
+            failingHandle, "fs:delete",
+            buildJsonObject { put("path", "nonempty"); put("force", true) }
+        )
+        assertIs<ToolOutcome.Ok>(forcedRes.outcome)
+        val okText = forcedRes.content.filterIsInstance<ContentBlock.Text>().first().text
+        assertTrue(okText.startsWith("delete skipped:"), "expected delete skipped message, got: $okText")
     }
 }
 

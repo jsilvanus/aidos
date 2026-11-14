@@ -12,6 +12,8 @@ import dev.aidos.downloads.LocalDownloadManager
 import dev.aidos.huggingface.HuggingFaceClient
 import dev.aidos.kernel.BasicResourceHandle
 import dev.aidos.kernel.CapabilityId
+import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.aidin.AIDIN_PROTOCOL_VERSION
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.ContributionPolicy
@@ -21,6 +23,8 @@ import dev.aidos.aidin.Heartbeat
 import dev.aidos.aidin.SplitHosting
 import dev.aidos.aidin.SplitPlanOutcome
 import dev.aidos.modelruntime.GgufLoader
+import dev.aidos.modelruntime.InferenceBackend
+import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.decisions.OnnxDecisionBackend
 import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.providers.ProviderBackend
@@ -30,6 +34,7 @@ import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.RunSettingsSource
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
 import dev.aidos.modelruntime.create
+import dev.aidos.models.CatalogEntry
 import dev.aidos.models.DatabaseModelCatalogManager
 import dev.aidos.models.InstalledModel
 import dev.aidos.models.ModelBrowser
@@ -42,6 +47,8 @@ import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.handshake.HandshakeWire
 import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
+import fi.italeino.aidos.engine.license.LicenseAcceptanceRecord
+import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
 import fi.italeino.aidos.sdk.client.AidosEngineClient
 import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import fi.italeino.aidos.engine.approval.AppApprovalStore
@@ -58,12 +65,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.time.Instant
 
 /**
  * In-process Engine host for the Windows desktop app / daemon: the desktop counterpart of Android's
@@ -102,6 +118,11 @@ class DesktopEngineHost(
     private val llamaRpcDir: File = System.getenv("AIDOS_LLAMA_RPC_DIR")?.let(::File) ?: File(stateDir, "llama-rpc"),
     /** RAM this machine lends to a split, as anchor or helper; a quarter of its memory by default. */
     private val splitRamBudgetBytes: () -> Long = { DesktopDevice.totalMemoryBytes() / 4 },
+    /**
+     * Engine-wide maximum placement allowed across all requests (RFC-0104). When null, reads
+     * `preferences.json` inside [stateDir] dynamically so settings updates take effect immediately.
+     */
+    private val engineLocality: (() -> Locality)? = null,
 ) {
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -140,7 +161,7 @@ class DesktopEngineHost(
 
     val catalogManager: ModelCatalogManager = DatabaseModelCatalogManager(
         JdbcSqliteDriver(
-            url = "jdbc:sqlite:" + File(stateDir, "aidos_engine.db").absolutePath,
+            url = "jdbc:sqlite:" + File(stateDir.apply { mkdirs() }, "aidos_engine.db").absolutePath,
             schema = CatalogSchema,
         )
     )
@@ -159,6 +180,27 @@ class DesktopEngineHost(
     val artifactDir: File get() = modelsDir
 
     val approvalStore: AppApprovalStore = FileAppApprovalStore(File(stateDir, "approvals.json"))
+
+    val licenseAcceptanceStore: LicenseAcceptanceStore = FileLicenseAcceptanceStore(File(stateDir, "licenses.json"))
+
+    @Volatile
+    private var cachedPrefs: Pair<String, Locality>? = null
+    private val prefsJson = Json { ignoreUnknownKeys = true }
+
+    private fun resolveEngineLocality(): Locality {
+        engineLocality?.let { return it() }
+        val prefsFile = File(stateDir, "preferences.json")
+        if (!prefsFile.isFile) return Locality.ANY
+        val raw = runCatching { prefsFile.readText() }.getOrNull() ?: return Locality.ANY
+        cachedPrefs?.let { (cachedRaw, cachedLocality) ->
+            if (raw == cachedRaw) return cachedLocality
+        }
+        val parsed = runCatching {
+            prefsJson.decodeFromString<DesktopPreferencesData>(raw).engineLocalityLimit?.let(Locality::parse)
+        }.getOrNull() ?: Locality.ANY
+        cachedPrefs = raw to parsed
+        return parsed
+    }
 
     var modelRuntime: GlobalModelRuntime? = null
         private set
@@ -192,9 +234,13 @@ class DesktopEngineHost(
             // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
             val runtime = GlobalModelRuntime(
                 // HTTP providers (e.g. a local Ollama) from providers.json; read per call, so editing it needs no restart.
-                ProviderBackend(
-                    OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
-                    { ProviderConfigs.load(File(stateDir, "providers.json")) },
+                CatalogAwareInferenceBackend(
+                    ProviderBackend(
+                        OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
+                        { ProviderConfigs.load(File(stateDir, "providers.json")) },
+                    ),
+                    modelsDir = modelsDir,
+                    catalogManager = catalogManager,
                 ),
                 runSettings = runSettings,
             )
@@ -203,7 +249,7 @@ class DesktopEngineHost(
             // through the same InferenceRequestManager as the HTTP API, so admission, model loading
             // and the locality limits (RFC-0104) stay on one path.
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            val manager = InferenceRequestManager(runtime)
+            val manager = InferenceRequestManager(runtime, licenseStore = licenseAcceptanceStore)
             lateinit var server: EngineHttpServer
             val agent = createEngineAgentRuntime(scope, manager, router = { server.virtualModelRouter }, aidin = { _aidin.value })
             _agentRuntime = agent
@@ -213,6 +259,16 @@ class DesktopEngineHost(
                 inferenceManager = manager,
                 port = desiredPort,
                 isSubjectApproved = { id -> approvalStore.getApproval(id)?.status == AppApprovalStatus.APPROVED },
+                subjectLocality = { subject ->
+                    approvalStore.getApproval(subject)?.localityLimit?.let(Locality::parse)
+                },
+                engineLocality = { resolveEngineLocality() },
+                onLocalityViolation = { subject, required, placement, _ ->
+                    val pkg = subject
+                    if (pkg != null && pkg != TokenManager.ENGINE_SUBJECT) {
+                        approvalStore.recordLocalityRefusal(pkg, required.wire, placement.wire)
+                    }
+                },
                 extraRoutes = {
                     agentRoutes(
                         agent,
@@ -306,22 +362,28 @@ class DesktopEngineHost(
     /**
      * Installed GGUF models this machine could anchor as a split, by model id.
      *
-     * Uses the installed-model records first (RFC-0105 production integration): installers can save a
-     * GGUF under a quantized filename that is not `<modelId>.gguf`, so filename guesses alone are not
-     * authoritative. Falls back to legacy `<modelId>.gguf` discovery only when no install record exists.
+     * Combines authoritative installed-model records (RFC-0105) with any manual `.gguf` files
+     * placed in [modelsDir], deduplicating by canonical file path so catalog metadata wins when both
+     * refer to the same artifact.
      */
     fun splittableModels(): List<String> {
         val installed = runCatching { kotlinx.coroutines.runBlocking { catalogManager.listInstalled().getOrThrow() } }.getOrDefault(emptyList())
-        val byCatalog = installed
-            .filter { it.path.endsWith(".gguf", ignoreCase = true) }
-            .filter { File(it.path).isFile }
-            .map { it.modelId }
-            .toMutableSet()
-        if (byCatalog.isEmpty()) {
-            modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".gguf") }
-                ?.mapTo(byCatalog) { it.name.removeSuffix(".gguf") }
+        val result = mutableSetOf<String>()
+        val catalogFiles = mutableSetOf<File>()
+        for (entry in installed) {
+            if (!entry.path.endsWith(".gguf", ignoreCase = true)) continue
+            val file = File(entry.path)
+            if (!file.isFile) continue
+            result.add(entry.modelId)
+            catalogFiles.add(canonicalOrAbsolute(file))
         }
-        return byCatalog.sorted()
+        modelsDir.listFiles { f -> f.isFile && f.extension.equals("gguf", ignoreCase = true) }
+            ?.forEach { file ->
+                if (canonicalOrAbsolute(file) !in catalogFiles) {
+                    result.add(file.nameWithoutExtension)
+                }
+            }
+        return result.sorted()
     }
 
     /**
@@ -330,13 +392,13 @@ class DesktopEngineHost(
      */
     fun startSplitModel(group: GroupId, modelId: String): String {
         val split = _split.value ?: return "Turn on sharing first."
-        val file = resolveSplitModelArtifact(modelId) ?: return "$modelId is not installed as a GGUF model."
+        val (file, modelDigest) = resolveSplitModel(modelId) ?: return "$modelId is not installed as a GGUF model."
         val meta = GgufLoader.loadMetadata(file) ?: return "Could not read $modelId."
         if (meta.blockCount < 2) return "$modelId has too few layers to split."
         val outcome = split.start(
             group = group,
             modelId = modelId,
-            modelDigest = "gguf-bytes:${file.length()}",
+            modelDigest = modelDigest,
             modelFile = file,
             blockCount = meta.blockCount,
             contextLength = meta.contextWindow.takeIf { it > 0 }?.coerceAtMost(4096) ?: 4096,
@@ -344,16 +406,31 @@ class DesktopEngineHost(
         return split.status.value ?: (outcome as? SplitPlanOutcome.Refused)?.reason.orEmpty()
     }
 
-    private fun resolveSplitModelArtifact(modelId: String): File? {
+    internal fun resolveSplitModel(modelId: String): Pair<File, String>? {
         val installed = runCatching { kotlinx.coroutines.runBlocking { catalogManager.listInstalled().getOrThrow() } }.getOrDefault(emptyList())
-        val installedPath = installed.firstOrNull { it.modelId == modelId }?.path
-        if (installedPath != null) {
-            val fromCatalog = File(installedPath)
-            if (fromCatalog.isFile && fromCatalog.extension.equals("gguf", ignoreCase = true)) return fromCatalog
+        val installedEntry = installed.firstOrNull { it.modelId == modelId }
+        val file = run {
+            val fromCatalog = installedEntry?.path?.let(::File)
+            if (fromCatalog != null && fromCatalog.isFile && fromCatalog.extension.equals("gguf", ignoreCase = true)) {
+                fromCatalog
+            } else {
+                val exactLegacy = File(modelsDir, "$modelId.gguf")
+                if (exactLegacy.isFile) exactLegacy else legacyQuantizedMatch(modelId, installed)
+            }
+        } ?: return null
+
+        val matchingInstalled = installedEntry ?: installed.firstOrNull {
+            val f = File(it.path)
+            f.isFile && canonicalOrAbsolute(f) == canonicalOrAbsolute(file)
         }
-        val exactLegacy = File(modelsDir, "$modelId.gguf")
-        if (exactLegacy.isFile) return exactLegacy
-        return legacyQuantizedMatch(modelId, installed)
+        val digestFromInstalled = matchingInstalled?.digest?.trim()?.takeIf { it.isNotEmpty() }
+        val digestFromCatalog = if (digestFromInstalled == null) {
+            val catalogEntry = runCatching { kotlinx.coroutines.runBlocking { catalogManager.getCatalog(matchingInstalled?.modelId ?: modelId).getOrNull() } }.getOrNull()
+            catalogEntry?.propertiesJson?.let(::parseJsonStringMap)?.get("sha256")?.trim()?.takeIf { it.isNotEmpty() }
+        } else null
+
+        val digest = digestFromInstalled ?: digestFromCatalog ?: sha256File(file)
+        return file to digest
     }
 
     private fun legacyQuantizedMatch(modelId: String, installed: List<InstalledModel>): File? {
@@ -471,4 +548,326 @@ class DesktopEngineHost(
             vararg callbacks: AfterVersion,
         ): QueryResult.Value<Unit> = QueryResult.Value(Unit)
     }
+}
+
+/**
+ * Decorates a desktop [InferenceBackend] with catalog & installed records from [ModelCatalogManager]
+ * so `InferenceRequestManager` and `/v1/models` see downloaded license metadata, catalog ids, and
+ * real artifact paths/digests alongside manually added files and HTTP providers.
+ */
+private class CatalogAwareInferenceBackend(
+    private val delegate: InferenceBackend,
+    private val modelsDir: File,
+    private val catalogManager: ModelCatalogManager,
+) : InferenceBackend {
+
+    override suspend fun catalog(): List<ModelDescriptor> {
+        val base = delegate.catalog()
+        val entries = catalogManager.listCatalog().getOrNull().orEmpty()
+        if (entries.isEmpty()) return base
+        val entriesById = entries.associateBy { it.id }
+        val emittedIds = mutableSetOf<String>()
+        val merged = base.map { existing ->
+            emittedIds.add(existing.id)
+            val entry = entriesById[existing.id] ?: return@map existing
+            val props = metadataFromCatalogEntry(entry)
+            existing.copy(
+                digest = existing.digest ?: props["sha256"]?.takeIf { it.isNotBlank() },
+                quantization = existing.quantization ?: props["quantization"],
+                metadata = existing.metadata + props,
+            )
+        }.toMutableList()
+        for (entry in entries) {
+            if (emittedIds.add(entry.id)) {
+                merged.add(descriptorFromCatalog(entry))
+            }
+        }
+        return merged
+    }
+
+    override suspend fun installed(): List<ModelDescriptor> {
+        val base = delegate.installed()
+        val catalogById = catalogManager.listCatalog().getOrNull().orEmpty().associateBy { it.id }
+        val activeInstalled = catalogManager.listInstalled().getOrNull().orEmpty()
+            .filter { File(it.path).exists() }
+        if (activeInstalled.isEmpty() && catalogById.isEmpty()) return base
+
+        val installedById = activeInstalled.associateBy { it.modelId }
+        val aliasToInstalled = mutableMapOf<File, InstalledModel>()
+        for (inst in activeInstalled) {
+            aliasToInstalled[canonicalOrAbsolute(File(inst.path))] = inst
+        }
+
+        val emittedIds = mutableSetOf<String>()
+        val result = mutableListOf<ModelDescriptor>()
+        val matchedBaseByModelId = mutableMapOf<String, ModelDescriptor>()
+
+        for (item in base) {
+            val ownedByDifferentId = findAliasOwner(item, aliasToInstalled)?.takeIf { it.modelId != item.id }
+            if (ownedByDifferentId != null) {
+                matchedBaseByModelId[ownedByDifferentId.modelId] = item
+                continue
+            }
+            val inst = installedById[item.id]
+            val catalogProps = catalogById[item.id]?.let(::metadataFromCatalogEntry).orEmpty()
+            val instProps = inst?.propertiesJson?.let(::parseJsonStringMap).orEmpty()
+            val mergedMeta = item.metadata + catalogProps + instProps
+            emittedIds.add(item.id)
+            result.add(
+                item.copy(
+                    digest = item.digest ?: inst?.digest?.takeIf { it.isNotBlank() },
+                    sizeBytes = item.sizeBytes ?: inst?.sizeBytes?.takeIf { it > 0L },
+                    quantization = item.quantization ?: inst?.quantization,
+                    metadata = mergedMeta,
+                )
+            )
+        }
+
+        for (inst in activeInstalled) {
+            if (!emittedIds.add(inst.modelId)) continue
+            val catalogEntry = catalogById[inst.modelId]
+            val matchedBase = matchedBaseByModelId[inst.modelId]
+            val catalogProps = catalogEntry?.let(::metadataFromCatalogEntry).orEmpty()
+            val instProps = parseJsonStringMap(inst.propertiesJson)
+            val mergedMeta = matchedBase?.metadata.orEmpty() + catalogProps + instProps
+            val placement = mergedMeta["placement"]
+            result.add(
+                ModelDescriptor(
+                    id = inst.modelId,
+                    name = catalogEntry?.name ?: matchedBase?.name ?: inst.modelId,
+                    kind = catalogEntry?.kind ?: matchedBase?.kind ?: dev.aidos.kernel.ModelKind.LLM,
+                    providerId = catalogEntry?.provider ?: matchedBase?.providerId ?: "llama.cpp",
+                    isLocal = placement?.let { it != "remote" } ?: matchedBase?.isLocal ?: true,
+                    contextWindow = mergedMeta["context_window"]?.toIntOrNull() ?: matchedBase?.contextWindow ?: 4096,
+                    sizeBytes = inst.sizeBytes.takeIf { it > 0L } ?: matchedBase?.sizeBytes,
+                    digest = inst.digest.takeIf { it.isNotBlank() } ?: matchedBase?.digest,
+                    format = mergedMeta["format"] ?: matchedBase?.format,
+                    quantization = inst.quantization ?: mergedMeta["quantization"] ?: matchedBase?.quantization,
+                    metadata = mergedMeta,
+                )
+            )
+        }
+        return result
+    }
+
+    override suspend fun computeDigest(modelId: String): String {
+        val inst = catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
+        if (inst != null) {
+            val file = File(inst.path)
+            if (file.isFile) return sha256File(file)
+            if (file.isDirectory && inst.digest.isNotBlank()) return inst.digest
+        }
+        return delegate.computeDigest(modelId)
+    }
+
+    override suspend fun computeDigest(modelId: String, artifactPath: String?): String {
+        if (artifactPath != null) {
+            val file = File(artifactPath)
+            if (file.isFile) return sha256File(file)
+        } else {
+            return computeDigest(modelId)
+        }
+        return delegate.computeDigest(modelId, artifactPath)
+    }
+
+    override suspend fun delete(modelId: String) {
+        val inst = catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
+        delegate.delete(modelId)
+        if (inst != null) {
+            val f = File(inst.path)
+            if (f.isDirectory) f.deleteRecursively() else if (f.isFile) f.delete()
+            catalogManager.uninstall(modelId)
+        }
+    }
+
+    override suspend fun load(modelId: String): Result<ModelAdapter> {
+        val inst = catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
+        if (inst != null && File(inst.path).exists()) {
+            return delegate.load(modelId, inst.path)
+        }
+        return delegate.load(modelId)
+    }
+
+    override suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+        val resolved = artifactPath ?: catalogManager.listInstalled().getOrNull()
+            ?.firstOrNull { it.modelId == modelId }
+            ?.path
+            ?.takeIf { File(it).exists() }
+        return if (resolved != null) delegate.load(modelId, resolved) else delegate.load(modelId)
+    }
+
+    override suspend fun load(
+        modelId: String,
+        artifactPath: String?,
+        settings: ModelRunSettings,
+    ): Result<ModelAdapter> {
+        val resolved = artifactPath ?: catalogManager.listInstalled().getOrNull()
+            ?.firstOrNull { it.modelId == modelId }
+            ?.path
+            ?.takeIf { File(it).exists() }
+        return delegate.load(modelId, resolved, settings)
+    }
+
+    override suspend fun unload(modelId: String) {
+        delegate.unload(modelId)
+    }
+
+    private fun findAliasOwner(item: ModelDescriptor, aliasToInstalled: Map<File, InstalledModel>): InstalledModel? {
+        val ggufCandidate = canonicalOrAbsolute(File(modelsDir, "${item.id}.gguf"))
+        aliasToInstalled[ggufCandidate]?.let { return it }
+        val dirCandidate = canonicalOrAbsolute(File(modelsDir, item.id))
+        return aliasToInstalled[dirCandidate]
+    }
+
+    private fun metadataFromCatalogEntry(entry: CatalogEntry): Map<String, String> = buildMap {
+        putAll(parseJsonStringMap(entry.propertiesJson))
+        entry.remoteUrl?.takeIf { it.isNotBlank() }?.let { putIfAbsent("download_url", it) }
+    }
+
+    private fun descriptorFromCatalog(entry: CatalogEntry): ModelDescriptor {
+        val meta = metadataFromCatalogEntry(entry)
+        val isLocal = meta["placement"]?.let { it != "remote" } ?: (entry.provider != "remote")
+        return ModelDescriptor(
+            id = entry.id,
+            name = entry.name,
+            kind = entry.kind,
+            providerId = entry.provider,
+            isLocal = isLocal,
+            contextWindow = meta["context_window"]?.toIntOrNull() ?: 4096,
+            sizeBytes = meta["size_bytes"]?.toLongOrNull(),
+            digest = meta["sha256"]?.takeIf { it.isNotBlank() },
+            format = meta["format"],
+            quantization = meta["quantization"],
+            metadata = meta,
+        )
+    }
+}
+
+/**
+ * File-backed [LicenseAcceptanceStore] for Desktop, following [FileAppApprovalStore] conventions:
+ * JSON persistence with atomic temp-file replacement, [Mutex] synchronization, and a [MutableStateFlow]
+ * seeded with the saved records on construction.
+ */
+internal class FileLicenseAcceptanceStore(private val file: File) : LicenseAcceptanceStore {
+
+    private val json = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+    private val mutex = Mutex()
+    private val records = mutableMapOf<Pair<String, String>, LicenseAcceptanceRecord>()
+    private val acceptances: MutableStateFlow<List<LicenseAcceptanceRecord>>
+
+    init {
+        for (record in readFromDisk()) {
+            records[record.modelId to record.modelVersion] = record
+        }
+        acceptances = MutableStateFlow(sortedSnapshotLocked())
+    }
+
+    override suspend fun isAccepted(
+        modelId: String,
+        modelVersion: String,
+        licenseTextDigest: String,
+    ): Boolean = mutex.withLock {
+        records[modelId to modelVersion]?.licenseTextDigest == licenseTextDigest
+    }
+
+    override suspend fun accept(
+        modelId: String,
+        modelVersion: String,
+        licenseTextDigest: String,
+    ): LicenseAcceptanceRecord = mutex.withLock {
+        val record = LicenseAcceptanceRecord(
+            modelId = modelId,
+            modelVersion = modelVersion,
+            licenseTextDigest = licenseTextDigest,
+            acceptedAt = Instant.now().toString(),
+        )
+        records[modelId to modelVersion] = record
+        val snapshot = sortedSnapshotLocked()
+        writeLocked(snapshot)
+        acceptances.value = snapshot
+        record
+    }
+
+    override suspend fun getAcceptance(
+        modelId: String,
+        modelVersion: String,
+    ): LicenseAcceptanceRecord? = mutex.withLock {
+        records[modelId to modelVersion]
+    }
+
+    override suspend fun listAllAcceptances(): List<LicenseAcceptanceRecord> = mutex.withLock {
+        sortedSnapshotLocked()
+    }
+
+    override fun watchAcceptances(): Flow<List<LicenseAcceptanceRecord>> = acceptances.asStateFlow()
+
+    override suspend fun revoke(modelId: String, modelVersion: String): Boolean = mutex.withLock {
+        val removed = records.remove(modelId to modelVersion) != null
+        if (removed) {
+            val snapshot = sortedSnapshotLocked()
+            writeLocked(snapshot)
+            acceptances.value = snapshot
+        }
+        removed
+    }
+
+    override suspend fun clear() {
+        mutex.withLock {
+            records.clear()
+            writeLocked(emptyList())
+            acceptances.value = emptyList()
+        }
+    }
+
+    private fun sortedSnapshotLocked(): List<LicenseAcceptanceRecord> =
+        records.values
+            .sortedWith(compareByDescending<LicenseAcceptanceRecord> { it.acceptedAt }.thenByDescending { it.modelId })
+
+    private fun readFromDisk(): List<LicenseAcceptanceRecord> {
+        if (!file.isFile) return emptyList()
+        return try {
+            json.decodeFromString<List<LicenseAcceptanceRecord>>(file.readText())
+        } catch (_: Exception) {
+            runCatching { file.renameTo(File(file.parentFile, "${file.name}.corrupt")) }
+            emptyList()
+        }
+    }
+
+    private fun writeLocked(list: List<LicenseAcceptanceRecord>) {
+        file.parentFile?.mkdirs()
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(json.encodeToString(list))
+        try {
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
+
+private fun parseJsonStringMap(raw: String): Map<String, String> = try {
+    Json.parseToJsonElement(raw).jsonObject.mapNotNull { (key, value) ->
+        (value as? JsonPrimitive)?.takeIf { it.isString || it.content.isNotEmpty() }?.content?.let { key to it }
+    }.toMap()
+} catch (_: Exception) {
+    emptyMap()
+}
+
+private fun canonicalOrAbsolute(file: File): File = runCatching { file.canonicalFile }.getOrDefault(file.absoluteFile)
+
+private fun sha256File(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(8192)
+    file.inputStream().use { input ->
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }

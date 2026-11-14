@@ -21,7 +21,8 @@ sealed interface Route {
         val port: Int,
     ) : Route {
         init {
-            require(host.isNotBlank() && port in 1..65535) { "invalid host:port" }
+            require(isValidHost(host)) { "invalid host" }
+            require(port in 1..65535) { "invalid port: $port" }
         }
     }
 
@@ -39,14 +40,30 @@ sealed interface Route {
         val serverPort: Int,
     ) : Route {
         init {
-            require(tunnelId.isNotBlank() && serverHost.isNotBlank() && serverPort in 1..65535) {
-                "invalid SSH reverse route"
-            }
+            require(isValidTunnelId(tunnelId)) { "invalid tunnelId" }
+            require(isValidHost(serverHost)) { "invalid serverHost" }
+            require(serverPort in 1..65535) { "invalid serverPort: $serverPort" }
         }
     }
 
     companion object {
+        const val MAX_HOST_LENGTH = 255
+        const val MAX_TUNNEL_ID_LENGTH = 128
+
         fun direct(host: String, port: Int) = Direct(host, port)
+
+        fun isValidHost(host: String): Boolean =
+            host.isNotBlank() &&
+                host.length <= MAX_HOST_LENGTH &&
+                host.none { it.isWhitespace() || it.isControlChar() }
+
+        fun isValidTunnelId(tunnelId: String): Boolean =
+            tunnelId.isNotBlank() &&
+                tunnelId.length <= MAX_TUNNEL_ID_LENGTH &&
+                tunnelId.none { it.isWhitespace() || it.isControlChar() || it == ':' }
+
+        private fun Char.isControlChar(): Boolean =
+            code < 0x20 || code == 0x7F || code in 0x80..0x9F
     }
 }
 
@@ -96,6 +113,11 @@ data class RouteLatency(
 
 /** Result of attempting to dial a route. */
 sealed interface DialResult {
-    data class Success(val route: Route, val rttMillis: Long) : DialResult
+    data class Success(val route: Route, val rttMillis: Long) : DialResult {
+        init {
+            require(rttMillis >= 0) { "RTT must be non-negative on success" }
+        }
+    }
+
     data class Failure(val route: Route, val reason: String) : DialResult
 }

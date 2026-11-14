@@ -1,6 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="decisions-jvm">
-    <output-path>$PROJECT_DIR$/engine/decisions/build/libs</output-path>
-    <root id="archive" name="decisions-jvm.jar" />
-  </artifact>
-</component>

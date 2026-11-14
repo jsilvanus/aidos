@@ -1,45 +1,37 @@
 package fi.italeino.aidos.engine.license
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 
 /**
- * In-memory implementation of LicenseAcceptanceStore for testing.
+ * In-memory implementation of [LicenseAcceptanceStore] for tests and ephemeral hosts.
  *
- * All data is discarded when the instance is garbage collected.
- * This is NOT suitable for production; use EncryptedLicenseAcceptanceStore on Android.
+ * All state is guarded by [mutex] and exposed via a hot [MutableStateFlow] initialized to `emptyList()`.
  */
 class InMemoryLicenseAcceptanceStore : LicenseAcceptanceStore {
-    
-    private val records = mutableMapOf<String, LicenseAcceptanceRecord>()
-    private val changesFlow = MutableSharedFlow<List<LicenseAcceptanceRecord>>(replay = 1)
 
-    init {
-        // Initialize with empty list broadcast so watchers don't hang
-        try {
-            changesFlow.tryEmit(emptyList())
-        } catch (e: Exception) {
-            // tryEmit may fail in some contexts; that's OK for tests
-        }
-    }
+    private val mutex = Mutex()
+    private val records = mutableMapOf<Pair<String, String>, LicenseAcceptanceRecord>()
+    private val acceptances = MutableStateFlow<List<LicenseAcceptanceRecord>>(emptyList())
 
     override suspend fun isAccepted(
         modelId: String,
         modelVersion: String,
         licenseTextDigest: String
-    ): Boolean {
-        val key = "$modelId/$modelVersion"
-        val record = records[key] ?: return false
-        return record.licenseTextDigest == licenseTextDigest
+    ): Boolean = mutex.withLock {
+        val record = records[modelId to modelVersion] ?: return@withLock false
+        record.licenseTextDigest == licenseTextDigest
     }
 
     override suspend fun accept(
         modelId: String,
         modelVersion: String,
         licenseTextDigest: String
-    ): LicenseAcceptanceRecord {
-        val key = "$modelId/$modelVersion"
+    ): LicenseAcceptanceRecord = mutex.withLock {
         val now = Instant.now().toString()
         val record = LicenseAcceptanceRecord(
             modelId = modelId,
@@ -47,39 +39,38 @@ class InMemoryLicenseAcceptanceStore : LicenseAcceptanceStore {
             licenseTextDigest = licenseTextDigest,
             acceptedAt = now
         )
-        records[key] = record
-        changesFlow.tryEmit(records.values.toList())
-        return record
+        records[modelId to modelVersion] = record
+        acceptances.value = sortedSnapshotLocked()
+        record
     }
 
     override suspend fun getAcceptance(
         modelId: String,
         modelVersion: String
-    ): LicenseAcceptanceRecord? {
-        val key = "$modelId/$modelVersion"
-        return records[key]
+    ): LicenseAcceptanceRecord? = mutex.withLock {
+        records[modelId to modelVersion]
     }
 
-    override suspend fun listAllAcceptances(): List<LicenseAcceptanceRecord> {
-        return records.values
-            .sortedWith(compareByDescending<LicenseAcceptanceRecord> { it.acceptedAt }.thenByDescending { it.modelId })
+    override suspend fun listAllAcceptances(): List<LicenseAcceptanceRecord> = mutex.withLock {
+        sortedSnapshotLocked()
     }
 
-    override fun watchAcceptances(): Flow<List<LicenseAcceptanceRecord>> {
-        return changesFlow
-    }
+    override fun watchAcceptances(): Flow<List<LicenseAcceptanceRecord>> = acceptances.asStateFlow()
 
-    override suspend fun revoke(modelId: String, modelVersion: String): Boolean {
-        val key = "$modelId/$modelVersion"
-        val removed = records.remove(key) != null
+    override suspend fun revoke(modelId: String, modelVersion: String): Boolean = mutex.withLock {
+        val removed = records.remove(modelId to modelVersion) != null
         if (removed) {
-            changesFlow.tryEmit(records.values.toList())
+            acceptances.value = sortedSnapshotLocked()
         }
-        return removed
+        removed
     }
 
-    override suspend fun clear() {
+    override suspend fun clear() = mutex.withLock {
         records.clear()
-        changesFlow.tryEmit(emptyList())
+        acceptances.value = emptyList()
     }
+
+    private fun sortedSnapshotLocked(): List<LicenseAcceptanceRecord> =
+        records.values
+            .sortedWith(compareByDescending<LicenseAcceptanceRecord> { it.acceptedAt }.thenByDescending { it.modelId })
 }

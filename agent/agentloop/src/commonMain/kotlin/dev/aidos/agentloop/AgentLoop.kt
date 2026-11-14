@@ -1,11 +1,11 @@
 package dev.aidos.agentloop
 
+import dev.aidos.kernel.Budget
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContextItem
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
-import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -13,6 +13,8 @@ import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.StopReason
+import dev.aidos.kernel.TensorOutput
+import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.ToolCallResult
 import dev.aidos.kernel.ToolChoice
@@ -37,16 +39,58 @@ class AgentLoop(
 ) {
     val maxSteps: Int = 24
 
-    suspend fun run(request: RunRequest): RunOutcome {
-        val routingCtx = RoutingContext(
+    private fun buildRoutingContext(
+        request: RunRequest,
+        budgetUsed: Long,
+        runTaint: TrustLevel,
+        minimumContextWindow: Int? = null,
+    ): RoutingContext {
+        val remainingBudget = request.budgetRemaining?.let { limit ->
+            Budget(costUnits = (limit - budgetUsed).coerceAtLeast(0L))
+        }
+        return RoutingContext(
             profile = request.profile,
             networkAvailable = request.networkAvailable,
-            budgetRemaining = null,
-            runTaint = TrustLevel.TRUSTED,
+            budgetRemaining = remainingBudget,
+            runTaint = runTaint,
+            minimumContextWindow = minimumContextWindow,
             executionWindow = request.executionWindow,
         )
-        val initialDecision = router.select(request.modelKind, routingCtx)
-        val adapter = when (initialDecision) {
+    }
+
+    private fun responseUsageCost(response: ModelResponse): Long {
+        val usage = response.usage
+        if (usage != null) {
+            val total = usage.totalTokens
+            if (total != null && (total > 0 || (usage.inputTokens == null && usage.outputTokens == null))) {
+                return total.coerceAtLeast(0).toLong()
+            }
+            if (usage.inputTokens != null || usage.outputTokens != null) {
+                val input = (usage.inputTokens ?: 0).coerceAtLeast(0).toLong()
+                val output = (usage.outputTokens ?: 0).coerceAtLeast(0).toLong()
+                return input + output
+            }
+        }
+        if (response.outputs.isEmpty()) return 0L
+        val charCount = response.outputs.sumOf { output ->
+            when (output) {
+                is TextOutput -> output.text.length.toLong()
+                is ToolCallOutput -> (output.call.toolName.length + output.call.arguments.toString().length).toLong()
+                is TensorOutput -> output.tensor.storage.byteSize
+                else -> 0L
+            }
+        }
+        return (charCount / 4L).coerceAtLeast(1L)
+    }
+
+    suspend fun run(request: RunRequest): RunOutcome {
+        val initialCtx = buildRoutingContext(
+            request = request,
+            budgetUsed = 0L,
+            runTaint = TrustLevel.TRUSTED,
+        )
+        val initialDecision = router.select(request.modelKind, initialCtx)
+        var currentAdapter = when (initialDecision) {
             is RoutingDecision.Local -> initialDecision.adapter
             is RoutingDecision.RemoteApproved -> initialDecision.adapter
             is RoutingDecision.RemotePendingApproval -> return RunOutcome.Suspended("Remote approval required: ${initialDecision.reason}")
@@ -54,8 +98,9 @@ class AgentLoop(
             else -> return RunOutcome.Failed("Routing failed: $initialDecision")
         }
 
+        var minimumContextWindow: Int? = null
         val assemblyReq = AssemblyRequest(
-            model = adapter,
+            model = currentAdapter,
             userMessage = request.userMessage,
             tools = request.tools,
             conversationHistory = emptyList(),
@@ -65,13 +110,19 @@ class AgentLoop(
         val pkg = when (val ar = assembler.assemble(assemblyReq)) {
             is AssemblyResult.Ok -> ar.pkg
             is AssemblyResult.TooBig -> {
-                val larger = router.select(request.modelKind, routingCtx.copy(minimumContextWindow = ar.minimumContextWindow))
-                val largerAdapter = when (larger) {
+                minimumContextWindow = ar.minimumContextWindow
+                val larger = router.select(
+                    request.modelKind,
+                    initialCtx.copy(minimumContextWindow = minimumContextWindow),
+                )
+                currentAdapter = when (larger) {
                     is RoutingDecision.Local -> larger.adapter
                     is RoutingDecision.RemoteApproved -> larger.adapter
+                    is RoutingDecision.RemotePendingApproval -> return RunOutcome.Suspended("Remote approval required: ${larger.reason}")
+                    is RoutingDecision.UnavailableOffline -> return RunOutcome.Suspended("Model unavailable offline: ${larger.kind}")
                     else -> return RunOutcome.Failed("No model with context window >= ${ar.minimumContextWindow}")
                 }
-                when (val ar2 = assembler.assemble(assemblyReq.copy(model = largerAdapter))) {
+                when (val ar2 = assembler.assemble(assemblyReq.copy(model = currentAdapter))) {
                     is AssemblyResult.Ok -> ar2.pkg
                     is AssemblyResult.TooBig -> return RunOutcome.Failed("Prompt does not fit even in larger context window")
                 }
@@ -95,24 +146,40 @@ class AgentLoop(
                 return RunOutcome.Failed("Budget exhausted after $steps steps")
             }
 
+            if (steps > 0) {
+                val turnCtx = buildRoutingContext(
+                    request = request,
+                    budgetUsed = budgetUsed,
+                    runTaint = runTaint,
+                    minimumContextWindow = minimumContextWindow,
+                )
+                currentAdapter = when (val turnDecision = router.select(request.modelKind, turnCtx)) {
+                    is RoutingDecision.Local -> turnDecision.adapter
+                    is RoutingDecision.RemoteApproved -> turnDecision.adapter
+                    is RoutingDecision.RemotePendingApproval -> return RunOutcome.Suspended("Remote approval required: ${turnDecision.reason}")
+                    is RoutingDecision.UnavailableOffline -> return RunOutcome.Suspended("Model unavailable offline: ${turnDecision.kind}")
+                    else -> return RunOutcome.Failed("Routing failed: $turnDecision")
+                }
+            }
+
             steps++
             checkpoint(StepEvent.StepStarted(step = steps))
             val modelReq = ModelRequest(
                 messages = transcript.toList(),
                 tools = pkg.request.tools,
                 toolChoice = ToolChoice.Auto,
-                maxOutputTokens = adapter.contextWindow / 8,
+                maxOutputTokens = currentAdapter.contextWindow / 8,
             )
-            val response = adapter.invoke(modelReq).getOrElse { err ->
+            val response = currentAdapter.invoke(modelReq).getOrElse { err ->
                 checkpoint(StepEvent.StepFailed(step = steps, reason = err.message ?: "model error"))
                 return RunOutcome.Failed("Model invocation failed: ${err.message}")
             }
 
-            // RFC-0028: Account for model response tokens consumed
-            budgetUsed += response.outputs.toString().length.toLong()
+            // RFC-0028: Account for model response tokens consumed from usage
+            budgetUsed += responseUsageCost(response)
 
             val responseText = response.outputs
-                .filterIsInstance<dev.aidos.kernel.TextOutput>()
+                .filterIsInstance<TextOutput>()
                 .joinToString("") { it.text }
                 .ifEmpty { null }
             val responseToolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }

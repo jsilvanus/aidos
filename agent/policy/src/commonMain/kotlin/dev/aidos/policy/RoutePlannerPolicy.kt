@@ -6,71 +6,116 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * RFC-0108 Phase 2: Policy for which routes can carry split inference.
+ * Locality ceiling governing which route types may be used.
  *
- * Layer split (RFC-0105) is only safe over LAN routes due to overhead (~10ms per token per helper).
- * WAN routes (direct to Tailscale, SSH tunnel) are too latent.
+ * - [LOCAL_ONLY]: Only LAN discovery (`Route.Lan`) is permitted; direct WAN/overlay routes and
+ *   SSH reverse tunnels are blocked.
+ * - [TRUSTED_CLUSTER]: LAN and direct peer routes (`Route.Direct`) are permitted; SSH reverse
+ *   tunnels remain blocked.
+ * - [ANY]: All route types (`Route.Lan`, `Route.Direct`, `Route.SshReverse`) are permitted for
+ *   routing, though layer split remains disallowed over tunnels.
+ */
+enum class Locality {
+    LOCAL_ONLY,
+    TRUSTED_CLUSTER,
+    ANY,
+}
+
+/**
+ * RFC-0108 Phase 2: Policy for which routes can carry split inference and pass locality checks.
  *
- * A route is deemed "local" (safe for split) if:
- * - It is explicitly `Route.Lan` (mDNS discovery), OR
- * - It is `Route.Direct` or `Route.SshReverse` with measured RTT ≤ threshold (default 50ms)
+ * Layer split (RFC-0105) is only safe over LAN routes (or low-RTT direct cluster links when
+ * locality allows) due to overhead (~10ms per token per helper).
+ * SSH reverse tunnels (`Route.SshReverse`) are never safe for layer split regardless of RTT.
  *
- * If RTT is unmeasured (never tried), conservatively treat as non-local (refuse split).
+ * Defaults to [Locality.LOCAL_ONLY] (fail-closed) so remote/tunnel routes are never permitted
+ * unless a wider [Locality] is explicitly selected.
  */
 class RoutePlannerPolicy(
     private val lanRttThreshold: Duration = 50.milliseconds,
+    private val defaultLocality: Locality = Locality.LOCAL_ONLY,
 ) {
-    /**
-     * Decides whether a route can be used for layer split.
-     *
-     * Returns true only if:
-     * 1. Route is `Route.Lan` (always local), OR
-     * 2. Route has measured RTT and RTT ≤ lanRttThreshold
-     *
-     * Returns false for:
-     * - Routes without RTT measurement (no evidence of LAN speed)
-     * - Routes with RTT > threshold (WAN speed; too much overhead)
-     */
-    fun isSafeForSplit(latency: RouteLatency): Boolean {
-        val route = latency.route
-        val rtt = latency.rttMillis
-
-        // LAN routes are always safe for split
-        if (route == Route.Lan) return true
-
-        // Unmeasured routes (RTT = -1 means failure) or failed: refuse split
-        if (rtt < 0) return false
-
-        // Direct and SSH routes only safe if RTT is low (LAN speed)
-        return rtt <= lanRttThreshold.inWholeMilliseconds
+    init {
+        require(!lanRttThreshold.isNegative()) { "lanRttThreshold must be non-negative" }
     }
 
     /**
-     * Decides if any route in a set of latencies is safe for split.
-     * Useful for checking if a peer can participate in a split plan.
-     *
-     * Returns true if at least one route meets split safety criteria.
+     * Checks whether [route] is permitted under [locality].
+     * Under [Locality.LOCAL_ONLY], only [Route.Lan] is permitted.
      */
-    fun hasLocalRoute(latencies: List<RouteLatency>): Boolean {
-        return latencies.any { isSafeForSplit(it) }
+    fun isRoutePermitted(route: Route, locality: Locality = defaultLocality): Boolean = when (locality) {
+        Locality.LOCAL_ONLY -> route == Route.Lan
+        Locality.TRUSTED_CLUSTER -> route == Route.Lan || route is Route.Direct
+        Locality.ANY -> true
     }
 
     /**
-     * Filters a list of latencies to only those safe for split.
-     * Returns them in RTT order (fastest first).
+     * Filters [latencies] to routes permitted under [locality] (excluding failed `rttMillis < 0`).
      */
-    fun filterLocalRoutes(latencies: List<RouteLatency>): List<RouteLatency> {
+    fun filterPermittedRoutes(
+        latencies: List<RouteLatency>,
+        locality: Locality = defaultLocality,
+    ): List<RouteLatency> {
         return latencies
-            .filter { isSafeForSplit(it) }
+            .filter { it.rttMillis >= 0 && isRoutePermitted(it.route, locality) }
             .sortedBy { it.rttMillis }
     }
 
     /**
-     * For a peer with multiple latencies, selects the best one for split.
+     * Decides whether a route can be used for layer split under [locality].
+     *
+     * Returns true only if:
+     * 1. Measured RTT is non-negative (`rttMillis >= 0`), AND
+     * 2. Route is permitted by [locality], AND
+     * 3. Either route is `Route.Lan`, OR route is `Route.Direct` with `rttMillis <= lanRttThreshold`.
+     *
+     * Returns false for:
+     * - Unmeasured/failed routes (`rttMillis = -1`)
+     * - Any non-LAN route under [Locality.LOCAL_ONLY]
+     * - Any SSH reverse tunnel (`Route.SshReverse`), regardless of RTT or locality
+     * - Direct routes with `rttMillis > lanRttThreshold`
+     */
+    fun isSafeForSplit(latency: RouteLatency, locality: Locality = defaultLocality): Boolean {
+        val rtt = latency.rttMillis
+        if (rtt < 0) return false
+        if (!isRoutePermitted(latency.route, locality)) return false
+
+        return when (latency.route) {
+            Route.Lan -> true
+            is Route.Direct -> locality != Locality.LOCAL_ONLY && rtt <= lanRttThreshold.inWholeMilliseconds
+            is Route.SshReverse -> false
+        }
+    }
+
+    /**
+     * Decides if any route in a set of latencies is safe for split under [locality].
+     */
+    fun hasLocalRoute(latencies: List<RouteLatency>, locality: Locality = defaultLocality): Boolean {
+        return latencies.any { isSafeForSplit(it, locality) }
+    }
+
+    /**
+     * Filters a list of latencies to only those safe for split under [locality].
+     * Returns them in RTT order (fastest first).
+     */
+    fun filterLocalRoutes(
+        latencies: List<RouteLatency>,
+        locality: Locality = defaultLocality,
+    ): List<RouteLatency> {
+        return latencies
+            .filter { isSafeForSplit(it, locality) }
+            .sortedBy { it.rttMillis }
+    }
+
+    /**
+     * For a peer with multiple latencies, selects the best one for split under [locality].
      * Returns null if no route is safe.
      */
-    fun selectBestLocalRoute(latencies: List<RouteLatency>): RouteLatency? {
-        return filterLocalRoutes(latencies).firstOrNull()
+    fun selectBestLocalRoute(
+        latencies: List<RouteLatency>,
+        locality: Locality = defaultLocality,
+    ): RouteLatency? {
+        return filterLocalRoutes(latencies, locality).firstOrNull()
     }
 }
 
@@ -83,7 +128,7 @@ enum class RouteClass {
     Lan,
     /** Direct connection (Tailscale, forwarded port, etc.) — local or WAN depending on RTT */
     Direct,
-    /** SSH reverse tunnel — typically WAN, but could be fast if collocated */
+    /** SSH reverse tunnel — typically WAN, never safe for layer split */
     SshTunnel,
 }
 

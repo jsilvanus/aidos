@@ -473,6 +473,107 @@ class InferenceRequestManagerTest {
         // Only 1 concurrent ever running (due to maxConcurrentRequests = 1)
         assertEquals(1, serializingAdapter.maxConcurrentInvokes)
     }
+
+    @Test
+    fun openModel_rejectsWhenLicenseNotAccepted() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(CountingAdapter())
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 4,
+            licenseStore = licenseStore,
+        )
+
+        val result = manager.openModel("test-model")
+
+        assertTrue(result.isFailure)
+        val err = result.exceptionOrNull()
+        assertTrue(err is LicenseNotAcceptedException)
+        assertEquals("test-model", err.modelId)
+        assertEquals("1.0", err.modelVersion)
+        assertEquals("sha256-abc123", err.licenseTextDigest)
+        assertEquals(0, runtime.loadCalls)
+    }
+
+    @Test
+    fun openModel_succeedsOnceLicenseAccepted() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(CountingAdapter())
+        val manager = InferenceRequestManager(
+            runtime,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 4,
+            licenseStore = licenseStore,
+        )
+
+        assertTrue(manager.openModel("test-model").isFailure)
+        licenseStore.accept("test-model", "1.0", "sha256-abc123")
+
+        val result = manager.openModel("test-model")
+        assertTrue(result.isSuccess)
+        assertEquals(1, runtime.loadCalls)
+    }
+
+    @Test
+    fun openModel_mergesCatalogLicenseMetadataWhenInstalledLacksMetadata() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val catalogDescriptor = ModelDescriptor(
+            id = "test-model",
+            name = "Test",
+            kind = ModelKind.LLM,
+            providerId = "huggingface",
+            isLocal = true,
+            contextWindow = 2048,
+            sizeBytes = 1234,
+            digest = null,
+            metadata = mapOf(
+                "version" to "2.0",
+                "license_digest" to "digest-from-catalog",
+                "license_text" to "Catalog License",
+            ),
+        )
+        val installedWithoutMetadata = catalogDescriptor.copy(metadata = emptyMap())
+        val runtime = FakeRuntime(
+            adapter = CountingAdapter(),
+            catalogDescriptors = listOf(catalogDescriptor),
+            installedDescriptors = listOf(installedWithoutMetadata),
+        )
+        val manager = InferenceRequestManager(runtime, licenseStore = licenseStore)
+
+        val denied = manager.openModel("test-model")
+        assertTrue(denied.isFailure)
+        assertTrue(denied.exceptionOrNull() is LicenseNotAcceptedException)
+        assertEquals(0, runtime.loadCalls)
+
+        licenseStore.accept("test-model", "2.0", "digest-from-catalog")
+        assertTrue(manager.openModel("test-model").isSuccess)
+        assertEquals(1, runtime.loadCalls)
+    }
+
+    @Test
+    fun missingModel_delegatesToRuntimeLoadForCanonicalNotInstalledError() = runTest {
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        val runtime = FakeRuntime(
+            adapter = CountingAdapter(),
+            catalogDescriptors = emptyList(),
+            installedDescriptors = emptyList(),
+            loadError = { modelId -> IllegalStateException("MODEL_NOT_INSTALLED: $modelId") },
+        )
+        val manager = InferenceRequestManager(runtime, licenseStore = licenseStore)
+
+        val openResult = manager.openModel("missing-model")
+        assertTrue(openResult.isFailure)
+        assertTrue(openResult.exceptionOrNull() is IllegalStateException)
+        assertTrue(openResult.exceptionOrNull()?.message?.contains("MODEL_NOT_INSTALLED") == true)
+
+        val execResult = manager.execute("missing-model") { adapter ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+        assertTrue(execResult.isFailure)
+        assertTrue(execResult.exceptionOrNull() is IllegalStateException)
+        assertEquals(2, runtime.loadCalls)
+    }
 }
 
 private class FakeRuntime(
@@ -484,6 +585,9 @@ private class FakeRuntime(
         "license_digest" to "sha256-abc123",
         "license_text" to "Test License - Accept to use",
     ),
+    private val catalogDescriptors: List<ModelDescriptor>? = null,
+    private val installedDescriptors: List<ModelDescriptor>? = null,
+    private val loadError: ((String) -> Throwable?)? = null,
 ) : ModelRuntime {
     var deleteCalls: Int = 0
         private set
@@ -492,7 +596,7 @@ private class FakeRuntime(
     var loadCalls: Int = 0
         private set
 
-    override suspend fun catalog(): List<ModelDescriptor> = listOf(
+    override suspend fun catalog(): List<ModelDescriptor> = catalogDescriptors ?: listOf(
         ModelDescriptor(
             id = "test-model",
             name = "Test",
@@ -506,10 +610,11 @@ private class FakeRuntime(
         )
     )
 
-    override suspend fun installed(): List<ModelDescriptor> = catalog()
+    override suspend fun installed(): List<ModelDescriptor> = installedDescriptors ?: catalog()
 
     override suspend fun load(modelId: String): Result<ModelAdapter> {
         loadCalls++
+        loadError?.invoke(modelId)?.let { return Result.failure(it) }
         return Result.success(adapter)
     }
 

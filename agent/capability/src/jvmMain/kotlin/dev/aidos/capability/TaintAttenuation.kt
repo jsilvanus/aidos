@@ -12,11 +12,11 @@ import dev.aidos.kernel.RecoveryClass
  * The principle: a tainted Run keeps doing local, reversible, in-project work without friction,
  * and must ask before anything that leaves the project or cannot be undone.
  *
- * | Effect                                   | Tainted Run                     |
- * |------------------------------------------|---------------------------------|
- * | Read, Notify, Mutate IN_PROJECT          | allowed (previews already kept) |
- * | Mutate OUT_OF_PROJECT, secrets read      | denied                          |
- * | Egress, shell, push / UNSAFE recovery    | requires approval per call      |
+ * | Effect                                                 | Tainted Run                     |
+ * |--------------------------------------------------------|---------------------------------|
+ * | Read, Notify, Mutate IN_PROJECT                        | allowed (previews already kept) |
+ * | Mutate OUT_OF_PROJECT, secrets read                    | denied                          |
+ * | Egress, shell, APP_IPC (Binder), push / UNSAFE recovery| requires approval per call      |
  *
  * Callers apply this only when the Run's taint is UNTRUSTED; PROJECT and TRUSTED never attenuate.
  * Worker creation with a wider scope than the parent is not decided here (no scope comparison is
@@ -32,6 +32,7 @@ object TaintAttenuation {
         if (effect is EffectKind.Egress ||
             permission == Permission.NETWORK_EGRESS ||
             permission == Permission.SHELL_EXEC ||
+            permission == Permission.APP_IPC ||
             operation.recoveryClass == RecoveryClass.UNSAFE
         ) return Decision.REQUIRES_APPROVAL
         return Decision.ALLOW

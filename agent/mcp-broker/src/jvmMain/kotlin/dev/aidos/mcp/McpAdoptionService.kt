@@ -48,7 +48,7 @@ class McpAdoptionService(
                 val adoptedNames = outcome.activation.tool.operations().map { it.name.removePrefix("$serverName:") }.toSet()
                 val client = outcome.activation.client
                 try {
-                    val allTools = client.listTools()
+                    val allTools = outcome.activation.catalog
                     Result.success(
                         McpServerCatalog(
                             serverId = serverName,

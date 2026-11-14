@@ -1,6 +1,6 @@
 # RFC-0027: Trust, Taint, and Untrusted Content
 
-Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
+Status: Implemented 2026-11-10 (Accepted 2026-08-03). Partially superseded by [RFC-0110](0110-optional-guardian-approval.md) (Optional Guardian Approval for Tainted Runs). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
 
 ## Abstract
 
@@ -126,6 +126,7 @@ remainder of the Run:
 | `Notify` | allowed | allowed |
 | Secrets read | per capability | **denied** |
 | Git push / any `UNSAFE` recovery class | per capability | **requires approval per call** |
+| App IPC (cross-app MCP over Binder, `Permission.APP_IPC`) | per capability | **requires approval per call** |
 | Worker creation with wider scope than parent | per capability | **denied** |
 
 The design principle: **a tainted Run may continue to do local, reversible, in-project work
@@ -149,6 +150,8 @@ merely that the run is tainted. Without that, the prompt is unanswerable and the
 click through it.
 
 Approving grants a **single-use** exercise, not a capability upgrade. The Run remains tainted.
+
+See [RFC-0110](0110-optional-guardian-approval.md) for the opt-in user-scope `GUARDIAN` mode, which interposes a two-gate taint escalation evaluator — an inbound System One Decision Model suspicion latch (Gate A) and an outbound blind, zero-tool Guardian LLM verifier (Gate B) — before falling back to human approval with the verifier's rationale.
 
 ### Interaction with structural sandboxing
 
@@ -213,6 +216,12 @@ What people usually want when they ask is **curation for quality**, and that exi
 name: the cookbook (RFC-0022) ranks models by fit and states what they are good at. Curation and
 trust are different claims and keep different words.
 
+[RFC-0110](0110-optional-guardian-approval.md) preserves this invariant: its opt-in two-gate
+taint escalation evaluator (Decision Model Gate A + Blind Guardian LLM Gate B) never declares a
+"trusted model" or clears taint; Gate B inspects only the `TRUSTED` user prompt and candidate tool
+invocation with zero tools bound, and fails closed to human approval on ambiguity or suspected
+injection.
+
 Not in MVP: per-token influence tracking, user-configurable attenuation policy, taint
 visualisation in the UI beyond the escalation prompt.
 
@@ -224,3 +233,6 @@ Taint-aware context assembly: preferring untainted sources when both would satis
 
 Automatic detection of injection patterns in retrieved content, raising taint rather than
 attempting to filter the content.
+
+Opt-in two-gate (Decision Model Gate A + Blind Guardian LLM Gate B) taint escalation evaluation
+is specified separately in [RFC-0110](0110-optional-guardian-approval.md).

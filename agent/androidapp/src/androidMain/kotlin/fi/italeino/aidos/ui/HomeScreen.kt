@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     projectsPresenter: ProjectsPresenter,
     onProjectSelected: (projectId: String) -> Unit,
+    inboxItems: List<InboxItem> = emptyList(),
 ) {
     val projectsState by projectsPresenter.state.collectAsState()
 
@@ -92,7 +93,7 @@ fun HomeScreen(
                     .padding(8.dp),
             ) { page ->
                 when (page) {
-                    0 -> InboxPane(projectsState)
+                    0 -> InboxPane(inboxItems)
                     1 -> ProjectsPane(projectsPresenter, projectsState, onProjectSelected)
                 }
             }
@@ -101,16 +102,9 @@ fun HomeScreen(
 }
 
 @Composable
-private fun InboxPane(projectsState: ProjectsUiState) {
-    val items = when (projectsState) {
-        is ProjectsUiState.Ready -> listOf(
-            InboxItem("approve", "write src/http/Client.kt", projectsState.projects.firstOrNull()?.name ?: "aidos", "2m"),
-            InboxItem("continue", "needs foreground to run the model", "notes", "14m"),
-            InboxItem("review", "4 changes ready to commit", projectsState.projects.firstOrNull()?.name ?: "aidos", "1h"),
-        )
-        else -> emptyList()
-    }
-
+private fun InboxPane(
+    items: List<InboxItem> = emptyList(),
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -124,7 +118,7 @@ private fun InboxPane(projectsState: ProjectsUiState) {
         )
 
         if (items.isEmpty()) {
-            Text("No pending actions right now")
+            Text("No pending approvals or alerts")
             return
         }
 
@@ -151,15 +145,10 @@ private fun InboxPane(projectsState: ProjectsUiState) {
                 }
             }
         }
-
-        Text(
-            text = "⋯ 5 more",
-            style = MaterialTheme.typography.bodySmall,
-        )
     }
 }
 
-private data class InboxItem(
+data class InboxItem(
     val actionLabel: String,
     val summary: String,
     val projectName: String,

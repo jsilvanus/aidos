@@ -27,9 +27,9 @@ import dev.aidos.kernel.ToolDescriptor
 import dev.aidos.kernel.ToolOutcome
 import dev.aidos.kernel.TrustLevel
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
@@ -238,8 +238,11 @@ class FilesystemTool(
             ?: return Result.failure(IllegalArgumentException("handle is not a DirHandle"))
 
         return when (operation) {
-            "fs:write" -> previewWrite(dir, arguments)
-            else       -> Result.failure(UnsupportedOperationException("no preview for $operation"))
+            "fs:write"  -> previewWrite(dir, arguments)
+            "fs:delete" -> previewDelete(dir, arguments)
+            "fs:move"   -> previewMove(dir, arguments)
+            "fs:mkdir"  -> previewMkdir(dir, arguments)
+            else        -> Result.failure(UnsupportedOperationException("no preview for $operation"))
         }
     }
 
@@ -256,7 +259,11 @@ class FilesystemTool(
 
     private suspend fun write(dir: DirHandle, args: JsonObject): ToolCallResult {
         val path = relPath(args, "path") ?: return error("fs:write", "missing or invalid 'path'")
-        val content = args["content"]?.jsonPrimitive?.content
+        // RFC-0034: Refuse writes inside .git/
+        if (isGitPath(path)) {
+            return error("fs:write", ".git/ is read-only and cannot be written to")
+        }
+        val content = stringArg(args, "content")
             ?: return error("fs:write", "missing 'content'")
         val existedBefore = dir.exists(path)
         val bytes = content.encodeToByteArray()
@@ -283,7 +290,7 @@ class FilesystemTool(
 
     private suspend fun search(dir: DirHandle, args: JsonObject): ToolCallResult {
         val path = relPath(args, "path") ?: return error("fs:search", "missing or invalid 'path'")
-        val pattern = args["pattern"]?.jsonPrimitive?.content
+        val pattern = stringArg(args, "pattern")
             ?: return error("fs:search", "missing 'pattern'")
 
         // Collect all matching lines by recursively reading files under the path.
@@ -323,22 +330,24 @@ class FilesystemTool(
 
     private suspend fun delete(dir: DirHandle, args: JsonObject): ToolCallResult {
         val path = relPath(args, "path") ?: return error("fs:delete", "missing or invalid 'path'")
-        
+
         // RFC-0034: Refuse deletion inside .git/
-        if (path.value.startsWith(".git/") || path.value == ".git") {
+        if (isGitPath(path)) {
             return error("fs:delete", ".git/ is read-only and cannot be deleted")
         }
-        
-        val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
-        val force = args["force"]?.jsonPrimitive?.booleanOrNull ?: false
-        
-        val result = dir.delete(path, recursive).getOrElse {
+
+        val recursive = boolArg(args, "recursive") ?: false
+        val force = boolArg(args, "force") ?: false
+
+        val count = dir.delete(path, recursive).getOrElse {
             val message = it.message ?: "delete failed"
-            if (force) ok(listOf(ContentBlock.Text("delete skipped: $message")), TrustLevel.TRUSTED)
-            else error("fs:delete", message)
+            return if (force) {
+                ok(listOf(ContentBlock.Text("delete skipped: $message")), TrustLevel.TRUSTED)
+            } else {
+                error("fs:delete", message)
+            }
         }
-        
-        val count = result
+
         return ok(
             listOf(ContentBlock.Text("deleted $count file(s) at ${path.value}")),
             TrustLevel.TRUSTED
@@ -348,18 +357,18 @@ class FilesystemTool(
     private suspend fun move(dir: DirHandle, args: JsonObject): ToolCallResult {
         val from = relPath(args, "from") ?: return error("fs:move", "missing or invalid 'from'")
         val to = relPath(args, "to") ?: return error("fs:move", "missing or invalid 'to'")
-        
-        // RFC-0034: Refuse move into .git/
-        if (to.value.startsWith(".git/") || to.value == ".git") {
-            return error("fs:move", ".git/ is read-only and cannot be written to")
+
+        // RFC-0034: Refuse moving from or into .git/
+        if (isGitPath(from) || isGitPath(to)) {
+            return error("fs:move", ".git/ is read-only and cannot be moved or modified")
         }
-        
-        val overwrite = args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
-        
+
+        val overwrite = boolArg(args, "overwrite") ?: false
+
         dir.move(from, to, overwrite).getOrElse {
             return error("fs:move", it.message ?: "move failed")
         }
-        
+
         return ok(
             listOf(ContentBlock.Text("moved ${from.value} to ${to.value}")),
             TrustLevel.TRUSTED
@@ -368,16 +377,16 @@ class FilesystemTool(
 
     private suspend fun mkdir(dir: DirHandle, args: JsonObject): ToolCallResult {
         val path = relPath(args, "path") ?: return error("fs:mkdir", "missing or invalid 'path'")
-        
+
         // RFC-0034: Refuse mkdir inside .git/
-        if (path.value.startsWith(".git/") || path.value == ".git") {
+        if (isGitPath(path)) {
             return error("fs:mkdir", ".git/ is read-only and cannot be written to")
         }
-        
+
         dir.mkdir(path).getOrElse {
             return error("fs:mkdir", it.message ?: "mkdir failed")
         }
-        
+
         return ok(
             listOf(ContentBlock.Text("created directory ${path.value}")),
             TrustLevel.TRUSTED
@@ -393,7 +402,10 @@ class FilesystemTool(
     private suspend fun previewWrite(dir: DirHandle, args: JsonObject): Result<Preview> {
         val path = relPath(args, "path")
             ?: return Result.failure(IllegalArgumentException("missing or invalid 'path'"))
-        val newContent = args["content"]?.jsonPrimitive?.content
+        if (isGitPath(path)) {
+            return Result.failure(IllegalArgumentException(".git/ is read-only and cannot be written to"))
+        }
+        val newContent = stringArg(args, "content")
             ?: return Result.failure(IllegalArgumentException("missing 'content'"))
 
         val oldBytes = if (dir.exists(path)) dir.read(path).getOrElse { ByteArray(0) } else ByteArray(0)
@@ -404,6 +416,138 @@ class FilesystemTool(
 
         val fileDiff = computeDiff(path.value, oldText, newText)
         return Result.success(Preview.Diff(fileDiff))
+    }
+
+    private suspend fun previewDelete(dir: DirHandle, args: JsonObject): Result<Preview> {
+        val path = relPath(args, "path")
+            ?: return Result.failure(IllegalArgumentException("missing or invalid 'path'"))
+        if (isGitPath(path)) {
+            return Result.failure(IllegalArgumentException(".git/ is read-only and cannot be deleted"))
+        }
+        val recursive = boolArg(args, "recursive") ?: false
+        val force = boolArg(args, "force") ?: false
+
+        val readResult = dir.read(path)
+        if (readResult.isSuccess) {
+            val oldText = readResult.getOrThrow().decodeToString()
+            if (oldText.isEmpty()) {
+                val fileChange = FileChange(
+                    path = path.value,
+                    previousPath = null,
+                    kind = FileChangeKind.DELETED,
+                    baseBlobHash = oldText.sha256short(),
+                    headBlobHash = null,
+                    binary = false,
+                    modeChanged = false,
+                    hunkCount = 0,
+                    linesAdded = 0,
+                    linesRemoved = 0,
+                    review = ReviewState.NOT_REVIEWED,
+                    origin = ChangeOrigin.SESSION,
+                )
+                return Result.success(Preview.Diff(FileDiff(fileChange, emptyList())))
+            }
+            return Result.success(Preview.Diff(computeDiff(path.value, oldText, "")))
+        }
+
+        val entries = dir.list(path).getOrElse { emptyList() }
+        if (entries.isEmpty() && !dir.exists(path)) {
+            return Result.success(Preview.NoChange)
+        }
+        if (!recursive && entries.isNotEmpty()) {
+            if (force) return Result.success(Preview.NoChange)
+            return Result.success(
+                Preview.Description("Delete directory ${path.value} (${entries.size} immediate entry/entries; requires recursive=true)")
+            )
+        }
+        val total = countEntries(dir, path)
+        return Result.success(
+            Preview.Description(
+                if (total == 0) "Delete empty directory ${path.value}"
+                else "Delete directory ${path.value} ($total item(s))"
+            )
+        )
+    }
+
+    private suspend fun previewMove(dir: DirHandle, args: JsonObject): Result<Preview> {
+        val from = relPath(args, "from")
+            ?: return Result.failure(IllegalArgumentException("missing or invalid 'from'"))
+        val to = relPath(args, "to")
+            ?: return Result.failure(IllegalArgumentException("missing or invalid 'to'"))
+        if (isGitPath(from) || isGitPath(to)) {
+            return Result.failure(IllegalArgumentException(".git/ is read-only and cannot be moved or modified"))
+        }
+        val overwrite = boolArg(args, "overwrite") ?: false
+
+        val fromRead = dir.read(from)
+        val fromEntries = if (fromRead.isFailure) dir.list(from).getOrElse { emptyList() } else emptyList()
+        val fromExists = fromRead.isSuccess || dir.exists(from) || fromEntries.isNotEmpty()
+        if (!fromExists) {
+            return Result.failure(IllegalArgumentException("source does not exist: ${from.value}"))
+        }
+
+        if (isSamePath(from, to)) {
+            return Result.success(Preview.NoChange)
+        }
+
+        val toExists = dir.exists(to) || dir.list(to).getOrNull()?.isNotEmpty() == true
+        if (toExists && !overwrite) {
+            return Result.failure(IllegalArgumentException("destination already exists: ${to.value}"))
+        }
+
+        if (fromRead.isSuccess) {
+            val hash = fromRead.getOrThrow().decodeToString().sha256short()
+            val fileChange = FileChange(
+                path = to.value,
+                previousPath = from.value,
+                kind = FileChangeKind.RENAMED,
+                baseBlobHash = hash,
+                headBlobHash = hash,
+                binary = false,
+                modeChanged = false,
+                hunkCount = 0,
+                linesAdded = 0,
+                linesRemoved = 0,
+                review = ReviewState.NOT_REVIEWED,
+                origin = ChangeOrigin.SESSION,
+            )
+            return Result.success(Preview.Diff(FileDiff(fileChange, emptyList())))
+        }
+
+        return Result.success(
+            Preview.Description(
+                "Move directory ${from.value} to ${to.value}${if (overwrite && toExists) " (overwrite)" else ""}"
+            )
+        )
+    }
+
+    private suspend fun previewMkdir(dir: DirHandle, args: JsonObject): Result<Preview> {
+        val path = relPath(args, "path")
+            ?: return Result.failure(IllegalArgumentException("missing or invalid 'path'"))
+        if (isGitPath(path)) {
+            return Result.failure(IllegalArgumentException(".git/ is read-only and cannot be written to"))
+        }
+        if (dir.read(path).isSuccess) {
+            return Result.failure(IllegalArgumentException("file already exists at path: ${path.value}"))
+        }
+        if (dir.exists(path) || dir.list(path).getOrNull()?.isNotEmpty() == true) {
+            return Result.success(Preview.NoChange)
+        }
+        return Result.success(Preview.Description("Create directory ${path.value}"))
+    }
+
+    private suspend fun countEntries(dir: DirHandle, path: RelPath, depth: Int = 0): Int {
+        if (depth > 64) return 0
+        val entries = dir.list(path).getOrNull() ?: return 0
+        var count = 0
+        for (entry in entries) {
+            count++
+            if (entry.isDirectory) {
+                val child = RelPath.of("${path.value}/${entry.name}").getOrNull() ?: continue
+                count += countEntries(dir, child, depth + 1)
+            }
+        }
+        return count
     }
 
     /**
@@ -499,9 +643,31 @@ class FilesystemTool(
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private fun relPath(args: JsonObject, key: String): RelPath? {
-        val raw = args[key]?.jsonPrimitive?.content ?: return null
+        val raw = stringArg(args, key) ?: return null
         return RelPath.of(raw).getOrNull()
     }
+
+    private fun stringArg(args: JsonObject, key: String): String? {
+        val prim = args[key] as? JsonPrimitive ?: return null
+        return if (prim.isString) prim.content else null
+    }
+
+    private fun boolArg(args: JsonObject, key: String): Boolean? {
+        val prim = args[key] as? JsonPrimitive ?: return null
+        return if (prim.isString) null else prim.booleanOrNull
+    }
+
+    private fun normalizedSegments(path: RelPath): List<String> =
+        path.value
+            .replace('\\', '/')
+            .split('/')
+            .filter { it.isNotEmpty() && it != "." }
+
+    private fun isGitPath(path: RelPath): Boolean =
+        normalizedSegments(path).any { it.equals(".git", ignoreCase = true) }
+
+    private fun isSamePath(a: RelPath, b: RelPath): Boolean =
+        normalizedSegments(a) == normalizedSegments(b)
 
     private fun ok(content: List<ContentBlock>, trust: TrustLevel) =
         ToolCallResult("", ToolOutcome.Ok, content, trust)

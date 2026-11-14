@@ -5,8 +5,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 
 class LicenseAcceptanceStoreTest {
 
@@ -174,5 +179,36 @@ class LicenseAcceptanceStoreTest {
 
         // Wrong digest still fails
         assertFalse(store.isAccepted(modelId, "1.0", "digest-v2"))
+    }
+
+    @Test
+    fun watchAcceptances_emitsInitialEmptyListWithoutWrites() = runTest {
+        val store = InMemoryLicenseAcceptanceStore()
+        assertEquals(emptyList(), store.watchAcceptances().first())
+    }
+
+    @Test
+    fun concurrentAcceptAndRevoke_preservesConsistentState() = runTest {
+        val store = InMemoryLicenseAcceptanceStore()
+        withContext(Dispatchers.Default) {
+            val jobs = (0 until 50).map { idx ->
+                async {
+                    val modelId = "model-$idx"
+                    store.accept(modelId, "v1", "digest-$idx")
+                    if (idx % 2 == 0) {
+                        store.revoke(modelId, "v1")
+                    }
+                }
+            }
+            jobs.awaitAll()
+        }
+
+        val all = store.listAllAcceptances()
+        assertEquals(25, all.size)
+        assertEquals(all, store.watchAcceptances().first())
+        for (idx in 0 until 50) {
+            val expected = idx % 2 != 0
+            assertEquals(expected, store.isAccepted("model-$idx", "v1", "digest-$idx"))
+        }
     }
 }

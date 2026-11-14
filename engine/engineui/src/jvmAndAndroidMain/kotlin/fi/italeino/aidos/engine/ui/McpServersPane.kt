@@ -680,10 +680,13 @@ private fun AddMcpServerDialog(
 
     // Interactive Form States
     var name by remember { mutableStateOf("") }
-    var transport by remember { mutableStateOf("stdio") } // "stdio" or "http"
+    var transport by remember { mutableStateOf("stdio") } // "stdio", "http", or "binder"
     var command by remember { mutableStateOf("") }
     var argsText by remember { mutableStateOf("") }
     var endpointUrl by remember { mutableStateOf("") }
+    var binderPackage by remember { mutableStateOf("") }
+    var binderService by remember { mutableStateOf("") }
+    var binderCertsText by remember { mutableStateOf("") }
     var envSecretsText by remember { mutableStateOf("") }
     var allowDesktop by remember { mutableStateOf(true) }
     var allowMobile by remember { mutableStateOf(false) }
@@ -768,11 +771,14 @@ private fun AddMcpServerDialog(
                         )
 
                         Text("Transport Protocol", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = transport == "stdio",
-                                onClick = { transport = "stdio" },
-                                label = { Text("stdio (Local Subprocess)") },
+                                onClick = {
+                                    transport = "stdio"
+                                    allowDesktop = true
+                                },
+                                label = { Text("stdio") },
                             )
                             FilterChip(
                                 selected = transport == "http",
@@ -780,7 +786,16 @@ private fun AddMcpServerDialog(
                                     transport = "http"
                                     allowMobile = true
                                 },
-                                label = { Text("Streamable HTTP (Remote SSE)") },
+                                label = { Text("HTTP (SSE)") },
+                            )
+                            FilterChip(
+                                selected = transport == "binder",
+                                onClick = {
+                                    transport = "binder"
+                                    allowDesktop = false
+                                    allowMobile = true
+                                },
+                                label = { Text("Binder (Android)") },
                             )
                         }
 
@@ -810,7 +825,7 @@ private fun AddMcpServerDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 minLines = 2,
                             )
-                        } else {
+                        } else if (transport == "http") {
                             OutlinedTextField(
                                 value = endpointUrl,
                                 onValueChange = { endpointUrl = it },
@@ -828,19 +843,60 @@ private fun AddMcpServerDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 minLines = 2,
                             )
+                        } else {
+                            OutlinedTextField(
+                                value = binderPackage,
+                                onValueChange = { binderPackage = it },
+                                label = { Text("Android Package Name") },
+                                placeholder = { Text("com.agenticmessenger.mcp.host") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                            )
+
+                            OutlinedTextField(
+                                value = binderService,
+                                onValueChange = { binderService = it },
+                                label = { Text("Exported Service Class") },
+                                placeholder = { Text("com.agenticmessenger.mcp.android.AmpMcpBinderService") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                            )
+
+                            OutlinedTextField(
+                                value = binderCertsText,
+                                onValueChange = { binderCertsText = it },
+                                label = { Text("Signing Cert SHA-256 Pins (comma or newline separated)") },
+                                placeholder = { Text("64-char hex SHA-256 digest(s)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2,
+                            )
                         }
 
                         Text("Supported Platform Profiles", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = allowDesktop, onCheckedChange = { allowDesktop = it })
+                            Checkbox(
+                                checked = allowDesktop,
+                                onCheckedChange = { allowDesktop = it },
+                                enabled = transport != "binder",
+                            )
                             Text("DESKTOP", fontSize = 12.sp)
                             Spacer(modifier = Modifier.width(16.dp))
-                            Checkbox(checked = allowMobile, onCheckedChange = { allowMobile = it })
+                            Checkbox(
+                                checked = allowMobile,
+                                onCheckedChange = { allowMobile = it },
+                                enabled = transport != "binder" && transport != "stdio",
+                            )
                             Text("MOBILE", fontSize = 12.sp)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    val parsedBinderCerts = binderCertsText
+                        .split(',', '\n', ';')
+                        .map { it.trim().lowercase() }
+                        .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+                        .toSet()
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -868,9 +924,14 @@ private fun AddMcpServerDialog(
                                         line.substring(0, idx).trim() to line.substring(idx + 1).trim()
                                     }
 
-                                val profiles = mutableSetOf<String>()
-                                if (allowDesktop) profiles.add("DESKTOP")
-                                if (allowMobile) profiles.add("MOBILE")
+                                val profiles = if (transport == "binder") {
+                                    setOf("MOBILE")
+                                } else {
+                                    buildSet {
+                                        if (allowDesktop) add("DESKTOP")
+                                        if (allowMobile) add("MOBILE")
+                                    }
+                                }
 
                                 onAdd(
                                     ParsedMcpServerConfig(
@@ -879,12 +940,19 @@ private fun AddMcpServerDialog(
                                         command = if (transport == "stdio") command.trim() else null,
                                         args = argsList,
                                         endpointUrl = if (transport == "http") endpointUrl.trim() else null,
+                                        packageName = if (transport == "binder") binderPackage.trim() else null,
+                                        serviceClass = if (transport == "binder") binderService.trim() else null,
+                                        signingCertSha256 = if (transport == "binder") parsedBinderCerts else emptySet(),
                                         envOrHeaders = secrets,
                                         profiles = profiles,
                                     )
                                 )
                             },
-                            enabled = name.isNotBlank() && ((transport == "stdio" && command.isNotBlank()) || (transport == "http" && endpointUrl.isNotBlank())),
+                            enabled = name.isNotBlank() && (
+                                (transport == "stdio" && command.isNotBlank()) ||
+                                    (transport == "http" && endpointUrl.isNotBlank()) ||
+                                    (transport == "binder" && binderPackage.isNotBlank() && binderService.isNotBlank() && parsedBinderCerts.isNotEmpty())
+                                ),
                         ) {
                             Text("Add Server")
                         }
@@ -942,7 +1010,11 @@ private fun AddMcpServerDialog(
                                                 Text("[${s.transport.uppercase()}]", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                                             }
                                             Text(
-                                                if (s.transport == "stdio") "${s.command} ${s.args.joinToString(" ")}" else s.endpointUrl.orEmpty(),
+                                                when (s.transport) {
+                                                    "stdio" -> "${s.command} ${s.args.joinToString(" ")}"
+                                                    "binder" -> "${s.packageName.orEmpty()}/${s.serviceClass.orEmpty()}"
+                                                    else -> s.endpointUrl.orEmpty()
+                                                },
                                                 fontSize = 11.sp,
                                                 fontFamily = FontFamily.Monospace,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -23,14 +23,19 @@ internal fun ensureMcpServerCapability(
         is McpTransport.Http -> Permission.NETWORK_EGRESS
         is McpTransport.Binder -> Permission.APP_IPC
     }
-    val existing = runBlocking {
-        capabilityManager.loadForSubject(serverId).firstOrNull {
-            it.permission == permission && it.subjectKind == SubjectKind.MCP_SERVER && it.revokedAt == null
-        }
+    // Check full capability history (active OR revoked) so a revoked MCP grant is never silently re-granted.
+    if (capabilityManager.hasSubjectCapabilityHistory(serverId, SubjectKind.MCP_SERVER, permission)) {
+        return
     }
-    if (existing != null) return
     val scope = when (transport) {
-        is McpTransport.Stdio -> CapabilityScope.Shell(projectId, "/", null)
+        is McpTransport.Stdio -> {
+            if (transport.command.isBlank()) return
+            CapabilityScope.Shell(
+                projectId = projectId,
+                workingDirectory = ".",
+                allowedCommands = listOf(transport.command),
+            )
+        }
         is McpTransport.Http -> {
             val uri = URI.create(transport.endpointUrl)
             val host = uri.host ?: return
@@ -49,6 +54,7 @@ internal fun ensureMcpServerCapability(
             allowedKinds = emptySet(),
         )
     }
+    // RuntimeCompositionRoot.buildExecutor invokes this synchronously during runtime wiring.
     runBlocking {
         capabilityManager.grant(
             subjectId = serverId,

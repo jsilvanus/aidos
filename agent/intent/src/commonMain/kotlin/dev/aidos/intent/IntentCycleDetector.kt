@@ -1,24 +1,26 @@
 package dev.aidos.intent
 
-import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.ErrorClass
+import dev.aidos.kernel.ErrorCodes
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Detects cycles in the intent graph when adding edges (RFC-0012).
  *
- * When a new intent_edges row is about to be inserted, this checks whether adding it would
- * create a cycle. A cycle deadlocks status derivation and is rejected immediately with
- * error code `intent.cycle_rejected`.
+ * In `intent_edges`, a `DEPENDS_ON` row `(from_node_id -> to_node_id)` means `from_node_id`
+ * depends on `to_node_id` (i.e. `to_node_id` must complete first). Adding `fromNodeId -> toNodeId`
+ * creates a cycle if `fromNodeId == toNodeId` or if a directed path already exists from
+ * `toNodeId` to `fromNodeId` across persisted `intent_edges` and any not-yet-persisted
+ * intra-batch `pendingEdges`.
  *
- * The check is a reachability test: if a path already exists from to_node_id to from_node_id,
- * then adding from_node_id → to_node_id would create a cycle.
- *
- * Cost: O(E + V) per edge insert. At intent-graph scale (tens to hundreds of nodes),
- * this is negligible.
+ * A cycle deadlocks status derivation and is rejected immediately with error code
+ * `intent.cycle_rejected`.
  */
 class IntentCycleDetector(
     private val driver: SqlDriver,
@@ -28,74 +30,103 @@ class IntentCycleDetector(
 ) {
 
     /**
-     * Checks if adding a dependency edge would create a cycle.
+     * Checks if adding a persisted dependency edge (`fromNodeId` DEPENDS_ON `toNodeId`) would
+     * create a cycle against persisted `intent_edges`.
      *
-     * Returns null if the edge is safe. Returns [AidosError] if a cycle would be created.
-     *
-     * If a cycle is detected, writes an audit row with kind=IntentCycleDetected.
+     * Returns null if the edge is safe. Returns [AidosError] if a cycle would be created, and
+     * writes an audit row with `kind = IntentCycleDetected`.
      */
     fun checkEdgeForCycle(
         projectId: String,
         fromNodeId: String,
         toNodeId: String,
         actor: ActorRef,
+    ): AidosError? = checkEdgeForCycle(
+        projectId = projectId,
+        fromNodeId = fromNodeId,
+        toNodeId = toNodeId,
+        actor = actor,
+        pendingEdges = emptyList(),
+    )
+
+    /**
+     * Checks if adding `fromNodeId -> toNodeId` would create a cycle against both persisted
+     * `intent_edges` (`edge_kind = 'DEPENDS_ON'`) and [pendingEdges] from the same proposal batch.
+     *
+     * Returns null if safe, or [AidosError] (`intent.cycle_rejected`) after emitting an
+     * `IntentCycleDetected` audit row.
+     */
+    fun checkEdgeForCycle(
+        projectId: String,
+        fromNodeId: String,
+        toNodeId: String,
+        actor: ActorRef,
+        pendingEdges: Collection<Pair<String, String>>,
     ): AidosError? {
-        // Reachability check: is there a path from toNodeId to fromNodeId?
-        // If yes, adding fromNodeId → toNodeId creates a cycle.
-        val canReach = canReachViaGraph(toNodeId, fromNodeId, projectId)
-        if (!canReach) {
-            return null  // Safe
+        val createsCycle = if (fromNodeId == toNodeId) {
+            true
+        } else {
+            canReachViaGraph(
+                source = toNodeId,
+                target = fromNodeId,
+                projectId = projectId,
+                pendingEdges = pendingEdges,
+            )
+        }
+        if (!createsCycle) {
+            return null
         }
 
-        // Cycle detected. Emit audit and return error.
-        val auditId = idGen()
         audit.write(
-            id = auditId,
+            id = idGen(),
             projectId = projectId,
             kind = "IntentCycleDetected",
             actor = actor,
             subjectRef = "$fromNodeId → $toNodeId",
-            detailJson = """{"from":"$fromNodeId","to":"$toNodeId"}""",
+            detailJson = buildJsonObject {
+                put("from", fromNodeId)
+                put("to", toNodeId)
+            }.toString(),
             nowIso = nowIso(),
         )
 
         return AidosError(
-            code = "intent.cycle_rejected",
+            code = ErrorCodes.INTENT_CYCLE_REJECTED,
             errorClass = ErrorClass.INVALID_INPUT,
             message = "Adding edge $fromNodeId → $toNodeId would create a cycle",
         )
     }
 
     /**
-     * Checks if a path exists from source to target in the intent graph.
-     *
-     * Uses depth-first search with a visited set to avoid revisiting nodes.
+     * Checks if a directed `DEPENDS_ON` path exists from [source] to [target] across persisted
+     * `intent_edges` and [pendingEdges], using BFS with a visited set so pre-existing cycles
+     * cannot cause infinite loops.
      */
     private fun canReachViaGraph(
         source: String,
         target: String,
         projectId: String,
+        pendingEdges: Collection<Pair<String, String>>,
     ): Boolean {
-        val visited = mutableSetOf<String>()
-        return dfs(source, target, projectId, visited)
-    }
+        if (source == target) return true
 
-    private fun dfs(
-        current: String,
-        target: String,
-        projectId: String,
-        visited: MutableSet<String>,
-    ): Boolean {
-        if (current == target) return true
-        if (current in visited) return false
+        val adjacency = loadDependencyAdjacency(projectId)
+        for ((from, to) in pendingEdges) {
+            adjacency.getOrPut(from) { mutableListOf() }.add(to)
+        }
 
-        visited.add(current)
+        val visited = mutableSetOf(source)
+        val queue = ArrayDeque<String>()
+        queue.addLast(source)
 
-        // Get all nodes that current depends on (outgoing edges with kind='DEPENDS_ON')
-        val nextNodes = getOutgoingNodes(current, projectId)
-        for (next in nextNodes) {
-            if (dfs(next, target, projectId, visited)) {
-                return true
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            val nextNodes = adjacency[current] ?: continue
+            for (next in nextNodes) {
+                if (next == target) return true
+                if (visited.add(next)) {
+                    queue.addLast(next)
+                }
             }
         }
 
@@ -103,23 +134,27 @@ class IntentCycleDetector(
     }
 
     /**
-     * Returns all nodes that [nodeId] points to via DEPENDS_ON edges.
+     * Loads all persisted `DEPENDS_ON` edges (`from_node_id -> to_node_id`) for [projectId].
      */
-    private fun getOutgoingNodes(nodeId: String, projectId: String): List<String> {
-        val result = mutableListOf<String>()
+    private fun loadDependencyAdjacency(projectId: String): MutableMap<String, MutableList<String>> {
+        val adjacency = mutableMapOf<String, MutableList<String>>()
         driver.executeQuery(
             identifier = null,
-            sql = "SELECT to_node_id FROM intent_edges " +
-                "WHERE project_id = ? AND from_node_id = ? AND edge_kind = 'DEPENDS_ON'",
-            parameters = 2,
-            binders = { bindString(0, projectId); bindString(1, nodeId) },
+            sql = "SELECT from_node_id, to_node_id FROM intent_edges " +
+                "WHERE project_id = ? AND edge_kind = 'DEPENDS_ON'",
+            parameters = 1,
+            binders = { bindString(0, projectId) },
             mapper = { resultSet ->
                 while (resultSet.next().value) {
-                    resultSet.getString(0)?.let { result.add(it) }
+                    val from = resultSet.getString(0)
+                    val to = resultSet.getString(1)
+                    if (from != null && to != null) {
+                        adjacency.getOrPut(from) { mutableListOf() }.add(to)
+                    }
                 }
                 QueryResult.Value(Unit)
             },
         )
-        return result
+        return adjacency
     }
 }

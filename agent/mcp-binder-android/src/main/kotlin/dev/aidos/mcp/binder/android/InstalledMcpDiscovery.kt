@@ -56,10 +56,12 @@ object InstalledMcpDiscovery {
             if (!serviceInfo.exported) return@mapNotNull null // Non-exported services cannot be bound by other apps
 
             val pkg = serviceInfo.packageName
-            val serviceClass = serviceInfo.name
+            val rawName = serviceInfo.name ?: return@mapNotNull null
+            val serviceClass = normalizeServiceClass(pkg, rawName)
             val appLabel = serviceInfo.applicationInfo?.let { it.loadLabel(pm).toString() } ?: pkg
             val serviceLabel = serviceInfo.loadLabel(pm).toString()
             val certs = AndroidBinderConnector.signingCertsOf(context, pkg)
+            if (certs.isEmpty()) return@mapNotNull null
 
             DiscoveredMcpProvider(
                 packageName = pkg,
@@ -70,4 +72,7 @@ object InstalledMcpDiscovery {
             )
         }
     }
+
+    internal fun normalizeServiceClass(packageName: String, rawServiceName: String): String =
+        if (rawServiceName.startsWith(".")) "$packageName$rawServiceName" else rawServiceName
 }

@@ -120,7 +120,7 @@ class McpServerActivator(
         val registration = load.registration.copy(tools = resolution.adopted)
         val tool = McpTool(registration, client)
         return McpActivationOutcome.Activated(
-            McpServerActivation(tool = tool, unadopted = resolution.unadopted, client = client),
+            McpServerActivation(tool = tool, unadopted = resolution.unadopted, client = client, catalog = catalog),
         )
     }
 
@@ -241,6 +241,7 @@ class McpServerActivation(
     val tool: McpTool,
     val unadopted: List<McpToolSpec>,
     val client: McpClient,
+    val catalog: List<McpToolSpec> = emptyList(),
 ) {
     // Not [AutoCloseable]: the SDK's shutdown is suspending, and wrapping it in `runBlocking` to
     // satisfy the interface would block whichever thread the caller happens to be on -- including

@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="daemon-jvm">
-    <output-path>$PROJECT_DIR$/agent/daemon/build/libs</output-path>
-    <root id="archive" name="daemon-jvm.jar">
-      <element id="module-output" name="aidos-agent.daemon.jvmMain" />
-    </root>
-  </artifact>
-</component>

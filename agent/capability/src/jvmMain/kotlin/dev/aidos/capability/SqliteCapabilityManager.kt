@@ -1,5 +1,6 @@
 package dev.aidos.capability
 
+import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.identity.UuidV7Generator
@@ -42,7 +43,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -66,6 +66,9 @@ class SqliteCapabilityManager(
     private val deviceId: String = "runtime",
     private val nowIso: () -> String,
 ) : CapabilityManager {
+
+    private val transacter = object : TransacterImpl(projectDriver) {}
+    private val usageLock = Any()
 
     constructor(
         projectDriver: SqlDriver,
@@ -116,8 +119,8 @@ class SqliteCapabilityManager(
                 "constraints_json, issued_at, issued_by_kind, issued_by_id, " +
                 "parent_capability_id, allows_delegation, expires_at, revoked_at, revoked_by, " +
                 "revocation_epoch, audit_ref) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'USER', ?, NULL, 0, ?, NULL, NULL, ?, ?)",
-            parameters = 10,
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 17,
         ) {
             bindString(0, id.value)
             bindString(1, projectIdStr)
@@ -127,10 +130,15 @@ class SqliteCapabilityManager(
             bindString(5, Json.encodeToString(scope.toJson()))
             bindString(6, Json.encodeToString(constraints.toJson()))
             bindString(7, now)
-            bindString(8, grantedBy.value)
-            bindString(9, expiresAt?.toString())
-            bindLong(10, epoch)
-            bindString(11, auditId.value)
+            bindString(8, "USER")
+            bindString(9, grantedBy.value)
+            bindString(10, null)
+            bindLong(11, 0L)
+            bindString(12, expiresAt?.toString())
+            bindString(13, null)
+            bindString(14, null)
+            bindLong(15, epoch)
+            bindString(16, auditId.value)
         }
 
         return Result.success(
@@ -163,8 +171,14 @@ class SqliteCapabilityManager(
     ): Result<Capability> {
         val parentCap = loadCapabilityById(parent)
             ?: return Result.failure(capNotFound(parent))
-        if (parentCap.revokedAt != null) {
+        val now = nowIso()
+        val epoch = currentEpochOrZero(parentCap.scope.projectId() ?: parentCap.projectId)
+        if (parentCap.revokedAt != null || parentCap.revocationEpoch < epoch) {
             return Result.failure(RuntimeException("parent capability ${parent.value} is revoked"))
+        }
+        val parentExp = parentCap.expiresAt
+        if (parentExp != null && Instant.parse(now) > parentExp) {
+            return Result.failure(RuntimeException("parent capability ${parent.value} is expired"))
         }
         if (!parentCap.allowsDelegation) {
             return Result.failure(RuntimeException("parent capability ${parent.value} does not allow delegation"))
@@ -184,8 +198,6 @@ class SqliteCapabilityManager(
 
         val id = CapabilityId(ids.next())
         val auditId = AuditId(ids.next())
-        val now = nowIso()
-        val epoch = currentEpochOrZero(parentCap.scope.projectId())
 
         // Was missing entirely: every delegate() call failed FK-violating on audit_ref, since
         // nothing wrote the audit_log row it references (unlike grant(), just above, which does).
@@ -196,6 +208,11 @@ class SqliteCapabilityManager(
             SubjectKind.PLUGIN -> dev.aidos.kernel.ActorKind.PLUGIN
             SubjectKind.MCP_SERVER -> dev.aidos.kernel.ActorKind.MCP_SERVER
             SubjectKind.FRONTEND -> dev.aidos.kernel.ActorKind.USER
+        }
+        val issuedByKind = when (parentCap.subjectKind) {
+            SubjectKind.WORKER -> "WORKER"
+            SubjectKind.FRONTEND -> "USER"
+            SubjectKind.SESSION, SubjectKind.PLUGIN, SubjectKind.MCP_SERVER -> "SESSION"
         }
 
         insertAuditRow(
@@ -210,8 +227,8 @@ class SqliteCapabilityManager(
                 "constraints_json, issued_at, issued_by_kind, issued_by_id, " +
                 "parent_capability_id, allows_delegation, expires_at, revoked_at, revoked_by, " +
                 "revocation_epoch, audit_ref) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SESSION', ?, ?, 0, ?, NULL, NULL, ?, ?)",
-            parameters = 11,
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 17,
         ) {
             bindString(0, id.value)
             bindString(1, parentCap.projectId.value)
@@ -221,11 +238,20 @@ class SqliteCapabilityManager(
             bindString(5, Json.encodeToString(attenuatedScope.toJson()))
             bindString(6, Json.encodeToString(attenuatedConstraints.toJson()))
             bindString(7, now)
-            bindString(8, parentCap.subjectId)
-            bindString(9, parent.value)
-            bindString(10, (parentCap.expiresAt ?: attenuatedConstraints.maxDurationSeconds?.let { null })?.toString())
-            bindLong(11, epoch)
-            bindString(12, auditId.value)
+            bindString(8, issuedByKind)
+            bindString(9, parentCap.subjectId)
+            bindString(10, parent.value)
+            bindLong(11, 0L)
+            bindString(12, parentCap.expiresAt?.toString())
+            bindString(13, null)
+            bindString(14, null)
+            bindLong(15, epoch)
+            bindString(16, auditId.value)
+        }
+
+        val issuedSource = when (issuedByKind) {
+            "USER" -> GrantSource.User
+            else -> GrantSource.Delegation(dev.aidos.kernel.SessionId(parentCap.subjectId))
         }
 
         return Result.success(
@@ -238,7 +264,7 @@ class SqliteCapabilityManager(
                 scope = attenuatedScope,
                 constraints = attenuatedConstraints,
                 issuedAt = Instant.parse(now),
-                issuedBy = GrantSource.Delegation(dev.aidos.kernel.SessionId(parentCap.subjectId)),
+                issuedBy = issuedSource,
                 parentCapabilityId = parent,
                 allowsDelegation = false,
                 expiresAt = parentCap.expiresAt,
@@ -272,81 +298,89 @@ class SqliteCapabilityManager(
         capabilityId: CapabilityId,
         operation: Operation<*>,
         runTaint: TrustLevel,
-    ): CapabilityCheckResult {
-        val cap = loadCapabilityById(capabilityId)
-            ?: return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
+    ): CapabilityCheckResult = synchronized(usageLock) {
+        transacter.transactionWithResult {
+            val cap = loadCapabilityById(capabilityId)
+                ?: return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
 
-        if (cap.subjectId != subjectId && cap.subjectKind != SubjectKind.MCP_SERVER) {
-            return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
-        }
-
-        if (cap.subjectKind == SubjectKind.MCP_SERVER && cap.subjectId != subjectId && !operation.name.startsWith("${cap.subjectId}:")) {
-            return CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
-        }
-        if (':' in operation.name && isServerCapabilityRevoked(operation.name.substringBefore(':'), cap.permission)) {
-            return CapabilityCheckResult.Denied(DenialReason.CAPABILITY_REVOKED)
-        }
-        // Revocation check: compare stored epoch against current project epoch.
-        val currentEpoch = currentEpochOrZero(cap.scope.projectId())
-        if (cap.revokedAt != null || cap.revocationEpoch < currentEpoch) {
-            return CapabilityCheckResult.Denied(DenialReason.CAPABILITY_REVOKED)
-        }
-
-        // Expiry check.
-        val exp = cap.expiresAt
-        if (exp != null && Instant.parse(nowIso()) > exp) {
-            return CapabilityCheckResult.Denied(DenialReason.CAPABILITY_EXPIRED)
-        }
-
-        // Taint attenuation (RFC-0027): UNTRUSTED runs are denied for specific permission classes.
-        // Only UNTRUSTED attenuates: PROJECT (ordinary project reads) never does.
-        if (runTaint == TrustLevel.UNTRUSTED) {
-            when (TaintAttenuation.decide(cap.permission, operation)) {
-                TaintAttenuation.Decision.DENY ->
-                    return CapabilityCheckResult.Denied(DenialReason.ATTENUATED_BY_TAINT)
-                TaintAttenuation.Decision.REQUIRES_APPROVAL ->
-                    return CapabilityCheckResult.Denied(DenialReason.TAINT_REQUIRES_APPROVAL)
-                TaintAttenuation.Decision.ALLOW -> Unit
+            if (cap.subjectId != subjectId && cap.subjectKind != SubjectKind.MCP_SERVER) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
             }
-        }
 
-        // RFC-0008 step 8d, TOOL_CALL continuation (branch `claude/continuation-flow`, follow-up):
-        // a grant issued with requiresApprovalPerUse was silently unenforced -- every use passed
-        // validate() exactly as if the constraint didn't exist, since nothing here ever read it.
-        // This makes the constraint real again: every exercise of such a grant is denied, always
-        // -- "per use" means every use, not just the first. Nothing in this codebase issues a
-        // grant with this flag set yet (grep confirms), so this is inert until something does; the
-        // executor-side response (park for a human decision instead of returning the denial to the
-        // model as data, the way every other DenialReason here already does) is a separate,
-        // larger piece — see PIPELINE.md's "Notes for the next link" for the resume design and why
-        // it can't reuse EffectBroker.invoke() (runtime/kernel/ is frozen at G0).
-        if (cap.constraints.requiresApprovalPerUse) {
-            return CapabilityCheckResult.Denied(DenialReason.REQUIRES_APPROVAL)
-        }
-
-        // RFC-0018: maxExerciseCount enforcement. Load current usage count and check limit.
-        val maxCount = cap.constraints.maxExerciseCount
-        if (maxCount != null && maxCount > 0) {
-            val currentCount = loadCapabilityUsageCount(capabilityId)
-            if (currentCount >= maxCount) {
-                return CapabilityCheckResult.Denied(DenialReason.CONSTRAINT_EXCEEDED)
+            if (cap.subjectKind == SubjectKind.MCP_SERVER && cap.subjectId != subjectId && !operation.name.startsWith("${cap.subjectId}:")) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.NO_CAPABILITY)
             }
-        }
+            if (':' in operation.name && isServerCapabilityRevoked(operation.name.substringBefore(':'), cap.permission)) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.CAPABILITY_REVOKED)
+            }
+            // Revocation check: compare stored epoch against current project epoch.
+            val currentEpoch = currentEpochOrZero(cap.scope.projectId() ?: cap.projectId)
+            if (cap.revokedAt != null || cap.revocationEpoch < currentEpoch) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.CAPABILITY_REVOKED)
+            }
 
-        return CapabilityCheckResult.Allowed
+            // Expiry check.
+            val now = nowIso()
+            val exp = cap.expiresAt
+            if (exp != null && Instant.parse(now) > exp) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.CAPABILITY_EXPIRED)
+            }
+
+            // Taint attenuation (RFC-0027): UNTRUSTED runs are denied for specific permission classes.
+            // Only UNTRUSTED attenuates: PROJECT (ordinary project reads) never does.
+            if (runTaint == TrustLevel.UNTRUSTED) {
+                when (TaintAttenuation.decide(cap.permission, operation)) {
+                    TaintAttenuation.Decision.DENY ->
+                        return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.ATTENUATED_BY_TAINT)
+                    TaintAttenuation.Decision.REQUIRES_APPROVAL ->
+                        return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.TAINT_REQUIRES_APPROVAL)
+                    TaintAttenuation.Decision.ALLOW -> Unit
+                }
+            }
+
+            // RFC-0008 step 8d, TOOL_CALL continuation (branch `claude/continuation-flow`, follow-up):
+            // a grant issued with requiresApprovalPerUse was silently unenforced -- every use passed
+            // validate() exactly as if the constraint didn't exist, since nothing here ever read it.
+            // This makes the constraint real again: every exercise of such a grant is denied, always
+            // -- "per use" means every use, not just the first. Nothing in this codebase issues a
+            // grant with this flag set yet (grep confirms), so this is inert until something does; the
+            // executor-side response (park for a human decision instead of returning the denial to the
+            // model as data, the way every other DenialReason here already does) is a separate,
+            // larger piece — see PIPELINE.md's "Notes for the next link" for the resume design and why
+            // it can't reuse EffectBroker.invoke() (runtime/kernel/ is frozen at G0).
+            if (cap.constraints.requiresApprovalPerUse) {
+                return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.REQUIRES_APPROVAL)
+            }
+
+            // RFC-0018: maxExerciseCount enforcement. Enforce even when maxCount <= 0 and increment atomically.
+            val maxCount = cap.constraints.maxExerciseCount
+            if (maxCount != null) {
+                val currentCount = loadCapabilityUsageCount(capabilityId)
+                if (currentCount >= maxCount.toLong()) {
+                    return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.CONSTRAINT_EXCEEDED)
+                }
+            }
+
+            recordCapabilityExercise(capabilityId, now)
+            CapabilityCheckResult.Allowed
+        }
     }
 
     override suspend fun revoke(capabilityId: CapabilityId, revokedBy: String) {
         val now = nowIso()
         // Increment the project epoch and revoke the capability tree in one transaction.
-        projectDriver.execute(
-            identifier = null,
-            sql = "UPDATE project_revocation_epoch SET epoch = epoch + 1 " +
-                "WHERE project_id = (SELECT project_id FROM capabilities WHERE id = ?)",
-            parameters = 1,
-        ) { bindString(0, capabilityId.value) }
+        synchronized(usageLock) {
+            transacter.transaction {
+                projectDriver.execute(
+                    identifier = null,
+                    sql = "UPDATE project_revocation_epoch SET epoch = epoch + 1 " +
+                        "WHERE project_id = (SELECT project_id FROM capabilities WHERE id = ?)",
+                    parameters = 1,
+                ) { bindString(0, capabilityId.value) }
 
-        revokeTree(capabilityId, revokedBy, now)
+                revokeTree(capabilityId, revokedBy, now)
+            }
+        }
     }
 
     /** Recursively revokes a capability and all its delegated descendants. */
@@ -401,6 +435,28 @@ class SqliteCapabilityManager(
 
     override fun currentEpoch(projectId: ProjectId): Long = currentEpochOrZero(projectId)
 
+    /**
+     * Returns true if any capability row (active or revoked) already exists for [subjectId] with
+     * [subjectKind] and [permission]. Prevents auto-issuance flows (e.g. MCP servers) from
+     * silently re-granting a previously revoked capability.
+     */
+    fun hasSubjectCapabilityHistory(
+        subjectId: String,
+        subjectKind: SubjectKind,
+        permission: Permission,
+    ): Boolean {
+        return projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT 1 FROM capabilities WHERE subject_id = ? AND subject_kind = ? AND permission = ? LIMIT 1",
+            mapper = { cursor -> QueryResult.Value(cursor.next().value) },
+            parameters = 3,
+        ) {
+            bindString(0, subjectId)
+            bindString(1, subjectKind.name)
+            bindString(2, permission.name)
+        }.value
+    }
+
     private fun isServerCapabilityRevoked(serverId: String, permission: Permission): Boolean {
         val now = Instant.parse(nowIso())
         val rows = mutableListOf<Capability>()
@@ -423,7 +479,7 @@ class SqliteCapabilityManager(
         }
         if (rows.isEmpty()) return false
         val active = rows.count { row ->
-            val epoch = currentEpochOrZero(row.scope.projectId())
+            val epoch = currentEpochOrZero(row.scope.projectId() ?: row.projectId)
             val expired = row.expiresAt?.let { now > it } ?: false
             row.revokedAt == null && row.revocationEpoch >= epoch && !expired
         }
@@ -440,9 +496,23 @@ class SqliteCapabilityManager(
         ) { bindString(0, capId.value) }.value
 
     private fun findProjectIdForSubject(subjectId: String): String? {
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id FROM sessions WHERE id = ? LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, subjectId) }.value?.let { return it }
+
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id FROM mcp_operation_adoptions WHERE server_name = ? LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, subjectId) }.value?.let { return it }
+
         return projectDriver.executeQuery(
             identifier = null,
-            sql = "SELECT project_id FROM sessions WHERE id = ?",
+            sql = "SELECT project_id FROM capabilities WHERE subject_id = ? LIMIT 1",
             mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
             parameters = 1,
         ) { bindString(0, subjectId) }.value
@@ -517,7 +587,8 @@ class SqliteCapabilityManager(
             issuedAt = Instant.parse(issuedAt),
             issuedBy = when (issuedByKind) {
                 "USER" -> GrantSource.User
-                "SESSION" -> GrantSource.Delegation(dev.aidos.kernel.SessionId(issuedById))
+                "SESSION", "WORKER" -> GrantSource.Delegation(dev.aidos.kernel.SessionId(issuedById))
+                "RUNTIME" -> GrantSource.Default(issuedById)
                 else -> GrantSource.User
             },
             parentCapabilityId = parentId?.let { CapabilityId(it) },
@@ -594,22 +665,24 @@ class SqliteCapabilityManager(
                 }
             }
             parentScope is CapabilityScope.Shell && delegatedScope is CapabilityScope.Shell -> {
-                if (parentScope.projectId != delegatedScope.projectId) {
-                    "shell scope cross-project delegation denied"
-                } else if (parentScope.allowedCommands != null && delegatedScope.allowedCommands != null) {
-                    // Delegated commands must be a subset of parent's allowed commands.
-                    val parentCmds = (parentScope.allowedCommands as Iterable<String>).toSet()
-                    val delegatedCmds = (delegatedScope.allowedCommands as Iterable<String>).toSet()
-                    if (!delegatedCmds.all { it in parentCmds }) {
-                        "shell delegated commands not contained in parent"
-                    } else {
-                        null
+                val parentCmds = parentScope.allowedCommands
+                val delegatedCmds = delegatedScope.allowedCommands
+                when {
+                    parentScope.projectId != delegatedScope.projectId ->
+                        "shell scope cross-project delegation denied"
+                    !isPathContained(parentScope.workingDirectory, delegatedScope.workingDirectory) ->
+                        "shell delegated workingDirectory ${delegatedScope.workingDirectory} not contained in parent ${parentScope.workingDirectory}"
+                    parentCmds != null && delegatedCmds == null ->
+                        "shell delegation cannot expand commands from restricted to unrestricted"
+                    parentCmds != null && delegatedCmds != null -> {
+                        val parentSet = parentCmds.toSet()
+                        if (!delegatedCmds.all { it in parentSet }) {
+                            "shell delegated commands not contained in parent"
+                        } else {
+                            null
+                        }
                     }
-                } else if (parentScope.allowedCommands != null && delegatedScope.allowedCommands == null) {
-                    // Cannot expand from restricted to unrestricted.
-                    "shell delegation cannot expand commands from restricted to unrestricted"
-                } else {
-                    null
+                    else -> null
                 }
             }
             parentScope is CapabilityScope.Git && delegatedScope is CapabilityScope.Git -> {
@@ -622,50 +695,49 @@ class SqliteCapabilityManager(
                 }
             }
             parentScope is CapabilityScope.Network && delegatedScope is CapabilityScope.Network -> {
-                // Delegated hosts must be a subset of parent's allowed hosts.
                 val parentHosts = parentScope.allowedHosts.toSet()
-                val delegatedHosts = delegatedScope.allowedHosts.toSet()
-                if (!delegatedHosts.all { host -> hostMatched(host, parentHosts) }) {
-                    "network delegated hosts not contained in parent"
-                } else if (delegatedScope.allowedPorts != null && parentScope.allowedPorts != null) {
-                    val parentPorts = (parentScope.allowedPorts as Iterable<Int>).toSet()
-                    val delegatedPorts = (delegatedScope.allowedPorts as Iterable<Int>).toSet()
-                    if (!delegatedPorts.all { it in parentPorts }) {
+                val parentPorts = parentScope.allowedPorts
+                val delegatedPorts = delegatedScope.allowedPorts
+                when {
+                    parentScope.allowedHosts.isEmpty() ->
+                        "network parent scope has no allowedHosts to delegate"
+                    delegatedScope.allowedHosts.isEmpty() ->
+                        "network delegated allowedHosts cannot be empty"
+                    !delegatedScope.allowedHosts.all { host -> hostMatched(host, parentHosts) } ->
+                        "network delegated hosts not contained in parent"
+                    parentPorts != null && delegatedPorts == null ->
+                        "network delegation cannot expand ports from restricted to unrestricted"
+                    parentPorts != null && delegatedPorts != null && !delegatedPorts.all { it in parentPorts.toSet() } ->
                         "network delegated ports not contained in parent"
-                    } else {
-                        null
-                    }
-                } else if (delegatedScope.allowedPorts != null && parentScope.allowedPorts == null) {
-                    // Cannot restrict ports if parent allows all.
-                    null
-                } else if (delegatedScope.allowedPorts == null && parentScope.allowedPorts != null) {
-                    // Cannot expand from restricted to unrestricted ports.
-                    "network delegation cannot expand ports from restricted to unrestricted"
-                } else {
-                    null
+                    !parentScope.allowPrivateAddresses && delegatedScope.allowPrivateAddresses ->
+                        "network delegation cannot expand allowPrivateAddresses from false to true"
+                    redirectPermissiveness(delegatedScope.followRedirects) > redirectPermissiveness(parentScope.followRedirects) ->
+                        "network delegation cannot relax followRedirects from ${parentScope.followRedirects} to ${delegatedScope.followRedirects}"
+                    delegatedScope.maxResponseBytes < 0L ->
+                        "network delegated maxResponseBytes ${delegatedScope.maxResponseBytes} must be non-negative"
+                    delegatedScope.maxResponseBytes > parentScope.maxResponseBytes ->
+                        "network delegated maxResponseBytes ${delegatedScope.maxResponseBytes} exceeds parent ${parentScope.maxResponseBytes}"
+                    else -> null
                 }
             }
             parentScope is CapabilityScope.Model && delegatedScope is CapabilityScope.Model -> {
-                if (delegatedScope.allowedKinds.any { it !in parentScope.allowedKinds }) {
-                    "model delegated kinds not contained in parent"
-                } else if (delegatedScope.allowedProviders != null && parentScope.allowedProviders != null) {
-                    val parentProvs = (parentScope.allowedProviders as Iterable<String>).toSet()
-                    val delegatedProvs = (delegatedScope.allowedProviders as Iterable<String>).toSet()
-                    if (!delegatedProvs.all { it in parentProvs }) {
+                val parentProvs = parentScope.allowedProviders
+                val delegatedProvs = delegatedScope.allowedProviders
+                when {
+                    delegatedScope.allowedKinds.any { it !in parentScope.allowedKinds } ->
+                        "model delegated kinds not contained in parent"
+                    parentProvs != null && delegatedProvs == null ->
+                        "model delegation cannot expand providers from restricted to unrestricted"
+                    parentProvs != null && delegatedProvs != null && !delegatedProvs.all { it in parentProvs.toSet() } ->
                         "model delegated providers not contained in parent"
-                    } else {
-                        null
-                    }
-                } else if (delegatedScope.allowedProviders != null && parentScope.allowedProviders == null) {
-                    // Cannot expand from all to restricted.
-                    "model delegation cannot restrict providers when parent allows all"
-                } else {
-                    null
+                    else -> null
                 }
             }
             parentScope is CapabilityScope.Secrets && delegatedScope is CapabilityScope.Secrets -> {
                 if (parentScope.projectId != delegatedScope.projectId) {
                     "secrets scope cross-project delegation denied"
+                } else if (delegatedScope.allowedSecretIds.any { it.value.isBlank() || '*' in it.value || '?' in it.value }) {
+                    "secrets delegated ids must name concrete non-blank secrets"
                 } else if (parentScope.allowedSecretIds.isEmpty()) {
                     // Parent allows no secrets; delegation cannot add any.
                     if (delegatedScope.allowedSecretIds.isNotEmpty()) {
@@ -678,8 +750,7 @@ class SqliteCapabilityManager(
                     "secrets delegation cannot expand from restricted to all"
                 } else {
                     val parentIds = parentScope.allowedSecretIds.toSet()
-                    val delegatedIds = delegatedScope.allowedSecretIds.toSet()
-                    if (!delegatedIds.all { it in parentIds }) {
+                    if (!delegatedScope.allowedSecretIds.all { it in parentIds }) {
                         "secrets delegated ids not contained in parent"
                     } else {
                         null
@@ -687,7 +758,9 @@ class SqliteCapabilityManager(
                 }
             }
             parentScope is CapabilityScope.Worker && delegatedScope is CapabilityScope.Worker -> {
-                if (delegatedScope.maxWorkerCount > parentScope.maxWorkerCount) {
+                if (delegatedScope.maxWorkerCount < 0) {
+                    "worker delegated maxWorkerCount must be non-negative"
+                } else if (delegatedScope.maxWorkerCount > parentScope.maxWorkerCount) {
                     "worker delegation cannot expand max worker count"
                 } else if (!delegatedScope.allowedRoles.all { it in parentScope.allowedRoles }) {
                     "worker delegated roles not contained in parent"
@@ -698,8 +771,7 @@ class SqliteCapabilityManager(
             parentScope is CapabilityScope.Events && delegatedScope is CapabilityScope.Events -> {
                 // Events scope: all topic patterns in delegated must match patterns in parent.
                 val parentPatterns = parentScope.topicPatterns.toSet()
-                val delegatedPatterns = delegatedScope.topicPatterns.toSet()
-                if (!delegatedPatterns.all { it in parentPatterns }) {
+                if (!delegatedScope.topicPatterns.all { it in parentPatterns }) {
                     "events delegated patterns not contained in parent"
                 } else {
                     null
@@ -712,113 +784,141 @@ class SqliteCapabilityManager(
         }
     }
 
-    /** Check if a path is contained within a parent path pattern. Simple substring containment. */
-    private fun isPathContained(parentPath: String, childPath: String): Boolean {
-        // Normalize trailing slashes for comparison.
-        val parent = parentPath.trimEnd('/')
-        val child = childPath.trimEnd('/')
-        return child.startsWith(parent)
+    private data class NormalizedPath(val isAbsolute: Boolean, val segments: List<String>)
+
+    private fun normalizeScopePath(raw: String): NormalizedPath? {
+        if (raw.isEmpty() || '\u0000' in raw) return null
+        if (raw.startsWith("//") || raw.startsWith("\\\\")) return null
+        if (raw.length > 1 && raw[1] == ':') return null
+        val isAbsolute = raw.startsWith('/') || raw.startsWith('\\')
+        val parts = raw.split('/', '\\')
+        if (parts.any { it == ".." }) return null
+        val segments = parts.filter { it.isNotEmpty() && it != "." }
+        return NormalizedPath(isAbsolute = isAbsolute, segments = segments)
     }
 
-    /** Check if a delegated host matches a parent host pattern (supports wildcards). */
+    /** Segment-safe path containment check preventing prefix, traversal, and backslash escapes. */
+    private fun isPathContained(parentPath: String, childPath: String): Boolean {
+        val parent = normalizeScopePath(parentPath) ?: return false
+        val child = normalizeScopePath(childPath) ?: return false
+        if (parent.isAbsolute != child.isAbsolute) return false
+        if (child.segments.size < parent.segments.size) return false
+        return child.segments.subList(0, parent.segments.size) == parent.segments
+    }
+
+    private fun redirectPermissiveness(policy: RedirectPolicy): Int = when (policy) {
+        RedirectPolicy.NONE -> 0
+        RedirectPolicy.SAME_HOST_ONLY -> 1
+        RedirectPolicy.ANY_ALLOWED_HOST -> 2
+    }
+
+    /** Check if a delegated host matches a parent host pattern (case-insensitive, safe wildcard). */
     private fun hostMatched(delegated: String, parentHosts: Set<String>): Boolean {
-        return parentHosts.any { pattern ->
+        val target = delegated.trim().lowercase()
+        if (target.isEmpty() || target.startsWith('.') || target.contains("..") ||
+            target.any { it.isWhitespace() } || '/' in target || ':' in target
+        ) {
+            return false
+        }
+        val targetIsWildcard = target.startsWith("*.")
+        val targetDomain = if (targetIsWildcard) target.substring(2) else target
+        if (targetDomain.isEmpty() || '*' in targetDomain || targetDomain.startsWith('.')) {
+            return false
+        }
+        return parentHosts.any { rawPattern ->
+            val pattern = rawPattern.trim().lowercase()
             when {
-                pattern == delegated -> true
+                pattern == target -> true
                 pattern.startsWith("*.") -> {
-                    // Wildcard: *.example.com matches api.example.com
-                    val suffix = pattern.substring(1) // ".example.com"
-                    delegated.endsWith(suffix) && delegated != pattern.substring(2)
+                    val baseDomain = pattern.substring(2)
+                    baseDomain.isNotEmpty() &&
+                        !baseDomain.startsWith('.') &&
+                        '*' !in baseDomain &&
+                        if (targetIsWildcard) {
+                            targetDomain == baseDomain || targetDomain.endsWith(".$baseDomain")
+                        } else {
+                            targetDomain.endsWith(".$baseDomain")
+                        }
                 }
                 else -> false
             }
         }
     }
 
+    private fun validateLimitAttenuation(name: String, parentLimit: Long?, delegatedLimit: Long?): String? {
+        if (delegatedLimit != null && delegatedLimit < 0L) {
+            return "delegated $name $delegatedLimit must be non-negative"
+        }
+        if (parentLimit != null && delegatedLimit == null) {
+            return "delegated $name cannot be unlimited when parent is $parentLimit"
+        }
+        if (parentLimit != null && delegatedLimit != null && delegatedLimit > parentLimit) {
+            return "delegated $name $delegatedLimit exceeds parent $parentLimit"
+        }
+        return null
+    }
+
     /** RFC-0018: Validate that delegated constraints are equal or more restrictive. */
     private fun validateConstraintAttenuation(parentConstraints: CapabilityConstraints, delegatedConstraints: CapabilityConstraints): String? {
-        // maxDurationSeconds: delegated must be <= parent (or null = unlimited).
-        val parentDur = parentConstraints.maxDurationSeconds
-        val delegatedDur = delegatedConstraints.maxDurationSeconds
-        if (parentDur != null && delegatedDur != null && delegatedDur > parentDur) {
-            return "delegated maxDurationSeconds $delegatedDur exceeds parent $parentDur"
-        }
-        if (parentDur != null && delegatedDur == null) {
-            return "delegated maxDurationSeconds cannot be unlimited when parent is $parentDur"
+        validateLimitAttenuation("maxDurationSeconds", parentConstraints.maxDurationSeconds?.toLong(), delegatedConstraints.maxDurationSeconds?.toLong())?.let { return it }
+        validateLimitAttenuation("maxBytesRead", parentConstraints.maxBytesRead, delegatedConstraints.maxBytesRead)?.let { return it }
+        validateLimitAttenuation("maxBytesWritten", parentConstraints.maxBytesWritten, delegatedConstraints.maxBytesWritten)?.let { return it }
+        validateLimitAttenuation("maxExerciseCount", parentConstraints.maxExerciseCount?.toLong(), delegatedConstraints.maxExerciseCount?.toLong())?.let { return it }
+
+        // requiresApprovalPerUse: delegated cannot drop parent's approval requirement.
+        if (parentConstraints.requiresApprovalPerUse && !delegatedConstraints.requiresApprovalPerUse) {
+            return "delegated cannot drop requiresApprovalPerUse when parent requires approval per use"
         }
 
-        // maxBytesRead: delegated must be <= parent.
-        val parentBytesRead = parentConstraints.maxBytesRead
-        val delegatedBytesRead = delegatedConstraints.maxBytesRead
-        if (parentBytesRead != null && delegatedBytesRead != null && delegatedBytesRead > parentBytesRead) {
-            return "delegated maxBytesRead $delegatedBytesRead exceeds parent $parentBytesRead"
-        }
-        if (parentBytesRead != null && delegatedBytesRead == null) {
-            return "delegated maxBytesRead cannot be unlimited when parent is $parentBytesRead"
-        }
-
-        // maxBytesWritten: delegated must be <= parent.
-        val parentBytesWritten = parentConstraints.maxBytesWritten
-        val delegatedBytesWritten = delegatedConstraints.maxBytesWritten
-        if (parentBytesWritten != null && delegatedBytesWritten != null && delegatedBytesWritten > parentBytesWritten) {
-            return "delegated maxBytesWritten $delegatedBytesWritten exceeds parent $parentBytesWritten"
-        }
-        if (parentBytesWritten != null && delegatedBytesWritten == null) {
-            return "delegated maxBytesWritten cannot be unlimited when parent is $parentBytesWritten"
-        }
-
-        // maxExerciseCount: delegated must be <= parent.
-        val parentCount = parentConstraints.maxExerciseCount
-        val delegatedCount = delegatedConstraints.maxExerciseCount
-        if (parentCount != null && delegatedCount != null && delegatedCount > parentCount) {
-            return "delegated maxExerciseCount $delegatedCount exceeds parent $parentCount"
-        }
-        if (parentCount != null && delegatedCount == null) {
-            return "delegated maxExerciseCount cannot be unlimited when parent is $parentCount"
-        }
-
-        // requiresApprovalPerUse: if parent doesn't require it, delegated cannot require it.
-        if (!parentConstraints.requiresApprovalPerUse && delegatedConstraints.requiresApprovalPerUse) {
-            return "delegated cannot require approval when parent does not"
-        }
-
-        // budget: check that delegated budget dimensions are <= parent (RFC-0028).
+        // budget: delegated cannot drop parent's budget and must attenuate all 7 dimensions (RFC-0028).
         val parentBudget = parentConstraints.budget
         val delegatedBudget = delegatedConstraints.budget
-        if (parentBudget != null && delegatedBudget != null) {
-            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls != null && (delegatedBudget.modelCalls as Int) > (parentBudget.modelCalls as Int)) {
-                return "delegated budget.modelCalls ${delegatedBudget.modelCalls} exceeds parent ${parentBudget.modelCalls}"
-            }
-            if (parentBudget.modelCalls != null && delegatedBudget.modelCalls == null) {
-                return "delegated budget.modelCalls cannot be unlimited when parent is ${parentBudget.modelCalls}"
-            }
-            // Similar checks for other budget dimensions...
-            if (parentBudget.steps != null && delegatedBudget.steps != null && (delegatedBudget.steps as Int) > (parentBudget.steps as Int)) {
-                return "delegated budget.steps ${delegatedBudget.steps} exceeds parent ${parentBudget.steps}"
-            }
-            if (parentBudget.steps != null && delegatedBudget.steps == null) {
-                return "delegated budget.steps cannot be unlimited when parent is ${parentBudget.steps}"
-            }
+        if (parentBudget != null && delegatedBudget == null) {
+            return "delegated budget cannot be null when parent specifies a budget"
+        }
+        if (delegatedBudget != null) {
+            validateLimitAttenuation("budget.modelCalls", parentBudget?.modelCalls?.toLong(), delegatedBudget.modelCalls?.toLong())?.let { return it }
+            validateLimitAttenuation("budget.inputTokens", parentBudget?.inputTokens, delegatedBudget.inputTokens)?.let { return it }
+            validateLimitAttenuation("budget.outputTokens", parentBudget?.outputTokens, delegatedBudget.outputTokens)?.let { return it }
+            validateLimitAttenuation("budget.costUnits", parentBudget?.costUnits, delegatedBudget.costUnits)?.let { return it }
+            validateLimitAttenuation("budget.steps", parentBudget?.steps?.toLong(), delegatedBudget.steps?.toLong())?.let { return it }
+            validateLimitAttenuation("budget.wallClockSeconds", parentBudget?.wallClockSeconds?.toLong(), delegatedBudget.wallClockSeconds?.toLong())?.let { return it }
+            validateLimitAttenuation("budget.toolInvocations", parentBudget?.toolInvocations?.toLong(), delegatedBudget.toolInvocations?.toLong())?.let { return it }
         }
 
         return null
     }
 
     /** Load the current exercise count for a capability from capability_usage table. */
-    private fun loadCapabilityUsageCount(capabilityId: CapabilityId): Int {
-        var count = 0
+    private fun loadCapabilityUsageCount(capabilityId: CapabilityId): Long {
+        var count = 0L
         projectDriver.executeQuery(
             identifier = null,
             sql = "SELECT exercised_count FROM capability_usage WHERE capability_id = ?",
             mapper = { cursor ->
                 if (cursor.next().value) {
-                    count = cursor.getLong(0)?.toInt() ?: 0
+                    count = cursor.getLong(0) ?: 0L
                 }
                 QueryResult.Value(Unit)
             },
             parameters = 1,
         ) { bindString(0, capabilityId.value) }
         return count
+    }
+
+    private fun recordCapabilityExercise(capabilityId: CapabilityId, now: String) {
+        projectDriver.execute(
+            identifier = null,
+            sql = "INSERT INTO capability_usage (capability_id, exercised_count, last_exercised_at) " +
+                "VALUES (?, 1, ?) " +
+                "ON CONFLICT(capability_id) DO UPDATE SET " +
+                "exercised_count = capability_usage.exercised_count + 1, " +
+                "last_exercised_at = excluded.last_exercised_at",
+            parameters = 2,
+        ) {
+            bindString(0, capabilityId.value)
+            bindString(1, now)
+        }
     }
 
 }

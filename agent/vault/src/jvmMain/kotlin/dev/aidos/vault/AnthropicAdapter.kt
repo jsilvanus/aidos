@@ -147,22 +147,23 @@ class AnthropicAdapter(
         }
         is Turn.Assistant -> buildJsonObject {
             put("role", "assistant")
-            if (turn.text != null) {
-                put("content", buildJsonArray {
-                    add(buildJsonObject { put("type", "text"); put("text", turn.text) })
-                })
-            } else if (turn.toolCalls.isNotEmpty()) {
-                put("content", buildJsonArray {
-                    for (tc in turn.toolCalls) {
-                        add(buildJsonObject {
-                            put("type", "tool_use")
-                            put("id", tc.callId)
-                            put("name", tc.toolName)
-                            put("input", tc.arguments)
-                        })
-                    }
-                })
-            }
+            put("content", buildJsonArray {
+                val text = turn.text
+                if (!text.isNullOrEmpty()) {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", text)
+                    })
+                }
+                for (tc in turn.toolCalls) {
+                    add(buildJsonObject {
+                        put("type", "tool_use")
+                        put("id", tc.callId)
+                        put("name", tc.toolName)
+                        put("input", tc.arguments)
+                    })
+                }
+            })
         }
         is Turn.ToolResult -> buildJsonObject {
             put("role", "user")

@@ -1,7 +1,9 @@
 package dev.aidos.routing
 
+import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
+import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
@@ -45,13 +47,13 @@ data class RoutingPolicy(
  *
  * Candidate resolution order:
  * 1. MOBILE without a foreground service: [RoutingDecision.ForegroundRequired].
- * 2. If a local model is loaded and matches the request, return [RoutingDecision.Local].
+ * 2. If a local model is loaded and matches [kind] and context window, return [RoutingDecision.Local].
  * 3. If no local model exists AND allowRemote is false (NEVER, or the ASK default):
  *    [RoutingDecision.RemotePendingApproval] naming a candidate adapter if
  *    [RoutingPolicy.remoteRequiresApproval] (ASK) and one exists, else
  *    [RoutingDecision.UnavailableOffline].
  * 4. If allowRemote is true but network is unavailable: [RoutingDecision.UnavailableOffline].
- * 5. If allowRemote is true and network is up but no candidate matches the allowlist:
+ * 5. If allowRemote is true and network is up but no candidate matches [kind] and allowlist:
  *    [RoutingDecision.DisabledByPolicy].
  * 6. If taint is UNTRUSTED and the only option is egress: [RoutingDecision.RemotePendingApproval].
  * 7. Consider budget (RFC-0028): prefer cheaper/smaller models when budget is limited.
@@ -61,21 +63,94 @@ class PolicyInferenceRouter(
     private val policy: RoutingPolicy,
     private val localAdapters: List<ModelAdapter> = emptyList(),
     private val remoteAdapters: List<ModelAdapter> = emptyList(),
+    private val adapterKinds: Map<String, ModelKind> = emptyMap(),
+    private val adapterDescriptors: Map<String, ModelDescriptor> = emptyMap(),
+    private val adapterCosts: Map<String, Long> = emptyMap(),
 ) : InferenceRouter {
 
     /**
-     * Estimates relative cost for an adapter (lower is cheaper).
-     * Used when budget is constrained to prefer smaller/cheaper models.
-     * Returns a score where 0 is local (free), and higher values indicate costlier options.
-     * This is a heuristic; exact cost depends on the provider's pricing.
+     * Resolves the [ModelKind] served by [adapter] using descriptor metadata, explicit kind map,
+     * typed kernel subtype ([EmbeddingModelAdapter]), or [RoutingPolicy.preferredLocal] hints.
+     * Untyped generic [ModelAdapter]s default to [ModelKind.LLM].
      */
-    private fun estimateAdapterCost(adapter: ModelAdapter): Long {
-        // Local models have zero cost (they're already downloaded/loaded).
+    private fun resolveAdapterKind(adapter: ModelAdapter): ModelKind? {
+        adapterDescriptors[adapter.modelId]?.let { return it.kind }
+        adapterKinds[adapter.modelId]?.let { return it }
+        if (adapter is EmbeddingModelAdapter) return ModelKind.EMBEDDING
+        return null
+    }
+
+    private fun matchesKind(adapter: ModelAdapter, requestedKind: ModelKind): Boolean {
+        val explicit = resolveAdapterKind(adapter)
+        if (explicit != null) return explicit == requestedKind
+
+        val preferredKindsForId = policy.preferredLocal.entries
+            .filter { it.value == adapter.modelId }
+            .map { it.key }
+        if (preferredKindsForId.isNotEmpty()) {
+            return requestedKind in preferredKindsForId
+        }
+
+        // Plain untyped adapters (e.g. AnthropicAdapter / OpenAiHttpModelAdapter) serve chat LLMs.
+        return requestedKind == ModelKind.LLM
+    }
+
+    /**
+     * Estimates relative cost for an adapter (lower is cheaper).
+     * Local adapters cost 0. For remote adapters, prefers explicit [adapterCosts], then
+     * [ModelDescriptor] cost metadata / model weight size (`sizeBytes`), then model tier
+     * heuristic — never [ModelAdapter.contextWindow].
+     */
+    internal fun estimateAdapterCost(adapter: ModelAdapter): Long {
         if (adapter.isLocal) return 0L
 
-        // Remote models have relative cost based on context window (proxy for model size/capability).
-        // Larger models typically cost more; this is a rough heuristic.
-        return adapter.contextWindow.toLong()
+        adapterCosts[adapter.modelId]?.let { return it.coerceAtLeast(0L) }
+
+        val descriptor = adapterDescriptors[adapter.modelId]
+        if (descriptor != null) {
+            metadataCost(descriptor.metadata)?.let { return it }
+            val bytes = descriptor.sizeBytes
+            if (bytes != null && bytes > 0L) {
+                return (bytes / (1024L * 1024L)).coerceAtLeast(1L)
+            }
+        }
+
+        val id = adapter.modelId.lowercase()
+        val isOSeries = id == "o1" || id == "o3" ||
+            id.startsWith("o1-") || id.startsWith("o3-") ||
+            id.contains("/o1") || id.contains("/o3") ||
+            id.contains("-o1") || id.contains("-o3")
+        return when {
+            id.contains("nano") || id.contains("micro") || id.contains("tiny") ||
+                id.contains("-1b") || id.contains("-2b") || id.contains("-3b") -> 100L
+            id.contains("mini") || id.contains("haiku") || id.contains("flash") ||
+                id.contains("lite") || id.contains("small") || id.contains("fast") ||
+                id.contains("-7b") || id.contains("-8b") -> 200L
+            id.contains("opus") || id.contains("ultra") || id.contains("large") ||
+                id.contains("frontier") || isOSeries ||
+                (id.contains("gpt-4") && !id.contains("4o")) -> 5_000L
+            id.contains("sonnet") || id.contains("medium") || id.contains("4o") ||
+                id.contains("pro") -> 1_000L
+            else -> 1_000L
+        }
+    }
+
+    private fun metadataCost(metadata: Map<String, String>): Long? {
+        for (key in DIRECT_COST_KEYS) {
+            parseNumericCost(metadata[key])?.let { return it }
+        }
+        val inputCost = parseNumericCost(metadata["input_cost_per_million"])
+        val outputCost = parseNumericCost(metadata["output_cost_per_million"])
+        if (inputCost != null || outputCost != null) {
+            return (inputCost ?: 0L) + (outputCost ?: 0L)
+        }
+        return null
+    }
+
+    private fun parseNumericCost(raw: String?): Long? {
+        if (raw == null) return null
+        raw.toLongOrNull()?.let { return it.coerceAtLeast(0L) }
+        return raw.toDoubleOrNull()?.let { (it * 100.0).toLong().coerceAtLeast(0L) }
     }
 
     override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
@@ -86,15 +161,14 @@ class PolicyInferenceRouter(
             return RoutingDecision.ForegroundRequired
         }
 
-        // 1. Local candidates — filter by kind (via context window) only.
-        // preferredLocal is applied below when choosing among candidates; filtering by all
-        // preferredLocal values here would incorrectly allow a preferred model ID for a
-        // different kind to match the current request.
+        val minCtx = context.minimumContextWindow
+
+        // 1. Local candidates — filtered by ModelKind and minimum context window.
         val localCandidates = localAdapters
-            .filter { context.minimumContextWindow == null || it.contextWindow >= context.minimumContextWindow!! }
+            .filter { matchesKind(it, kind) }
+            .filter { minCtx == null || it.contextWindow >= minCtx }
 
         if (localCandidates.isNotEmpty()) {
-            // Prefer the user's preferred model for this kind if loaded.
             val preferred = policy.preferredLocal[kind]
             val adapter = if (preferred != null) {
                 localCandidates.find { it.modelId == preferred } ?: localCandidates.first()
@@ -104,12 +178,10 @@ class PolicyInferenceRouter(
             return RoutingDecision.Local(adapter)
         }
 
-        // 2. No local candidate available. Remote candidates — filtered by allowedRemoteModelIds
-        // (if non-empty = allowlist) — are computed once here so both the policy-denial branch
-        // below (M23: naming *which* adapter approval would be for) and the later allowed-path
-        // branches can use them.
+        // 2. Remote candidates — filtered by ModelKind, minimum context window, and allowlist.
         val remoteCandidates = remoteAdapters
-            .filter { context.minimumContextWindow == null || it.contextWindow >= context.minimumContextWindow!! }
+            .filter { matchesKind(it, kind) }
+            .filter { minCtx == null || it.contextWindow >= minCtx }
             .filter { adapter ->
                 policy.allowedRemoteModelIds.isEmpty() || adapter.modelId in policy.allowedRemoteModelIds
             }
@@ -139,21 +211,24 @@ class PolicyInferenceRouter(
         }
 
         // 5. RFC-0028: Budget-aware routing. When budget is constrained, prefer cheaper models.
-        // If costUnits budget is low, select the model with the lowest estimated cost.
         val budgetRemaining = context.budgetRemaining
-        val budgetCostUnits = budgetRemaining?.costUnits
-        val remoteAdapter = if (budgetCostUnits != null && budgetCostUnits <= 1000) {
-            // Budget is tight; prefer the cheapest option.
-            // Sort by estimated cost and take the first (cheapest).
+        val costUnits = budgetRemaining?.costUnits
+        val inputTokens = budgetRemaining?.inputTokens
+        val outputTokens = budgetRemaining?.outputTokens
+        val modelCalls = budgetRemaining?.modelCalls
+        val isBudgetConstrained =
+            (costUnits != null && costUnits <= 1000L) ||
+                (inputTokens != null && inputTokens <= 10_000L) ||
+                (outputTokens != null && outputTokens <= 4_000L) ||
+                (modelCalls != null && modelCalls <= 2)
+
+        val remoteAdapter = if (isBudgetConstrained) {
             remoteCandidates.minByOrNull { estimateAdapterCost(it) } ?: remoteCandidates.first()
         } else {
-            // Budget is ample or unconstrained; prefer first candidate.
             remoteCandidates.first()
         }
 
         // 6. Tainted run crossing network boundary requires user confirmation (RFC-0027).
-        // Only UNTRUSTED attenuates: a Run that merely read project files is PROJECT-tainted
-        // and must not be asked about every model call.
         return if (context.runTaint == TrustLevel.UNTRUSTED) {
             RoutingDecision.RemotePendingApproval(
                 adapter = remoteAdapter,
@@ -162,5 +237,16 @@ class PolicyInferenceRouter(
         } else {
             RoutingDecision.RemoteApproved(remoteAdapter)
         }
+    }
+
+    private companion object {
+        val DIRECT_COST_KEYS = listOf(
+            "cost_units",
+            "costUnits",
+            "cost_per_call",
+            "costPerCall",
+            "cost_per_million_tokens",
+            "costPerMillionTokens",
+        )
     }
 }

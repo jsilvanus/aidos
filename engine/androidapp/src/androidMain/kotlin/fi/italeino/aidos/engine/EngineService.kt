@@ -56,7 +56,6 @@ import fi.italeino.aidos.engine.handshake.InProcessHandshakeSource
 import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.sdk.client.AidosEngineClient
 import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
-import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.AndroidAidin
@@ -145,12 +144,8 @@ class EngineService : LifecycleService() {
         _instance = this
         _state.value = EngineState.STARTING
 
-        // Wire crash handler early before anything else might fail (RFC-0037)
-        val crashDir = File(filesDir, "crashes")
-        // Note: On Android, the user database is shared system-wide in ~/.aidos/user.db;
-        // EngineService doesn't access it directly, but CrashHandler needs the driver.
-        // For now, we defer crash recording until we have access to the database connection.
-        // This is a known limitation for Phase 1 Android implementation.
+        // Crash recording (RFC-0037): on Android the user database is not accessed directly
+        // by EngineService, so CrashHandler initialization is deferred until a SqlDriver is available.
 
         tokenManager = TokenManager()
         val approvals = EncryptedAppApprovalStore(this)

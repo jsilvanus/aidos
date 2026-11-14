@@ -17,8 +17,11 @@ import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
 import dev.aidos.executor.CapabilityApprovalResolution
 import dev.aidos.executor.EventStore
+import dev.aidos.executor.GuardianApprovalVerifier
+import dev.aidos.executor.LlmGuardianApprovalVerifier
 import dev.aidos.executor.RunCreator
 import dev.aidos.executor.SqliteExecutor
+import dev.aidos.executor.TaintInputScreener
 import dev.aidos.executor.WorkerSpawner
 import dev.aidos.filesystem.FilesystemTool
 import dev.aidos.filesystem.PathTrustPolicy
@@ -39,6 +42,7 @@ import dev.aidos.settings.SettingError
 import dev.aidos.settings.SettingOrigin
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
+import dev.aidos.settings.TaintApprovalPolicy
 import dev.aidos.settings.UserDbSettingsAudit
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.ConsumerKind
@@ -121,6 +125,16 @@ class RuntimeCompositionRoot(
     },
     /** RFC-0056: background compaction and storage-pressure maintenance after each driven Run. */
     internal val retention: RetentionMaintenance = RetentionMaintenance(),
+    /** RFC-0110 Gate A: optional override for inbound prompt-injection screening. */
+    private val taintInputScreener: TaintInputScreener? = null,
+    /** RFC-0110 Gate B: optional override for the blind Guardian approval verifier. */
+    private val guardianVerifier: GuardianApprovalVerifier? = null,
+    /** RFC-0110 Gate A: Engine base URL used to construct [SystemOneTaintInputScreener] when [taintInputScreener] is null. */
+    private val systemOneBaseUrl: () -> String? = {
+        System.getenv("AIDOS_SYSTEMONE_URL") ?: System.getenv("AIDOS_ENGINE_URL")
+    },
+    /** Optional bearer token provider for [SystemOneTaintInputScreener]. */
+    private val systemOneBearerToken: () -> String? = { System.getenv("AIDOS_ENGINE_TOKEN") },
 ) {
 
     /**
@@ -146,9 +160,19 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
     ) {
         val rootPath = projectRootPath(projectDriver, projectId.value) ?: return
-        buildExecutor(projectDriver, projectId, sessionId, rootPath, deviceId, platformProfile, idGen, nowIso).drive(runId)
+        buildExecutor(
+            projectDriver = projectDriver,
+            projectId = projectId,
+            sessionId = sessionId,
+            rootPath = rootPath,
+            deviceId = deviceId,
+            platformProfile = platformProfile,
+            networkAvailable = networkAvailable,
+            idGen = idGen,
+            nowIso = nowIso,
+        ).drive(runId)
         // RFC-0037 MVP: collect local, aggregated observability metrics after each driven Run.
-        runCatching { MetricsCollector(projectDriver).collect() }
+        runCatching { MetricsCollector(projectDriver).collect(projectId.value) }
             .onFailure { DaemonLog.err("aidos: metrics collection failed: ${it.message}") }
         // RFC-0056: compaction runs after the Run, on a background dispatcher; it never fails a Run.
         runCatching { retention.schedule(projectDriver, projectId.value, rootPath, userDriver, idGen, nowIso) }
@@ -186,8 +210,17 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
-        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
-            .resolveCapabilityApproval(runId, approved, denialReason)
+        return buildExecutor(
+            projectDriver = projectDriver,
+            projectId = ProjectId(projectId),
+            sessionId = sessionId,
+            rootPath = rootPath,
+            deviceId = deviceId,
+            platformProfile = PlatformProfile.DESKTOP,
+            networkAvailable = runNetworkAvailable(projectDriver, runId),
+            idGen = idGen,
+            nowIso = nowIso,
+        ).resolveCapabilityApproval(runId, approved, denialReason)
     }
 
     /**
@@ -221,9 +254,19 @@ class RuntimeCompositionRoot(
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
+        val networkAvailable = runNetworkAvailable(projectDriver, runId)
 
-        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
-            .resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
+        return buildExecutor(
+            projectDriver = projectDriver,
+            projectId = ProjectId(projectId),
+            sessionId = sessionId,
+            rootPath = rootPath,
+            deviceId = deviceId,
+            platformProfile = PlatformProfile.DESKTOP,
+            networkAvailable = networkAvailable,
+            idGen = idGen,
+            nowIso = nowIso,
+        ).resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
                 val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
                 val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
                     ?: return@resolveToolCallApproval
@@ -291,8 +334,17 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
-        return buildExecutor(projectDriver, ProjectId(projectId), sessionId, rootPath, deviceId, PlatformProfile.DESKTOP, idGen, nowIso)
-            .resolveUserPrompt(runId, answer, denialReason)
+        return buildExecutor(
+            projectDriver = projectDriver,
+            projectId = ProjectId(projectId),
+            sessionId = sessionId,
+            rootPath = rootPath,
+            deviceId = deviceId,
+            platformProfile = PlatformProfile.DESKTOP,
+            networkAvailable = runNetworkAvailable(projectDriver, runId),
+            idGen = idGen,
+            nowIso = nowIso,
+        ).resolveUserPrompt(runId, answer, denialReason)
     }
 
     private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =
@@ -303,6 +355,16 @@ class RuntimeCompositionRoot(
                 QueryResult.Value(
                     if (c.next().value) Triple(c.getString(0)!!, c.getString(1)!!, c.getString(2)!!) else null
                 )
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value
+
+    private fun runNetworkAvailable(driver: SqlDriver, runId: RunId): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT network_available FROM runs WHERE id = ?",
+            mapper = { c ->
+                QueryResult.Value(if (c.next().value) (c.getLong(0) ?: 0L) != 0L else false)
             },
             parameters = 1,
         ) { bindString(0, runId.value) }.value
@@ -332,6 +394,7 @@ class RuntimeCompositionRoot(
         rootPath: String,
         deviceId: String,
         platformProfile: PlatformProfile = PlatformProfile.DESKTOP,
+        networkAvailable: Boolean = false,
         idGen: () -> String,
         nowIso: () -> String,
     ): SqliteExecutor {
@@ -442,6 +505,23 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
         )
+        val resolvedScreener: TaintInputScreener? = taintInputScreener
+            ?: systemOneBaseUrl()
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { url ->
+                    SystemOneTaintInputScreener(
+                        baseUrl = url,
+                        bearerToken = systemOneBearerToken,
+                    )
+                }
+        val resolvedGuardianVerifier: GuardianApprovalVerifier = guardianVerifier
+            ?: LlmGuardianApprovalVerifier(
+                router = router,
+                resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
+                profile = platformProfile,
+                networkAvailable = { networkAvailable },
+            )
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -464,6 +544,9 @@ class RuntimeCompositionRoot(
             resolveToolCapability = capabilityResolver::resolveForTool,
             // RFC-0056: large tool outputs are stored once, content-addressed, under .aidos/blobs.
             largeOutputs = BlobStore(projectDriver, File(rootPath, RetentionMaintenance.BLOBS_DIR), nowIso),
+            resolveTaintApprovalPolicy = { resolveTaintApprovalPolicy(userDriver, projectSettings) },
+            taintInputScreener = resolvedScreener,
+            guardianVerifier = resolvedGuardianVerifier,
         )
         return SqliteExecutor(
             driver = projectDriver,
@@ -562,6 +645,20 @@ class RuntimeCompositionRoot(
                 SettingsStore(userDriver = it, projectDriver = null)
                     .resolve(Settings.routingRemoteEgress, project = project).value
             } ?: Settings.routingRemoteEgress.default
+
+        /**
+         * RFC-0110: resolves `Settings.trustTaintApprovalPolicy` from [userDriver] (user scope only,
+         * per the setting's SECURITY scope class), falling back to `MANUAL` when no [userDriver] is
+         * supplied. `internal` so tests can verify the resolution without driving a full Run.
+         */
+        internal fun resolveTaintApprovalPolicy(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+        ): TaintApprovalPolicy =
+            userDriver?.let {
+                SettingsStore(userDriver = it, projectDriver = null)
+                    .resolve(Settings.trustTaintApprovalPolicy, project = project).value
+            } ?: Settings.trustTaintApprovalPolicy.default
 
         /**
          * RFC-0027 + RFC-0036: the effective `trust.untrusted_paths`. Specifying a path can only

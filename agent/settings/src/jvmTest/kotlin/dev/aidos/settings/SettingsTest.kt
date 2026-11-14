@@ -283,4 +283,98 @@ class SettingsTest {
         assertTrue(offDecoded.isSuccess)
         assertEquals(VoiceApprovalsLevel.OFF, offDecoded.getOrNull())
     }
+
+    @Test
+    fun `trust taint approval policy defaults to MANUAL and resolves GUARDIAN from user scope`() {
+        assertEquals(Settings.trustTaintApprovalPolicy, Settings.forKey("trust.taint_approval_policy"))
+
+        val userDriver = openUserDriver()
+        val store = SettingsStore(userDriver, null)
+
+        val defaultResolved = store.resolve(Settings.trustTaintApprovalPolicy)
+        assertEquals(TaintApprovalPolicy.MANUAL, defaultResolved.value)
+        assertEquals(SettingOrigin.DEFAULT, defaultResolved.origin)
+
+        val writeResult = SettingsWriter(userDriver).writeUser(
+            Settings.trustTaintApprovalPolicy,
+            JsonPrimitive("GUARDIAN"),
+            SettingSetByKind.USER,
+            "2026-08-05T00:00:00Z",
+        )
+        assertTrue(writeResult.isSuccess)
+
+        val userResolved = store.resolve(Settings.trustTaintApprovalPolicy)
+        assertEquals(TaintApprovalPolicy.GUARDIAN, userResolved.value)
+        assertEquals(SettingOrigin.USER, userResolved.origin)
+        assertEquals("user.db", userResolved.originPath)
+    }
+
+    @Test
+    fun `trust taint approval policy rejects aidos toml project override with SCOPE_VIOLATION`() {
+        val userDriver = openUserDriver()
+        val projectDriver = openProjectDriver()
+        val audit = UserDbSettingsAudit(userDriver)
+        val toml = """
+            [trust]
+            taint_approval_policy = "GUARDIAN"
+        """.trimIndent()
+
+        val load = ProjectSettingsLoader(projectDriver, audit).load("p1", toml, "2026-08-05T00:00:00Z")
+        val loadViolation = load.diagnostics.single { it.errorClass == SettingErrorClass.SCOPE_VIOLATION }
+        assertEquals("trust.taint_approval_policy", loadViolation.key)
+        assertEquals(2, loadViolation.line)
+        assertEquals(SettingAuditKind.SCOPE_VIOLATION, audit.entries("trust.taint_approval_policy").single().kind)
+
+        val errors = mutableListOf<SettingError>()
+        val resolvedDefault = SettingsStore(userDriver, projectDriver).resolve(
+            Settings.trustTaintApprovalPolicy,
+            projectId = "p1",
+            project = load.snapshot,
+            errors = errors,
+        )
+        assertEquals(TaintApprovalPolicy.MANUAL, resolvedDefault.value)
+        assertEquals(SettingOrigin.DEFAULT, resolvedDefault.origin)
+        assertEquals(ScopeClass.SECURITY, resolvedDefault.overriddenBy)
+        assertEquals(1, errors.size)
+        assertEquals(SettingErrorClass.SCOPE_VIOLATION, errors[0].errorClass)
+        assertEquals("trust.taint_approval_policy", errors[0].key)
+
+        assertTrue(
+            SettingsWriter(userDriver).writeUser(
+                Settings.trustTaintApprovalPolicy,
+                JsonPrimitive("MANUAL"),
+                SettingSetByKind.USER,
+                "2026-08-05T00:00:00Z",
+            ).isSuccess
+        )
+        val userErrors = mutableListOf<SettingError>()
+        val resolvedUser = SettingsStore(userDriver, projectDriver).resolve(
+            Settings.trustTaintApprovalPolicy,
+            projectId = "p1",
+            project = load.snapshot,
+            errors = userErrors,
+        )
+        assertEquals(TaintApprovalPolicy.MANUAL, resolvedUser.value)
+        assertEquals(SettingOrigin.USER, resolvedUser.origin)
+        assertEquals(ScopeClass.SECURITY, resolvedUser.overriddenBy)
+        assertEquals(1, userErrors.size)
+        assertEquals(SettingErrorClass.SCOPE_VIOLATION, userErrors[0].errorClass)
+    }
+
+    @Test
+    fun `trust taint approval policy fails closed to MANUAL on invalid user value`() {
+        val userDriver = openUserDriver()
+        userDriver.execute(
+            null,
+            "INSERT INTO settings (scope, scope_id, key, value_json, set_at, set_by_kind) " +
+                "VALUES ('user', NULL, 'trust.taint_approval_policy', '\"AUTO\"', '2026-08-05T00:00:00Z', 'RUNTIME')",
+            0,
+        )
+
+        val errors = mutableListOf<SettingError>()
+        val resolved = SettingsStore(userDriver, null).resolve(Settings.trustTaintApprovalPolicy, errors = errors)
+        assertEquals(TaintApprovalPolicy.MANUAL, resolved.value)
+        assertEquals(1, errors.size)
+        assertEquals(SettingErrorClass.VALIDATION_FAILED, errors[0].errorClass)
+    }
 }

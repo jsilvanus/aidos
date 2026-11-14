@@ -242,4 +242,176 @@ class EgressSecurityPolicyTest {
             server.stop(0)
         }
     }
+
+    @Test
+    fun `DefaultEgressClient aborts chunked streaming response at maxResponseBytes plus one`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/chunked-large") { exchange ->
+            exchange.sendResponseHeaders(200, 0L) // chunked encoding, no Content-Length
+            val chunk = ByteArray(1024) { 'a'.code.toByte() }
+            try {
+                exchange.responseBody.use { out ->
+                    repeat(128) {
+                        out.write(chunk)
+                        out.flush()
+                    }
+                }
+            } catch (_: Exception) {
+                // Expected when client closes stream cleanly upon hitting maxResponseBytes + 1
+            }
+        }
+        server.createContext("/chunked-exact") { exchange ->
+            exchange.sendResponseHeaders(200, 0L)
+            exchange.responseBody.use { out ->
+                out.write("1234".toByteArray())
+                out.flush()
+                out.write("5678".toByteArray())
+                out.flush()
+            }
+        }
+        server.start()
+        try {
+            val port = server.address.port
+            val client = DefaultEgressClient(policy = policy)
+
+            val oversizedScope = CapabilityScope.Network(
+                allowedHosts = listOf("127.0.0.1"),
+                allowedPorts = listOf(port),
+                allowPrivateAddresses = true,
+                maxResponseBytes = 1024,
+            )
+            val oversizedResult = client.request(
+                EgressRequest(
+                    capabilityId = CapabilityId("cap-chunked-oversize"),
+                    url = "http://127.0.0.1:$port/chunked-large",
+                ),
+                scope = oversizedScope,
+            )
+            assertTrue(oversizedResult.isFailure)
+            assertIs<SecurityException>(oversizedResult.exceptionOrNull())
+            val oversizedRecord = client.getAuditRecords().last()
+            assertEquals(EgressOutcome.BLOCKED_RESPONSE_SIZE, oversizedRecord.outcome)
+            assertEquals(1025L, oversizedRecord.responseBytes)
+
+            val exactScope = CapabilityScope.Network(
+                allowedHosts = listOf("127.0.0.1"),
+                allowedPorts = listOf(port),
+                allowPrivateAddresses = true,
+                maxResponseBytes = 8,
+            )
+            val exactResult = client.request(
+                EgressRequest(
+                    capabilityId = CapabilityId("cap-chunked-exact"),
+                    url = "http://127.0.0.1:$port/chunked-exact",
+                ),
+                scope = exactScope,
+            )
+            assertTrue(exactResult.isSuccess)
+            assertEquals("12345678", exactResult.getOrThrow().bodyString)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `detects and rejects obfuscated IPv4 and IPv4-mapped IPv6 literals without DNS bypass`() {
+        val obfuscatedCases = listOf(
+            "2130706433" to AddressClass.LOOPBACK,
+            "2852039166" to AddressClass.LINK_LOCAL,
+            "0177.0.0.1" to AddressClass.LOOPBACK,
+            "017700000001" to AddressClass.LOOPBACK,
+            "0300.0250.0.1" to AddressClass.PRIVATE,
+            "0x7f000001" to AddressClass.LOOPBACK,
+            "0x7f.0.0.1" to AddressClass.LOOPBACK,
+            "0xa9fea9fe" to AddressClass.LINK_LOCAL,
+            "127.1" to AddressClass.LOOPBACK,
+            "127.0.1" to AddressClass.LOOPBACK,
+            "10.1" to AddressClass.PRIVATE,
+            "192.168.1" to AddressClass.PRIVATE,
+            "127.0.0.1." to AddressClass.LOOPBACK,
+            "::ffff:127.0.0.1" to AddressClass.LOOPBACK,
+            "::ffff:7f00:1" to AddressClass.LOOPBACK,
+            "::ffff:169.254.169.254" to AddressClass.LINK_LOCAL,
+            "::ffff:a9fe:a9fe" to AddressClass.LINK_LOCAL,
+            "::ffff:10.0.0.1" to AddressClass.PRIVATE,
+            "64:ff9b::127.0.0.1" to AddressClass.LOOPBACK,
+            "2002:7f00:0001::" to AddressClass.LOOPBACK,
+            "::1" to AddressClass.LOOPBACK,
+        )
+
+        val noDnsCallsPolicy = EgressSecurityPolicy(
+            dnsResolver = { host -> error("DNS must not be queried for IP literal '$host'") },
+        )
+        val wildcardScope = CapabilityScope.Network(
+            allowedHosts = listOf("*"),
+            allowPrivateAddresses = false,
+        )
+
+        for ((literal, expectedClass) in obfuscatedCases) {
+            assertTrue(EgressSecurityPolicy.isIpLiteral(literal), "Expected isIpLiteral('$literal') to be true")
+            assertEquals(expectedClass, EgressSecurityPolicy.classifyIpString(literal), "Classification mismatch for '$literal'")
+
+            val urlHost = if (literal.contains(':')) "[$literal]" else literal
+            val url = "http://$urlHost/latest/meta-data/"
+            val parsedHost = java.net.URI.create(url).host
+            for (scope in listOf(noDnsCallsPolicy.defaultScope, wildcardScope)) {
+                val res = noDnsCallsPolicy.validateDestination(url, scope = scope)
+                assertIs<EgressValidationResult.Denied>(res, "Expected denial for $url")
+                assertEquals(EgressOutcome.BLOCKED_PRE_DNS, res.outcome)
+                if (parsedHost != null) {
+                    assertEquals(expectedClass, res.addressClass, "Expected $expectedClass for $url")
+                    assertTrue(res.reason.contains("IP literal"), "Expected IP literal denial reason for $url, got: ${res.reason}")
+                }
+            }
+        }
+
+        // Bracketed IPv6 literal string checks
+        assertTrue(EgressSecurityPolicy.isIpLiteral("[::ffff:127.0.0.1]"))
+        assertTrue(EgressSecurityPolicy.isIpLiteral("[::ffff:7f00:1]"))
+
+        // InetAddress classification for 16-byte IPv4-mapped IPv6 directly
+        val mappedLoopback = InetAddress.getByAddress(
+            byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, 127, 0, 0, 1),
+        )
+        assertEquals(AddressClass.LOOPBACK, EgressSecurityPolicy.classifyAddress(mappedLoopback))
+        val mappedLinkLocal = InetAddress.getByAddress(
+            byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, 169.toByte(), 254.toByte(), 169.toByte(), 254.toByte()),
+        )
+        assertEquals(AddressClass.LINK_LOCAL, EgressSecurityPolicy.classifyAddress(mappedLinkLocal))
+
+        // Obfuscated loopback allowed as pattern still fails post-DNS SSRF check when allowPrivateAddresses=false
+        val explicitlyNamedObfuscatedScope = CapabilityScope.Network(
+            allowedHosts = listOf("2130706433", "::ffff:127.0.0.1"),
+            allowPrivateAddresses = false,
+        )
+        val obfuscatedV4Res = noDnsCallsPolicy.validateDestination("http://2130706433/", scope = explicitlyNamedObfuscatedScope)
+        assertIs<EgressValidationResult.Denied>(obfuscatedV4Res)
+        assertEquals(EgressOutcome.BLOCKED_POST_DNS, obfuscatedV4Res.outcome)
+        assertEquals(AddressClass.LOOPBACK, obfuscatedV4Res.addressClass)
+
+        val mappedV6Res = noDnsCallsPolicy.validateDestination("http://[::ffff:127.0.0.1]/", scope = explicitlyNamedObfuscatedScope)
+        assertIs<EgressValidationResult.Denied>(mappedV6Res)
+        assertEquals(EgressOutcome.BLOCKED_POST_DNS, mappedV6Res.outcome)
+        assertEquals(AddressClass.LOOPBACK, mappedV6Res.addressClass)
+    }
+
+    @Test
+    fun `legitimate hostnames starting with digits remain non-IP hostnames`() {
+        val legitimateHosts = listOf(
+            "123example.com",
+            "api.example.com",
+            "123.example.com",
+            "0xdead.example.com",
+            "999.0.0.1",
+            "256.1.1.1",
+            "",
+        )
+        for (host in legitimateHosts) {
+            assertFalse(EgressSecurityPolicy.isIpLiteral(host), "Host '$host' must not be classified as IP literal")
+        }
+
+        val scope = CapabilityScope.Network(allowedHosts = listOf("123example.com", "api.example.com"))
+        assertIs<EgressValidationResult.Allowed>(policy.validateDestination("https://123example.com/v1", scope = scope))
+        assertIs<EgressValidationResult.Allowed>(policy.validateDestination("https://api.example.com/v1", scope = scope))
+    }
 }

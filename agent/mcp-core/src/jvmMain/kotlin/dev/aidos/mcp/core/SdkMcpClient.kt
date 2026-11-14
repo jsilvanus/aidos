@@ -28,6 +28,8 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import io.modelcontextprotocol.kotlin.sdk.types.McpException
 import io.modelcontextprotocol.kotlin.sdk.types.RPCError
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
@@ -51,6 +53,8 @@ class SdkMcpClient(
     private val requestTimeoutMillis: Long = 30_000,
 ) : McpClient, McpTaskClient {
 
+    private val connectMutex = Mutex()
+    @Volatile
     private var initialized = false
 
     private val _notifications = MutableSharedFlow<McpNotification>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -161,10 +165,13 @@ class SdkMcpClient(
      * client must not reach the network or spawn anything.
      */
     private suspend fun ensureConnected() {
-        if (!initialized) {
-            observeNotifications()
-            client.connect(transport)
-            initialized = true
+        if (initialized) return
+        connectMutex.withLock {
+            if (!initialized) {
+                observeNotifications()
+                client.connect(transport)
+                initialized = true
+            }
         }
     }
 
@@ -230,8 +237,11 @@ class SdkMcpClient(
 
     /** SDK cleanup for callers already inside structured concurrency; no runBlocking bridge. */
     override suspend fun closeSuspend() {
-        client.close()
-        initialized = false
+        connectMutex.withLock {
+            initialized = false
+            runCatching { client.close() }
+            runCatching { transport.close() }
+        }
     }
 
     private fun mapTool(tool: io.modelcontextprotocol.kotlin.sdk.types.Tool): McpToolSpec =

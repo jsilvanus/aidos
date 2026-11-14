@@ -1,46 +1,109 @@
 package dev.aidos.tunnel
 
 import fi.italeino.sshtunnel.HostKeyPolicy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * Controls how [HostKeyPinningPolicy] behaves when no host key has been pinned yet.
+ */
+enum class HostKeyTrustMode {
+    /**
+     * Trust on first use: accept and persist the first observed host key fingerprint, then
+     * reject any subsequent change.
+     */
+    TOFU,
+
+    /**
+     * Strict pre-pinned mode: require a host key fingerprint to already be pinned in
+     * [TunnelStorage] (or set via [HostKeyPinningPolicy.setPinned]) before connecting.
+     */
+    STRICT_PRE_PINNED,
+}
 
 /**
  * RFC-0108 Phase 3: Host key pinning policy.
- * On the first successful connection, the server's host key fingerprint is saved.
- * On subsequent connections, the same fingerprint must be seen.
- * A mismatch stops the tunnel immediately (HostKeyChanged state).
+ * Loads any previously pinned fingerprint from [TunnelStorage] and persists first-seen keys in
+ * [HostKeyTrustMode.TOFU] mode. Any mismatch against the pinned fingerprint is rejected and
+ * audited, stopping the tunnel in `TunnelState.HostKeyChanged`.
  */
 class HostKeyPinningPolicy(
     private val tunnelId: String,
     private val storage: TunnelStorage,
     private val audit: TunnelAuditLog,
+    private val trustMode: HostKeyTrustMode = HostKeyTrustMode.TOFU,
 ) : HostKeyPolicy {
-    private var pinnedFingerprint: String? = null
-    private var initialized = false
+    private val mutex = Mutex()
 
-    override fun accept(host: String, port: Int, fingerprint: String): Boolean {
-        if (!initialized) {
-            // Note: in a real app this would be async and would load from storage on start.
-            // For now, we assume it's called after pinnedFingerprint is set by the caller.
+    @Volatile
+    private var pinnedFingerprint: String? = null
+
+    @Volatile
+    private var initialized: Boolean = false
+
+    /** Load any persisted host key fingerprint from [TunnelStorage]. */
+    suspend fun loadPinnedKey() {
+        mutex.withLock {
+            pinnedFingerprint = storage.loadPinnedHostKey(tunnelId)
             initialized = true
         }
-
-        val pinned = pinnedFingerprint
-        if (pinned == null) {
-            // First connection: save the fingerprint.
-            pinnedFingerprint = fingerprint
-            audit.log(tunnelId, "Host key pinned: $fingerprint")
-            return true
-        }
-
-        if (pinned == fingerprint) return true
-
-        // Mismatch: host key has changed.
-        audit.log(tunnelId, "⚠ Host key mismatch! Expected $pinned, got $fingerprint")
-        return false
     }
 
-    /** Set the pinned fingerprint at startup (loaded from storage). */
+    /** Set or clear the pinned fingerprint in memory (e.g. from pre-loaded configuration). */
     fun setPinned(fingerprint: String?) {
         pinnedFingerprint = fingerprint
+        initialized = true
+    }
+
+    override fun accept(host: String, port: Int, fingerprint: String): Boolean {
+        if (fingerprint.isBlank()) return false
+
+        val auditMessage: String?
+        val accepted: Boolean
+
+        runBlocking {
+            mutex.withLock {
+                if (!initialized) {
+                    pinnedFingerprint = storage.loadPinnedHostKey(tunnelId)
+                    initialized = true
+                }
+
+                val pinned = pinnedFingerprint
+                when {
+                    pinned == null && trustMode == HostKeyTrustMode.STRICT_PRE_PINNED -> {
+                        auditMessage = "⚠ Host key rejected for $host:$port: no pre-pinned key configured (got $fingerprint)"
+                        accepted = false
+                    }
+                    pinned == null -> {
+                        storage.pinHostKey(tunnelId, fingerprint)
+                        pinnedFingerprint = fingerprint
+                        auditMessage = "Host key pinned for $host:$port: $fingerprint"
+                        accepted = true
+                    }
+                    pinned == fingerprint -> {
+                        auditMessage = null
+                        accepted = true
+                    }
+                    else -> {
+                        auditMessage = "⚠ Host key mismatch for $host:$port! Expected $pinned, got $fingerprint"
+                        accepted = false
+                    }
+                }
+            }
+        }
+
+        if (auditMessage != null) {
+            try {
+                runBlocking { audit.log(tunnelId, auditMessage) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Audit logging failure must not alter the host-key verification verdict.
+            }
+        }
+        return accepted
     }
 }
 

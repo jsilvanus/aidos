@@ -4,6 +4,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.channels.FileLock
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Advisory file lock for a project (RFC-0055).
@@ -22,14 +23,27 @@ import java.time.Instant
  * filesystems, some Android volumes).
  */
 class ProjectLock private constructor(
-    private val lockFile: File,
+    private val lockKey: String,
     private val raf: RandomAccessFile,
     private val fileLock: FileLock,
     val instanceId: String,
     val acquiredAt: String,
 ) {
+    @Volatile
+    private var released = false
+
     companion object {
-        private val inProcessHolders = mutableMapOf<String, String>()
+        private data class HolderEntry(
+            val lock: ProjectLock,
+            val instanceId: String,
+            val acquiredAt: String,
+            val heartbeatAt: String,
+        )
+
+        private val inProcessHolders = ConcurrentHashMap<String, HolderEntry>()
+        private val lockMonitors = ConcurrentHashMap<String, Any>()
+
+        private fun monitorFor(key: String): Any = lockMonitors.computeIfAbsent(key) { Any() }
 
         /** File path within a project root (RFC-0055). */
         const val LOCK_FILE_REL = ".aidos/instance.lock"
@@ -54,66 +68,94 @@ class ProjectLock private constructor(
             nowIso: () -> String = { Instant.now().toString() },
         ): AcquireResult {
             val lockFile = File(projectRoot, LOCK_FILE_REL)
-            lockFile.parentFile.mkdirs()
+            val key = lockKey(lockFile)
+            synchronized(monitorFor(key)) {
+                inProcessHolders[key]?.let { holder ->
+                    return AcquireResult.AlreadyHeld(
+                        instanceId = holder.instanceId,
+                        acquiredAt = holder.acquiredAt,
+                        heartbeatAt = holder.heartbeatAt,
+                    )
+                }
 
-            val raf = RandomAccessFile(lockFile, "rw")
-            val channel = raf.channel
-            val fileLock = try {
-                channel.tryLock()
-            } catch (_: java.nio.channels.OverlappingFileLockException) {
-                // Same JVM process holds the lock (e.g. in tests). Treat as AlreadyHeld.
-                val meta = readMeta(raf)
-                val holder = inProcessHolders[lockKey(lockFile)]
-                raf.close()
-                return AcquireResult.AlreadyHeld(
-                    instanceId = meta["instance_id"] ?: holder ?: "unknown",
-                    acquiredAt = meta["acquired_at"] ?: "unknown",
-                    heartbeatAt = meta["heartbeat_at"] ?: "unknown",
-                )
+                lockFile.parentFile?.mkdirs()
+
+                val raf = RandomAccessFile(lockFile, "rw")
+                val channel = raf.channel
+                val fileLock = try {
+                    channel.tryLock()
+                } catch (_: java.nio.channels.OverlappingFileLockException) {
+                    // Same JVM process holds the lock via another path alias. Treat as AlreadyHeld.
+                    val meta = readMeta(raf)
+                    val holder = inProcessHolders[key]
+                    raf.close()
+                    return AcquireResult.AlreadyHeld(
+                        instanceId = holder?.instanceId ?: meta["instance_id"] ?: "unknown",
+                        acquiredAt = holder?.acquiredAt ?: meta["acquired_at"] ?: "unknown",
+                        heartbeatAt = holder?.heartbeatAt ?: meta["heartbeat_at"] ?: "unknown",
+                    )
+                }
+
+                if (fileLock == null) {
+                    // OS lock held by another process.
+                    val meta = readMeta(raf)
+                    raf.close()
+                    return AcquireResult.AlreadyHeld(
+                        instanceId = meta["instance_id"] ?: "unknown",
+                        acquiredAt = meta["acquired_at"] ?: "unknown",
+                        heartbeatAt = meta["heartbeat_at"] ?: "unknown",
+                    )
+                }
+
+                try {
+                    val now = nowIso()
+                    // We hold the OS lock. Check if the file has stale content from a prior owner
+                    // that lost the OS lock without cleanup (e.g. network FS).
+                    val meta = readMeta(raf)
+                    val heartbeatAt = meta["heartbeat_at"]
+                    if (heartbeatAt != null && isStale(heartbeatAt, now)) {
+                        // Stale — we have the OS lock, so we can just overwrite.
+                        // Return StaleBreakable so the caller gets a log record.
+                        val prevId = meta["instance_id"] ?: "unknown"
+                        writeMeta(raf, instanceId, now)
+                        val lock = ProjectLock(key, raf, fileLock, instanceId, now)
+                        inProcessHolders[key] = HolderEntry(lock, instanceId, now, now)
+                        return AcquireResult.StaleBreakable(
+                            lock = lock,
+                            previousInstanceId = prevId,
+                            previousHeartbeatAt = heartbeatAt,
+                        )
+                    }
+
+                    writeMeta(raf, instanceId, now)
+                    val lock = ProjectLock(key, raf, fileLock, instanceId, now)
+                    inProcessHolders[key] = HolderEntry(lock, instanceId, now, now)
+                    return AcquireResult.Acquired(lock)
+                } catch (t: Throwable) {
+                    inProcessHolders.computeIfPresent(key) { _, existing ->
+                        if (existing.lock.raf === raf) null else existing
+                    }
+                    try {
+                        fileLock.release()
+                    } catch (_: Exception) { }
+                    try {
+                        raf.close()
+                    } catch (_: Exception) { }
+                    throw t
+                }
             }
-
-            if (fileLock == null) {
-                // OS lock held by another process.
-                val meta = readMeta(raf)
-                raf.close()
-                return AcquireResult.AlreadyHeld(
-                    instanceId = meta["instance_id"] ?: "unknown",
-                    acquiredAt = meta["acquired_at"] ?: "unknown",
-                    heartbeatAt = meta["heartbeat_at"] ?: "unknown",
-                )
-            }
-
-            // We hold the OS lock. Check if the file has stale content from a prior owner
-            // that lost the OS lock without cleanup (e.g. network FS).
-            val meta = readMeta(raf)
-            val heartbeatAt = meta["heartbeat_at"]
-            if (heartbeatAt != null && isStale(heartbeatAt, nowIso())) {
-                // Stale — we have the OS lock, so we can just overwrite.
-                // Return StaleBreakable so the caller gets a log record.
-                val prevId = meta["instance_id"] ?: "unknown"
-                writeMeta(raf, instanceId, nowIso())
-                inProcessHolders[lockKey(lockFile)] = instanceId
-                return AcquireResult.StaleBreakable(
-                    lock = ProjectLock(lockFile, raf, fileLock, instanceId, nowIso()),
-                    previousInstanceId = prevId,
-                    previousHeartbeatAt = heartbeatAt,
-                )
-            }
-
-            writeMeta(raf, instanceId, nowIso())
-            inProcessHolders[lockKey(lockFile)] = instanceId
-            return AcquireResult.Acquired(
-                ProjectLock(lockFile, raf, fileLock, instanceId, nowIso())
-            )
         }
 
         /** Reads the key=value metadata from the lock file without acquiring the lock. */
         fun readMeta(lockFile: File): Map<String, String> {
-            if (!lockFile.exists()) return emptyMap()
-            return try {
-                RandomAccessFile(lockFile, "r").use { raf -> readMeta(raf) }
-            } catch (_: Exception) {
-                emptyMap()
+            val key = lockKey(lockFile)
+            synchronized(monitorFor(key)) {
+                if (!lockFile.exists()) return emptyMap()
+                return try {
+                    RandomAccessFile(lockFile, "r").use { raf -> readMeta(raf) }
+                } catch (_: Exception) {
+                    emptyMap()
+                }
             }
         }
 
@@ -153,7 +195,9 @@ class ProjectLock private constructor(
             }
         }
 
-        private fun lockKey(lockFile: File): String = lockFile.absoluteFile.normalize().path
+        private fun lockKey(lockFile: File): String =
+            runCatching { lockFile.canonicalPath }
+                .getOrElse { lockFile.absoluteFile.normalize().path }
     }
 
     /**
@@ -161,31 +205,46 @@ class ProjectLock private constructor(
      * Caller is responsible for scheduling (e.g. via a ScheduledExecutorService or coroutine timer).
      */
     fun heartbeat(nowIso: String) {
-        try {
-            raf.seek(0)
-            val content = raf.readLines()
-            val updated = content.map { line ->
-                if (line.trimStart().startsWith("heartbeat_at")) "heartbeat_at = \"$nowIso\""
-                else line
-            }.joinToString("\n") + "\n"
-            raf.seek(0)
-            raf.setLength(0)
-            raf.write(updated.toByteArray())
-            raf.channel.force(false)
-        } catch (_: Exception) {
-            // Heartbeat failure is non-fatal — the lock is still held via OS advisory lock.
+        synchronized(monitorFor(lockKey)) {
+            if (released) return
+            try {
+                raf.seek(0)
+                val content = raf.readLines()
+                val updated = content.map { line ->
+                    if (line.trimStart().startsWith("heartbeat_at")) "heartbeat_at = \"$nowIso\""
+                    else line
+                }.joinToString("\n") + "\n"
+                raf.seek(0)
+                raf.setLength(0)
+                raf.write(updated.toByteArray())
+                raf.channel.force(false)
+                inProcessHolders.computeIfPresent(lockKey) { _, existing ->
+                    if (existing.lock === this@ProjectLock) existing.copy(heartbeatAt = nowIso) else existing
+                }
+            } catch (_: Exception) {
+                // Heartbeat failure is non-fatal — the lock is still held via OS advisory lock.
+            }
         }
     }
 
     /** Releases the OS advisory lock and closes the file. */
     fun release() {
-        try {
-            fileLock.release()
-        } finally {
-            inProcessHolders.remove(lockFile.absoluteFile.normalize().path)
+        synchronized(monitorFor(lockKey)) {
+            if (released) return
+            released = true
             try {
-                raf.close()
-            } catch (_: Exception) { }
+                try {
+                    fileLock.release()
+                } finally {
+                    inProcessHolders.computeIfPresent(lockKey) { _, existing ->
+                        if (existing.lock === this@ProjectLock) null else existing
+                    }
+                }
+            } finally {
+                try {
+                    raf.close()
+                } catch (_: Exception) { }
+            }
         }
     }
 }

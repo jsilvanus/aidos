@@ -9,97 +9,174 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * RFC-0108 Phase 2: Per-peer remote-access control.
  *
- * Using a peer over a remote route (non-Lan) requires explicit opt-in from the user, shown in the UI
- * and written to the audit log. This prevents accidental exposure of local models to the internet.
- *
- * A peer is "remote-access allowed" if:
- * - The user has explicitly enabled it (remote-access switch is ON)
- * - AND at least one of its routes is non-Lan (has a remote route available)
- *
- * Queries for a peer's capabilities check: if the peer is requested over a non-Lan route but
- * remote-access is not allowed, the listener rejects the connection (even if the tunnel delivers it).
+ * Fail-closed policy:
+ * - Peer IDs are strictly validated; blank or malformed IDs are rejected on mutation and denied
+ *   on evaluation.
+ * - Unknown/unlisted peers are denied remote access by default. When [knownPeers] is provided,
+ *   unlisted peers are denied all routes (including LAN).
+ * - Explicitly revoked peers are denied all routes (both LAN and remote) and cannot be re-allowed
+ *   without explicit [unrevoke].
  */
-class RemoteAccessPolicy {
+class RemoteAccessPolicy(
+    private val knownPeers: Set<String>? = null,
+) {
+    init {
+        knownPeers?.forEach(::requireValidPeerId)
+    }
+
+    private val lock = Any()
     private val _allowedPeers = MutableStateFlow<Set<String>>(emptySet())
     val allowedPeers: StateFlow<Set<String>> = _allowedPeers.asStateFlow()
 
+    private val _revokedPeers = MutableStateFlow<Set<String>>(emptySet())
+    val revokedPeers: StateFlow<Set<String>> = _revokedPeers.asStateFlow()
+
     /**
      * Enable remote access for a peer.
-     * The peer can now be used over non-Lan routes.
-     *
-     * @param peerId: Peer's node ID or other identifier
+     * Rejects blank/malformed IDs, unknown peers (when [knownPeers] is bounded), and revoked peers.
      */
     fun allow(peerId: String) {
-        _allowedPeers.value = _allowedPeers.value + peerId
+        requireValidPeerId(peerId)
+        synchronized(lock) {
+            check(peerId !in _revokedPeers.value) { "peer $peerId is revoked" }
+            if (knownPeers != null) {
+                check(peerId in knownPeers) { "unknown peer: $peerId" }
+            }
+            _allowedPeers.value = _allowedPeers.value + peerId
+        }
     }
 
     /**
      * Disable remote access for a peer.
-     * The peer can only be used over Lan routes.
+     * The peer can only be used over Lan routes (unless revoked).
      */
     fun disallow(peerId: String) {
-        _allowedPeers.value = _allowedPeers.value - peerId
+        requireValidPeerId(peerId)
+        synchronized(lock) {
+            _allowedPeers.value = _allowedPeers.value - peerId
+        }
+    }
+
+    /**
+     * Revoke a peer completely: removes remote-access permission and blocks all routes
+     * (including LAN) until explicitly unrevoked.
+     */
+    fun revoke(peerId: String) {
+        requireValidPeerId(peerId)
+        synchronized(lock) {
+            _allowedPeers.value = _allowedPeers.value - peerId
+            _revokedPeers.value = _revokedPeers.value + peerId
+        }
+    }
+
+    /**
+     * Lift an explicit revocation for [peerId]. Does not automatically grant remote access;
+     * caller must still invoke [allow] explicitly.
+     */
+    fun unrevoke(peerId: String) {
+        requireValidPeerId(peerId)
+        synchronized(lock) {
+            _revokedPeers.value = _revokedPeers.value - peerId
+        }
+    }
+
+    /** Returns true if [peerId] is valid and currently revoked. */
+    fun isRevoked(peerId: String): Boolean {
+        if (!isValidPeerId(peerId)) return false
+        return peerId in _revokedPeers.value
     }
 
     /**
      * Check if a peer is allowed to use remote routes.
+     * Fails closed for invalid, unknown/unlisted, or revoked peers.
      */
     fun isRemoteAccessAllowed(peerId: String): Boolean {
-        return peerId in _allowedPeers.value
+        if (!isValidPeerId(peerId)) return false
+        if (knownPeers != null && peerId !in knownPeers) return false
+        return peerId !in _revokedPeers.value && peerId in _allowedPeers.value
     }
 
     /**
      * Toggle remote access for a peer.
-     * Returns the new state (true = allowed).
+     * Returns the new state (true = allowed). Rejects invalid, unknown, or revoked peers.
      */
     fun toggle(peerId: String): Boolean {
-        val allowed = isRemoteAccessAllowed(peerId)
-        if (allowed) disallow(peerId) else allow(peerId)
-        return !allowed
+        requireValidPeerId(peerId)
+        synchronized(lock) {
+            check(peerId !in _revokedPeers.value) { "peer $peerId is revoked" }
+            if (knownPeers != null) {
+                check(peerId in knownPeers) { "unknown peer: $peerId" }
+            }
+            val currentlyAllowed = peerId in _allowedPeers.value
+            _allowedPeers.value = if (currentlyAllowed) {
+                _allowedPeers.value - peerId
+            } else {
+                _allowedPeers.value + peerId
+            }
+            return !currentlyAllowed
+        }
     }
 
     /**
      * Given a peer's latencies, decide which routes are actually usable.
      *
-     * Returns:
-     * - All latencies if the peer has no remote routes (only Lan)
-     * - All latencies if remote-access is allowed
-     * - Only Lan latencies if remote-access is not allowed (filter out non-Lan)
-     *
-     * Useful for:
-     * - Filtering routes before presenting to a dialer
-     * - Checking if a peer can be reached at all
-     * - Audit logging which routes would be used
+     * Fail-closed rules:
+     * - Invalid peer ID -> emptyList()
+     * - Revoked peer -> emptyList()
+     * - Unknown peer when [knownPeers] is bounded -> emptyList()
+     * - Explicitly allowed peer -> all latencies
+     * - Otherwise -> only [Route.Lan] latencies
      */
     fun filterAllowedRoutes(
         peerId: String,
         latencies: List<RouteLatency>,
     ): List<RouteLatency> {
-        val lan = latencies.filter { it.route == Route.Lan }
-        val remote = latencies.filter { it.route != Route.Lan }
+        if (!isValidPeerId(peerId)) return emptyList()
+        if (knownPeers != null && peerId !in knownPeers) return emptyList()
+        if (peerId in _revokedPeers.value) return emptyList()
 
-        // If no remote routes, all latencies are OK
-        if (remote.isEmpty()) return latencies
-
-        // If remote-access allowed, all OK
         if (isRemoteAccessAllowed(peerId)) return latencies
 
-        // Remote routes exist but not allowed: filter to Lan only
-        return lan
+        return latencies.filter { it.route == Route.Lan }
     }
 
     /**
-     * Get all peers currently allowed for remote access.
+     * Get all peers currently allowed for remote access (excluding any revoked peers).
      */
     fun getAllAllowedPeers(): Set<String> {
-        return _allowedPeers.value.toSet()
+        return _allowedPeers.value - _revokedPeers.value
+    }
+
+    /**
+     * Get all currently revoked peers.
+     */
+    fun getRevokedPeers(): Set<String> {
+        return _revokedPeers.value.toSet()
     }
 
     /**
      * Clear all remote-access permissions (used on logout or reset).
+     * Explicit revocations remain in effect.
      */
     fun clearAll() {
-        _allowedPeers.value = emptySet()
+        synchronized(lock) {
+            _allowedPeers.value = emptySet()
+        }
+    }
+
+    companion object {
+        const val MAX_PEER_ID_LENGTH = 128
+
+        fun isValidPeerId(peerId: String): Boolean =
+            peerId.isNotEmpty() &&
+                peerId.length <= MAX_PEER_ID_LENGTH &&
+                peerId != "." &&
+                peerId != ".." &&
+                peerId.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }
+
+        private fun requireValidPeerId(peerId: String) {
+            require(isValidPeerId(peerId)) { "invalid peerId" }
+        }
     }
 }
 
@@ -113,6 +190,10 @@ data class RemoteAccessAuditEvent(
     val allowed: Boolean,  // true = enabled, false = disabled
     val timestamp: Long = System.currentTimeMillis(),
 ) {
+    init {
+        require(RemoteAccessPolicy.isValidPeerId(peerId)) { "invalid peerId" }
+    }
+
     fun toLog(): String {
         val action = if (allowed) "enabled" else "disabled"
         val peer = peerName ?: peerId

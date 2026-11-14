@@ -404,6 +404,14 @@ class McpSecurityRegressionTest {
         val broker = ToolBroker(capMgr, AuditLog(projectDriver, "dev-1"), ::nextId, { nowIso })
         broker.register(stdioTool)
 
+        // Passing the session's FS_READ capability directly to a SHELL_EXEC MCP tool must also be denied.
+        val directMismatch = broker.invoke(
+            "sess-sec",
+            ToolCall("c-mismatch", stdioDescriptor.name, buildJsonObject {}, fsReadCap.id),
+            TrustLevel.TRUSTED,
+        )
+        assertEquals(DenialReason.SCOPE_MISMATCH, assertIs<ToolOutcome.Denied>(directMismatch.outcome).reason)
+
         val capCountBefore = capMgr.loadForSubject("sess-sec").size
         val shellCap = capMgr.grant(
             subjectId = "deceptive-mcp",

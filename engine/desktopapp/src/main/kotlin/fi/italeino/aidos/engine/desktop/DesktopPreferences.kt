@@ -2,6 +2,7 @@ package fi.italeino.aidos.engine.desktop
 
 import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.modelruntime.RunSettingsSource
+import fi.italeino.aidos.engine.inference.Locality
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +29,8 @@ data class DesktopPreferencesData(
      * network. Off by default; nothing listens or advertises until the user turns it on.
      */
     val groupSharingEnabled: Boolean = false,
+    /** Engine-wide maximum placement allowed across all requests (RFC-0104); null means no limit (`any`). */
+    val engineLocalityLimit: String? = null,
 )
 
 /** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
@@ -78,6 +81,13 @@ class DesktopPreferences(private val file: File) {
     fun setAutoStartEngine(enabled: Boolean) = update { it.copy(autoStartEngine = enabled) }
 
     fun setGroupSharingEnabled(enabled: Boolean) = update { it.copy(groupSharingEnabled = enabled) }
+
+    fun setEngineLocalityLimit(localityWire: String?) = update {
+        val normalized = localityWire?.let(Locality::parse)?.wire
+        it.copy(engineLocalityLimit = normalized)
+    }
+
+    fun engineLocality(): Locality = _data.value.engineLocalityLimit?.let(Locality::parse) ?: Locality.ANY
 
     /** What the runtime reads at load time; a model never configured runs with the defaults. */
     val runSettingsSource = RunSettingsSource { id -> runSettingsFor(id) }

@@ -44,6 +44,25 @@ object Settings {
         codec(BooleanCodec)
     }
 
+    /**
+     * Taint escalation approval policy when a tainted Run requests a guarded operation
+     * (RFC-0110, RFC-0027).
+     *
+     * SECURITY because relaxing from MANUAL to GUARDIAN replaces human confirmation on
+     * TAINT_REQUIRES_APPROVAL with two-gate automated verification — a project file must never
+     * be able to opt a Run out of human confirmation. Defaults to MANUAL (most restrictive).
+     */
+    val trustTaintApprovalPolicy: SettingDescriptor<TaintApprovalPolicy> = setting("trust.taint_approval_policy") {
+        scopeClass(ScopeClass.SECURITY)
+        default(TaintApprovalPolicy.MANUAL)
+        mostRestrictive(TaintApprovalPolicy.MANUAL)
+        description(
+            "Taint escalation approval policy: MANUAL requires human confirmation per call; " +
+                "GUARDIAN uses two-gate automated verification (RFC-0110)."
+        )
+        codec(EnumCodec(TaintApprovalPolicy.entries.toTypedArray()))
+    }
+
     // ─── SPEND class — user-scope only ──────────────────────────────────────
 
     /**
@@ -255,6 +274,7 @@ object Settings {
     val all: List<SettingDescriptor<*>> = listOf(
         routingRemoteEgress,
         networkAllowPlaintextHttp,
+        trustTaintApprovalPolicy,
         budgetRunCostCeiling,
         budgetRunModelCallCeiling,
         knowledgeExcludePaths,
@@ -324,4 +344,15 @@ enum class VoiceApprovalsLevel {
 
     /** Currently equivalent to TIER1; reserved for future readback-verification enforcement. */
     TIER2,
+}
+
+/**
+ * Taint escalation approval policy for `trust.taint_approval_policy` (RFC-0110, RFC-0027).
+ */
+enum class TaintApprovalPolicy {
+    /** Every TAINT_REQUIRES_APPROVAL parks the Run for human confirmation (RFC-0027). */
+    MANUAL,
+
+    /** Two-gate verification (Gate A Decision Model + Gate B Blind Guardian LLM, RFC-0110). */
+    GUARDIAN,
 }

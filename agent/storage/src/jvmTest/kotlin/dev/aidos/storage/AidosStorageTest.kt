@@ -41,6 +41,13 @@ class AidosStorageTest {
         assertTrue(root.resolve(".aidos/user.db").exists())
         assertTrue(root.resolve(".aidos/secrets/vault.db").exists())
         assertTrue(projectRoot.resolve(".aidos/state.db").exists())
+
+        listOf(user.driver, vault.driver, project.driver).forEach { driver ->
+            val jdbc = driver as JdbcSqliteDriver
+            assertEquals("2", pragma(jdbc, "auto_vacuum"))
+            assertEquals("1000", pragma(jdbc, "wal_autocheckpoint"))
+            jdbc.close()
+        }
     }
 
     @Test
@@ -53,5 +60,21 @@ class AidosStorageTest {
         assertEquals("wal", pragma(driver, "journal_mode").lowercase())
         assertEquals("1", pragma(driver, "synchronous"))
         assertEquals("1", pragma(driver, "foreign_keys"))
+        assertEquals("2", pragma(driver, "auto_vacuum"))
+        assertEquals("1000", pragma(driver, "wal_autocheckpoint"))
+        driver.close()
+
+        val reopened = AidosStorage.openProject(path, "test-1.0") { "2026-08-05T00:00:00Z" }
+        val reopenedDriver = reopened.driver as JdbcSqliteDriver
+        try {
+            assertIs<OpenResult.Ready>(reopened.result)
+            assertEquals("wal", pragma(reopenedDriver, "journal_mode").lowercase())
+            assertEquals("1", pragma(reopenedDriver, "synchronous"))
+            assertEquals("1", pragma(reopenedDriver, "foreign_keys"))
+            assertEquals("2", pragma(reopenedDriver, "auto_vacuum"))
+            assertEquals("1000", pragma(reopenedDriver, "wal_autocheckpoint"))
+        } finally {
+            reopenedDriver.close()
+        }
     }
 }

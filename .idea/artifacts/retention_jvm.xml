@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="retention-jvm">
-    <output-path>$PROJECT_DIR$/agent/retention/build/libs</output-path>
-    <root id="archive" name="retention-jvm.jar">
-      <element id="module-output" name="aidos-agent.retention.jvmMain" />
-    </root>
-  </artifact>
-</component>

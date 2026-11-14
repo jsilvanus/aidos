@@ -10,6 +10,7 @@ import dev.aidos.decisions.LayaPackage
 import dev.aidos.stt.WhisperPackage
 import dev.aidos.vision.VisionPackage
 import fi.italeino.aidos.engine.EngineService
+import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
 import fi.italeino.aidos.sdk.client.EmbeddingsRequest
 import kotlinx.coroutines.CancellationException
 import io.ktor.client.HttpClient
@@ -156,6 +157,16 @@ class ModelDetailViewModel : ViewModel() {
         }
     }
 
+    /** Records user acceptance of the current model's license terms, if any. */
+    fun acceptLicense() {
+        val model = _state.value.model ?: return
+        val service = EngineService.instance ?: return
+        val licenseStore = service.licenseAcceptanceStore ?: return
+        viewModelScope.launch {
+            acceptLicenseFromCatalogOrRemote(model.id, model.licenseName, service, licenseStore)
+        }
+    }
+
     /** Install the selected Hugging Face GGUF through the engine's shared workflow. */
     fun startDownload() {
         if (downloadJob?.isActive == true) return
@@ -182,26 +193,29 @@ class ModelDetailViewModel : ViewModel() {
                 val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
                 val licenseText = remote.license?.trim()?.takeIf { it.isNotEmpty() }
                 val licenseDigest = licenseText?.let(::sha256Hex)
+                val modelVersion = resolveLicenseModelVersion(remote, safeModelId)
                 if (remote.quantizations.isEmpty() && onnxPackage != null) {
+                    recordLicenseAcceptance(service.licenseAcceptanceStore, model.id, modelVersion, licenseDigest)
                     installOnnxPackage(
                         modelId = model.id,
                         safeId = safeModelId,
                         pkg = onnxPackage,
                         licenseText = licenseText,
                         licenseDigest = licenseDigest,
-                        modelVersion = onnxPackage.files.firstOrNull()?.sha256Digest ?: onnxPackage.files.firstOrNull()?.path,
+                        modelVersion = modelVersion,
                     )
                     return@launch
                 }
                 val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
                 if (remote.quantizations.isEmpty() && visionPackage != null) {
+                    recordLicenseAcceptance(service.licenseAcceptanceStore, model.id, modelVersion, licenseDigest)
                     installOnnxPackage(
                         modelId = model.id,
                         safeId = safeModelId,
                         pkg = visionPackage,
                         licenseText = licenseText,
                         licenseDigest = licenseDigest,
-                        modelVersion = visionPackage.files.firstOrNull()?.sha256Digest ?: visionPackage.files.firstOrNull()?.path,
+                        modelVersion = modelVersion,
                     )
                     return@launch
                 }
@@ -227,6 +241,8 @@ class ModelDetailViewModel : ViewModel() {
                     }
                     else -> throw IllegalStateException("No downloadable artifact available for ${model.id}")
                 }
+
+                recordLicenseAcceptance(service.licenseAcceptanceStore, model.id, modelVersion, licenseDigest)
 
                 val modelsDir = File(service.filesDir, "models")
                 modelsDir.mkdirs()
@@ -255,7 +271,7 @@ class ModelDetailViewModel : ViewModel() {
                         quantization = if (format == "gguf") artifactBaseName else null,
                         licenseText = licenseText,
                         licenseTextDigest = licenseDigest,
-                        modelVersion = expectedDigest ?: artifactBaseName,
+                        modelVersion = modelVersion,
                     )
                 ) { event ->
                     when (event) {
@@ -517,6 +533,86 @@ class ModelDetailViewModel : ViewModel() {
         CookbookVerdict.RUNS_TIGHT -> ModelFitVerdict.RUNS_TIGHT
         CookbookVerdict.EXCEEDS_CONTEXT -> ModelFitVerdict.EXCEEDS_CONTEXT
         CookbookVerdict.WILL_NOT_FIT -> ModelFitVerdict.WILL_NOT_FIT
+    }
+
+    private suspend fun acceptLicenseFromCatalogOrRemote(
+        modelId: String,
+        fallbackLicenseText: String?,
+        service: EngineService,
+        licenseStore: LicenseAcceptanceStore,
+    ) {
+        val catalogEntry = withContext(Dispatchers.IO) { service.catalogManager?.getCatalog(modelId)?.getOrNull() }
+        val props = catalogEntry?.propertiesJson?.let {
+            runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull()
+        }
+        val catalogText = runCatching { props?.get("license_text")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        val catalogDigest = runCatching { props?.get("license_digest")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: catalogText?.let(::sha256Hex)
+        val catalogVersion = runCatching { props?.get("version")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        if (catalogDigest != null) {
+            val installedDigest = withContext(Dispatchers.IO) {
+                service.catalogManager?.listInstalled()?.getOrNull()?.firstOrNull { it.modelId == modelId }?.digest
+            }
+            recordLicenseAcceptance(licenseStore, modelId, catalogVersion ?: installedDigest ?: "", catalogDigest)
+            return
+        }
+
+        val remote = withContext(Dispatchers.IO) { service.hfClient?.getModel(modelId)?.getOrNull() }
+        if (remote != null) {
+            val licenseText = remote.license?.trim()?.takeIf { it.isNotEmpty() }
+            val licenseDigest = licenseText?.let(::sha256Hex)
+            val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val version = resolveLicenseModelVersion(remote, safeId)
+            recordLicenseAcceptance(licenseStore, modelId, version, licenseDigest)
+            return
+        }
+
+        val fallbackText = fallbackLicenseText?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val installedDigest = withContext(Dispatchers.IO) {
+            service.catalogManager?.listInstalled()?.getOrNull()?.firstOrNull { it.modelId == modelId }?.digest
+        }
+        recordLicenseAcceptance(licenseStore, modelId, installedDigest ?: "", sha256Hex(fallbackText))
+    }
+
+    private suspend fun recordLicenseAcceptance(
+        licenseStore: LicenseAcceptanceStore?,
+        modelId: String,
+        modelVersion: String,
+        licenseDigest: String?,
+    ) {
+        if (licenseStore == null || licenseDigest.isNullOrBlank()) return
+        if (!licenseStore.isAccepted(modelId, modelVersion, licenseDigest)) {
+            licenseStore.accept(modelId, modelVersion, licenseDigest)
+        }
+    }
+
+    private fun resolveLicenseModelVersion(
+        remote: dev.aidos.huggingface.HuggingFaceModel,
+        safeId: String,
+    ): String {
+        if (remote.quantizations.isEmpty()) {
+            val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
+            if (onnxPackage != null) {
+                return onnxPackage.files.firstOrNull()?.sha256Digest
+                    ?: onnxPackage.files.firstOrNull()?.path
+                    ?: safeId
+            }
+            val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
+            if (visionPackage != null) {
+                return visionPackage.files.firstOrNull()?.sha256Digest
+                    ?: visionPackage.files.firstOrNull()?.path
+                    ?: safeId
+            }
+        }
+        val quant = remote.quantizations.find { it.name.contains("Q4_K_M", ignoreCase = true) }
+            ?: remote.quantizations.firstOrNull()
+        if (quant != null) return quant.sha256Digest ?: quant.name
+        val artifact = remote.artifacts.firstOrNull { it.sizeBytes > 0L }
+        if (artifact != null) return artifact.sha256Digest ?: artifact.filename
+        return safeId
     }
 
     private fun sha256Hex(value: String): String =

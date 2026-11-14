@@ -72,20 +72,27 @@ class GlobalModelRuntime(
      * Models unused for longer than [idleTimeoutMillis] are unloaded.
      */
     suspend fun checkAndUnloadIdleModels() {
-        val now = nowMillis()
-        val modelsToUnload = mutableListOf<String>()
+        admissionQueue.withLock {
+            val now = nowMillis()
+            val modelsToUnload = loadedModels.entries
+                .filter { (modelId, loadedModel) ->
+                    val idleTimeMs = now - loadedModel.lastAccessedAtMillis
+                    idleTimeMs > idleTimeoutMillis &&
+                        !isModelActive(modelId) &&
+                        modelId !in warmPinnedModels
+                }
+                .map { it.key }
 
-        loadedModels.forEach { (modelId, loadedModel) ->
-            val idleTimeMs = now - loadedModel.lastAccessedAtMillis
-            if (idleTimeMs > idleTimeoutMillis && !isModelActive(modelId) && modelId !in warmPinnedModels) {
-                modelsToUnload.add(modelId)
-            }
-        }
-
-        modelsToUnload.forEach { modelId ->
-            admissionQueue.withLock {
-                loadedModels = loadedModels - modelId
-                backend.unload(modelId)
+            modelsToUnload.forEach { modelId ->
+                val latest = loadedModels[modelId] ?: return@forEach
+                val latestNow = nowMillis()
+                if (latestNow - latest.lastAccessedAtMillis > idleTimeoutMillis &&
+                    !isModelActive(modelId) &&
+                    modelId !in warmPinnedModels
+                ) {
+                    loadedModels = loadedModels - modelId
+                    backend.unload(modelId)
+                }
             }
         }
     }
@@ -102,12 +109,6 @@ class GlobalModelRuntime(
      * logical id would reject a valid catalog entry before the backend gets the exact path.
      */
     suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
-        loadedModels[modelId]?.let {
-            val updated = it.copy(lastAccessedAtMillis = nowMillis())
-            loadedModels = loadedModels + (modelId to updated)
-            return Result.success(it.adapter)
-        }
-
         return admissionQueue.withLock {
             loadedModels[modelId]?.let {
                 val updated = it.copy(lastAccessedAtMillis = nowMillis())
@@ -197,7 +198,7 @@ class GlobalModelRuntime(
 
     /** Idle time in milliseconds for a loaded model, or null if not loaded. */
     fun idleTimeMs(modelId: String): Long? = loadedModels[modelId]?.let {
-        System.currentTimeMillis() - it.lastAccessedAtMillis
+        nowMillis() - it.lastAccessedAtMillis
     }
 
     override suspend fun delete(modelId: String) {

@@ -1,5 +1,6 @@
 package dev.aidos.agentloop
 
+import dev.aidos.kernel.Budget
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
@@ -30,6 +31,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AgentLoopTest {
@@ -186,5 +188,145 @@ class AgentLoopTest {
         assertTrue(events.any { it is StepEvent.RunStarted })
         assertTrue(events.any { it is StepEvent.StepStarted })
         assertTrue(events.any { it is StepEvent.RunCompleted })
+    }
+
+    @Test
+    fun `RoutingContext receives remaining budget reflecting usage across turns`() = runTest {
+        val turn1Response = ModelResponse(
+            outputs = listOf(
+                ToolCallOutput(
+                    ToolCall(
+                        callId = "call-1",
+                        toolName = "search",
+                        arguments = buildJsonObject {},
+                        capabilityId = null,
+                    )
+                )
+            ),
+            stopReason = StopReason.TOOL_USE,
+            usage = Usage(inputTokens = 25, outputTokens = 15, totalTokens = 40),
+            model = ModelRef("test-model", "1.0"),
+        )
+        val turn2Response = ModelResponse(
+            outputs = listOf(TextOutput("Done")),
+            stopReason = StopReason.END_TURN,
+            usage = Usage(inputTokens = 10, outputTokens = 5, totalTokens = 15),
+            model = ModelRef("test-model", "1.0"),
+        )
+        val adapter = fakeModel(responses = listOf(turn1Response, turn2Response))
+        val observedContexts = mutableListOf<RoutingContext>()
+        val recordingRouter = object : InferenceRouter {
+            override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
+                observedContexts.add(context)
+                return RoutingDecision.Local(adapter)
+            }
+        }
+
+        val loop = AgentLoop(recordingRouter, PromptAssembler(), noOpBroker())
+        val result = loop.run(RunRequest(userMessage = "Check budget", budgetRemaining = 100L))
+
+        assertIs<RunOutcome.Completed>(result)
+        assertEquals(2, observedContexts.size)
+        assertEquals(Budget(costUnits = 100L), observedContexts[0].budgetRemaining)
+        assertEquals(Budget(costUnits = 60L), observedContexts[1].budgetRemaining)
+    }
+
+    @Test
+    fun `budgetUsed accumulates response usage rather than output string length`() = runTest {
+        // Output string length (~500 chars) far exceeds budget=50, while reported usage=20 stays within budget.
+        val longText = "x".repeat(500)
+        val turn1 = ModelResponse(
+            outputs = listOf(
+                TextOutput(longText),
+                ToolCallOutput(
+                    ToolCall(
+                        callId = "call-1",
+                        toolName = "step",
+                        arguments = buildJsonObject {},
+                        capabilityId = null,
+                    )
+                ),
+            ),
+            stopReason = StopReason.TOOL_USE,
+            usage = Usage(inputTokens = 12, outputTokens = 8, totalTokens = 20),
+            model = ModelRef("test-model", "1.0"),
+        )
+        val turn2 = ModelResponse(
+            outputs = listOf(
+                ToolCallOutput(
+                    ToolCall(
+                        callId = "call-2",
+                        toolName = "step",
+                        arguments = buildJsonObject {},
+                        capabilityId = null,
+                    )
+                ),
+            ),
+            stopReason = StopReason.TOOL_USE,
+            usage = Usage(inputTokens = 20, outputTokens = 10, totalTokens = null), // sums input + output = 30 -> total 50
+            model = ModelRef("test-model", "1.0"),
+        )
+        val turn3 = endTurnResponse("Should not run")
+        val adapter = fakeModel(responses = listOf(turn1, turn2, turn3))
+
+        val events = mutableListOf<StepEvent>()
+        val loop = AgentLoop(fakeRouter(adapter), PromptAssembler(), noOpBroker()) { events.add(it) }
+        val result = loop.run(RunRequest(userMessage = "Test usage accounting", budgetRemaining = 50L))
+
+        val failed = assertIs<RunOutcome.Failed>(result)
+        assertTrue(failed.reason.contains("Budget exhausted"), failed.reason)
+        // Step 1 and Step 2 ran (total 20 + 30 = 50), Step 3 was blocked before running
+        assertEquals(2, events.count { it is StepEvent.StepStarted })
+    }
+
+    @Test
+    fun `unbounded run passes null budgetRemaining to RoutingContext`() = runTest {
+        val adapter = fakeModel(responses = listOf(endTurnResponse()))
+        var seenCtx: RoutingContext? = null
+        val router = object : InferenceRouter {
+            override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
+                seenCtx = context
+                return RoutingDecision.Local(adapter)
+            }
+        }
+        val loop = AgentLoop(router, PromptAssembler(), noOpBroker())
+        val result = loop.run(RunRequest(userMessage = "Hello", budgetRemaining = null))
+
+        assertIs<RunOutcome.Completed>(result)
+        assertNull(seenCtx?.budgetRemaining)
+    }
+
+    @Test
+    fun `null usage falls back to token estimate rather than failing or using raw wrapper length`() = runTest {
+        val turn1 = ModelResponse(
+            outputs = listOf(
+                ToolCallOutput(
+                    ToolCall(
+                        callId = "call-1",
+                        toolName = "tool",
+                        arguments = buildJsonObject {},
+                        capabilityId = null,
+                    )
+                )
+            ),
+            stopReason = StopReason.TOOL_USE,
+            usage = null,
+            model = ModelRef("test-model", "1.0"),
+        )
+        val turn2 = endTurnResponse("ok")
+        val adapter = fakeModel(responses = listOf(turn1, turn2))
+        val observedContexts = mutableListOf<RoutingContext>()
+        val router = object : InferenceRouter {
+            override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
+                observedContexts.add(context)
+                return RoutingDecision.Local(adapter)
+            }
+        }
+        val loop = AgentLoop(router, PromptAssembler(), noOpBroker())
+        val result = loop.run(RunRequest(userMessage = "Fallback estimate", budgetRemaining = 100L))
+
+        assertIs<RunOutcome.Completed>(result)
+        val remainingAfterTurn1 = observedContexts[1].budgetRemaining?.costUnits ?: 0L
+        assertTrue(remainingAfterTurn1 in 90L..99L, "Expected small char/4 estimate deducted, got remaining=$remainingAfterTurn1")
     }
 }

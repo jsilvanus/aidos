@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="prompt-jvm">
-    <output-path>$PROJECT_DIR$/agent/prompt/build/libs</output-path>
-    <root id="archive" name="prompt-jvm.jar">
-      <element id="module-output" name="aidos-agent.prompt.jvmMain" />
-    </root>
-  </artifact>
-</component>

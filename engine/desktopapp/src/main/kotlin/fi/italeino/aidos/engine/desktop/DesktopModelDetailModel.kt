@@ -30,7 +30,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * Desktop port of Android's ModelDetailViewModel plus the load/unload state machine that the
@@ -118,6 +122,25 @@ class DesktopModelDetailModel(
         }
     }
 
+    /** Returns true if this model requires no license acceptance or the user has already accepted its terms. */
+    suspend fun isLicenseAccepted(): Boolean {
+        val (version, digest) = resolveStoredOrRemoteLicense() ?: return true
+        return host.licenseAcceptanceStore.isAccepted(modelId, version, digest)
+    }
+
+    /** Records user acceptance of this model's license terms, if any. */
+    fun acceptLicense() {
+        scope.launch {
+            acceptLicenseNow()
+        }
+    }
+
+    /** Suspend helper recording license acceptance before initiating download/use. */
+    suspend fun acceptLicenseNow() {
+        val (version, digest) = resolveStoredOrRemoteLicense() ?: return
+        recordLicenseAcceptance(modelId, version, digest)
+    }
+
     /** Install the selected Hugging Face GGUF through the engine's shared workflow. */
     fun startDownload() {
         if (downloadJob?.isActive == true) return
@@ -131,6 +154,9 @@ class DesktopModelDetailModel(
                 val remote = host.hfClient.getModel(model.id).getOrThrow()
 
                 val safeModelId = model.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val licenseText = remote.license?.trim()?.takeIf { it.isNotEmpty() }
+                val licenseDigest = licenseText?.let(::sha256Hex)
+                val modelVersion = resolveLicenseModelVersion(remote, safeModelId)
 
                 // A GGUF quantization is the single-file path (prefer Q4_K_M, as on Android). Failing
                 // that, an ONNX decision package (graph + tokenizer + config) or a Whisper speech-to-text package installs as a directory.
@@ -138,14 +164,30 @@ class DesktopModelDetailModel(
                 // would leave a file the Engine can never load.
                 val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
                 if (remote.quantizations.isEmpty() && onnxPackage != null) {
-                    installOnnxPackage(model.id, safeModelId, onnxPackage)
+                    recordLicenseAcceptance(model.id, modelVersion, licenseDigest)
+                    installOnnxPackage(
+                        modelId = model.id,
+                        safeId = safeModelId,
+                        pkg = onnxPackage,
+                        licenseText = licenseText,
+                        licenseDigest = licenseDigest,
+                        modelVersion = modelVersion,
+                    )
                     return@launch
                 }
                 // A SmolVLM-style vision model is its three graphs and configs installed as one unit; the
                 // projector-pairing problem of GGUF vision models does not arise on ONNX.
                 val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
                 if (remote.quantizations.isEmpty() && visionPackage != null) {
-                    installOnnxPackage(model.id, safeModelId, visionPackage)
+                    recordLicenseAcceptance(model.id, modelVersion, licenseDigest)
+                    installOnnxPackage(
+                        modelId = model.id,
+                        safeId = safeModelId,
+                        pkg = visionPackage,
+                        licenseText = licenseText,
+                        licenseDigest = licenseDigest,
+                        modelVersion = modelVersion,
+                    )
                     return@launch
                 }
                 if (remote.quantizations.isEmpty()) {
@@ -158,6 +200,8 @@ class DesktopModelDetailModel(
                     val q = qs.find { it.name.contains("Q4_K_M", ignoreCase = true) } ?: qs.first()
                     Triple(q.name, q.downloadUrl, q.sha256Digest)
                 }
+
+                recordLicenseAcceptance(model.id, modelVersion, licenseDigest)
 
                 val artifactName = dev.aidos.models.PackageInstall.ggufFileName(safeModelId, artifactBaseName)
                 val destination = File(host.artifactDir, artifactName).absolutePath
@@ -174,6 +218,9 @@ class DesktopModelDetailModel(
                         format = format,
                         backend = if (format == "gguf") "llama.cpp" else "unknown",
                         quantization = if (format == "gguf") artifactBaseName else null,
+                        licenseText = licenseText,
+                        licenseTextDigest = licenseDigest,
+                        modelVersion = modelVersion,
                     )
                 ) { event ->
                     when (event) {
@@ -209,9 +256,22 @@ class DesktopModelDetailModel(
     }
 
     /** Downloads every file of [pkg] (a decision, speech or vision model) into `<models>/<safeId>/`; the graph last, so a partial install is never a loadable package. */
-    private suspend fun installOnnxPackage(modelId: String, safeId: String, pkg: dev.aidos.huggingface.ModelPackage) {
+    private suspend fun installOnnxPackage(
+        modelId: String,
+        safeId: String,
+        pkg: dev.aidos.huggingface.ModelPackage,
+        licenseText: String?,
+        licenseDigest: String?,
+        modelVersion: String?,
+    ) {
         val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).installPackage(
-            dev.aidos.models.PackageInstall.toRequest(modelId, pkg, File(host.artifactDir, safeId).absolutePath)
+            dev.aidos.models.PackageInstall
+                .toRequest(modelId, pkg, File(host.artifactDir, safeId).absolutePath)
+                .copy(
+                    licenseText = licenseText,
+                    licenseTextDigest = licenseDigest,
+                    modelVersion = modelVersion,
+                )
         ) { event ->
             when (event) {
                 is InstallerEvent.DownloadProgress -> {
@@ -431,6 +491,81 @@ class DesktopModelDetailModel(
             baselineFreeRamMB = device.baselineAvailableRamBytes?.let { (it / (1024L * 1024L)).toInt() },
         )
     }
+
+    private suspend fun resolveStoredOrRemoteLicense(): Pair<String, String>? {
+        val catalogEntry = withContext(Dispatchers.IO) { host.catalogManager.getCatalog(modelId).getOrNull() }
+        val props = catalogEntry?.propertiesJson?.let {
+            runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull()
+        }
+        val catalogText = runCatching { props?.get("license_text")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        val catalogDigest = runCatching { props?.get("license_digest")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: catalogText?.let(::sha256Hex)
+        val catalogVersion = runCatching { props?.get("version")?.jsonPrimitive?.takeIf { it.isString }?.content }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        if (catalogDigest != null) {
+            val installedDigest = withContext(Dispatchers.IO) {
+                host.catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }?.digest
+            }
+            return (catalogVersion ?: installedDigest ?: "") to catalogDigest
+        }
+
+        val remote = withContext(Dispatchers.IO) { host.hfClient.getModel(modelId).getOrNull() }
+        if (remote != null) {
+            val licenseText = remote.license?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val safeId = modelId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            return resolveLicenseModelVersion(remote, safeId) to sha256Hex(licenseText)
+        }
+
+        val fallbackText = _state.value.model?.licenseName?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val installedDigest = withContext(Dispatchers.IO) {
+            host.catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }?.digest
+        }
+        return (installedDigest ?: "") to sha256Hex(fallbackText)
+    }
+
+    private suspend fun recordLicenseAcceptance(
+        modelId: String,
+        modelVersion: String,
+        licenseDigest: String?,
+    ) {
+        if (licenseDigest.isNullOrBlank()) return
+        if (!host.licenseAcceptanceStore.isAccepted(modelId, modelVersion, licenseDigest)) {
+            host.licenseAcceptanceStore.accept(modelId, modelVersion, licenseDigest)
+        }
+    }
+
+    private fun resolveLicenseModelVersion(
+        remote: dev.aidos.huggingface.HuggingFaceModel,
+        safeId: String,
+    ): String {
+        if (remote.quantizations.isEmpty()) {
+            val onnxPackage = dev.aidos.models.PackageInstall.choose(remote.packages)
+            if (onnxPackage != null) {
+                return onnxPackage.files.firstOrNull()?.sha256Digest
+                    ?: onnxPackage.files.firstOrNull()?.path
+                    ?: safeId
+            }
+            val visionPackage = remote.packages.firstOrNull { it.isVisionPackage }
+            if (visionPackage != null) {
+                return visionPackage.files.firstOrNull()?.sha256Digest
+                    ?: visionPackage.files.firstOrNull()?.path
+                    ?: safeId
+            }
+        }
+        val quant = remote.quantizations.find { it.name.contains("Q4_K_M", ignoreCase = true) }
+            ?: remote.quantizations.firstOrNull()
+        if (quant != null) return quant.sha256Digest ?: quant.name
+        val artifact = remote.artifacts.firstOrNull { it.sizeBytes > 0L }
+        if (artifact != null) return artifact.sha256Digest ?: artifact.filename
+        return safeId
+    }
+
+    private fun sha256Hex(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     private fun ModelRunSettings.toUi() = RunSettingsUi(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
 

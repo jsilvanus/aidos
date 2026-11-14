@@ -16,13 +16,15 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**']
+    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**', 'models/rot13-gguf/**']
   pull_request:
-    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**']
+    paths: ['.github/workflows/llama-rpc-native.yml', 'engine/aidin/**', 'models/rot13-gguf/**']
 
 env:
   # Keep equal to HelperProcessSupervisor.DEFAULT_LLAMA_CPP_BUILD_ID (engine/aidin).
   LLAMA_TAG: b11901
+  # Pinned immutable commit SHA for ggml-org/llama.cpp tag b11901 (avoid mutable tag/branch refs).
+  LLAMA_COMMIT: 5320c87ff0d994845b44ce7976f10055ec697447
 
 jobs:
   build:
@@ -39,11 +41,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check out llama.cpp ${{ env.LLAMA_TAG }}
+      - name: Check out llama.cpp ${{ env.LLAMA_TAG }} (${{ env.LLAMA_COMMIT }})
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
-          ref: ${{ env.LLAMA_TAG }}
+          ref: ${{ env.LLAMA_COMMIT }}
           path: llama.cpp
 
       # Static, no OpenMP and no CPU-specific code, so the two programs run on any machine of the
@@ -52,10 +54,20 @@ jobs:
         shell: bash
         working-directory: llama.cpp
         run: |
+          set -euo pipefail
+          actual_commit=$(git rev-parse HEAD)
+          if [ "$actual_commit" != "$LLAMA_COMMIT" ]; then
+            echo "Expected llama.cpp commit $LLAMA_COMMIT but checked out $actual_commit"
+            exit 1
+          fi
           args=(-DGGML_RPC=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
                 -DGGML_OPENMP=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF)
           if [ "${{ matrix.platform }}" = "android-arm64" ]; then
-            args+=(-DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+            ndk="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
+            [ -n "$ndk" ] || { echo "Android NDK environment variable is not set"; exit 1; }
+            toolchain="$ndk/build/cmake/android.toolchain.cmake"
+            [ -f "$toolchain" ] || { echo "Missing Android CMake toolchain: $toolchain"; exit 1; }
+            args+=(-DCMAKE_TOOLCHAIN_FILE="$toolchain"
                    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26)
           fi
           cmake -B build "${args[@]}"
@@ -68,16 +80,23 @@ jobs:
       - name: Package
         shell: bash
         run: |
+          set -euo pipefail
           out="dist/llama-rpc-${{ matrix.platform }}-$LLAMA_TAG"
           mkdir -p "$out"
-          ext=""; [ "${{ matrix.platform }}" = "windows-x64" ] && ext=".exe"
+          ext=""
+          if [ "${{ matrix.platform }}" = "windows-x64" ]; then
+            ext=".exe"
+          fi
           for exe in llama-server ggml-rpc-server; do
-            src=$(find llama.cpp/build/bin -name "$exe$ext" -type f | head -1)
-            [ -n "$src" ] || { echo "missing $exe$ext"; exit 1; }
-            cp "$src" "$out/"
+            src=$(find llama.cpp/build -name "$exe$ext" -type f | head -1 || true)
+            [ -n "$src" ] || { echo "missing $exe$ext under llama.cpp/build"; exit 1; }
+            cp "$src" "$out/$exe$ext"
+            if [ "${{ matrix.platform }}" != "windows-x64" ]; then
+              chmod +x "$out/$exe$ext"
+            fi
           done
           cp llama.cpp/LICENSE "$out/LICENSE.llama.cpp"
-          echo "$LLAMA_TAG" > "$out/BUILD"
+          printf '%s\n' "$LLAMA_TAG" > "$out/BUILD"
           ls -la "$out"
 
       # A real layer split over loopback with the checked-in ROT13 fixture: the helper holds layers
@@ -87,28 +106,48 @@ jobs:
         if: matrix.platform == 'linux-x64'
         shell: bash
         run: |
+          set -euo pipefail
+          rpc=""
+          srv=""
+          trap 'kill ${rpc:-} ${srv:-} 2>/dev/null || true' EXIT
           bin="dist/llama-rpc-linux-x64-$LLAMA_TAG"
           "$bin/ggml-rpc-server" -H 127.0.0.1 -p 50052 > rpc.log 2>&1 &
           rpc=$!
           sleep 2
+          kill -0 "$rpc" || { echo "ggml-rpc-server exited early"; cat rpc.log; exit 1; }
           "$bin/llama-server" -m models/rot13-gguf/rot13.gguf --rpc 127.0.0.1:50052 -ngl 99 \
             --host 127.0.0.1 --port 8089 -c 512 > server.log 2>&1 &
           srv=$!
+          ready=0
           for i in $(seq 1 60); do
-            curl -sf http://127.0.0.1:8089/health > /dev/null && break
+            if curl -sf http://127.0.0.1:8089/health > /dev/null; then
+              ready=1
+              break
+            fi
             sleep 1
           done
-          out=$(curl -sf http://127.0.0.1:8089/completion \
+          if [ "$ready" -ne 1 ]; then
+            echo "llama-server failed health check"
+            cat rpc.log || true
+            cat server.log || true
+            exit 1
+          fi
+          out=$(curl -sf -m 30 -H 'Content-Type: application/json' \
+            http://127.0.0.1:8089/completion \
             -d '{"prompt":"Hello","n_predict":1,"temperature":0}' | jq -r .content)
           echo "split answer: '$out'"
           grep -i "rpc" server.log | head -5 || true
-          [ "$out" = "b" ] || { cat server.log; exit 1; }
-          kill $rpc; sleep 1
-          if curl -sf -m 20 http://127.0.0.1:8089/completion -d '{"prompt":"Hello","n_predict":1}'; then
+          [ "$out" = "b" ] || { cat rpc.log || true; cat server.log; exit 1; }
+          kill "$rpc"
+          wait "$rpc" 2>/dev/null || true
+          rpc=""
+          if curl -sf -m 20 -H 'Content-Type: application/json' \
+            http://127.0.0.1:8089/completion -d '{"prompt":"Hello","n_predict":1}'; then
             echo "anchor answered after its helper died"; exit 1
           fi
           echo "anchor stopped answering once the helper was gone, as expected"
-          kill $srv 2>/dev/null || true
+          kill "$srv" 2>/dev/null || true
+          srv=""
 
       # The same split driven by the Engine's own supervisors: AidinNode pairing, the planner, the
       # helper's ggml-rpc-server reached only through the AIDIN tunnel, and the helper kill.
@@ -136,5 +175,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: llama-rpc-${{ matrix.platform }}-${{ env.LLAMA_TAG }}
-          path: dist/
+          path: dist/llama-rpc-${{ matrix.platform }}-${{ env.LLAMA_TAG }}/
+          if-no-files-found: error
           retention-days: 90

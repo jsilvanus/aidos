@@ -4,6 +4,8 @@ import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.CapabilityScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -150,72 +152,105 @@ class DefaultEgressClient(
                         else -> reqBuilder.method(request.method.uppercase(), publisher)
                     }
 
-                    val httpResponse = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofByteArray())
-                    if (httpResponse.statusCode() in 300..399) {
+                    val httpResponse = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofInputStream())
+                    val redirectTarget = if (httpResponse.statusCode() in 300..399) {
                         val location = httpResponse.headers().firstValue("Location").orElse(null)
                         if (location != null) {
-                            val redirectValidation = policy.validateRedirect(
-                                fromUrl = current.uri.toString(),
-                                toLocation = location,
-                                scope = effectiveScope
-                            )
-                            if (redirectValidation is EgressValidationResult.Denied) {
-                                record(
-                                    request = request,
-                                    host = current.uri.host ?: "unknown",
-                                    addressClass = current.addressClass,
-                                    method = request.method,
-                                    requestBytes = requestBytes,
-                                    responseBytes = 0L,
-                                    payloadHash = payloadHash,
-                                    durationMs = System.currentTimeMillis() - startTime,
-                                    outcome = redirectValidation.outcome,
+                            try {
+                                val redirectValidation = policy.validateRedirect(
+                                    fromUrl = current.uri.toString(),
+                                    toLocation = location,
+                                    scope = effectiveScope
                                 )
-                                return@withContext Result.failure(
-                                    SecurityException("RFC-0042 Egress Denied: ${redirectValidation.reason}")
-                                )
+                                if (redirectValidation is EgressValidationResult.Denied) {
+                                    record(
+                                        request = request,
+                                        host = current.uri.host ?: "unknown",
+                                        addressClass = current.addressClass,
+                                        method = request.method,
+                                        requestBytes = requestBytes,
+                                        responseBytes = 0L,
+                                        payloadHash = payloadHash,
+                                        durationMs = System.currentTimeMillis() - startTime,
+                                        outcome = redirectValidation.outcome,
+                                    )
+                                    return@withContext Result.failure(
+                                        SecurityException("RFC-0042 Egress Denied: ${redirectValidation.reason}")
+                                    )
+                                }
+                                if (redirectsFollowed++ >= 5) {
+                                    record(
+                                        request = request,
+                                        host = current.uri.host ?: "unknown",
+                                        addressClass = current.addressClass,
+                                        method = request.method,
+                                        requestBytes = requestBytes,
+                                        responseBytes = 0L,
+                                        payloadHash = payloadHash,
+                                        durationMs = System.currentTimeMillis() - startTime,
+                                        outcome = EgressOutcome.BLOCKED_REDIRECT,
+                                    )
+                                    return@withContext Result.failure(SecurityException("RFC-0042 Egress Denied: redirect limit exceeded"))
+                                }
+                                redirectValidation as EgressValidationResult.Allowed
+                            } finally {
+                                runCatching { httpResponse.body().close() }
                             }
-                            if (redirectsFollowed++ >= 5) {
-                                record(
-                                    request = request,
-                                    host = current.uri.host ?: "unknown",
-                                    addressClass = current.addressClass,
-                                    method = request.method,
-                                    requestBytes = requestBytes,
-                                    responseBytes = 0L,
-                                    payloadHash = payloadHash,
-                                    durationMs = System.currentTimeMillis() - startTime,
-                                    outcome = EgressOutcome.BLOCKED_REDIRECT,
-                                )
-                                return@withContext Result.failure(SecurityException("RFC-0042 Egress Denied: redirect limit exceeded"))
-                            }
-                            current = redirectValidation as EgressValidationResult.Allowed
-                            continue
+                        } else {
+                            null
                         }
+                    } else {
+                        null
+                    }
+                    if (redirectTarget != null) {
+                        current = redirectTarget
+                        continue
                     }
 
-                    val responseBytes = httpResponse.body()
-                    val contentLength = httpResponse.headers().firstValue("Content-Length").orElse(null)?.toLongOrNull()
-                    if (contentLength != null && contentLength > effectiveScope.maxResponseBytes) {
-                        record(
-                            request = request,
-                            host = current.uri.host ?: "unknown",
-                            addressClass = current.addressClass,
-                            method = request.method,
-                            requestBytes = requestBytes,
-                            responseBytes = 0L,
-                            payloadHash = payloadHash,
-                            durationMs = System.currentTimeMillis() - startTime,
-                            outcome = EgressOutcome.BLOCKED_RESPONSE_SIZE,
-                        )
-                        return@withContext Result.failure(
-                            SecurityException(
-                                "RFC-0042 Egress Denied: response body exceeds maxResponseBytes (${contentLength} > ${effectiveScope.maxResponseBytes})"
+                    val maxBytes = effectiveScope.maxResponseBytes.coerceAtLeast(0L)
+                    httpResponse.body().use { bodyStream ->
+                        val contentLength = httpResponse.headers().firstValue("Content-Length").orElse(null)?.toLongOrNull()
+                        if (contentLength != null && contentLength > maxBytes) {
+                            record(
+                                request = request,
+                                host = current.uri.host ?: "unknown",
+                                addressClass = current.addressClass,
+                                method = request.method,
+                                requestBytes = requestBytes,
+                                responseBytes = 0L,
+                                payloadHash = payloadHash,
+                                durationMs = System.currentTimeMillis() - startTime,
+                                outcome = EgressOutcome.BLOCKED_RESPONSE_SIZE,
                             )
-                        )
-                    }
-                    if (responseBytes.size.toLong() > effectiveScope.maxResponseBytes) {
-                        record(
+                            return@withContext Result.failure(
+                                SecurityException(
+                                    "RFC-0042 Egress Denied: response body exceeds maxResponseBytes ($contentLength > $maxBytes)"
+                                )
+                            )
+                        }
+
+                        val readResult = readBoundedBody(bodyStream, maxBytes)
+                        if (readResult.exceededLimit) {
+                            record(
+                                request = request,
+                                host = current.uri.host ?: "unknown",
+                                addressClass = current.addressClass,
+                                method = request.method,
+                                requestBytes = requestBytes,
+                                responseBytes = readResult.bytesRead,
+                                payloadHash = payloadHash,
+                                durationMs = System.currentTimeMillis() - startTime,
+                                outcome = EgressOutcome.BLOCKED_RESPONSE_SIZE,
+                            )
+                            return@withContext Result.failure(
+                                SecurityException(
+                                    "RFC-0042 Egress Denied: response body exceeds maxResponseBytes (${readResult.bytesRead} > $maxBytes)"
+                                )
+                            )
+                        }
+
+                        val responseBytes = readResult.bytes
+                        val record = record(
                             request = request,
                             host = current.uri.host ?: "unknown",
                             addressClass = current.addressClass,
@@ -224,34 +259,17 @@ class DefaultEgressClient(
                             responseBytes = responseBytes.size.toLong(),
                             payloadHash = payloadHash,
                             durationMs = System.currentTimeMillis() - startTime,
-                            outcome = EgressOutcome.BLOCKED_RESPONSE_SIZE,
+                            outcome = EgressOutcome.SUCCESS,
                         )
-                        return@withContext Result.failure(
-                            SecurityException(
-                                "RFC-0042 Egress Denied: response body exceeds maxResponseBytes (${responseBytes.size} > ${effectiveScope.maxResponseBytes})"
+                        return@withContext Result.success(
+                            EgressResponse(
+                                statusCode = httpResponse.statusCode(),
+                                headers = httpResponse.headers().map(),
+                                body = responseBytes,
+                                record = record
                             )
                         )
                     }
-
-                    val record = record(
-                        request = request,
-                        host = current.uri.host ?: "unknown",
-                        addressClass = current.addressClass,
-                        method = request.method,
-                        requestBytes = requestBytes,
-                        responseBytes = responseBytes.size.toLong(),
-                        payloadHash = payloadHash,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        outcome = EgressOutcome.SUCCESS,
-                    )
-                    return@withContext Result.success(
-                        EgressResponse(
-                            statusCode = httpResponse.statusCode(),
-                            headers = httpResponse.headers().map(),
-                            body = responseBytes,
-                            record = record
-                        )
-                    )
                 } catch (e: Exception) {
                     record(
                         request = request,
@@ -302,5 +320,50 @@ class DefaultEgressClient(
         synchronized(auditLog) { auditLog.add(record) }
         runCatching { recordSink(record) }
         return record
+    }
+
+    private class BoundedReadResult(
+        val bytes: ByteArray,
+        val bytesRead: Long,
+        val exceededLimit: Boolean,
+    )
+
+    private fun readBoundedBody(input: InputStream, maxBytes: Long): BoundedReadResult {
+        val out = ByteArrayOutputStream(minOf(maxBytes, 8192L).toInt())
+        val buffer = ByteArray(8192)
+        var totalRead = 0L
+        val readCap = if (maxBytes == Long.MAX_VALUE) Long.MAX_VALUE else maxBytes + 1L
+
+        while (true) {
+            val remainingToCap = readCap - totalRead
+            if (remainingToCap <= 0L) {
+                return BoundedReadResult(
+                    bytes = ByteArray(0),
+                    bytesRead = totalRead,
+                    exceededLimit = true,
+                )
+            }
+            val toRead = minOf(buffer.size.toLong(), remainingToCap).toInt()
+            val n = input.read(buffer, 0, toRead)
+            if (n == -1) break
+            if (n == 0) continue
+
+            val newTotal = totalRead + n
+            if (newTotal > maxBytes) {
+                return BoundedReadResult(
+                    bytes = ByteArray(0),
+                    bytesRead = newTotal,
+                    exceededLimit = true,
+                )
+            }
+            out.write(buffer, 0, n)
+            totalRead = newTotal
+        }
+
+        return BoundedReadResult(
+            bytes = out.toByteArray(),
+            bytesRead = totalRead,
+            exceededLimit = false,
+        )
     }
 }

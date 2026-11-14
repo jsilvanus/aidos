@@ -6,6 +6,7 @@ import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.shared.TransportSendOptions
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.JSONRPCMessage
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -33,7 +34,8 @@ class BinderMcpClient(
     private val sdkClient = Client(
         clientInfo = Implementation(name = "aidos-mcp-core", version = "0.1.0"),
     )
-    private val delegate = SdkMcpClient(sdkClient, ConnectOnStartTransport(transport, connector), requestTimeoutMillis)
+    private val binderTransport = ConnectOnStartTransport(transport, connector)
+    private val delegate = SdkMcpClient(sdkClient, binderTransport, requestTimeoutMillis)
 
     override suspend fun initialize(): McpServerInfo = delegate.initialize()
     override suspend fun listTools(): List<McpToolSpec> = delegate.listTools()
@@ -48,7 +50,10 @@ class BinderMcpClient(
     override suspend fun getTaskResult(taskId: String): McpCallResult = delegate.getTaskResult(taskId)
     override suspend fun cancelTask(taskId: String): McpCancelOutcome = delegate.cancelTask(taskId)
 
-    override fun close() = delegate.close()
+    override fun close() {
+        delegate.close()
+        runBlocking { runCatching { binderTransport.close() } }
+    }
     override suspend fun closeSuspend() = delegate.closeSuspend()
 }
 

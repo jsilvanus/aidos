@@ -281,9 +281,10 @@ class CapabilityTest {
         assertEquals(d.DENY, TaintAttenuation.decide(Permission.SECRETS_READ, noOp))
         assertEquals(d.DENY, TaintAttenuation.decide(Permission.FS_WRITE,
             op(EffectKind.Mutate(MutationScope.OUT_OF_PROJECT))))
-        // Egress, shell and UNSAFE effects (git push): ask per call.
+        // Egress, shell, cross-app IPC and UNSAFE effects (git push): ask per call.
         assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.NETWORK_EGRESS, noOp))
         assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.SHELL_EXEC, noOp))
+        assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.APP_IPC, noOp))
         assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.MODEL_QUERY, op(EffectKind.Egress("remote"))))
         assertEquals(d.REQUIRES_APPROVAL, TaintAttenuation.decide(Permission.GIT_WRITE,
             op(EffectKind.Mutate(MutationScope.IN_PROJECT), RecoveryClass.UNSAFE)))
@@ -308,6 +309,32 @@ class CapabilityTest {
         assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-3", cap.id, noOp, TrustLevel.TRUSTED))
         assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-3", cap.id, noOp, TrustLevel.PROJECT))
         val tainted = mgr.validate("session-3", cap.id, noOp, TrustLevel.UNTRUSTED)
+        assertIs<CapabilityCheckResult.Denied>(tainted)
+        assertEquals(DenialReason.TAINT_REQUIRES_APPROVAL, tainted.reason)
+    }
+
+    @Test
+    fun `validate requires approval for APP_IPC when run taint is UNTRUSTED`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000103"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+        val cap = mgr.grant(
+            subjectId = "session-5",
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.APP_IPC,
+            scope = CapabilityScope.Model(
+                allowedProviders = listOf("binder:com.example.notes"),
+                allowedKinds = emptySet(),
+            ),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-5", cap.id, noOp, TrustLevel.TRUSTED))
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-5", cap.id, noOp, TrustLevel.PROJECT))
+        val tainted = mgr.validate("session-5", cap.id, noOp, TrustLevel.UNTRUSTED)
         assertIs<CapabilityCheckResult.Denied>(tainted)
         assertEquals(DenialReason.TAINT_REQUIRES_APPROVAL, tainted.reason)
     }

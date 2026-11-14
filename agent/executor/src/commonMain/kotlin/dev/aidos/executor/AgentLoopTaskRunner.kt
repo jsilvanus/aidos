@@ -50,7 +50,9 @@ import dev.aidos.prompt.AssemblyResult
 import dev.aidos.prompt.InstructionDiscovery
 import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
+import dev.aidos.settings.TaintApprovalPolicy
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -77,6 +79,8 @@ private object UnboundedWindow : ExecutionWindow {
     override fun permitsLocalInference(): Boolean = true
 }
 
+private const val MAX_AUDIT_RATIONALE_LENGTH = 1000
+
 private val json = Json { ignoreUnknownKeys = true }
 
 @Serializable
@@ -100,6 +104,10 @@ private data class StoredToolResult(
     val trustLevel: String,
     /** This result's own label (RFC-0027); null in rows written before it existed. */
     val resultTrust: String? = null,
+    /** RFC-0110 Gate A: one-way suspicion latch persisted across eviction and crash recovery. */
+    val injectionSuspected: Boolean = false,
+    /** RFC-0110 Gate A: optional probability reported by [TaintInputScreener]. */
+    val injectionProbability: Double? = null,
 )
 
 /**
@@ -312,6 +320,12 @@ class AgentLoopTaskRunner(
      * inline in the row, exactly as before.
      */
     private val largeOutputs: LargeOutputStore? = null,
+    /** RFC-0110: resolves user-controlled taint approval policy (MANUAL default vs GUARDIAN). */
+    private val resolveTaintApprovalPolicy: () -> TaintApprovalPolicy = { TaintApprovalPolicy.MANUAL },
+    /** RFC-0110 Gate A: optional inbound prompt-injection screener for UNTRUSTED tool results. */
+    private val taintInputScreener: TaintInputScreener? = null,
+    /** RFC-0110 Gate B: optional blind verifier for TAINT_REQUIRES_APPROVAL under GUARDIAN policy. */
+    private val guardianVerifier: GuardianApprovalVerifier? = null,
 ) : TaskRunner {
 
     /** Undoes [LargeOutputStore.externalize] for a snapshot read back from `attempts`. */
@@ -563,29 +577,164 @@ class AgentLoopTaskRunner(
                 it.reason == DenialReason.REQUIRES_APPROVAL || it.reason == DenialReason.TAINT_REQUIRES_APPROVAL
             }
         if (deniedForApproval != null && capabilityId != null) {
+            if (
+                !taintApproved &&
+                deniedForApproval.reason == DenialReason.TAINT_REQUIRES_APPROVAL &&
+                resolveTaintApprovalPolicy() == TaintApprovalPolicy.GUARDIAN
+            ) {
+                return handleGuardianTaintGate(
+                    task = task,
+                    callRow = callRow,
+                    run = run,
+                    call = call,
+                    capabilityId = capabilityId,
+                    descriptor = descriptor,
+                )
+            }
             // RFC-0027 "Escalation": the human is told *which* untrusted content entered the
             // context, not merely that the Run is tainted — otherwise the prompt is unanswerable.
             val taintMessage = if (deniedForApproval.reason == DenialReason.TAINT_REQUIRES_APPROVAL) {
-                "Run wants to call ${call.toolName}${describeArgs(callRow.argumentsJson)}. " +
-                    "This run has read untrusted content from ${taintSourceDescription(task.runId)}. Allow once?"
+                defaultTaintEscalationMessage(task.runId, call.toolName, callRow.argumentsJson)
             } else null
-            return TaskResult(
-                success = true,
-                park = ParkRequest(
-                    suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
-                    operationDetailJson = json.encodeToString(
-                        ToolCallApprovalDetail(
-                            capabilityId = capabilityId.value, toolName = call.toolName,
-                            taintMessage = taintMessage, callId = call.callId,
-                        ),
-                    ),
-                    taskState = TaskState.AWAITING_APPROVAL,
-                    escalationMessage = taintMessage,
-                ),
-            )
+            return parkToolCallForApproval(capabilityId = capabilityId, call = call, taintMessage = taintMessage)
         }
 
         return finishToolCall(task, callRow, run, result)
+    }
+
+    private fun defaultTaintEscalationMessage(runId: RunId, toolName: String, argumentsJson: String): String =
+        "Run wants to call $toolName${describeArgs(argumentsJson)}. " +
+            "This run has read untrusted content from ${taintSourceDescription(runId)}. Allow once?"
+
+    private fun parkToolCallForApproval(
+        capabilityId: CapabilityId,
+        call: ToolCall,
+        taintMessage: String?,
+    ): TaskResult = TaskResult(
+        success = true,
+        park = ParkRequest(
+            suspendedOperation = SuspendedOperation.ToolCall(toolName = call.toolName, callId = call.callId),
+            operationDetailJson = json.encodeToString(
+                ToolCallApprovalDetail(
+                    capabilityId = capabilityId.value,
+                    toolName = call.toolName,
+                    taintMessage = taintMessage,
+                    callId = call.callId,
+                ),
+            ),
+            taskState = TaskState.AWAITING_APPROVAL,
+            escalationMessage = taintMessage,
+        ),
+    )
+
+    private suspend fun handleGuardianTaintGate(
+        task: Task,
+        callRow: ToolCallRow,
+        run: RunContext,
+        call: ToolCall,
+        capabilityId: CapabilityId,
+        descriptor: ToolDescriptor?,
+    ): TaskResult {
+        if (hasSuspectedInjection(task.runId.value)) {
+            audit.write(
+                id = idGen(),
+                projectId = run.projectId.value,
+                kind = "GuardianBypassedSuspectedInjection",
+                actor = ActorRef(ActorKind.RUNTIME, "guardian"),
+                capabilityId = capabilityId.value,
+                subjectRef = call.toolName,
+                detailJson = redact(
+                    buildJsonObject {
+                        put("callId", callRow.callId)
+                        put("runId", task.runId.value)
+                    }.toString()
+                ),
+                nowIso = nowIso(),
+            )
+            val taintMessage = "Run wants to call ${call.toolName}${describeArgs(callRow.argumentsJson)}. " +
+                "This run has read untrusted content from ${taintSourceDescription(task.runId)}; " +
+                "suspected prompt injection prevented automatic verification. Allow once?"
+            return parkToolCallForApproval(capabilityId = capabilityId, call = call, taintMessage = taintMessage)
+        }
+
+        val verifier = guardianVerifier
+        if (verifier == null) {
+            return parkToolCallForApproval(
+                capabilityId = capabilityId,
+                call = call,
+                taintMessage = defaultTaintEscalationMessage(task.runId, call.toolName, callRow.argumentsJson),
+            )
+        }
+
+        val verdict = try {
+            verifier.verify(
+                GuardianApprovalRequest(
+                    userMessageSummary = run.userMessageSummary,
+                    toolName = call.toolName,
+                    toolTitle = descriptor?.title,
+                    toolDescription = descriptor?.description,
+                    argumentsJson = callRow.argumentsJson,
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            GuardianVerdict(
+                decision = GuardianDecision.AMBIGUOUS,
+                rationale = "Guardian verification failed: ${e.message ?: e::class.simpleName ?: "error"}",
+            )
+        }
+
+        val redactedRationale = redact(verdict.rationale).take(MAX_AUDIT_RATIONALE_LENGTH)
+        val detailJson = redact(
+            buildJsonObject {
+                put("callId", callRow.callId)
+                put("decision", verdict.decision.name)
+                put("rationale", redactedRationale)
+                verdict.modelId?.let { put("modelId", it) }
+            }.toString()
+        )
+
+        if (verdict.decision == GuardianDecision.ALIGNED) {
+            audit.write(
+                id = idGen(),
+                projectId = run.projectId.value,
+                kind = "GuardianApproved",
+                actor = ActorRef(ActorKind.RUNTIME, "guardian"),
+                capabilityId = capabilityId.value,
+                subjectRef = call.toolName,
+                detailJson = detailJson,
+                nowIso = nowIso(),
+            )
+            // Single-use taint exercise ONLY for this ToolCall; runs.taint_level remains UNTRUSTED.
+            val effectiveResult = broker.invoke(subjectId, call, TrustLevel.PROJECT)
+            val postGuardianDenied = (effectiveResult.outcome as? ToolOutcome.Denied)
+                ?.takeIf {
+                    it.reason == DenialReason.REQUIRES_APPROVAL || it.reason == DenialReason.TAINT_REQUIRES_APPROVAL
+                }
+            if (postGuardianDenied != null) {
+                val taintMessage = if (postGuardianDenied.reason == DenialReason.TAINT_REQUIRES_APPROVAL) {
+                    defaultTaintEscalationMessage(task.runId, call.toolName, callRow.argumentsJson)
+                } else null
+                return parkToolCallForApproval(capabilityId = capabilityId, call = call, taintMessage = taintMessage)
+            }
+            return finishToolCall(task, callRow, run, effectiveResult)
+        }
+
+        audit.write(
+            id = idGen(),
+            projectId = run.projectId.value,
+            kind = "GuardianEscalated",
+            actor = ActorRef(ActorKind.RUNTIME, "guardian"),
+            capabilityId = capabilityId.value,
+            subjectRef = call.toolName,
+            detailJson = detailJson,
+            nowIso = nowIso(),
+        )
+        val taintMessage = "Run wants to call ${call.toolName}${describeArgs(callRow.argumentsJson)}. " +
+            "This run has read untrusted content from ${taintSourceDescription(task.runId)}. " +
+            "Guardian (${verdict.decision.name}): $redactedRationale Allow once?"
+        return parkToolCallForApproval(capabilityId = capabilityId, call = call, taintMessage = taintMessage)
     }
 
     private fun descriptorRecoveryClass(run: RunContext, toolName: String): RecoveryClass {
@@ -601,7 +750,7 @@ class AgentLoopTaskRunner(
      * [executeToolCall]'s normal `broker.invoke()` path and [executeAskUser]'s resumed path (a
      * [ToolCallResult] it constructs itself, never having gone through the broker at all).
      */
-    private fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {
+    private suspend fun finishToolCall(task: Task, callRow: ToolCallRow, run: RunContext, result: ToolCallResult): TaskResult {
         // Taint is monotonic within a Run (RFC-0027); persisted immediately so the next
         // MODEL_CALL task's routing context reads it correctly even after a restart.
         val newTaint = run.taintLevel raisedBy result.trustLevel
@@ -655,6 +804,46 @@ class AgentLoopTaskRunner(
                 "(${secretKinds.joinToString()}) and has been excluded from AI context.]"
         }
 
+        // RFC-0110 Gate A: screen UNTRUSTED tool results only after secret withholding so
+        // credentials never leave the tool boundary, failing safely to no latch if unavailable.
+        val screeningVerdict = if (
+            result.trustLevel == TrustLevel.UNTRUSTED &&
+            secretKinds.isEmpty() &&
+            taintInputScreener != null &&
+            text.isNotBlank()
+        ) {
+            try {
+                taintInputScreener.screen(callRow.toolName, text)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                InputScreeningVerdict(instructionSuspected = false)
+            }
+        } else {
+            null
+        }
+        val injectionSuspected = screeningVerdict?.instructionSuspected == true
+        val injectionProbability = screeningVerdict?.probability
+
+        if (screeningVerdict != null && screeningVerdict.instructionSuspected) {
+            audit.write(
+                id = idGen(),
+                projectId = run.projectId.value,
+                kind = "TaintInjectionSuspected",
+                actor = ActorRef(ActorKind.RUNTIME, "guardian"),
+                subjectRef = callRow.toolName,
+                detailJson = redact(
+                    buildJsonObject {
+                        put("runId", task.runId.value)
+                        put("callId", callRow.callId)
+                        screeningVerdict.probability?.let { put("probability", it) }
+                        screeningVerdict.modelId?.let { put("modelId", it) }
+                    }.toString()
+                ),
+                nowIso = nowIso(),
+            )
+        }
+
         updateToolCallOutcome(callRow.callId, outcomeStr)
         val recoveryClass = descriptorRecoveryClass(run, callRow.toolName)
         writeAttempt(
@@ -665,7 +854,17 @@ class AgentLoopTaskRunner(
             modelVersion = null,
             tokensInput = null,
             tokensOutput = null,
-            outputSnapshot = json.encodeToString(StoredToolResult(outcomeStr, detail, text, newTaint.name, result.trustLevel.name)),
+            outputSnapshot = json.encodeToString(
+                StoredToolResult(
+                    outcome = outcomeStr,
+                    detail = detail,
+                    text = text,
+                    trustLevel = newTaint.name,
+                    resultTrust = result.trustLevel.name,
+                    injectionSuspected = injectionSuspected,
+                    injectionProbability = injectionProbability,
+                )
+            ),
         )
 
         // Fan-in: once every sibling TOOL_CALL task for this model turn is terminal, append the
@@ -689,7 +888,7 @@ class AgentLoopTaskRunner(
      * a query, D3) — never calls the broker, never resolves a capability, since asking a question
      * exercises no authority to gate in the first place.
      */
-    private fun executeAskUser(task: Task, callRow: ToolCallRow, run: RunContext): TaskResult {
+    private suspend fun executeAskUser(task: Task, callRow: ToolCallRow, run: RunContext): TaskResult {
         val answered = loadAskUserAnswer(task.runId)
         if (answered != null) {
             deleteAskUserContinuation(task.runId)
@@ -979,6 +1178,33 @@ class AgentLoopTaskRunner(
             },
             parameters = 1,
         ) { bindString(0, runId.value) }.value ?: "unknown tool call"
+
+    /**
+     * RFC-0110 Gate A one-way suspicion latch: returns true if any `TOOL_CALL` attempt in [runId]
+     * persisted `injectionSuspected = true`, surviving eviction, process restart, and
+     * [LargeOutputStore] externalization.
+     */
+    private fun hasSuspectedInjection(runId: String): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT a.output_snapshot FROM attempts a " +
+                "JOIN tasks t ON a.task_id = t.id " +
+                "WHERE t.run_id = ? AND t.kind = 'TOOL_CALL' AND a.output_snapshot IS NOT NULL",
+            mapper = { c ->
+                var suspected = false
+                while (!suspected && c.next().value) {
+                    val raw = c.getString(0) ?: continue
+                    val stored = runCatching {
+                        json.decodeFromString<StoredToolResult>(resolveStored(raw))
+                    }.getOrNull()
+                    if (stored?.injectionSuspected == true) {
+                        suspected = true
+                    }
+                }
+                QueryResult.Value(suspected)
+            },
+            parameters = 1,
+        ) { bindString(0, runId) }.value
 
     /**
      * RFC-0016: discovers AGENTS.md/CLAUDE.md at the project root and marks the set adopted iff

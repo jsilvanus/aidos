@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="cli-jvm">
-    <output-path>$PROJECT_DIR$/agent/cli/build/libs</output-path>
-    <root id="archive" name="cli-jvm.jar">
-      <element id="module-output" name="aidos-agent.cli.jvmMain" />
-    </root>
-  </artifact>
-</component>

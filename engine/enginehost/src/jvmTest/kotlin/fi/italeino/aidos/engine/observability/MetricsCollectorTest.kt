@@ -4,7 +4,11 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import java.io.File
 import java.nio.file.Files
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -189,6 +193,40 @@ class MetricsCollectorTest {
             ) {}
             assertTrue(denialCount > 0, "Capability denial metric not recorded")
         } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testBuildLabelsEscapesQuotesBackslashesAndControlCharacters() {
+        val tempDir = Files.createTempDirectory("metrics_escaping_test").toFile()
+        val dbDriver = createTestDb(tempDir)
+        try {
+            val collector = MetricsCollector(dbDriver, projectId = "proj-escape")
+            val dirtyOp = "line1\nline2\r\t\b\u000c\u0000\"quote\"\\slash"
+            collector.recordCapabilityDenial(
+                capabilityId = "cap\"with\\slash",
+                operation = dirtyOp,
+                reason = "reason\n\"bad\"",
+            )
+
+            var labelsJson = ""
+            dbDriver.executeQuery(
+                identifier = null,
+                sql = "SELECT labels_json FROM metric_samples WHERE name = 'capability.denied' LIMIT 1",
+                mapper = { c ->
+                    if (c.next().value) labelsJson = c.getString(0)!!
+                    QueryResult.Value(Unit)
+                },
+                parameters = 0,
+            ) {}
+
+            val obj = Json.parseToJsonElement(labelsJson).jsonObject
+            assertEquals("cap\"with\\slash", obj["capability_id"]?.jsonPrimitive?.content)
+            assertEquals(dirtyOp, obj["operation"]?.jsonPrimitive?.content)
+            assertEquals("reason\n\"bad\"", obj["reason"]?.jsonPrimitive?.content)
+        } finally {
+            runCatching { dbDriver.close() }
             tempDir.deleteRecursively()
         }
     }

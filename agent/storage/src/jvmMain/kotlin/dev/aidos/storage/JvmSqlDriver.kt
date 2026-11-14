@@ -15,6 +15,13 @@ import org.sqlite.SQLiteConfig
  * only ever land on whichever connection happened to run it, not the ones after. Baking the
  * settings into [SQLiteConfig] and handing its `Properties` to the driver is what makes
  * `sqlite-jdbc` apply them to every connection it opens for this database.
+ *
+ * `SQLiteConfig.Pragma` in `sqlite-jdbc:3.45.2.0` has no `WAL_AUTOCHECKPOINT` or `AUTO_VACUUM`
+ * entry (unknown keys in `Properties` are ignored by `SQLiteConfig.apply`). SQLite's built-in
+ * default `wal_autocheckpoint` is `1000` on every new connection, and for brand-new/empty
+ * databases we explicitly apply `PRAGMA wal_autocheckpoint = 1000`, `PRAGMA auto_vacuum = INCREMENTAL`,
+ * and `VACUUM` on a single connection so page 1 persists `auto_vacuum = INCREMENTAL` (2) before
+ * `MigrationRunner` queries `sqlite_master` or creates tables across per-call connections.
  */
 fun createJvmDriver(path: String): SqlDriver {
     val config = SQLiteConfig().apply {
@@ -23,13 +30,27 @@ fun createJvmDriver(path: String): SqlDriver {
         enforceForeignKeys(true)
         setBusyTimeout(5000)
     }
+    val isNewOrEmpty = path == ":memory:" || File(path).let { !it.exists() || it.length() == 0L }
     val url = if (path == ":memory:") {
         JdbcSqliteDriver.IN_MEMORY
     } else {
         File(path).absoluteFile.parentFile?.mkdirs()
         "jdbc:sqlite:$path"
     }
-    return JdbcSqliteDriver(url, config.toProperties())
+    val driver = JdbcSqliteDriver(url, config.toProperties())
+    if (isNewOrEmpty) {
+        val conn = driver.getConnection()
+        try {
+            conn.createStatement().use { stmt ->
+                stmt.execute("PRAGMA wal_autocheckpoint = 1000")
+                stmt.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                stmt.execute("VACUUM")
+            }
+        } finally {
+            driver.closeConnection(conn)
+        }
+    }
+    return driver
 }
 
 /** Reads one of `schema/`'s files, bundled as a classpath resource -- see build.gradle.kts. */

@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="routing-jvm">
-    <output-path>$PROJECT_DIR$/agent/routing/build/libs</output-path>
-    <root id="archive" name="routing-jvm.jar">
-      <element id="module-output" name="aidos-agent.routing.jvmMain" />
-    </root>
-  </artifact>
-</component>

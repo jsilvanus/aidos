@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="worker-jvm">
-    <output-path>$PROJECT_DIR$/agent/worker/build/libs</output-path>
-    <root id="archive" name="worker-jvm.jar">
-      <element id="module-output" name="aidos-agent.worker.jvmMain" />
-    </root>
-  </artifact>
-</component>

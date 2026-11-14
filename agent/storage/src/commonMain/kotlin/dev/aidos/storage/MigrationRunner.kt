@@ -84,6 +84,18 @@ object MigrationRunner {
         ).value
     }
 
+    private const val AUTO_VACUUM_INCREMENTAL = 2L
+
+    private fun readAutoVacuum(driver: SqlDriver): Long? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "PRAGMA auto_vacuum",
+            mapper = { cursor ->
+                QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null)
+            },
+            parameters = 0,
+        ).value
+
     private fun bootstrap(
         driver: SqlDriver,
         schemaSql: String,
@@ -91,6 +103,7 @@ object MigrationRunner {
         runtimeVersion: String,
         appliedAt: String,
     ) {
+        driver.execute(identifier = null, sql = "PRAGMA auto_vacuum = INCREMENTAL", parameters = 0)
         for (statement in SqlScript.statements(schemaSql)) {
             driver.execute(identifier = null, sql = statement, parameters = 0)
         }
@@ -102,6 +115,13 @@ object MigrationRunner {
             bindLong(0, version.toLong())
             bindString(1, appliedAt)
             bindString(2, runtimeVersion)
+        }
+        // If page 1 was already initialized before PRAGMA auto_vacuum = INCREMENTAL took effect
+        // (for instance by readVersion() or WAL mode configuration), SQLite requires VACUUM on
+        // the same connection to persist auto_vacuum = INCREMENTAL (2).
+        if (readAutoVacuum(driver) != AUTO_VACUUM_INCREMENTAL && driver.currentTransaction() == null) {
+            driver.execute(identifier = null, sql = "PRAGMA auto_vacuum = INCREMENTAL", parameters = 0)
+            driver.execute(identifier = null, sql = "VACUUM", parameters = 0)
         }
     }
 }

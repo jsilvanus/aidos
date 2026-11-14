@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.SubjectKind
@@ -13,6 +14,8 @@ import dev.aidos.storage.DesktopPaths
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class McpCapabilityIssuanceTest {
@@ -61,5 +64,62 @@ class McpCapabilityIssuanceTest {
 
         val kind = manager.loadForSubject("issues").single().subjectKind
         assertEquals(SubjectKind.MCP_SERVER, kind)
+    }
+
+    @Test
+    fun `revoking MCP capability prevents silent re-issuance`() = runTest {
+        val driver = openProjectDriver()
+        seedProject(driver, "proj-mcp-revoke")
+        val manager = SqliteCapabilityManager(driver, UuidV7Generator(), { nowIso })
+        val transport = McpTransport.Http(endpointUrl = "https://mcp.example.com/v1")
+
+        ensureMcpServerCapability(
+            capabilityManager = manager,
+            projectId = ProjectId("proj-mcp-revoke"),
+            serverId = "issues",
+            transport = transport,
+        )
+        val initial = manager.loadForSubject("issues").single()
+        manager.revoke(initial.id, "user-1")
+        assertTrue(manager.loadForSubject("issues").isEmpty())
+
+        // Re-running startup issuance must NOT silently re-grant a revoked capability.
+        ensureMcpServerCapability(
+            capabilityManager = manager,
+            projectId = ProjectId("proj-mcp-revoke"),
+            serverId = "issues",
+            transport = transport,
+        )
+
+        assertTrue(manager.loadForSubject("issues").isEmpty())
+        val totalRows = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM capabilities WHERE subject_kind = 'MCP_SERVER' AND subject_id = ? AND permission = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0) ?: 0L else 0L) },
+            parameters = 2,
+        ) { bindString(0, "issues"); bindString(1, Permission.NETWORK_EGRESS.name) }.value
+        assertEquals(1L, totalRows)
+    }
+
+    @Test
+    fun `stdio MCP transport restricts workingDirectory to dot and allowedCommands to configured binary`() = runTest {
+        val driver = openProjectDriver()
+        seedProject(driver, "proj-mcp-stdio")
+        val manager = SqliteCapabilityManager(driver, UuidV7Generator(), { nowIso })
+
+        ensureMcpServerCapability(
+            capabilityManager = manager,
+            projectId = ProjectId("proj-mcp-stdio"),
+            serverId = "github-stdio",
+            transport = McpTransport.Stdio(command = "/usr/local/bin/github-mcp", args = listOf("--stdio")),
+        )
+
+        val granted = manager.loadForSubject("github-stdio").single()
+        assertEquals(Permission.SHELL_EXEC, granted.permission)
+        assertEquals(SubjectKind.MCP_SERVER, granted.subjectKind)
+        val scope = assertIs<CapabilityScope.Shell>(granted.scope)
+        assertEquals(ProjectId("proj-mcp-stdio"), scope.projectId)
+        assertEquals(".", scope.workingDirectory)
+        assertEquals(listOf("/usr/local/bin/github-mcp"), scope.allowedCommands)
     }
 }

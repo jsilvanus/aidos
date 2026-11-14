@@ -5,12 +5,16 @@ import dev.aidos.vault.Redactor
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -34,6 +38,11 @@ class StructuredLoggerTest {
             runtimeVersion = "0.1.0-alpha",
             homeDir = tempDir.absolutePath,
         )
+    }
+
+    @AfterTest
+    fun tearDown() {
+        tempDir.deleteRecursively()
     }
 
     @Test
@@ -212,5 +221,138 @@ class StructuredLoggerTest {
         val parsed = Json.parseToJsonElement(line).jsonObject
         assertEquals("ERROR", parsed["level"]?.jsonPrimitive?.content)
         assertEquals("test.json", parsed["key"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun testJsonControlCharsAndQuotesEscapedPerRfc8259() {
+        val special = "back\\slash \"quote\" line\nret\rtab\tbs\bform\u000cnull\u0000ctrl\u001f"
+        logger.info("test.escaping") {
+            field("payload", special)
+            field("level", "SPOOFED")
+            field("key", "SPOOFED_KEY")
+        }
+
+        val logsDir = Paths.get(tempDir.absolutePath, ".aidos", "logs")
+        val logFile = Files.list(logsDir).use { it.findFirst().orElse(null) }
+        assertNotNull(logFile)
+
+        val lines = Files.readAllLines(logFile, Charsets.UTF_8)
+        assertEquals(1, lines.size)
+        val parsed = Json.parseToJsonElement(lines.single()).jsonObject
+        assertEquals(special, parsed["payload"]?.jsonPrimitive?.content)
+        assertEquals("INFO", parsed["level"]?.jsonPrimitive?.content)
+        assertEquals("test.escaping", parsed["key"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun testRecursiveSecretRedactionInMetadataAndRingBuffer() {
+        logger.info("test.redaction") {
+            field("token", "short-token")
+            field("token_count", 150)
+            field("max_tokens", 4096)
+            field(
+                "nested",
+                mapOf(
+                    "apiKey" to "raw-api-key",
+                    "api_key" to "raw-api-key-2",
+                    "secret" to "top-secret",
+                    "password" to "hunter2",
+                    "authorization" to "Bearer secret-jwt",
+                    "items" to listOf(
+                        mapOf("access_token" to "tok-nested"),
+                        "Bearer inner-bearer-secret and sk-proj-abcd12345678",
+                    ),
+                ),
+            )
+            field("json_blob", "{\"password\":\"inside-json\",\"token\":\"inside-tok\",\"safe\":\"ok\"}")
+        }
+
+        val logsDir = Paths.get(tempDir.absolutePath, ".aidos", "logs")
+        val logFile = Files.list(logsDir).use { it.findFirst().orElse(null) }
+        assertNotNull(logFile)
+        val rawLine = Files.readAllLines(logFile, Charsets.UTF_8).single()
+
+        for (secret in listOf(
+            "short-token",
+            "raw-api-key",
+            "raw-api-key-2",
+            "top-secret",
+            "hunter2",
+            "secret-jwt",
+            "tok-nested",
+            "inner-bearer-secret",
+            "sk-proj-abcd12345678",
+            "inside-json",
+            "inside-tok",
+        )) {
+            assertFalse(rawLine.contains(secret), "Log JSONL leaked secret: $secret")
+        }
+
+        val parsed = Json.parseToJsonElement(rawLine).jsonObject
+        assertEquals("150", parsed["token_count"]?.jsonPrimitive?.content)
+        assertEquals("4096", parsed["max_tokens"]?.jsonPrimitive?.content)
+
+        val recent = logger.getRecentLogs().single()
+        assertEquals("[REDACTED]", recent.fields["token"])
+        assertFalse((recent.fields["nested"] ?: "").contains("top-secret"))
+        assertFalse((recent.fields["json_blob"] ?: "").contains("inside-json"))
+    }
+
+    @Test
+    fun testTraceAndNormalLogFilesStaySeparate() {
+        logger.enableTrace()
+        logger.trace("trace.event") {
+            field("step", "1")
+        }
+        logger.info("info.event") {
+            field("step", "2")
+        }
+
+        val logsDir = Paths.get(tempDir.absolutePath, ".aidos", "logs")
+        val files = Files.list(logsDir).use { s -> s.map { it.fileName.toString() }.toList() }
+        assertTrue(files.contains("diagnostic-trace.log"), "Expected diagnostic-trace.log in $files")
+        val datedFiles = files.filter { it.startsWith("diagnostic-") && it != "diagnostic-trace.log" }
+        assertTrue(datedFiles.isNotEmpty(), "Expected dated diagnostic log file after TRACE log")
+
+        val traceLines = Files.readAllLines(logsDir.resolve("diagnostic-trace.log"), Charsets.UTF_8)
+        assertEquals(1, traceLines.size)
+        assertEquals("TRACE", Json.parseToJsonElement(traceLines.single()).jsonObject["level"]?.jsonPrimitive?.content)
+
+        val datedLines = Files.readAllLines(logsDir.resolve(datedFiles.first()), Charsets.UTF_8)
+        assertEquals(1, datedLines.size)
+        assertEquals("INFO", Json.parseToJsonElement(datedLines.single()).jsonObject["level"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun testConcurrentLoggingProducesValidJsonLines() {
+        val threadCount = 6
+        val perThread = 40
+        val pool = Executors.newFixedThreadPool(threadCount)
+        try {
+            val futures = (0 until threadCount).map { t ->
+                pool.submit {
+                    for (i in 0 until perThread) {
+                        logger.info("concurrent.event") {
+                            field("thread", t)
+                            field("index", i)
+                            field("msg", "line-$t-$i\n\"quoted\"")
+                        }
+                    }
+                }
+            }
+            futures.forEach { it.get(15, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+
+        val logsDir = Paths.get(tempDir.absolutePath, ".aidos", "logs")
+        val logFile = Files.list(logsDir).use { it.findFirst().orElse(null) }
+        assertNotNull(logFile)
+        val lines = Files.readAllLines(logFile, Charsets.UTF_8)
+        assertEquals(threadCount * perThread, lines.size)
+        for (line in lines) {
+            val obj = Json.parseToJsonElement(line).jsonObject
+            assertEquals("INFO", obj["level"]?.jsonPrimitive?.content)
+        }
     }
 }

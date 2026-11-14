@@ -3,10 +3,16 @@ package dev.aidos.lock
 import java.io.File
 import java.nio.file.Files
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicIntegerArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertNotNull
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -105,6 +111,146 @@ class ProjectLockTest {
                 "heartbeat_at should be updated to $newTime but got ${meta["heartbeat_at"]}")
         } finally {
             if (!released) lock.release()
+        }
+    }
+
+    @Test
+    fun `concurrent acquire heartbeat and release on same project is thread-safe`() {
+        val root = tempRoot()
+        val threads = 12
+        val iterations = 40
+        val executor = Executors.newFixedThreadPool(threads)
+        val startGate = CountDownLatch(1)
+        val doneGate = CountDownLatch(threads)
+        val activeHolders = AtomicInteger(0)
+        val acquiredCount = AtomicInteger(0)
+        val alreadyHeldCount = AtomicInteger(0)
+        val errors = CopyOnWriteArrayList<Throwable>()
+
+        try {
+            repeat(threads) { threadIdx ->
+                executor.submit {
+                    try {
+                        assertTrue(startGate.await(10, TimeUnit.SECONDS))
+                        val instanceId = "inst-$threadIdx"
+                        repeat(iterations) { iter ->
+                            when (val res = ProjectLock.tryAcquire(root, instanceId = instanceId)) {
+                                is AcquireResult.Acquired -> {
+                                    try {
+                                        assertEquals(1, activeHolders.incrementAndGet())
+                                        acquiredCount.incrementAndGet()
+                                        res.lock.heartbeat(Instant.now().plusSeconds(iter.toLong()).toString())
+                                        Thread.yield()
+                                    } finally {
+                                        activeHolders.decrementAndGet()
+                                        res.lock.release()
+                                    }
+                                }
+                                is AcquireResult.StaleBreakable -> {
+                                    try {
+                                        assertEquals(1, activeHolders.incrementAndGet())
+                                        acquiredCount.incrementAndGet()
+                                    } finally {
+                                        activeHolders.decrementAndGet()
+                                        res.lock.release()
+                                    }
+                                }
+                                is AcquireResult.AlreadyHeld -> {
+                                    alreadyHeldCount.incrementAndGet()
+                                    assertNotEquals("unknown", res.instanceId)
+                                    assertNotEquals("unknown", res.acquiredAt)
+                                    assertNotEquals("unknown", res.heartbeatAt)
+                                }
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        errors.add(t)
+                    } finally {
+                        doneGate.countDown()
+                    }
+                }
+            }
+            startGate.countDown()
+            assertTrue(doneGate.await(30, TimeUnit.SECONDS), "Concurrency test timed out")
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertTrue(errors.isEmpty(), "Unexpected concurrency errors: $errors")
+        assertTrue(acquiredCount.get() > 0)
+        assertEquals(threads * iterations, acquiredCount.get() + alreadyHeldCount.get())
+
+        val finalAcquire = ProjectLock.tryAcquire(root, instanceId = "final-check")
+        try {
+            assertIs<AcquireResult.Acquired>(finalAcquire, "Lock should be free after all threads release")
+        } finally {
+            (finalAcquire as? AcquireResult.Acquired)?.lock?.release()
+        }
+    }
+
+    @Test
+    fun `concurrent acquire and release across distinct projects does not corrupt holder map`() {
+        val projectCount = 8
+        val roots = List(projectCount) { tempRoot() }
+        val threads = 16
+        val iterations = 50
+        val executor = Executors.newFixedThreadPool(threads)
+        val startGate = CountDownLatch(1)
+        val doneGate = CountDownLatch(threads)
+        val activePerProject = AtomicIntegerArray(projectCount)
+        val errors = CopyOnWriteArrayList<Throwable>()
+
+        try {
+            repeat(threads) { threadIdx ->
+                executor.submit {
+                    try {
+                        assertTrue(startGate.await(10, TimeUnit.SECONDS))
+                        repeat(iterations) { iter ->
+                            val idx = (threadIdx + iter) % projectCount
+                            when (val res = ProjectLock.tryAcquire(roots[idx], instanceId = "worker-$threadIdx")) {
+                                is AcquireResult.Acquired -> {
+                                    try {
+                                        assertEquals(1, activePerProject.incrementAndGet(idx))
+                                        Thread.yield()
+                                    } finally {
+                                        activePerProject.decrementAndGet(idx)
+                                        res.lock.release()
+                                    }
+                                }
+                                is AcquireResult.StaleBreakable -> {
+                                    try {
+                                        assertEquals(1, activePerProject.incrementAndGet(idx))
+                                    } finally {
+                                        activePerProject.decrementAndGet(idx)
+                                        res.lock.release()
+                                    }
+                                }
+                                is AcquireResult.AlreadyHeld -> {
+                                    assertTrue(res.instanceId.startsWith("worker-"))
+                                }
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        errors.add(t)
+                    } finally {
+                        doneGate.countDown()
+                    }
+                }
+            }
+            startGate.countDown()
+            assertTrue(doneGate.await(30, TimeUnit.SECONDS), "Multi-project concurrency test timed out")
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertTrue(errors.isEmpty(), "Unexpected multi-project concurrency errors: $errors")
+        roots.forEach { root ->
+            val check = ProjectLock.tryAcquire(root, instanceId = "verify-clean")
+            try {
+                assertIs<AcquireResult.Acquired>(check)
+            } finally {
+                (check as? AcquireResult.Acquired)?.lock?.release()
+            }
         }
     }
 }

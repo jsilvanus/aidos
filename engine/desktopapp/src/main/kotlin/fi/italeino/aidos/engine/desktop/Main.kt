@@ -6,6 +6,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import fi.italeino.aidos.engine.observability.CrashHandler
 import fi.italeino.aidos.engine.theme.AidosEngineTheme
@@ -30,13 +31,7 @@ fun main(args: Array<String>) {
         url = "jdbc:sqlite:${File(DesktopPaths.stateDir, "user.db").absolutePath}",
     )
     val crashDir = File(DesktopPaths.stateDir, "crashes")
-    val crashHandler = CrashHandler(
-        driver = userDbDriver,
-        runtimeVersion = "0.1.0",
-        platformProfile = "DESKTOP",
-        crashDir = crashDir,
-    )
-    Thread.setDefaultUncaughtExceptionHandler(crashHandler)
+    initDesktopCrashHandling(userDbDriver, crashDir)
 
     // Allow overriding port from command line arguments e.g. --port 18080
     val argPort = args.indexOf("--port").takeIf { it >= 0 && it + 1 < args.size }?.let { args[it + 1].toIntOrNull() }
@@ -99,4 +94,37 @@ fun main(args: Array<String>) {
             }
         }
     }
+}
+
+internal fun initDesktopCrashHandling(
+    userDbDriver: SqlDriver,
+    crashDir: File,
+    runtimeVersion: String = "0.1.0",
+): CrashHandler {
+    userDbDriver.execute(
+        identifier = null,
+        sql = """
+            CREATE TABLE IF NOT EXISTS crash_records (
+                id                TEXT PRIMARY KEY,
+                occurred_at       TEXT NOT NULL,
+                runtime_version   TEXT NOT NULL,
+                platform_profile  TEXT NOT NULL,
+                error_code        TEXT,
+                stack_hash        TEXT NOT NULL,
+                detail_path       TEXT NOT NULL,
+                in_flight_run_ids TEXT NOT NULL DEFAULT '[]',
+                reported          INTEGER NOT NULL DEFAULT 0
+            )
+        """,
+        parameters = 0,
+    ) {}
+    val crashHandler = CrashHandler(
+        driver = userDbDriver,
+        runtimeVersion = runtimeVersion,
+        platformProfile = "DESKTOP",
+        crashDir = crashDir,
+    )
+    Thread.setDefaultUncaughtExceptionHandler(crashHandler)
+    crashHandler.recoverOrphanedRecords(crashDir)
+    return crashHandler
 }

@@ -21,6 +21,7 @@ import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import fi.italeino.aidos.engine.ui.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.net.URI
 
@@ -261,6 +262,39 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
     val loading by detail.loading.collectAsState()
     val engineState by models.host.state.collectAsState()
     val prefs by models.prefs.data.collectAsState()
+    val scope = rememberCoroutineScope()
+    var pendingLicenseConfirm by remember { mutableStateOf(false) }
+
+    if (pendingLicenseConfirm) {
+        val licenseName = state.model?.licenseName.orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingLicenseConfirm = false },
+            title = { Text("Accept Model License") },
+            text = {
+                Text(
+                    "Downloading and running ${state.model?.name ?: modelId} requires accepting its license terms: $licenseName",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingLicenseConfirm = false
+                        scope.launch {
+                            detail.acceptLicenseNow()
+                            detail.startDownload()
+                        }
+                    },
+                ) {
+                    Text("Accept & Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingLicenseConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
@@ -275,7 +309,19 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
             actions = ModelDetailActions(
                 onPreferredContextChange = models.prefs::setPreferredContextLength,
                 onOpenUrl = ::openInBrowser,
-                onStartDownload = detail::startDownload,
+                onStartDownload = {
+                    if (detail.state.value.model?.licenseName.isNullOrBlank()) {
+                        detail.startDownload()
+                    } else {
+                        scope.launch {
+                            if (detail.isLicenseAccepted()) {
+                                detail.startDownload()
+                            } else {
+                                pendingLicenseConfirm = true
+                            }
+                        }
+                    }
+                },
                 onCancelDownload = detail::cancelDownload,
                 onDelete = detail::delete,
                 onEmbeddingInputChange = detail::setEmbeddingInput,
@@ -327,6 +373,8 @@ private fun SettingsDialog(prefs: DesktopPreferences, onClose: () -> Unit) {
                 ),
                 onSetRamBaseline = prefs::setRamBaselineUsedMb,
                 onRefreshRamBaseline = { ramNow = DesktopDevice.memory() },
+                engineLocalityLimit = data.engineLocalityLimit,
+                onSetEngineLocalityLimit = prefs::setEngineLocalityLimit,
                 tokenStorageNote = "Debug build: stored unencrypted in ${DesktopPaths.stateDir}.",
                 modifier = Modifier
                     .fillMaxSize()

@@ -13,6 +13,21 @@ class InstalledMcpDiscoveryTest {
     }
 
     @Test
+    fun normalizeServiceClassExpandsPackageRelativeNames() {
+        assertEquals(
+            "com.agenticmessenger.mcp.host.AmpMcpBinderService",
+            InstalledMcpDiscovery.normalizeServiceClass("com.agenticmessenger.mcp.host", ".AmpMcpBinderService"),
+        )
+        assertEquals(
+            "com.agenticmessenger.mcp.android.AmpMcpBinderService",
+            InstalledMcpDiscovery.normalizeServiceClass(
+                "com.agenticmessenger.mcp.host",
+                "com.agenticmessenger.mcp.android.AmpMcpBinderService",
+            ),
+        )
+    }
+
+    @Test
     fun discoveredProviderConvertsToMcpTransportBinder() {
         val certs = setOf("a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90")
         val provider = DiscoveredMcpProvider(

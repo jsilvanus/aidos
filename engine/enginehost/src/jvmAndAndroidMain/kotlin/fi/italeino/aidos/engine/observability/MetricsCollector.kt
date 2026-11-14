@@ -4,6 +4,9 @@ import app.cash.sqldelight.db.SqlDriver
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Collects and writes observability metrics to the database (RFC-0037).
@@ -212,8 +215,46 @@ class MetricsCollector(
     }
 
     private fun buildLabels(block: MutableMap<String, String>.() -> Unit): String {
-        val labels = mutableMapOf<String, String>()
+        val labels = linkedMapOf<String, String>()
         labels.block()
-        return labels.entries.joinToString(",", "{", "}") { (k, v) -> "\"$k\":\"$v\"" }
+        val jsonObject = buildJsonObject {
+            for ((k, v) in labels) {
+                put(k, v)
+            }
+        }
+        val sb = StringBuilder(64).append('{')
+        var first = true
+        for ((k, v) in jsonObject) {
+            if (!first) sb.append(',')
+            first = false
+            appendEscapedJsonString(sb, k)
+            sb.append(':')
+            appendEscapedJsonString(sb, (v as JsonPrimitive).content)
+        }
+        return sb.append('}').toString()
+    }
+
+    private fun appendEscapedJsonString(sb: StringBuilder, value: String) {
+        sb.append('"')
+        for (ch in value) {
+            when (ch) {
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '\b' -> sb.append("\\b")
+                '\u000C' -> sb.append("\\f")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> {
+                    if (ch.code < 0x20) {
+                        sb.append("\\u")
+                        sb.append(ch.code.toString(16).padStart(4, '0'))
+                    } else {
+                        sb.append(ch)
+                    }
+                }
+            }
+        }
+        sb.append('"')
     }
 }

@@ -1,6 +1,6 @@
 # RFC-0108: AIDIN Remote Routes (reaching a peer from outside the LAN)
 
-Status: Draft (proposed with D53, 2026-11-10). Not implemented.
+Status: Draft (proposed with D53, 2026-11-10). Phases 1–4 standalone libraries built and JVM unit-tested; Engine/AIDIN/UI runtime integration and Phase 5 remain deferred.
 
 Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0051 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
 
@@ -185,14 +185,13 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 
 **Route planner policy** (`agent:policy`, `dev.aidos.policy`):
 - ✅ `RoutePlannerPolicy` class:
-  - LAN routes always safe for split (no RTT threshold)
-  - Direct/SSH routes safe only if measured RTT ≤ 50ms (LAN speed)
+  - Enforces `Locality` (`LOCAL_ONLY`, `TRUSTED_CLUSTER`, `ANY`, fail-closed default `LOCAL_ONLY`)
+  - LAN routes safe for split (no RTT threshold); Direct/SSH routes blocked for split and refused under `LOCAL_ONLY`
   - Conservatively refuses unmeasured routes (RTT = -1 indicates failure)
-  - Filters routes to safe subset, sorted by speed
-  - Selects best local route (fastest)
+  - Filters permitted routes and selects best local route (fastest)
 - ✅ `RemoteAccessPolicy` class:
-  - Per-peer allow/disallow/toggle for using remote routes
-  - Filter routes based on permission (if not allowed and remote routes exist, return only Lan)
+  - Per-peer allow/disallow/toggle for using remote routes, validated peer IDs, optional `knownPeers` fail-closed check, and persistent revocation set
+  - Filter routes based on permission (returns only `Lan` unless explicitly allowed and non-revoked)
   - Observable state flows for UI integration
   - Supports getting all allowed peers and clearing permissions
 - ✅ `RemoteAccessAuditEvent` data class for logging permission changes
@@ -270,12 +269,11 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
   - Uses sshj library, which is pure Java and works on Android
   - All Phase 3 features (reverse/local forward, keepalive, reconnect, state flow) available on Android
   - No kernel dependency; reusable by other Android apps
-- ✅ `agent:vault` now includes `android()` target with Keystore-backed key storage
-  - `AndroidKeystoreVault` class: stores/retrieves SSH tunnel keys using Android Keystore
-  - Keys encrypted with device-bound, user-authenticated AES-256 in the hardware Keystore (or TEE)
+- ✅ `agent:vault` includes Keystore-backed key storage in `src/androidMain` (note: `android()` target is currently commented out in `agent/vault/build.gradle.kts` until Android SDK verification is enabled)
+  - `AndroidKeystoreVault` class: stores/retrieves SSH tunnel keys encrypted via `AndroidKeystoreKeyProvider` + private `SharedPreferences`
+  - Keys encrypted with device-bound AES-256-GCM in the Android Keystore (`AES/GCM/NoPadding`, random 12-byte IV per entry, preference-key AAD binding)
   - Private keys never written to disk unencrypted
-  - `EncryptedSharedPreferences` for transparent encryption/decryption
-  - `AndroidKeystoreKeyProvider` for integration with vault encryption
+  - `AndroidKeystoreKeyProvider` for hardware-backed Keystore cipher operations
 - ✅ Ready for androidapp integration (see Deferred)
 
 ### Deferred to later PRs

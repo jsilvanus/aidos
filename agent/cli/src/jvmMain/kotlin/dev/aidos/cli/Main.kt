@@ -1,5 +1,6 @@
 package dev.aidos.cli
 
+import dev.aidos.api.RuntimeClient
 import dev.aidos.api.socket.SocketPaths
 import dev.aidos.identity.ProjectRegistry
 import dev.aidos.identity.UuidV7Generator
@@ -39,6 +40,7 @@ import kotlin.system.exitProcess
  *   answer-run <runId> <answer...>
  *   ping
  *   version
+ *   diagnose [--output PATH] [--include-trace] [--runs ID,...] [--include-sensitive]
  *   export <projectDir> [--output F] [--encrypt] [--sign KEY] ...   (RFC-0041; local, no daemon)
  *   import <archive> [--into DIR] [--rename|--replace] ...          (RFC-0041; local, no daemon)
  *   keygen <prefix> | keygen --vault NAME [pubfile]                 (RFC-0041; local, no daemon)
@@ -89,7 +91,7 @@ fun main(args: Array<String>) {
     val commandArgs = rest.drop(1)
 
     try {
-        runBlocking { dispatch(cli, command, commandArgs) }
+        runBlocking { dispatch(cli, command, commandArgs, client) }
     } catch (e: SocketConnectionException) {
         System.err.println("aidos-cli: could not reach the daemon: ${e.message}")
         System.err.println("Is 'aidos-daemon' running? (socket: $resolvedSocketPath)")
@@ -100,7 +102,67 @@ fun main(args: Array<String>) {
     }
 }
 
-private suspend fun dispatch(cli: AidosCli, command: String, args: List<String>) {
+internal data class DiagnoseCliArgs(
+    val outputPath: String = "aidos-diagnostic.zip",
+    val includeTrace: Boolean = false,
+    val selectedRuns: List<String> = emptyList(),
+    val includeSensitive: Boolean = false,
+)
+
+internal fun parseDiagnoseArgs(args: List<String>): DiagnoseCliArgs {
+    var outputPath: String? = null
+    var includeTrace = false
+    val selectedRuns = mutableListOf<String>()
+    var includeSensitive = false
+    var i = 0
+    while (i < args.size) {
+        when (val arg = args[i]) {
+            "--output", "-o" -> {
+                if (i + 1 >= args.size) throw IllegalStateException("--output requires a path argument")
+                outputPath = args[i + 1]
+                i += 2
+            }
+            "--include-trace" -> {
+                includeTrace = true
+                i += 1
+            }
+            "--runs" -> {
+                if (i + 1 >= args.size) throw IllegalStateException("--runs requires a comma-separated run ID list")
+                args[i + 1].split(',').map { it.trim() }.filter { it.isNotEmpty() }.forEach(selectedRuns::add)
+                i += 2
+            }
+            "--include-sensitive" -> {
+                includeSensitive = true
+                i += 1
+            }
+            else -> {
+                if (arg.startsWith("-")) {
+                    throw IllegalStateException("unknown option for diagnose: $arg")
+                }
+                if (outputPath == null) {
+                    outputPath = arg
+                } else {
+                    throw IllegalStateException("unexpected extra argument for diagnose: $arg")
+                }
+                i += 1
+            }
+        }
+    }
+    return DiagnoseCliArgs(
+        outputPath = outputPath ?: "aidos-diagnostic.zip",
+        includeTrace = includeTrace,
+        selectedRuns = selectedRuns,
+        includeSensitive = includeSensitive,
+    )
+}
+
+internal suspend fun dispatch(
+    cli: AidosCli,
+    command: String,
+    args: List<String>,
+    client: RuntimeClient? = null,
+    homeDir: String = System.getProperty("user.home"),
+) {
     when (command) {
         "create-project" -> {
             requireArgs(args, 1, "create-project <name> [description]")
@@ -154,6 +216,16 @@ private suspend fun dispatch(cli: AidosCli, command: String, args: List<String>)
         }
         "ping" -> println(cli.ping())
         "version" -> println(cli.version())
+        "diagnose" -> {
+            val parsed = parseDiagnoseArgs(args)
+            val diagClient = client ?: fail("diagnose requires a RuntimeClient")
+            DiagnoseCommand(runtimeClient = diagClient, homeDir = homeDir).diagnose(
+                outputPath = parsed.outputPath,
+                includeTrace = parsed.includeTrace,
+                selectedRuns = parsed.selectedRuns,
+                includeSensitive = parsed.includeSensitive,
+            )
+        }
         else -> fail("unknown command: $command (see --help)")
     }
 }
@@ -167,9 +239,8 @@ private fun fail(message: String): Nothing {
     exitProcess(1)
 }
 
-private fun printHelp() {
-    println(
-        """
+internal fun helpText(): String =
+    """
         aidos-cli [--socket-path PATH] <command> [args...]
 
         Commands:
@@ -187,10 +258,13 @@ private fun printHelp() {
           answer-run <runId> <answer...>
           ping
           version
+          diagnose [--output PATH] [--include-trace] [--runs ID,...] [--include-sensitive]
 
         --socket-path PATH   Daemon socket (default: ${'$'}XDG_RUNTIME_DIR/aidos/runtime.sock)
-        """.trimIndent()
-    )
+    """.trimIndent()
+
+private fun printHelp() {
+    println(helpText())
 }
 
 /**

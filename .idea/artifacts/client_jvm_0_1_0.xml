@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="client-jvm-0.1.0">
-    <output-path>$PROJECT_DIR$/sdk/client/build/libs</output-path>
-    <root id="archive" name="client-jvm-0.1.0.jar">
-      <element id="module-output" name="aidos-sdk.client.jvmMain" />
-    </root>
-  </artifact>
-</component>

@@ -76,4 +76,61 @@ class MigrationRunnerTest {
         assertEquals(ErrorClass.CONFLICT, readOnly.error.errorClass)
         assertEquals("999", readOnly.error.detail["found_version"])
     }
+
+    @Test
+    fun `fresh database enables incremental auto_vacuum and wal_autocheckpoint 1000`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            val result = MigrationRunner.open(driver, DatabaseKind.PROJECT, schema, "test-1.0", now)
+            assertIs<OpenResult.Ready>(result)
+
+            val autoVacuum = driver.executeQuery(
+                identifier = null,
+                sql = "PRAGMA auto_vacuum",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
+                parameters = 0,
+            ).value
+            val walAutocheckpoint = driver.executeQuery(
+                identifier = null,
+                sql = "PRAGMA wal_autocheckpoint",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
+                parameters = 0,
+            ).value
+
+            assertEquals(2L, autoVacuum)
+            assertEquals(1000L, walAutocheckpoint)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun `opening newer read-only database does not rewrite auto_vacuum`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        try {
+            driver.execute(
+                identifier = null,
+                sql = "CREATE TABLE schema_versions (id INTEGER PRIMARY KEY, version INTEGER NOT NULL, applied_at TEXT NOT NULL, runtime_version TEXT NOT NULL)",
+                parameters = 0,
+            )
+            driver.execute(
+                identifier = null,
+                sql = "INSERT INTO schema_versions (id, version, applied_at, runtime_version) VALUES (1, 999, '2026-08-05T00:00:00Z', 'future-runtime')",
+                parameters = 0,
+            )
+
+            val result = MigrationRunner.open(driver, DatabaseKind.PROJECT, schema, "test-1.0", now)
+            assertIs<OpenResult.ReadOnly>(result)
+
+            val autoVacuum = driver.executeQuery(
+                identifier = null,
+                sql = "PRAGMA auto_vacuum",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else null) },
+                parameters = 0,
+            ).value
+            assertEquals(0L, autoVacuum)
+        } finally {
+            driver.close()
+        }
+    }
 }

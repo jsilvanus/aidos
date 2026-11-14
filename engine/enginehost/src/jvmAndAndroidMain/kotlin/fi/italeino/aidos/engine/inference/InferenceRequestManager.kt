@@ -89,32 +89,8 @@ class InferenceRequestManager(
     ): Result<T> {
         // RFC-0103: Check license acceptance before queuing/loading the model.
         // This must happen before admission to avoid taking a queue slot for a refused request.
-        if (licenseStore != null) {
-            val descriptor = describe(modelId) ?: run {
-                // Model doesn't exist; load will fail anyway with a more specific error
-                return Result.failure(IllegalArgumentException("Model $modelId not found"))
-            }
-            val licenseText = descriptor.metadata["license_text"] ?: descriptor.metadata["license"] ?: ""
-            val licenseDigest = descriptor.metadata["license_digest"]
-                ?: descriptor.metadata["license_text_digest"]
-                ?: licenseText.takeIf { it.isNotBlank() }?.let(::sha256Hex)
-                ?: ""
-            val version = descriptor.metadata["version"]
-                ?: descriptor.metadata["model_version"]
-                ?: descriptor.digest
-                ?: ""
-            val accepted = licenseStore.isAccepted(descriptor.id, version, licenseDigest)
-            if (!accepted && licenseDigest.isNotEmpty()) {
-                return Result.failure(
-                    LicenseNotAcceptedException(
-                        descriptor.id,
-                        version,
-                        licenseText,
-                        licenseDigest,
-                    )
-                )
-            }
-        }
+        val licenseCheck = checkLicenseAcceptance(modelId)
+        if (licenseCheck.isFailure) return Result.failure(licenseCheck.exceptionOrNull()!!)
 
         val descriptor = if (locality == Locality.ANY) null else describe(modelId)
         if (descriptor != null) {
@@ -158,9 +134,49 @@ class InferenceRequestManager(
         }
     }
 
-    /** The descriptor for [modelId], preferring the installed record over the catalog's. */
-    private suspend fun describe(modelId: String): ModelDescriptor? =
-        modelRuntime.installed().firstOrNull { it.id == modelId } ?: modelRuntime.catalog().firstOrNull { it.id == modelId }
+    /** Enforces [licenseStore] when present and the model carries license metadata. */
+    private suspend fun checkLicenseAcceptance(modelId: String): Result<Unit> {
+        val store = licenseStore ?: return Result.success(Unit)
+        // Missing models continue to modelRuntime.load() so callers get the canonical "not installed" 404 error.
+        val descriptor = describe(modelId) ?: return Result.success(Unit)
+        val licenseText = descriptor.metadata["license_text"] ?: descriptor.metadata["license"] ?: ""
+        val licenseDigest = descriptor.metadata["license_digest"]
+            ?: descriptor.metadata["license_text_digest"]
+            ?: licenseText.takeIf { it.isNotBlank() }?.let(::sha256Hex)
+            ?: ""
+        if (licenseDigest.isEmpty()) return Result.success(Unit)
+        val version = descriptor.metadata["version"]
+            ?: descriptor.metadata["model_version"]
+            ?: descriptor.digest
+            ?: ""
+        val accepted = store.isAccepted(descriptor.id, version, licenseDigest)
+        if (!accepted) {
+            return Result.failure(
+                LicenseNotAcceptedException(
+                    descriptor.id,
+                    version,
+                    licenseText,
+                    licenseDigest,
+                )
+            )
+        }
+        return Result.success(Unit)
+    }
+
+    /** The descriptor for [modelId], preferring the installed record over the catalog's while preserving catalog metadata. */
+    private suspend fun describe(modelId: String): ModelDescriptor? {
+        val installed = modelRuntime.installed().firstOrNull { it.id == modelId }
+        val catalog = modelRuntime.catalog().firstOrNull { it.id == modelId }
+        return when {
+            installed != null && catalog != null -> installed.copy(
+                digest = installed.digest ?: catalog.digest,
+                format = installed.format ?: catalog.format,
+                quantization = installed.quantization ?: catalog.quantization,
+                metadata = catalog.metadata + installed.metadata,
+            )
+            else -> installed ?: catalog
+        }
+    }
 
     /** Force-load a model into memory without performing inference. */
     suspend fun openModel(modelId: String): Result<Unit> {
@@ -173,6 +189,9 @@ class InferenceRequestManager(
             }
         }
         if (allowed.isFailure) return allowed
+
+        val licenseCheck = checkLicenseAcceptance(modelId)
+        if (licenseCheck.isFailure) return licenseCheck
 
         return try {
             modelRuntime.load(modelId).map { Unit }

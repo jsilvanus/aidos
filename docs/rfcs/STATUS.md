@@ -1,6 +1,6 @@
 # RFC implementation status
 
-Audited 2026-11-13 against the code (not against status lines or milestone checkmarks). One read-only audit per Accepted RFC; test files were read, not run. Key changes 2026-11-13: RFC-0037 reclassified from NOT_IMPLEMENTED to PARTIAL (CrashHandler/MetricsCollector implementation exists but not production-wired); RFC-0104 status updated to Accepted; RFC-0103 test-count note clarified.
+Audited 2026-11-13 and reconciled 2026-11-14 against code, production wiring, and passing JVM test suites (`agent`, `engine`, `sdk`). `IMPLEMENTED` = the RFC's MVP is built, wired where required, and tested; `PARTIAL` = some of it is built and tested, gaps listed; `NOT_IMPLEMENTED` = schema/DDL at most; `NOT_APPLICABLE` = the RFC's MVP is a decision, not code.
 
 **Accepted** (the status in each RFC) means the design is approved. This table says how much of it exists in code. `IMPLEMENTED` = the RFC's MVP is built and tested; `PARTIAL` = some of it is built and tested, gaps listed; `NOT_IMPLEMENTED` = schema/DDL at most; `NOT_APPLICABLE` = the RFC's MVP is a decision, not code.
 
@@ -8,44 +8,44 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 
 | RFC | Verdict | Built / missing |
 |---|---|---|
-| 0002 | IMPLEMENTED | executor/capability/audit/lock/identity/api real; BudgetLedger with reserve/settle/release/remaining; project archive and delete operations |
+| 0002 | PARTIAL | executor/capability/audit/lock/identity/api real; `SqlBudgetLedger` (`reserve`/`settle`/`release`/`remaining`) and `ProjectLifecycle` (`archive`/`delete`) built and real-schema tested in `:executor`, not yet production-wired into `RuntimeCompositionRoot`/`SqliteExecutor` |
 | 0003 | PARTIAL | capability, audit, redactor, scrubbed MCP env, socket auth real; vault wired (RFC-0035); audit gaps |
 | 0004 | PARTIAL | events table+EventStore+causal depth, payload redacted at publish (RFC-0035); no category/visibility/subscribe-authorization |
 | 0005 | PARTIAL | event wake + causal depth done; MOBILE deterministic gate and admission policy missing |
 | 0006 | PARTIAL | RunState, continuations, crash recovery; no CancelRun/priority interrupt, no event queue |
 | 0007 | PARTIAL | no RuntimeDispatchers, per-project mutex contexts, scope hierarchy; revocation epoch + treeless worker + ProjectLocker present |
-| 0008 | IMPLEMENTED | two loops; JSON-schema arg validation, INVALID_ARGUMENTS errors, budget termination condition all built and tested |
+| 0008 | PARTIAL | two loops (`AgentLoop` + `SqliteExecutor`), `JsonSchemaValidator` arg validation (`INVALID_ARGUMENTS`), and `AgentLoop` usage-based budget termination built and tested; production `SqliteExecutor` does not yet wire `BudgetLedger` termination |
 | 0009 | PARTIAL | recovery classes, drive/park/recover real; no INTENT row before effects, idempotency_key unwritten, no deadline budget, tests fabricate states |
-| 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); no archive/dormancy/templates |
+| 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); `ProjectLifecycle` archive (`CLOSED`) and FK-ordered delete built and real-schema tested in `:executor`, not yet wired to daemon/CLI |
 | 0011 | PARTIAL | sessions, worker spawn, memory store; no failure budget, no orphan cancel, no FACT cap |
-| 0012 | PARTIAL | flat intent store + status fn, tests only; no proposal gate, edges, acyclicity; not wired in prod |
+| 0012 | PARTIAL | flat intent store (`androidapp`), `DerivedStatusComputer` (`execution_edges` + `DEPENDS_ON` + `asserted_status`), `IntentCycleDetector`, and `IntentProposalEngine` (`resolveProposal` + `audit_ref`) built and real-schema tested in `:intent`, not yet wired into `SqliteExecutor`/`PromptAssembler` |
 | 0015 | PARTIAL | GitsemaKnowledgeIndex adapter+factory; no KnowledgeContextProvider, no prod caller, IndexingJob not executed |
 | 0016 | PARTIAL | discovery+hash done; no adoption writer, no budget drop, sha256 not blob hash |
 | 0017 | PARTIAL | MigrationRunner wired; pending_operations unused, no row_version CAS, no open-time recovery pass, no lifecycle states |
-| 0018 | IMPLEMENTED | SqliteCapabilityManager+RelPath, 23+ tests; delegate() scope containment checks and attenuation; maxExerciseCount enforcement with budget checks |
+| 0018 | IMPLEMENTED | `SqliteCapabilityManager`+`RelPath`, segment containment checks, `Shell`/`Network`/`Model` scope enforcement, 7-dimension `Budget` & `requiresApprovalPerUse` attenuation, atomic `maxExerciseCount` usage increments, and 17-column SQL persistence built and tested |
 | 0019 | PARTIAL | schema+dependency scheduling+recovery; no cycle check, no TARGETED/IMPLEMENTS/RETRY_OF writers, no retry loop |
-| 0020 | IMPLEMENTED | PolicyInferenceRouter with budget-aware selection, idle model unload with timeout, RemoteAdapterPipeline skeleton; Anthropic remote adapter wired |
+| 0020 | PARTIAL | `PolicyInferenceRouter` (`ModelKind` + budget-aware selection), lock-safe `GlobalModelRuntime` idle unload, `RemoteAdapterPipeline` skeleton, and `AnthropicAdapter` built and tested; daemon uses `PolicyInferenceRouter` without `GlobalModelRuntime` |
 | 0021 | PARTIAL | ModelAdapter/ToolCall.rawText real; key from the vault (env fallback), adapter bypasses EffectBroker, no egress_records writer |
 | 0022 | PARTIAL | cookbook, GlobalModelRuntime LRU, llama.cpp, GBNF, resumable download; no mmap, KV const, count-based admission |
 | 0023 | PARTIAL | AnthropicAdapter+PolicyInferenceRouter real; no approval dialog, egress_records no writer, no redaction |
 | 0024 | PARTIAL | kernel types, schema, SqliteContentNodeStore in androidapp; not wired to runtime composition; no sensitivity enforcement |
 | 0025 | PARTIAL | PromptAssembler sections/fit/TooBig/tool-descriptor fencing real; no PromptPackage provenance, no PrivacyFilter, no <context> sandboxing, provenance never written |
 | 0026 | PARTIAL | SessionMemoryStore+tests; not wired to runtime; no delete/inspect, no redactor, no expiry |
-| 0027 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0027 requirement map](#rfc-0027-requirement-map) below. Content-node provenance (`taint_source_node_id`, `prompt_provenance`) waits on RFC-0024/0025 plumbing |
-| 0028 | PARTIAL | Budget type+split, causal depth, step ceiling; BudgetLedger interface only, no writers, budgetRemaining=null; causal depth 16 not 8 |
+| 0027 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0027 requirement map](#rfc-0027-requirement-map) below. Partially superseded by RFC-0110 (Draft) for opt-in Guardian escalation and `Permission.APP_IPC` taint attenuation. Content-node provenance (`taint_source_node_id`, `prompt_provenance`) waits on RFC-0024/0025 plumbing |
+| 0028 | PARTIAL | `Budget` type+split, causal depth (16 not 8), step ceiling; `SqlBudgetLedger` built and real-schema tested in `:executor` and `AgentLoop` tracks `budgetRemaining`/`response.usage`, but `BudgetLedger` is not yet wired into production `SqliteExecutor` |
 | 0029 | PARTIAL | AidosError/ErrorClass + RetryPolicy + INDETERMINATE real; isModelAudience test-only; most registry codes never emitted, ad hoc codes used |
-| 0030 | IMPLEMENTED | ToolBroker capability check+audit+preview; JSON-schema validation MVP (type, required, properties, constraints); budget tracking foundation |
-| 0031 | IMPLEMENTED | stdio/HTTP clients, lazy lifecycle, adoption, fencing, tests, MCP_SERVER capability issuance on adopted-server activation, and user-scope `mcp_servers` write path are implemented; Binder transport for Android remains tracked as RFC-0107 Phase 2 (separate scope) |
+| 0030 | IMPLEMENTED | `ToolBroker` capability check + valid-`projectId` audit (including `openHandle` failures) + preview; `JsonSchemaValidator` MVP (string-first type check, 64-bit integer bounds, regex patterns, constraints) built and tested |
+| 0031 | PARTIAL | stdio/HTTP clients, lazy lifecycle, adoption, fencing, revoked-grant-safe `MCP_SERVER` capability issuance on activation (scoped stdio), and `McpServerRegistry` user-scope write path built and tested; `McpServerRegistry` not yet wired into daemon/CLI; Android Binder transport tracked under RFC-0107 |
 | 0032 | PARTIAL | JGit GitTool 14 tests, Reconciliation, TreelessWorker CAS; no fetch/merge_ff/switch, no worker-ref pruning, per-op capabilities differ |
-| 0034 | IMPLEMENTED | RelPath + symlink-aware containment + read/write/list/search+diff preview; delete/move/mkdir operations with .git/ protection; atomic writes for mkdir |
-| 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore is not built (the vault is JVM-only and the Android host does not run it yet) |
+| 0034 | IMPLEMENTED | `RelPath` + symlink-safe delete/containment + read/write/list/search + non-mutating previews (`write`/`delete`/`move`/`mkdir`), `.git/` protection, atomic temp-file writes in `SqliteDirHandle`, and same-path `move` no-op safety built and tested |
+| 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore (`agent/vault/src/androidMain`) exists as code (`AndroidKeystoreVault`) with `android()` target disabled in `agent/vault/build.gradle.kts` |
 | 0036 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0036 requirement map](#rfc-0036-requirement-map) below |
-| 0037 | PARTIAL | CrashHandler writes crash_records with stack hash and detail files and is installed in daemon startup; MetricsCollector writes metric_samples with run outcomes/duration/model-load-time and is invoked after driven runs; structured logger and diagnose bundle exist; no telemetry backend |
+| 0037 | PARTIAL | `CrashHandler`, `MetricsCollector.collect(projectId)` (wired after `drive()`), thread-safe RFC-8259 `StructuredLogger`, and CLI `aidos diagnose` bundle (wired in `Main` with real SQLite extraction & redaction) built and tested; desktop `crash_records` bootstrap wired; no remote telemetry backend |
 | 0038 | PARTIAL | CrashRecoveryTest 4 seeded boundaries, injection suite, RelPath tests; no shared fakes, no fixtures tree, no profile matrix, no concurrency tests |
 | 0039 | PARTIAL | MigrationRunner read-only fallback; unknown fields dropped, no size limits, migration_history unwritten; SDK uses range not exact match |
-| 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, PRAGMA synchronous=NORMAL, auto_vacuum=INCREMENTAL, wal_autocheckpoint=1000; MigrationRunner v1; forward migrations foundation |
+| 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, `PRAGMA synchronous=NORMAL`, `auto_vacuum=INCREMENTAL` (via `VACUUM` on bootstrap), `wal_autocheckpoint=1000`; `MigrationRunner` v1; forward migrations foundation built and tested |
 | 0041 | IMPLEMENTED | MVP built (full export, manifest, encryption, signing, verified import, migration, conflict policies, CLI) and tested; requirement map in [RFC-0041 requirement map](#rfc-0041-requirement-map) below |
-| 0042 | IMPLEMENTED | EgressSecurityPolicy+DefaultEgressClient enforcement is production-wired, Anthropic/OpenAI-style provider calls run through mediated egress transport, daemon writes `egress_records`, and response-size limits/rejections are enforced and tested |
+| 0042 | IMPLEMENTED | `EgressSecurityPolicy` (with obfuscated IPv4/IPv6 detection) + streaming-bounded `DefaultEgressClient` (`maxResponseBytes` enforcement) wired in daemon with `egress_records` persistence and configurable `EgressProviderTransports`; `AnthropicAdapter` & OpenAI-compatible transports tested |
 | 0043 | NOT_APPLICABLE | no plugin host in v1, matches RFC MVP; only enum value + unread installed_plugins table |
 | 0044 | PARTIAL | TriggerCalculator, ScheduledJobManager, NotificationManager tested; NotificationBudget unused, no timer/WorkManager calls scheduler |
 | 0045 | PARTIAL | DegradationLadder + event store, tests only, not called in prod; no admission check, resource_budgets DDL only |
@@ -60,9 +60,9 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0055 | PARTIAL | ProjectLock+stale detection, 0600 socket+token, interactive gate, env scrub; heartbeat never called, lock_breaks no writer, no release on shutdown |
 | 0056 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0056 requirement map](#rfc-0056-requirement-map) below |
 | 0057 | PARTIAL | RunSummaryComputer, spoken summary, voice approval tested; no UI uses them, no STT/TTS wired, approval_channel null |
-| 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence and inference gating now wired (including HTTP `license_not_accepted` 451 mapping), queue default is unbounded (no depth rejection by default); broader Android instrumentation and full multi-app UX validation still pending |
-| 0104 | PARTIAL | Placement derivation/enforcement implemented and tested; Connected Apps now has per-app locality caps plus refusal counters, Settings exposes Engine-wide locality cap, and refusals trigger an audit hook; still missing production non-local execution paths (remote providers/delegation in Android UI flow) |
-| 0105 | IMPLEMENTED | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split (planner+supervisors+GGML_RPC) IMPLEMENTED and tested; production integration wired in host path using installed model records (no `<modelId>.gguf` filename assumption), with desktop host coverage for split-model discovery and selection |
+| 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence (`Encrypted*` & `FileLicenseAcceptanceStore` on desktop) and `InferenceRequestManager` gating wired (`openModel` + `execute`, HTTP 451 `license_not_accepted`), `ModelDetailContent` status/accept card added; queue default is unbounded; broader Android instrumentation pending |
+| 0104 | PARTIAL | Placement derivation/enforcement implemented and tested; both `EngineService` (Android) and `DesktopEngineHost` (desktop) wire `subjectLocality`, `engineLocality`, and `onLocalityViolation` refusal recording; Settings exposes Engine-wide locality limit on both platforms; production multi-node non-local Android delegation UI still pending |
+| 0105 | IMPLEMENTED | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split (planner+supervisors+GGML_RPC) IMPLEMENTED and tested; desktop host production integration unions catalog & manual `.gguf` split models and supplies real SHA-256 digests |
 
 ## Not Accepted
 
@@ -75,8 +75,9 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0060 Plugin SDK | Draft | Not scheduled for v1. |
 | 0106 Desktop Generative UI | Draft | No code. |
 | 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
-| 0108 AIDIN Remote Routes | Draft | Phase 3a built: standalone `agent/ssh-tunnel` library (JVM; sshj and MINA transports pass one shared suite against an in-process server). Phase 4a: sshj transport written for Android but never run on a device or emulator. Not built: route hints, remote-access switch, Engine tunnel manager and key page, Android keystore-backed `KeyProvider`. |
+| 0108 AIDIN Remote Routes | Draft | Phases 1–4 standalone libraries built and JVM unit-tested (`agent:routes`, `agent:wire-aidin`, `agent:policy`, `agent:ssh-tunnel`, `agent:tunnel-manager` KMP JVM target with `SecretsVault` & pinned host keys); Android Keystore vault (`agent/vault` `androidMain`) written with direct AES-256-GCM Keystore encryption (`android()` target disabled in `agent/vault/build.gradle.kts`). Still not wired into Engine/AIDIN runtime, UI (`TunnelKeyPage`), or RFC-0107 Phase 5. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
+| 0110 Optional Guardian Approval for Tainted Runs | Draft | Planning only; no code. Partially amends RFC-0027 with opt-in `trust.taint_approval_policy` (`MANUAL` default, `GUARDIAN` opt-in), Gate A System One `noul` suspicion latch, Gate B blind zero-tool Guardian LLM verifier, and `Permission.APP_IPC` taint attenuation. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map
