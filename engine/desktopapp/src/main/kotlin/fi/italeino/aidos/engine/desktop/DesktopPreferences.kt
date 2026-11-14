@@ -31,6 +31,26 @@ data class DesktopPreferencesData(
     val groupSharingEnabled: Boolean = false,
     /** Engine-wide maximum placement allowed across all requests (RFC-0104); null means no limit (`any`). */
     val engineLocalityLimit: String? = null,
+
+    // Routing and Guardian Preferences (RFC-0110)
+    val globalMainModelId: String? = null,
+    val globalDefaultRunModelId: String? = null,
+    val globalLocality: String? = null,
+    val globalGuardianPolicy: String? = null,
+    val globalDecisionModelId: String? = null,
+    val globalGuardianLlmModelId: String? = null,
+
+    val projectMainModelId: String? = null,
+    val projectDefaultRunModelId: String? = null,
+    val projectAllowMainModelRunOverride: Boolean? = null,
+    val projectEnforcedLocality: String? = null,
+    val projectGuardianPolicy: String? = null,
+    val projectDecisionModelId: String? = null,
+    val projectGuardianLlmModelId: String? = null,
+
+    val runGuardianPolicyOverride: String? = null,
+    val runModelOverride: String? = null,
+    val runLocalityOverride: String? = null,
 )
 
 /** [ModelRunSettings] as stored: the runtime module has no serialization plugin, so this mirrors it. */
@@ -86,6 +106,25 @@ class DesktopPreferences(private val file: File) {
         val normalized = localityWire?.let(Locality::parse)?.wire
         it.copy(engineLocalityLimit = normalized)
     }
+
+    fun setGlobalMainModelId(id: String?) = update { it.copy(globalMainModelId = id) }
+    fun setGlobalDefaultRunModelId(id: String?) = update { it.copy(globalDefaultRunModelId = id) }
+    fun setGlobalLocality(locality: String?) = update { it.copy(globalLocality = locality) }
+    fun setGlobalGuardianPolicy(policy: String?) = update { it.copy(globalGuardianPolicy = policy) }
+    fun setGlobalDecisionModelId(id: String?) = update { it.copy(globalDecisionModelId = id) }
+    fun setGlobalGuardianLlmModelId(id: String?) = update { it.copy(globalGuardianLlmModelId = id) }
+
+    fun setProjectMainModelId(id: String?) = update { it.copy(projectMainModelId = id) }
+    fun setProjectDefaultRunModelId(id: String?) = update { it.copy(projectDefaultRunModelId = id) }
+    fun setProjectAllowMainModelRunOverride(allow: Boolean?) = update { it.copy(projectAllowMainModelRunOverride = allow) }
+    fun setProjectEnforcedLocality(locality: String?) = update { it.copy(projectEnforcedLocality = locality) }
+    fun setProjectGuardianPolicy(policy: String?) = update { it.copy(projectGuardianPolicy = policy) }
+    fun setProjectDecisionModelId(id: String?) = update { it.copy(projectDecisionModelId = id) }
+    fun setProjectGuardianLlmModelId(id: String?) = update { it.copy(projectGuardianLlmModelId = id) }
+
+    fun setRunGuardianPolicyOverride(override: String?) = update { it.copy(runGuardianPolicyOverride = override) }
+    fun setRunModelOverride(override: String?) = update { it.copy(runModelOverride = override) }
+    fun setRunLocalityOverride(override: String?) = update { it.copy(runLocalityOverride = override) }
 
     fun engineLocality(): Locality = _data.value.engineLocalityLimit?.let(Locality::parse) ?: Locality.ANY
 

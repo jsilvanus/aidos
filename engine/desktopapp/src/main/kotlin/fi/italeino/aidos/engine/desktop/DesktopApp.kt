@@ -19,6 +19,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
+import dev.aidos.api.CreateIntentNodeRequest
+import dev.aidos.api.CreateProjectRequest
+import dev.aidos.api.ProjectLocation
+import dev.aidos.api.RealRuntimeClient
+import dev.aidos.api.RuntimeClient
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.AidosUniversalApp
 import fi.italeino.aidos.engine.ui.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -31,22 +38,67 @@ enum class DesktopRightPaneTab {
     TOOLS,
 }
 
+enum class DesktopViewMode {
+    WORKSPACE,
+    SPLIT,
+    ENGINE,
+}
+
 /** Everything the window binds to, created once per app run. */
-class DesktopModels(val host: DesktopEngineHost, val prefs: DesktopPreferences, val scope: CoroutineScope) {
+class DesktopModels(
+    val host: DesktopEngineHost,
+    val prefs: DesktopPreferences,
+    val scope: CoroutineScope,
+    val runtimeClient: RuntimeClient = RealRuntimeClient(),
+) {
     val status = DesktopStatusModel(host, scope)
     val apps = DesktopAppsModel(host, scope)
     val models = DesktopModelsModel(host, prefs, scope)
     val agents = DesktopAgentsModel(host, scope)
     val mcp = DesktopMcpModel(host, scope)
+
+    init {
+        scope.launch {
+            try {
+                runtimeClient.projects.create(
+                    CreateProjectRequest(
+                        name = "Universal Workspace",
+                        description = "Causal Intent & Multi-Agent Project Hub",
+                        location = ProjectLocation.RuntimeManaged("default-workspace"),
+                    )
+                )
+                runtimeClient.intents.createNode(
+                    CreateIntentNodeRequest(
+                        projectId = "default-workspace",
+                        title = "Explore Causal Outliner & Infinite Canvas",
+                        type = IntentNodeType.GOAL,
+                    )
+                )
+                runtimeClient.intents.createNode(
+                    CreateIntentNodeRequest(
+                        projectId = "default-workspace",
+                        title = "Verify local Llama inference model handshake",
+                        type = IntentNodeType.ATOMIC_TASK,
+                    )
+                )
+            } catch (_: Exception) {
+                // Ignore initialization collisions
+            }
+        }
+    }
 }
 
 /**
- * One-window layout: Home (status) above Connected Apps on the left, the Models tabs / Agent Runtime on the right,
- * Settings in a dialog. All panes are the shared :engineui ones.
+ * Universal Desktop Application Root (RFC-0106, RFC-0111, RFC-0112, D48, D49).
+ *
+ * Unifies the Aidos Universal Workspace (Action Inbox, Outliner, Canvas, Living Doc, Projects)
+ * with the Aidos Engine Host (Models, Providers, MCP Tools, Connected Apps).
+ * Supports Workspace-only, Engine-only, and Side-by-Side Split views.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DesktopApp(models: DesktopModels) {
+    var viewMode by remember { mutableStateOf(DesktopViewMode.SPLIT) }
     var showSettings by remember { mutableStateOf(false) }
     var showGroups by remember { mutableStateOf(false) }
     var rightPaneTab by remember { mutableStateOf(DesktopRightPaneTab.MODELS) }
@@ -65,7 +117,37 @@ fun DesktopApp(models: DesktopModels) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Aidos Engine · debug") },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = when (viewMode) {
+                                DesktopViewMode.WORKSPACE -> "Aidos · Workspace"
+                                DesktopViewMode.ENGINE -> "Aidos Engine · Runtime"
+                                DesktopViewMode.SPLIT -> "Aidos · Workspace + Engine"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        FilterChip(
+                            selected = viewMode == DesktopViewMode.WORKSPACE,
+                            onClick = { viewMode = DesktopViewMode.WORKSPACE },
+                            label = { Text("Workspace") },
+                        )
+                        FilterChip(
+                            selected = viewMode == DesktopViewMode.SPLIT,
+                            onClick = { viewMode = DesktopViewMode.SPLIT },
+                            label = { Text("Split View") },
+                        )
+                        FilterChip(
+                            selected = viewMode == DesktopViewMode.ENGINE,
+                            onClick = { viewMode = DesktopViewMode.ENGINE },
+                            label = { Text("Engine") },
+                        )
+                    }
+                },
                 actions = {
                     IconButton(onClick = { showGroups = true }) {
                         Icon(Icons.Default.Share, contentDescription = "Device groups")
@@ -77,83 +159,41 @@ fun DesktopApp(models: DesktopModels) {
             )
         },
     ) { innerPadding ->
-        Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            Column(modifier = Modifier.weight(0.4f).fillMaxHeight()) {
-                StatusColumn(models, Modifier.weight(0.55f))
-                HorizontalDivider()
-                AppsColumn(models, Modifier.weight(0.45f))
+        when (viewMode) {
+            DesktopViewMode.WORKSPACE -> {
+                AidosUniversalApp(
+                    runtimeClient = models.runtimeClient,
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                )
             }
-            VerticalDivider()
-            Column(modifier = Modifier.weight(0.6f).fillMaxHeight()) {
-                val agentStats by models.agents.state.collectAsState()
-                val mcpState by models.mcp.state.collectAsState()
-                TabRow(selectedTabIndex = rightPaneTab.ordinal) {
-                    Tab(
-                        selected = rightPaneTab == DesktopRightPaneTab.MODELS,
-                        onClick = { rightPaneTab = DesktopRightPaneTab.MODELS },
-                        text = { Text("Models & Providers") }
-                    )
-                    Tab(
-                        selected = rightPaneTab == DesktopRightPaneTab.AGENTS,
-                        onClick = { rightPaneTab = DesktopRightPaneTab.AGENTS },
-                        text = {
-                            val active = agentStats.stats.activeRuns
-                            Text(if (active > 0) "Agents ($active)" else "Agents")
-                        }
-                    )
-                    Tab(
-                        selected = rightPaneTab == DesktopRightPaneTab.TOOLS,
-                        onClick = { rightPaneTab = DesktopRightPaneTab.TOOLS },
-                        text = {
-                            val serverCount = mcpState.servers.size
-                            Text(if (serverCount > 0) "Tools ($serverCount)" else "Tools")
-                        }
-                    )
-                }
-
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when (rightPaneTab) {
-                        DesktopRightPaneTab.MODELS -> {
-                            val modelId = selectedModelId
-                            if (modelId == null) {
-                                ModelsColumn(models, onModelSelected = { selectedModelId = it })
-                            } else {
-                                DetailColumn(models, modelId, onBack = {
-                                    selectedModelId = null
-                                    models.models.refresh()
-                                })
-                            }
-                        }
-                        DesktopRightPaneTab.AGENTS -> {
-                            AgentsPane(
-                                state = agentStats,
-                                onAppFilterSelected = { models.agents.selectAppFilter(it) },
-                                onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
-                                onPlacementFilterSelected = { models.agents.selectPlacementFilter(it) },
-                                onSearchQueryChanged = { models.agents.search(it) },
-                                onResetFilters = { models.agents.resetFilters() },
-                                onViewLayoutSelected = { models.agents.selectViewLayout(it) },
-                                onCancelRun = { models.agents.cancelRun(it) },
-                                onInspectRun = { models.agents.selectRunDetail(it) }
-                            )
-                        }
-                        DesktopRightPaneTab.TOOLS -> {
-                            McpServersPane(
-                                state = mcpState,
-                                onAddServer = { models.mcp.addServer(it) },
-                                onDeleteServer = { models.mcp.deleteServer(it) },
-                                onSelectServer = { models.mcp.selectServer(it) },
-                                onToggleAdoption = { serverId, toolName, shouldAdopt ->
-                                    models.mcp.toggleAdoption(serverId, toolName, shouldAdopt)
-                                },
-                                onAdoptAll = { models.mcp.adoptAll(it) },
-                                onUnadoptAll = { models.mcp.unadoptAll(it) },
-                                onRefreshCatalog = { models.mcp.refreshCatalog(it) },
-                                onSearchQueryChange = { models.mcp.search(it) },
-                                onTransportFilterChange = { models.mcp.setTransportFilter(it) },
-                                onAdoptionFilterChange = { models.mcp.setAdoptionFilter(it) }
-                            )
-                        }
+            DesktopViewMode.ENGINE -> {
+                EngineHostView(
+                    models = models,
+                    selectedModelId = selectedModelId,
+                    onSelectModelId = { selectedModelId = it },
+                    rightPaneTab = rightPaneTab,
+                    onSelectRightPaneTab = { rightPaneTab = it },
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                )
+            }
+            DesktopViewMode.SPLIT -> {
+                Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                    Box(modifier = Modifier.weight(0.55f).fillMaxHeight()) {
+                        AidosUniversalApp(
+                            runtimeClient = models.runtimeClient,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    VerticalDivider()
+                    Box(modifier = Modifier.weight(0.45f).fillMaxHeight()) {
+                        EngineHostView(
+                            models = models,
+                            selectedModelId = selectedModelId,
+                            onSelectModelId = { selectedModelId = it },
+                            rightPaneTab = rightPaneTab,
+                            onSelectRightPaneTab = { rightPaneTab = it },
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                 }
             }
@@ -165,6 +205,98 @@ fun DesktopApp(models: DesktopModels) {
     }
     if (showGroups) {
         GroupsDialog(models, onClose = { showGroups = false })
+    }
+}
+
+@Composable
+fun EngineHostView(
+    models: DesktopModels,
+    selectedModelId: String?,
+    onSelectModelId: (String?) -> Unit,
+    rightPaneTab: DesktopRightPaneTab,
+    onSelectRightPaneTab: (DesktopRightPaneTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier) {
+        Column(modifier = Modifier.weight(0.4f).fillMaxHeight()) {
+            StatusColumn(models, Modifier.weight(0.55f))
+            HorizontalDivider()
+            AppsColumn(models, Modifier.weight(0.45f))
+        }
+        VerticalDivider()
+        Column(modifier = Modifier.weight(0.6f).fillMaxHeight()) {
+            val agentStats by models.agents.state.collectAsState()
+            val mcpState by models.mcp.state.collectAsState()
+            TabRow(selectedTabIndex = rightPaneTab.ordinal) {
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.MODELS,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.MODELS) },
+                    text = { Text("Models & Providers") }
+                )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.AGENTS,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.AGENTS) },
+                    text = {
+                        val active = agentStats.stats.activeRuns
+                        Text(if (active > 0) "Agents ($active)" else "Agents")
+                    }
+                )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.TOOLS,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.TOOLS) },
+                    text = {
+                        val serverCount = mcpState.servers.size
+                        Text(if (serverCount > 0) "Tools ($serverCount)" else "Tools")
+                    }
+                )
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (rightPaneTab) {
+                    DesktopRightPaneTab.MODELS -> {
+                        val modelId = selectedModelId
+                        if (modelId == null) {
+                            ModelsColumn(models, onModelSelected = { onSelectModelId(it) })
+                        } else {
+                            DetailColumn(models, modelId, onBack = {
+                                onSelectModelId(null)
+                                models.models.refresh()
+                            })
+                        }
+                    }
+                    DesktopRightPaneTab.AGENTS -> {
+                        AgentsPane(
+                            state = agentStats,
+                            onAppFilterSelected = { models.agents.selectAppFilter(it) },
+                            onStatusFilterSelected = { models.agents.selectStatusFilter(it) },
+                            onPlacementFilterSelected = { models.agents.selectPlacementFilter(it) },
+                            onSearchQueryChanged = { models.agents.search(it) },
+                            onResetFilters = { models.agents.resetFilters() },
+                            onViewLayoutSelected = { models.agents.selectViewLayout(it) },
+                            onCancelRun = { models.agents.cancelRun(it) },
+                            onInspectRun = { models.agents.selectRunDetail(it) }
+                        )
+                    }
+                    DesktopRightPaneTab.TOOLS -> {
+                        McpServersPane(
+                            state = mcpState,
+                            onAddServer = { models.mcp.addServer(it) },
+                            onDeleteServer = { models.mcp.deleteServer(it) },
+                            onSelectServer = { models.mcp.selectServer(it) },
+                            onToggleAdoption = { serverId, toolName, shouldAdopt ->
+                                models.mcp.toggleAdoption(serverId, toolName, shouldAdopt)
+                            },
+                            onAdoptAll = { models.mcp.adoptAll(it) },
+                            onUnadoptAll = { models.mcp.unadoptAll(it) },
+                            onRefreshCatalog = { models.mcp.refreshCatalog(it) },
+                            onSearchQueryChange = { models.mcp.search(it) },
+                            onTransportFilterChange = { models.mcp.setTransportFilter(it) },
+                            onAdoptionFilterChange = { models.mcp.setAdoptionFilter(it) }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

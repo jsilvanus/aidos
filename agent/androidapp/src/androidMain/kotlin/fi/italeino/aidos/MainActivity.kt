@@ -3,67 +3,29 @@ package fi.italeino.aidos
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
-import androidx.navigation.compose.rememberNavController
-import dev.aidos.androidapp.ui.projects.ProjectsPresenter
-import dev.aidos.androidapp.ui.runs.RunListPresenter
-import dev.aidos.androidapp.ui.sessions.SessionListPresenter
-import dev.aidos.androidapp.ui.diff.CommitPresenter
-import fi.italeino.aidos.navigation.AidosNavHost
-import fi.italeino.aidos.theme.AidosTheme
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
+import dev.aidos.ui.AidosUniversalApp
+import dev.aidos.ui.theme.AidosTheme
 
 /**
- * Main activity for Aidos Android app (M27, M28, RFC-0050).
+ * Main activity for Aidos Adaptive UI (RFC-0050, RFC-0111, RFC-0112).
  *
- * Hosts the Compose UI and wires the runtime presenters.
- * Backed by persistent SQLite storage via [AndroidRuntimeClientFactory]
- * (PIPELINE.md §2.6 & §5).
- *
- * This activity only manages the UI — state, navigation, and presenter lifecycle.
- * All business logic remains in presenters (commonMain), which are platform-neutral
- * and testable on the JVM.
+ * Hosts the Universal Adaptive Compose UI backed by persistent SQLite storage
+ * via [AndroidRuntimeClientFactory].
  */
 class MainActivity : ComponentActivity() {
-    
-    private val applicationScope = CoroutineScope(SupervisorJob())
-    
-    private lateinit var projectsPresenter: ProjectsPresenter
-    private lateinit var sessionListPresenter: SessionListPresenter
-    private lateinit var runListPresenter: RunListPresenter
-    private lateinit var commitPresenter: CommitPresenter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val runtimeClient = AndroidRuntimeClientFactory.createRuntimeClient(this)
-        
-        projectsPresenter = ProjectsPresenter(runtimeClient, applicationScope)
-        sessionListPresenter = SessionListPresenter(runtimeClient, applicationScope)
-        runListPresenter = RunListPresenter(runtimeClient, applicationScope)
-        commitPresenter = CommitPresenter(runtimeClient, applicationScope)
 
         setContent {
             AidosTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val navController = rememberNavController()
-                    AidosNavHost(
-                        navController = navController,
-                        projectsPresenter = projectsPresenter,
-                        sessionListPresenter = sessionListPresenter,
-                        runListPresenter = runListPresenter,
-                        commitPresenter = commitPresenter,
-                    )
-                }
+                AidosUniversalApp(
+                    runtimeClient = runtimeClient,
+                    initialDestinationId = "inbox",
+                )
             }
         }
-
-        // Load projects on app start
-        projectsPresenter.loadProjects()
     }
 }

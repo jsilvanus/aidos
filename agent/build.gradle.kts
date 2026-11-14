@@ -12,6 +12,10 @@ plugins {
     id("com.android.application") version "8.5.2" apply false
 }
 
+allprojects {
+    group = "dev.aidos"
+}
+
 subprojects {
     pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
         extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {

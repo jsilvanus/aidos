@@ -10,31 +10,37 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- The ongoing notification is a real UI surface (RFC-0050 "Notifications"), not optional
-         chrome — targetSdk 33+ requires this to post any notification, including the foreground
-         service's own. -->
+    <!-- Ongoing notification UI surface (RFC-0050) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Optional for voice features (M33) -->
-    <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
 
     <application
         android:usesCleartextTraffic="false">
 
-        <!-- Main activity for Aidos UI (M28, RFC-0050) -->
+        <!-- Launcher 1 (RFC-0111): Aidos Tasks (Personal / Life Workspace) -->
         <activity
-            android:name="fi.italeino.aidos.MainActivity"
-            android:exported="true">
+            android:name="fi.italeino.aidos.TasksMainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:label="Aidos Tasks">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Foreground service for runtime (M27, RFC-0050, D24). Wraps the platform-neutral
-             dev.aidos.androidapp.service.RuntimeServiceHost (jvmMain). "dataSync" is the closest
-             standard Android 14 foreground-service-type match for "runs the agent loop the user
-             started"; none of the standard types name this exactly. -->
+        <!-- Launcher 2 (RFC-0111): Aidos Workspace (Development / Coding Workspace) -->
+        <activity
+            android:name="fi.italeino.aidos.MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:label="Aidos">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service for runtime (RFC-0050) -->
         <service
             android:name="fi.italeino.aidos.service.AidosService"
             android:enabled="true"
