@@ -59,9 +59,17 @@ class ProjectHubPresenter(
                 val items = summaries.map { summary ->
                     val isLife = summary.name.contains("personal", ignoreCase = true) ||
                             summary.name.contains("life", ignoreCase = true)
+                    val isWork = summary.name.contains("work", ignoreCase = true) ||
+                            summary.name.contains("enterprise", ignoreCase = true) ||
+                            summary.name.contains("commercial", ignoreCase = true)
+                    val domain = when {
+                        isLife -> WorkspaceDomain.LIFE_AIR_GAPPED
+                        isWork -> WorkspaceDomain.WORK_ENTERPRISE
+                        else -> WorkspaceDomain.CODE_GIT_BACKED
+                    }
                     ProjectItemUiModel(
                         summary = summary,
-                        domain = if (isLife) WorkspaceDomain.LIFE_AIR_GAPPED else WorkspaceDomain.CODE_GIT_BACKED,
+                        domain = domain,
                     )
                 }
 

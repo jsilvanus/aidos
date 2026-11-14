@@ -15,6 +15,7 @@ import dev.aidos.ui.theme.SpacingTokens
 enum class WorkspaceDomain {
     LIFE_AIR_GAPPED,
     CODE_GIT_BACKED,
+    WORK_ENTERPRISE,
 }
 
 @Composable
@@ -32,6 +33,11 @@ fun ProjectTypeBadge(
             "💻 GIT-BACKED (CODE)",
             Color(0x3306B6D4),
             Color(0xFF06B6D4),
+        )
+        WorkspaceDomain.WORK_ENTERPRISE -> Triple(
+            "🏢 CONTROLLED-EGRESS (WORK)",
+            Color(0x338B5CF6),
+            Color(0xFF8B5CF6),
         )
     }
 
