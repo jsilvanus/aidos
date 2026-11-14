@@ -5,6 +5,9 @@ plugins {
     id("maven-publish")
 }
 
+// Isolate kernel build artifacts per including root project to avoid daemon cache locking
+layout.buildDirectory.set(file("${rootProject.projectDir}/build/kernel"))
+
 kotlin {
     // 17, the lowest toolchain among its consumers (engine/ moved to 17 in 4cfa892). At 21 the JVM
     // jar was class-file 65, which the engine's JDK 17 tests could not load

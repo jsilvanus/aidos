@@ -97,6 +97,8 @@ class DesktopPreferences(private val file: File) {
 
     fun setAutoStartEngine(enabled: Boolean) = update { it.copy(autoStartEngine = enabled) }
 
+    fun setRamBaselineUsedMb(mb: Int?) = update { it.copy(ramBaselineUsedMb = mb) }
+
     fun setGroupSharingEnabled(enabled: Boolean) = update { it.copy(groupSharingEnabled = enabled) }
 
     fun setEngineLocalityLimit(localityWire: String?) = update {
