@@ -359,7 +359,6 @@ enum class VoiceApprovalsLevel {
 }
 
 /**
-/**
  * Taint escalation approval policy for `trust.taint_approval_policy` (RFC-0110, RFC-0027).
  */
 enum class TaintApprovalPolicy {
@@ -380,5 +379,4 @@ enum class IntentDispatchPolicy {
 
     /** Ready agent tasks are eligible for automatic dispatch as soon as dependencies are DONE. */
     AUTO_WHEN_READY,
-}
 }

@@ -43,10 +43,12 @@ class IntentCycleDetector(
         actor: ActorRef,
         additionalEdges: List<Pair<String, String>> = emptyList(),
         removedEdges: Set<Pair<String, String>> = emptySet(),
+        pendingEdges: List<Pair<String, String>> = emptyList(),
     ): AidosError? {
+        val combinedAdditional = if (pendingEdges.isNotEmpty()) additionalEdges + pendingEdges else additionalEdges
         // Reachability check: is there a path from toNodeId to fromNodeId?
         // If yes, adding fromNodeId → toNodeId creates a cycle.
-        val canReach = canReachViaGraph(toNodeId, fromNodeId, projectId, additionalEdges, removedEdges)
+        val canReach = canReachViaGraph(toNodeId, fromNodeId, projectId, combinedAdditional, removedEdges)
         if (!canReach) {
             return null  // Safe
         }

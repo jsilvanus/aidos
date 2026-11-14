@@ -285,7 +285,6 @@ class SettingsTest {
     }
 
     @Test
-    @Test
     fun `trust taint approval policy defaults to MANUAL and resolves GUARDIAN from user scope`() {
         assertEquals(Settings.trustTaintApprovalPolicy, Settings.forKey("trust.taint_approval_policy"))
 
@@ -401,6 +400,5 @@ class SettingsTest {
         val resolved = store.resolve(Settings.intentDefaultDispatchPolicy, projectId = "proj-life")
         assertEquals(IntentDispatchPolicy.AUTO_WHEN_READY, resolved.value)
         assertEquals(SettingOrigin.PROJECT, resolved.origin)
-    }
     }
 }
