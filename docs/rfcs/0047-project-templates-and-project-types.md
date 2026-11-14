@@ -51,6 +51,7 @@ A project type is a stable identifier that selects defaults. Built-in types:
 | `research` | documents, notes, references | fs, git, web fetch* | citation discipline, source tracking |
 | `writing` | prose, outlines, drafts | fs, git | voice, structure, revision practice |
 | `planning` | notes, task lists | fs, git, calendar* | decomposition, review cadence |
+| `work` | deliverables, client docs, operations | fs, git, office/docs*, comms* | confidential client/work discipline, data minimization, acceptance criteria (RFC-0114) |
 | `personal` | notes, media, transcripts | fs, git, media | privacy-first defaults, no remote egress |
 | `generic` | files | fs, git | none |
 
@@ -61,11 +62,16 @@ available; nothing is locked. This matters because real projects are hybrids —
 project usually contains analysis code — and a type system that forbade that would be worse than
 none.
 
-Two type-specific defaults are worth calling out:
+Three type-specific defaults are worth calling out:
 
 - `personal` defaults `routing.remote_egress = never`. A journal is the clearest case where the
   offline-first promise is the entire product, and the default should not require the user to
   discover the setting first.
+- `work` defaults `routing.remote_egress = ask`, `intent.default_dispatch_policy = auto_when_ready`,
+  and `trust.untrusted_paths` to include client drops (`client_drop/**`, `dist/**`, `build/**`).
+  Work projects handle proprietary deliverables, corporate strategy, and client-confidential data
+  under NDAs: prompts never leave the device or trusted LAN cluster without explicit approval, while
+  autonomous intent execution remains enabled within verified boundaries (RFC-0114).
 - `coding` defaults `trust.untrusted_paths` to the dependency directories (RFC-0027), because
   reading a vendored README is the most likely injection vector in that domain.
 
