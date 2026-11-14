@@ -92,3 +92,6 @@ include(":policy")
 // RFC-0113: The Blinded Egress Bridge.
 include(":bridge")
 
+// RFC-0106 / RFC-0111 / RFC-0112: Universal Adaptive UI common components
+include(":ui-common")
+
