@@ -18,7 +18,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0009 | PARTIAL | recovery classes, drive/park/recover real; no INTENT row before effects, idempotency_key unwritten, no deadline budget, tests fabricate states |
 | 0010 | PARTIAL | projects create/registry/lock/settings; export/import built (RFC-0041); `ProjectLifecycle` archive (`CLOSED`) and FK-ordered delete built and real-schema tested in `:executor`, not yet wired to daemon/CLI |
 | 0011 | PARTIAL | sessions, worker spawn, memory store; no failure budget, no orphan cancel, no FACT cap |
-| 0012 | PARTIAL | flat intent store (`androidapp`), `DerivedStatusComputer` (`execution_edges` + `DEPENDS_ON` + `asserted_status`), `IntentCycleDetector`, and `IntentProposalEngine` (`resolveProposal` + `audit_ref`) built and real-schema tested in `:intent`, not yet wired into `SqliteExecutor`/`PromptAssembler` |
+| 0012 | Superseded by 0110 | Superseded by [RFC-0110](0110-dual-mode-intent-graph.md) (dual Life & Coding Intent Graph implemented in `agent/intent`, `agent/settings`, `agent/prompt`, `agent/executor`, `agent/api`) |
 | 0015 | PARTIAL | GitsemaKnowledgeIndex adapter+factory; no KnowledgeContextProvider, no prod caller, IndexingJob not executed |
 | 0016 | PARTIAL | discovery+hash done; no adoption writer, no budget drop, sha256 not blob hash |
 | 0017 | PARTIAL | MigrationRunner wired; pending_operations unused, no row_version CAS, no open-time recovery pass, no lifecycle states |
@@ -60,9 +60,15 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0055 | PARTIAL | ProjectLock+stale detection, 0600 socket+token, interactive gate, env scrub; heartbeat never called, lock_breaks no writer, no release on shutdown |
 | 0056 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0056 requirement map](#rfc-0056-requirement-map) below |
 | 0057 | PARTIAL | RunSummaryComputer, spoken summary, voice approval tested; no UI uses them, no STT/TTS wired, approval_channel null |
+<<<<<<< HEAD
+| 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence (`Encrypted*` & `FileLicenseAcceptanceStore` on desktop) and `InferenceRequestManager` gating wired (`openModel` + `execute`, HTTP 451 `license_not_accepted`), `ModelDetailContent` status/accept card added; queue default is unbounded; broader Android instrumentation pending |
 | 0103 | PARTIAL | handshake, tokens, loopback HTTP, LRU, SDK client contract tests, desktop+Android host; license-acceptance persistence (`Encrypted*` & `FileLicenseAcceptanceStore` on desktop) and `InferenceRequestManager` gating wired (`openModel` + `execute`, HTTP 451 `license_not_accepted`), `ModelDetailContent` status/accept card added; queue default is unbounded; broader Android instrumentation pending |
 | 0104 | PARTIAL | Placement derivation/enforcement implemented and tested; both `EngineService` (Android) and `DesktopEngineHost` (desktop) wire `subjectLocality`, `engineLocality`, and `onLocalityViolation` refusal recording; Settings exposes Engine-wide locality limit on both platforms; production multi-node non-local Android delegation UI still pending |
 | 0105 | IMPLEMENTED | phase1 pairing/groups IMPLEMENTED; phase2 virtual models+delegation IMPLEMENTED; phase3 split (planner+supervisors+GGML_RPC) IMPLEMENTED and tested; desktop host production integration unions catalog & manual `.gguf` split models and supplies real SHA-256 digests |
+| 0110 | IMPLEMENTED | Dual-Mode Intent Graph (Life + Code) fully specified and implemented in agent/intent, agent/settings, agent/prompt, agent/executor, agent/api with 100% test coverage |
+| 0111 | Accepted | Intent Graph 7 presentation paradigms, multi-agent pill overlay (Red/Blue/Green/Violet), and Android dual-launcher topology codified |
+| 0112 | Accepted | Universal Adaptive UI Architecture (Desktop & Android OTG/DeX responsive layout switching) |
+| 0113 | IMPLEMENTED | The Blinded Egress Bridge: Information Flow Control for cross-domain messaging with zero-egress Life projects fully implemented in agent/bridge with 100% test coverage |
 
 ## Not Accepted
 
@@ -78,6 +84,9 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0108 AIDIN Remote Routes | Draft | Phases 1–4 standalone libraries built and JVM unit-tested (`agent:routes`, `agent:wire-aidin`, `agent:policy`, `agent:ssh-tunnel`, `agent:tunnel-manager` KMP JVM target with `SecretsVault` & pinned host keys); Android Keystore vault (`agent/vault` `androidMain`) written with direct AES-256-GCM Keystore encryption (`android()` target disabled in `agent/vault/build.gradle.kts`). Still not wired into Engine/AIDIN runtime, UI (`TunnelKeyPage`), or RFC-0107 Phase 5. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
 | 0110 Optional Guardian Approval for Tainted Runs | Draft | Planning only; no code. Partially amends RFC-0027 with opt-in `trust.taint_approval_policy` (`MANUAL` default, `GUARDIAN` opt-in), Gate A System One `noul` suspicion latch, Gate B blind zero-tool Guardian LLM verifier, and `Permission.APP_IPC` taint attenuation. |
+| 0111 Intent Graph UI Presentation Paradigms & Mobile Topology | Draft | Specifies 7 presentation paradigms for Dual-Mode Intent Graph, Dictator Red/Worker Pill mapping, and 2-APK Engine/Agent multi-launcher topology. |
+| 0112 Universal Adaptive UI Architecture | Draft | Specifies unified UI component parity across Desktop and Android (OTG/DeX responsive layout switching). |
+| 0113 Blinded Egress Bridge | Draft | Core engine components (`agent/bridge`) and tests implemented. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map

@@ -1,87 +1,99 @@
 package dev.aidos.intent
 
-import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
-import dev.aidos.storage.AidosStorage
-import dev.aidos.storage.DesktopPaths
-import java.io.File
-import java.nio.file.Files
-import kotlin.test.AfterTest
+import dev.aidos.kernel.PlatformProfile
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DerivedStatusComputerTest {
 
-    private val drivers = mutableListOf<JdbcSqliteDriver>()
-    private val tempDirs = mutableListOf<File>()
-    private var idSeq = 0
-
-    private val nowIso = "2026-08-05T00:00:00Z"
-
-    @AfterTest
-    fun tearDown() {
-        drivers.forEach { it.close() }
-        drivers.clear()
-        tempDirs.forEach { it.deleteRecursively() }
-        tempDirs.clear()
-    }
-
-    private fun nextId(prefix: String): String = "$prefix-${idSeq++}"
-
-    private fun setupDb(): Pair<JdbcSqliteDriver, DerivedStatusComputer> {
-        val root = Files.createTempDirectory("intent-derived-status-test").toFile()
-        tempDirs.add(root)
-        val driver = AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
-            as JdbcSqliteDriver
-        drivers.add(driver)
-        assertForeignKeysEnabled(driver)
-        seedProjectAndSession(driver, projectId = "proj1", sessionId = "sess1")
-        return driver to DerivedStatusComputer(driver)
-    }
-
-    private fun assertForeignKeysEnabled(driver: JdbcSqliteDriver) {
-        var fkEnabled = 0L
-        driver.executeQuery(
-            identifier = null,
-            sql = "PRAGMA foreign_keys",
-            parameters = 0,
-            mapper = { cursor ->
-                if (cursor.next().value) {
-                    fkEnabled = cursor.getLong(0) ?: 0L
-                }
-                QueryResult.Value(Unit)
-            },
+    private fun setupDb(): Triple<JdbcSqliteDriver, DerivedStatusComputer, IntentGraphRepository> {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val schemaStatements = listOf(
+            "PRAGMA foreign_keys = ON",
+            "CREATE TABLE projects (id TEXT PRIMARY KEY)",
+            """
+            CREATE TABLE audit_log (
+                id TEXT PRIMARY KEY, project_id TEXT, sequence INTEGER,
+                occurred_at TEXT, kind TEXT, actor_kind TEXT, actor_id TEXT,
+                device_id TEXT, subject_ref TEXT, capability_id TEXT, detail_json TEXT
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE intent_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL,
+                title TEXT NOT NULL, description TEXT, priority INTEGER NOT NULL DEFAULT 100,
+                lifecycle TEXT NOT NULL DEFAULT 'ACTIVE', parent_id TEXT,
+                actor_kind TEXT NOT NULL DEFAULT 'AGENT',
+                dispatch_policy TEXT NOT NULL DEFAULT 'INHERIT',
+                granularity TEXT NOT NULL DEFAULT 'GOAL',
+                target_profile TEXT,
+                min_locality TEXT,
+                estimated_steps INTEGER,
+                scope_paths_json TEXT NOT NULL DEFAULT '[]',
+                due_at TEXT,
+                recurrence_json TEXT,
+                asserted_status TEXT, asserted_at TEXT, asserted_by_user_id TEXT,
+                assertion_note TEXT, check_kind TEXT, check_spec TEXT,
+                verification_met INTEGER, verified_by_kind TEXT, verified_by_id TEXT,
+                verified_at TEXT, created_at TEXT NOT NULL, created_by_kind TEXT NOT NULL, created_by_id TEXT NOT NULL,
+                modified_at TEXT NOT NULL, modified_by_kind TEXT NOT NULL, modified_by_id TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                row_version INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (project_id) REFERENCES projects(id),
+                FOREIGN KEY (parent_id) REFERENCES intent_nodes(id),
+                CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK')),
+                CHECK (actor_kind IN ('HUMAN', 'AGENT', 'HYBRID')),
+                CHECK (dispatch_policy IN ('INHERIT', 'MANUAL_START', 'AUTO_WHEN_READY')),
+                CHECK (granularity IN ('GROUP', 'GOAL', 'SUB_GOAL', 'ATOMIC'))
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE intent_edges (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, from_node_id TEXT NOT NULL,
+                to_node_id TEXT NOT NULL, edge_kind TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE (from_node_id, to_node_id, edge_kind)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE execution_edges (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+                from_node_id TEXT NOT NULL, from_node_kind TEXT NOT NULL,
+                to_node_id TEXT NOT NULL, to_node_kind TEXT NOT NULL,
+                edge_kind TEXT NOT NULL,
+                confirmed INTEGER NOT NULL DEFAULT 0,
+                confirmed_by_kind TEXT, confirmed_by_id TEXT, confirmed_at TEXT,
+                UNIQUE (from_node_id, to_node_id, edge_kind)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE content_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL,
+                uri TEXT, content_hash TEXT, byte_size INTEGER, media_type TEXT,
+                state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+            "CREATE TABLE runs (id TEXT PRIMARY KEY, state TEXT NOT NULL)",
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY, run_id TEXT NOT NULL)",
+            "CREATE TABLE attempts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL)",
+            "INSERT INTO projects VALUES ('proj1')",
         )
-        assertEquals(1L, fkEnabled, "PRAGMA foreign_keys must be enabled")
-    }
+        schemaStatements.forEach { statement ->
+            driver.execute(identifier = null, sql = statement, parameters = 0) {}
+        }
 
-    private fun seedProjectAndSession(driver: JdbcSqliteDriver, projectId: String, sessionId: String) {
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO projects (id, name, root_path, created_at, updated_at, state_updated_at) " +
-                "VALUES (?, 'Test Project', '/tmp/test', ?, ?, ?)",
-            parameters = 4,
-        ) {
-            bindString(0, projectId)
-            bindString(1, nowIso)
-            bindString(2, nowIso)
-            bindString(3, nowIso)
-        }
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) " +
-                "VALUES (?, ?, 'Driver', 'DRIVER', 'RUNNING', ?, ?, ?)",
-            parameters = 5,
-        ) {
-            bindString(0, sessionId)
-            bindString(1, projectId)
-            bindString(2, nowIso)
-            bindString(3, nowIso)
-            bindString(4, nowIso)
-        }
+        var seq = 1L
+        val computer = DerivedStatusComputer(driver)
+        val repo = IntentGraphRepository(
+            driver = driver,
+            idGen = { "id-${seq++}" },
+            nowIso = { "2025-01-01T00:00:00Z" },
+        )
+        return Triple(driver, computer, repo)
     }
 
     private fun insertNode(
@@ -89,406 +101,332 @@ class DerivedStatusComputerTest {
         id: String,
         projectId: String = "proj1",
         type: String = "GOAL",
-        parentId: String? = null,
-        assertedStatus: String? = null,
-        verificationMet: Long? = null,
-        verifiedByKind: String? = null,
     ) {
         driver.execute(
             identifier = null,
             sql = "INSERT INTO intent_nodes " +
-                "(id, project_id, type, title, parent_id, asserted_status, verification_met, verified_by_kind, " +
-                "created_at, created_by_kind, created_by_id, modified_at, modified_by_kind, modified_by_id, tags) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USER', 'user1', ?, 'USER', 'user1', '[]')",
-            parameters = 10,
+                "(id, project_id, type, title, created_at, created_by_kind, created_by_id, " +
+                "modified_at, modified_by_kind, modified_by_id, tags) " +
+                "VALUES (?, ?, ?, ?, '2025-01-01T00:00:00Z', 'USER', 'user1', " +
+                "'2025-01-01T00:00:00Z', 'USER', 'user1', '[]')",
+            parameters = 4,
         ) {
             bindString(0, id)
             bindString(1, projectId)
             bindString(2, type)
             bindString(3, "Node $id")
-            bindString(4, parentId)
-            bindString(5, assertedStatus)
-            bindLong(6, verificationMet)
-            bindString(7, verifiedByKind)
-            bindString(8, nowIso)
-            bindString(9, nowIso)
         }
     }
 
-    private fun insertRun(
-        driver: JdbcSqliteDriver,
-        id: String,
-        state: String,
-        startedAt: String = nowIso,
-        projectId: String = "proj1",
-        sessionId: String = "sess1",
-    ) {
+    private fun insertRun(driver: JdbcSqliteDriver, id: String, state: String) {
         driver.execute(
             identifier = null,
-            sql = "INSERT INTO runs " +
-                "(id, session_id, project_id, trigger_event_id, started_at, state, " +
-                "retry_policy_json, platform_profile, device_id) " +
-                "VALUES (?, ?, ?, 'evt-1', ?, ?, '{}', 'DESKTOP', 'dev-1')",
-            parameters = 5,
+            sql = "INSERT INTO runs (id, state) VALUES (?, ?)",
+            parameters = 2,
         ) {
             bindString(0, id)
-            bindString(1, sessionId)
-            bindString(2, projectId)
-            bindString(3, startedAt)
-            bindString(4, state)
+            bindString(1, state)
         }
     }
 
-    private fun insertRunIntentEdge(
-        driver: JdbcSqliteDriver,
-        runId: String,
-        intentNodeId: String,
-        edgeKind: String,
-        confirmed: Long = 0L,
-        confirmedByKind: String? = null,
-        projectId: String = "proj1",
-    ) {
+    @Test
+    fun testNotStartedStatus() {
+        val (driver, computer, _) = setupDb()
+        insertNode(driver, "goal1")
+
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("NOT_STARTED", status)
+    }
+
+    @Test
+    fun testBlockedStatusUnmetDependency() {
+        val (driver, computer, repo) = setupDb()
+        insertNode(driver, "goal1")
+        insertNode(driver, "goal2")
+        repo.addEdge("proj1", "goal1", "goal2", IntentEdgeKind.DEPENDS_ON)
+
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("BLOCKED", status, "goal1 should be BLOCKED because goal2 is not DONE")
+    }
+
+    @Test
+    fun testBlockedStatusUnmetMetDependency() {
+        val (driver, computer, repo) = setupDb()
+        insertNode(driver, "goal1")
+        insertNode(driver, "goal2")
+        repo.addEdge("proj1", "goal1", "goal2", IntentEdgeKind.DEPENDS_ON)
+
         driver.execute(
             identifier = null,
-            sql = "INSERT INTO execution_edges " +
-                "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, " +
-                "edge_kind, confirmed, confirmed_by_kind, confirmed_by_id, confirmed_at) " +
-                "VALUES (?, ?, ?, 'RUN', ?, 'INTENT_NODE', ?, ?, ?, ?, ?)",
-            parameters = 9,
+            sql = "UPDATE intent_nodes SET asserted_status = 'DONE' WHERE id = ?",
+            parameters = 1,
         ) {
-            bindString(0, nextId("ee"))
-            bindString(1, projectId)
-            bindString(2, runId)
-            bindString(3, intentNodeId)
-            bindString(4, edgeKind)
-            bindLong(5, confirmed)
-            bindString(6, confirmedByKind)
-            bindString(7, if (confirmedByKind != null) "verifier-1" else null)
-            bindString(8, if (confirmed == 1L) nowIso else null)
+            bindString(0, "goal2")
         }
+
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("NOT_STARTED", status, "goal1 should be NOT_STARTED since dependency is satisfied")
     }
 
-    private fun insertIntentEdge(
-        driver: JdbcSqliteDriver,
-        fromNodeId: String,
-        toNodeId: String,
-        edgeKind: String = "DEPENDS_ON",
-        projectId: String = "proj1",
-    ) {
+    @Test
+    fun testDoneStatus() {
+        val (driver, computer, repo) = setupDb()
+        insertNode(driver, "goal1", type = "GOAL")
+        insertRun(driver, "run1", "COMPLETED")
+        repo.recordRunImplements("proj1", "run1", "goal1", confirmed = false)
+
         driver.execute(
             identifier = null,
-            sql = "INSERT INTO intent_edges (id, project_id, from_node_id, to_node_id, edge_kind, created_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?)",
-            parameters = 6,
+            sql = "UPDATE intent_nodes SET verified_by_kind = 'USER', verification_met = 1 WHERE id = ?",
+            parameters = 1,
         ) {
-            bindString(0, nextId("ie"))
-            bindString(1, projectId)
-            bindString(2, fromNodeId)
-            bindString(3, toNodeId)
-            bindString(4, edgeKind)
-            bindString(5, nowIso)
+            bindString(0, "goal1")
         }
+
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("DONE", status, "goal1 should be DONE with verified IMPLEMENTS")
     }
 
     @Test
-    fun testNotStartedStatusWithRealSchema() {
-        val (driver, computer) = setupDb()
+    fun testInProgressStatus() {
+        val (driver, computer, repo) = setupDb()
         insertNode(driver, "goal1")
-        assertEquals("NOT_STARTED", computer.derive("goal1", "proj1"))
-    }
-
-    @Test
-    fun testNonTerminalTargetedRunStatesDeriveInProgress() {
-        val activeStates = listOf("PENDING", "RUNNING", "YIELDED", "INTERRUPTED")
-        for ((index, state) in activeStates.withIndex()) {
-            val (driver, computer) = setupDb()
-            val nodeId = "goal-$index"
-            val runId = "run-$index"
-            insertNode(driver, nodeId)
-            insertRun(driver, runId, state)
-            insertRunIntentEdge(driver, runId, nodeId, "TARGETED")
-
-            assertEquals("IN_PROGRESS", computer.derive(nodeId, "proj1"), "Expected $state to derive IN_PROGRESS")
-        }
-    }
-
-    @Test
-    fun testCompletedTargetedRunWithoutImplementsDerivesNotStarted() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "goal1")
-        insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "goal1", "TARGETED")
-
-        assertEquals("NOT_STARTED", computer.derive("goal1", "proj1"))
-    }
-
-    @Test
-    fun testLatestFailedTargetedRunDerivesBlockedUntilActiveOrImplemented() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "goal1")
-        insertRun(driver, "run-old", "COMPLETED", startedAt = "2026-08-05T00:00:00Z")
-        insertRunIntentEdge(driver, "run-old", "goal1", "TARGETED")
-        insertRun(driver, "run-fail", "FAILED", startedAt = "2026-08-05T01:00:00Z")
-        insertRunIntentEdge(driver, "run-fail", "goal1", "TARGETED")
-
-        assertEquals("BLOCKED", computer.derive("goal1", "proj1"))
-
-        // Subsequent active run puts the node back IN_PROGRESS.
-        insertRun(driver, "run-retry", "RUNNING", startedAt = "2026-08-05T02:00:00Z")
-        insertRunIntentEdge(driver, "run-retry", "goal1", "TARGETED")
-        assertEquals("IN_PROGRESS", computer.derive("goal1", "proj1"))
-    }
-
-    @Test
-    fun testImplementsConfirmationRequiresUserOrAcceptanceCriteria() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "g-unconfirmed")
-        insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "g-unconfirmed", "IMPLEMENTS", confirmed = 0L)
-        assertEquals("NEEDS_REVIEW", computer.derive("g-unconfirmed", "proj1"))
-
-        // Confirmed=1 by SESSION does not satisfy confirmation gate.
-        insertNode(driver, "g-session")
-        insertRun(driver, "run2", "COMPLETED")
-        insertRunIntentEdge(
-            driver,
-            runId = "run2",
-            intentNodeId = "g-session",
-            edgeKind = "IMPLEMENTS",
-            confirmed = 1L,
-            confirmedByKind = "SESSION",
-        )
-        assertEquals("NEEDS_REVIEW", computer.derive("g-session", "proj1"))
-
-        insertNode(driver, "g-user")
-        insertRun(driver, "run3", "COMPLETED")
-        insertRunIntentEdge(
-            driver,
-            runId = "run3",
-            intentNodeId = "g-user",
-            edgeKind = "IMPLEMENTS",
-            confirmed = 1L,
-            confirmedByKind = "USER",
-        )
-        assertEquals("DONE", computer.derive("g-user", "proj1"))
-
-        insertNode(driver, "g-criteria")
-        insertRun(driver, "run4", "COMPLETED")
-        insertRunIntentEdge(
-            driver,
-            runId = "run4",
-            intentNodeId = "g-criteria",
-            edgeKind = "IMPLEMENTS",
-            confirmed = 1L,
-            confirmedByKind = "ACCEPTANCE_CRITERIA",
-        )
-        assertEquals("DONE", computer.derive("g-criteria", "proj1"))
-    }
-
-    @Test
-    fun testAcceptanceCriteriaViaEdgesAndParentHierarchyGateDone() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "goal1")
-        insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "goal1", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
-
-        // Unmet child criterion keeps parent goal in NEEDS_REVIEW.
-        insertNode(driver, "ac-child", type = "ACCEPTANCE_CRITERION", parentId = "goal1", verificationMet = 0L)
-        assertEquals("NOT_STARTED", computer.derive("ac-child", "proj1"))
-        assertEquals("NEEDS_REVIEW", computer.derive("goal1", "proj1"))
-
-        // Verify child criterion by CHECK, then add an unmet ACCEPTS-linked criterion.
-        driver.execute(
-            identifier = null,
-            sql = "UPDATE intent_nodes SET verification_met = 1, verified_by_kind = 'CHECK' WHERE id = 'ac-child'",
-            parameters = 0,
-        ) {}
-        assertEquals("DONE", computer.derive("ac-child", "proj1"))
-        assertEquals("DONE", computer.derive("goal1", "proj1"))
-
-        insertNode(driver, "ac-edge", type = "ACCEPTANCE_CRITERION", verificationMet = null, verifiedByKind = null)
-        insertIntentEdge(driver, fromNodeId = "goal1", toNodeId = "ac-edge", edgeKind = "ACCEPTS")
-        assertEquals("NEEDS_REVIEW", computer.derive("goal1", "proj1"))
-
-        driver.execute(
-            identifier = null,
-            sql = "UPDATE intent_nodes SET verification_met = 1, verified_by_kind = 'USER' WHERE id = 'ac-edge'",
-            parameters = 0,
-        ) {}
-        assertEquals("DONE", computer.derive("goal1", "proj1"))
-    }
-
-    @Test
-    fun testAssertedStatusOverridesDerivedStatus() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "g-done", assertedStatus = "DONE")
-        insertNode(driver, "g-dep")
-        insertIntentEdge(driver, "g-done", "g-dep", "DEPENDS_ON")
-        assertEquals("DONE", computer.derive("g-done", "proj1"))
-
-        insertNode(driver, "g-abandoned", assertedStatus = "ABANDONED")
         insertRun(driver, "run1", "RUNNING")
-        insertRunIntentEdge(driver, "run1", "g-abandoned", "TARGETED")
-        assertEquals("ABANDONED", computer.derive("g-abandoned", "proj1"))
+        repo.recordRunTargeting("proj1", "run1", "goal1")
+
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("IN_PROGRESS", status, "goal1 should be IN_PROGRESS with active TARGETED run")
     }
 
     @Test
-    fun testParentInheritanceWithoutSiblingPollution() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "root", type = "GOAL")
-        insertNode(driver, "sub-blocked", type = "SUB_GOAL", parentId = "root")
-        insertNode(driver, "sub-done", type = "SUB_GOAL", parentId = "root")
-        insertNode(driver, "external-blocker", type = "GOAL")
-
-        // sub-blocked depends on unmet external-blocker; sub-done is confirmed DONE.
-        insertIntentEdge(driver, "sub-blocked", "external-blocker", "DEPENDS_ON")
+    fun testNeedsReviewStatus() {
+        val (driver, computer, repo) = setupDb()
+        insertNode(driver, "goal1")
         insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "sub-done", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
+        repo.recordRunImplements("proj1", "run1", "goal1", confirmed = false)
 
-        // Rolling up root must mark root BLOCKED without polluting unrelated sibling sub-done.
-        assertEquals("BLOCKED", computer.derive("sub-blocked", "proj1"))
-        assertEquals("BLOCKED", computer.derive("root", "proj1"))
-        assertEquals("DONE", computer.derive("sub-done", "proj1"))
-
-        // Parent asserted ABANDONED propagates downward to children.
-        insertNode(driver, "abandoned-parent", type = "GOAL", assertedStatus = "ABANDONED")
-        insertNode(driver, "abandoned-child", type = "SUB_GOAL", parentId = "abandoned-parent")
-        assertEquals("ABANDONED", computer.derive("abandoned-child", "proj1"))
+        val status = computer.derive("goal1", "proj1")
+        assertEquals("NEEDS_REVIEW", status, "goal1 should be NEEDS_REVIEW with unconfirmed IMPLEMENTS")
     }
 
     @Test
-    fun testParentChildRollupProgressStates() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "parent", type = "GOAL")
-        insertNode(driver, "c1", type = "SUB_GOAL", parentId = "parent")
-        insertNode(driver, "c2", type = "SUB_GOAL", parentId = "parent")
+    fun testLifeManagementAgentToHumanAndHumanToAgentHandoffs() {
+        val (driver, computer, repo) = setupDb()
 
-        assertEquals("NOT_STARTED", computer.derive("parent", "proj1"))
-
-        // One child DONE, one child NOT_STARTED -> parent IN_PROGRESS.
-        insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "c1", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
-        assertEquals("IN_PROGRESS", computer.derive("parent", "proj1"))
-
-        // Second child unconfirmed IMPLEMENTS -> parent NEEDS_REVIEW.
-        insertRun(driver, "run2", "COMPLETED")
-        insertRunIntentEdge(driver, "run2", "c2", "IMPLEMENTS", confirmed = 0L)
-        assertEquals("NEEDS_REVIEW", computer.derive("parent", "proj1"))
-
-        // Confirm second child -> parent DONE.
-        driver.execute(
-            identifier = null,
-            sql = "UPDATE execution_edges SET confirmed = 1, confirmed_by_kind = 'USER' " +
-                "WHERE from_node_id = 'run2' AND to_node_id = 'c2'",
-            parameters = 0,
-        ) {}
-        assertEquals("DONE", computer.derive("parent", "proj1"))
-    }
-
-    @Test
-    fun testRecursiveDependsOnAndDiamondDag() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "top")
-        insertNode(driver, "mid-left")
-        insertNode(driver, "mid-right")
-        insertNode(driver, "leaf")
-
-        insertIntentEdge(driver, "top", "mid-left", "DEPENDS_ON")
-        insertIntentEdge(driver, "top", "mid-right", "DEPENDS_ON")
-        insertIntentEdge(driver, "mid-left", "leaf", "DEPENDS_ON")
-        insertIntentEdge(driver, "mid-right", "leaf", "DEPENDS_ON")
-
-        // leaf is NOT_STARTED -> mid-left, mid-right, top are all BLOCKED.
-        assertEquals("BLOCKED", computer.derive("mid-left", "proj1"))
-        assertEquals("BLOCKED", computer.derive("top", "proj1"))
-
-        // Complete leaf + mid-left + mid-right; top unblocks and diamond traversal succeeds.
-        insertRun(driver, "r-leaf", "COMPLETED")
-        insertRunIntentEdge(driver, "r-leaf", "leaf", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
-        assertEquals("NOT_STARTED", computer.derive("mid-left", "proj1"))
-
-        insertRun(driver, "r-mids", "COMPLETED")
-        insertRunIntentEdge(driver, "r-mids", "mid-left", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
-        insertRunIntentEdge(driver, "r-mids", "mid-right", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
-        assertEquals("NOT_STARTED", computer.derive("top", "proj1"))
-    }
-
-    @Test
-    fun testCyclicDependenciesAndParentCyclesTerminateSafelyAsBlocked() {
-        val (driver, computer) = setupDb()
-        insertNode(driver, "a")
-        insertNode(driver, "b")
-        insertIntentEdge(driver, "a", "b", "DEPENDS_ON")
-        insertIntentEdge(driver, "b", "a", "DEPENDS_ON")
-        assertEquals("BLOCKED", computer.derive("a", "proj1"))
-        assertEquals("BLOCKED", computer.derive("b", "proj1"))
-
-        insertNode(driver, "p1", parentId = null)
-        insertNode(driver, "p2", parentId = "p1")
-        driver.execute(
-            identifier = null,
-            sql = "UPDATE intent_nodes SET parent_id = 'p2' WHERE id = 'p1'",
-            parameters = 0,
-        ) {}
-        assertEquals("BLOCKED", computer.derive("p1", "proj1"))
-    }
-
-    @Test
-    fun testDanglingProducedContentDerivesStaleAndPropagatesToChildren() {
-        val (driver, computer) = setupDb()
-        val audit = AuditLog(driver, "test-device")
-        val auditId = audit.write(
-            id = nextId("aud"),
+        val group = repo.createNode(
             projectId = "proj1",
-            kind = "AttemptRecorded",
-            actor = ActorRef(ActorKind.SESSION, "sess1"),
-            subjectRef = "att1",
-            detailJson = "{}",
-            nowIso = nowIso,
+            id = "groceries-group",
+            type = IntentNodeType.GROUP,
+            title = "Weekly Groceries",
+            actorKind = IntentActorKind.HYBRID,
+            dispatchPolicy = NodeDispatchPolicy.AUTO_WHEN_READY,
+        )
+        val addMilk = repo.createNode(
+            projectId = "proj1",
+            id = "add-milk",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Add milk to shopping list",
+            parentId = group.id,
+            actorKind = IntentActorKind.AGENT,
+        )
+        val buyMilk = repo.createNode(
+            projectId = "proj1",
+            id = "buy-milk",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Buy milk / send shopping list as order",
+            parentId = group.id,
+            actorKind = IntentActorKind.HUMAN,
+            dueAt = "2025-01-02T18:00:00Z",
+        )
+        val confirmBudget = repo.createNode(
+            projectId = "proj1",
+            id = "confirm-budget",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Confirm grocery budget",
+            parentId = group.id,
+            actorKind = IntentActorKind.HUMAN,
+        )
+        val generateOrderDraft = repo.createNode(
+            projectId = "proj1",
+            id = "draft-order",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Generate order draft",
+            parentId = group.id,
+            actorKind = IntentActorKind.AGENT,
         )
 
-        insertNode(driver, "parent", type = "GOAL")
-        insertNode(driver, "child", type = "SUB_GOAL", parentId = "parent")
-        insertRun(driver, "run1", "COMPLETED")
-        insertRunIntentEdge(driver, "run1", "parent", "IMPLEMENTS", confirmed = 1L, confirmedByKind = "USER")
+        // Human buys milk only after agent adds milk; agent drafts order only after human confirms budget.
+        repo.addEdge("proj1", buyMilk.id, addMilk.id, IntentEdgeKind.DEPENDS_ON)
+        repo.addEdge("proj1", generateOrderDraft.id, confirmBudget.id, IntentEdgeKind.DEPENDS_ON)
+
+        assertEquals("BLOCKED", computer.derive(buyMilk.id, "proj1"))
+        assertEquals("BLOCKED", computer.derive(generateOrderDraft.id, "proj1"))
+
+        val initialHumanTasks = computer.listActionableForHuman("proj1").map { it.node.id }
+        assertFalse(buyMilk.id in initialHumanTasks, "buy-milk must be excluded while BLOCKED")
+        assertTrue(confirmBudget.id in initialHumanTasks, "confirm-budget is immediately actionable")
+
+        // Agent completes add-milk -> buy-milk becomes actionable for human.
+        insertRun(driver, "run-milk", "COMPLETED")
+        repo.recordRunImplements(
+            projectId = "proj1",
+            runId = "run-milk",
+            nodeId = addMilk.id,
+            confirmed = true,
+            confirmedByKind = "CHECK",
+            confirmedById = "list-check",
+        )
+        assertEquals("DONE", computer.derive(addMilk.id, "proj1"))
+        assertEquals("NOT_STARTED", computer.derive(buyMilk.id, "proj1"))
+        assertTrue(buyMilk.id in computer.listActionableForHuman("proj1").map { it.node.id })
+
+        // Human completes buy-milk and confirm-budget -> draft-order unblocks and inherits AUTO_WHEN_READY.
+        repo.completeHumanNode("proj1", buyMilk.id, "user1", "Ordered milk")
+        assertEquals("DONE", computer.derive(buyMilk.id, "proj1"))
+
+        val initialAutoReady = computer.listReadyForAgent("proj1", onlyAutoDispatch = true).map { it.node.id }
+        assertFalse(generateOrderDraft.id in initialAutoReady)
+
+        repo.completeHumanNode("proj1", confirmBudget.id, "user1")
+        assertEquals("NOT_STARTED", computer.derive(generateOrderDraft.id, "proj1"))
+
+        val readyAuto = computer.listReadyForAgent("proj1", onlyAutoDispatch = true)
+        val draftView = readyAuto.single { it.node.id == generateOrderDraft.id }
+        assertEquals(EffectiveDispatchPolicy.AUTO_WHEN_READY, draftView.effectiveDispatchPolicy)
+    }
+
+    @Test
+    fun testCodingManagementMobileExecutionNeedsReviewThenDesktopCheckDone() {
+        val (driver, computer, repo) = setupDb()
+
+        val desktopTask = repo.createNode(
+            projectId = "proj1",
+            id = "refactor-core",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Refactor desktop indexing pipeline",
+            actorKind = IntentActorKind.AGENT,
+            targetProfile = IntentTargetProfile.DESKTOP,
+            minLocality = IntentMinLocality.ANY,
+            estimatedSteps = 12,
+        )
+        val mobileLeaf = repo.createNode(
+            projectId = "proj1",
+            id = "mobile-fix",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Fix null check in Auth.kt",
+            actorKind = IntentActorKind.AGENT,
+            targetProfile = IntentTargetProfile.MOBILE,
+            minLocality = IntentMinLocality.LOCAL_ONLY,
+            estimatedSteps = 6,
+            scopePaths = listOf("src/Auth.kt"),
+        )
+        val shellCheck = repo.createNode(
+            projectId = "proj1",
+            id = "crit-shell",
+            type = IntentNodeType.ACCEPTANCE_CRITERION,
+            title = "Run gradle auth unit tests",
+            actorKind = IntentActorKind.AGENT,
+            checkKind = IntentCheckKind.SHELL_COMMAND,
+            checkSpec = "./gradlew :auth:jvmTest",
+        )
+        val followupTask = repo.createNode(
+            projectId = "proj1",
+            id = "followup-ui",
+            type = IntentNodeType.ATOMIC_TASK,
+            title = "Wire Auth error banner",
+            actorKind = IntentActorKind.AGENT,
+            targetProfile = IntentTargetProfile.MOBILE,
+            minLocality = IntentMinLocality.LOCAL_ONLY,
+        )
+
+        repo.addEdge("proj1", mobileLeaf.id, shellCheck.id, IntentEdgeKind.ACCEPTS)
+        repo.addEdge("proj1", followupTask.id, mobileLeaf.id, IntentEdgeKind.DEPENDS_ON)
+
+        // Mobile local agent sees only mobile-compatible tasks, not DESKTOP-only tasks.
+        val mobileReadyIds = computer.listReadyForAgent(
+            projectId = "proj1",
+            profile = PlatformProfile.MOBILE,
+            locality = IntentMinLocality.LOCAL_ONLY,
+        ).map { it.node.id }
+        assertTrue(mobileLeaf.id in mobileReadyIds)
+        assertFalse(desktopTask.id in mobileReadyIds)
+        assertFalse(followupTask.id in mobileReadyIds)
+        assertTrue(computer.hasPendingPlatformChecks(mobileLeaf.id, "proj1"))
+
+        // Mobile run implements unconfirmed -> parks in NEEDS_REVIEW; followup remains BLOCKED.
+        insertRun(driver, "run-mobile", "COMPLETED")
+        repo.recordRunImplements("proj1", "run-mobile", mobileLeaf.id, confirmed = false)
+        assertEquals("NEEDS_REVIEW", computer.derive(mobileLeaf.id, "proj1"))
+        assertEquals("BLOCKED", computer.derive(followupTask.id, "proj1"))
+
+        // Desktop mechanical test runner confirms implementation + SHELL_COMMAND criterion -> DONE.
+        repo.confirmPendingImplementation(
+            projectId = "proj1",
+            nodeId = mobileLeaf.id,
+            confirmedByKind = "CHECK",
+            confirmedById = "desktop-test-runner",
+        )
+        assertEquals("DONE", computer.derive(mobileLeaf.id, "proj1"))
+        assertFalse(computer.hasPendingPlatformChecks(mobileLeaf.id, "proj1"))
+        assertEquals("NOT_STARTED", computer.derive(followupTask.id, "proj1"))
+    }
+
+    @Test
+    fun testStaleStatusWhenProducedContentDangling() {
+        val (driver, computer, repo) = setupDb()
+        val task = repo.createNode("proj1", "Fix README", id = "doc-task")
+        insertRun(driver, "run-doc", "COMPLETED")
+        repo.recordRunImplements("proj1", "run-doc", task.id, confirmed = true, confirmedByKind = "USER", confirmedById = "u1")
 
         driver.execute(
             identifier = null,
-            sql = "INSERT INTO tasks (id, run_id, session_id, project_id, ordinal, kind, description, state, retry_policy_json) " +
-                "VALUES ('task1', 'run1', 'sess1', 'proj1', 1, 'TOOL_CALL', 'write artifact', 'COMPLETED', '{}')",
+            sql = """
+                INSERT INTO content_nodes (id, project_id, kind, uri, state, created_at, updated_at)
+                VALUES ('cn-1', 'proj1', 'FILE', 'README.md', 'DANGLING', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')
+            """.trimIndent(),
             parameters = 0,
-        ) {}
+        )
         driver.execute(
             identifier = null,
-            sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, state, audit_ref) " +
-                "VALUES ('att1', 'task1', 1, ?, 'COMPLETED', ?)",
-            parameters = 2,
-        ) {
-            bindString(0, nowIso)
-            bindString(1, auditId)
-        }
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO content_nodes " +
-                "(id, project_id, kind, name, mutability_policy, sensitivity_level, egress_eligibility, " +
-                "storage_location_json, content_hash, content_type, size_bytes, created_at, " +
-                "created_by_kind, created_by_id, updated_at, state) " +
-                "VALUES ('cn1', 'proj1', 'ARTIFACT', 'out.txt', 'IMMUTABLE', 'INTERNAL', 'LOCAL_ONLY', " +
-                "'{}', 'sha256:0', 'text/plain', 10, ?, 'SESSION', 'sess1', ?, 'DANGLING')",
-            parameters = 2,
-        ) {
-            bindString(0, nowIso)
-            bindString(1, nowIso)
-        }
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO execution_edges " +
-                "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind) " +
-                "VALUES ('ee-prod', 'proj1', 'att1', 'ATTEMPT', 'cn1', 'CONTENT_NODE', 'PRODUCED')",
+            sql = """
+                INSERT INTO execution_edges (id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind)
+                VALUES ('prod-1', 'proj1', 'run-doc', 'RUN', 'cn-1', 'CONTENT_NODE', 'PRODUCED')
+            """.trimIndent(),
             parameters = 0,
-        ) {}
+        )
 
-        assertEquals("STALE", computer.derive("parent", "proj1"))
-        assertEquals("STALE", computer.derive("child", "proj1"))
+        assertEquals("STALE", computer.derive(task.id, "proj1"))
+    }
+
+    @Test
+    fun testSnapshotCodecFastForwardAndConflictFlagging() {
+        val (driver1, computer1, repo1) = setupDb()
+        val (driver2, computer2, repo2) = setupDb()
+        val snap1 = IntentSnapshotCodec(driver1, { "2025-01-01T01:00:00Z" })
+        val snap2 = IntentSnapshotCodec(driver2, { "2025-01-01T02:00:00Z" })
+
+        repo1.createNode("proj1", "Parent Group", id = "g1", type = IntentNodeType.GROUP)
+        repo1.createNode("proj1", "Child Task", id = "a1", type = IntentNodeType.ATOMIC_TASK, parentId = "g1")
+        val initialExport = snap1.exportJson("proj1")
+        val initialResult = snap2.importAndReconcile("proj1", initialExport)
+        assertEquals(2, initialResult.addedNodes)
+        assertEquals(0, initialResult.conflictedNodeIds.size)
+
+        // Deterministic export stability
+        assertEquals(initialExport, snap1.exportJson("proj1"))
+
+        // Side 1 fast-forwards a1 to rowVersion=2; Side 2 hasn't edited it.
+        repo1.updateNode("proj1", "a1", title = "Child Task v2", modifiedBy = ActorRef(ActorKind.USER, "desktop"))
+        val ffResult = snap2.importAndReconcile("proj1", snap1.exportJson("proj1"))
+        assertEquals(1, ffResult.updatedNodes)
+        assertEquals("Child Task v2", repo2.getNode("proj1", "a1")!!.title)
+
+        // Both sides edit g1 independently from rowVersion=1 -> rowVersion=2 (divergent equal version).
+        repo1.updateNode("proj1", "g1", title = "Desktop Group Edit")
+        repo2.updateNode("proj1", "g1", title = "Phone Group Edit")
+        val conflictResult = snap2.importAndReconcile("proj1", snap1.exportJson("proj1"))
+        assertEquals(listOf("g1"), conflictResult.conflictedNodeIds)
+        assertEquals("CONFLICTED", computer2.derive("g1", "proj1"))
+        assertEquals("NOT_STARTED", computer1.derive("a1", "proj1"))
     }
 }

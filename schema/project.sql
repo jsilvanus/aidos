@@ -248,20 +248,29 @@ CREATE INDEX idx_provenance_from ON provenance_edges(from_node_id);
 CREATE INDEX idx_provenance_to   ON provenance_edges(to_node_id);
 
 -- ---------------------------------------------------------------------------
--- Intent graph (RFC-0012)
--- Node/edge tables were never given DDL in the RFC.
--- Note: no `status` column. Status is derived (RFC-0012 D10).
+-- Intent graph (RFC-0110, superseding RFC-0012)
+-- Note: no `status` column. Status is derived (RFC-0012 D10, RFC-0110).
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE intent_nodes (
     id                   TEXT PRIMARY KEY,
     project_id           TEXT NOT NULL,
-    type                 TEXT NOT NULL,                   -- GOAL|SUB_GOAL|CONSTRAINT|ACCEPTANCE_CRITERION
+    type                 TEXT NOT NULL,                   -- GROUP|GOAL|SUB_GOAL|ATOMIC_TASK|CONSTRAINT|ACCEPTANCE_CRITERION
     title                TEXT NOT NULL,
     description          TEXT,
     priority             INTEGER NOT NULL DEFAULT 100,
     lifecycle            TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE|ARCHIVED (authorship, not progress)
     parent_id            TEXT,
+    -- dual-mode ownership, dispatch & atomic sizing (RFC-0110)
+    actor_kind           TEXT NOT NULL DEFAULT 'AGENT',   -- HUMAN|AGENT|HYBRID
+    dispatch_policy      TEXT NOT NULL DEFAULT 'INHERIT', -- INHERIT|MANUAL_START|AUTO_WHEN_READY
+    granularity          TEXT NOT NULL DEFAULT 'GOAL',    -- GROUP|GOAL|SUB_GOAL|ATOMIC
+    target_profile       TEXT,                            -- MOBILE|DESKTOP|HEADLESS_SERVER|ANY
+    min_locality         TEXT,                            -- LOCAL_ONLY|TRUSTED_CLUSTER|ANY
+    estimated_steps      INTEGER,
+    scope_paths_json     TEXT NOT NULL DEFAULT '[]',
+    due_at               TEXT,
+    recurrence_json      TEXT,
     -- user override of derived status, stored as a timestamped claim
     asserted_status      TEXT,
     asserted_at          TEXT,
@@ -284,11 +293,15 @@ CREATE TABLE intent_nodes (
     row_version          INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (project_id) REFERENCES projects(id),
     FOREIGN KEY (parent_id)  REFERENCES intent_nodes(id),
-    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK'))
+    CHECK (verified_by_kind IS NULL OR verified_by_kind IN ('USER', 'CHECK')),
+    CHECK (actor_kind IN ('HUMAN', 'AGENT', 'HYBRID')),
+    CHECK (dispatch_policy IN ('INHERIT', 'MANUAL_START', 'AUTO_WHEN_READY')),
+    CHECK (granularity IN ('GROUP', 'GOAL', 'SUB_GOAL', 'ATOMIC'))
 );
 
 CREATE INDEX idx_intent_project ON intent_nodes(project_id, lifecycle, priority);
 CREATE INDEX idx_intent_parent  ON intent_nodes(parent_id);
+CREATE INDEX idx_intent_actor   ON intent_nodes(project_id, actor_kind, lifecycle);
 
 -- Dependencies only. `dependents` is derived by reverse lookup (RFC-0012).
 CREATE TABLE intent_edges (

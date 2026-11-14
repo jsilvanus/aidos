@@ -269,6 +269,11 @@ class MockRuntimeClient : RuntimeClient {
                 (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds))
     }
 
+    override val intents: IntentCommands = InMemoryIntentCommands(
+        nextId = ::nextId,
+        nowIso = { Clock.System.now().toString() },
+    )
+
     override val runtime: RuntimeInfo = object : RuntimeInfo {
         override suspend fun version(): RuntimeVersion =
             RuntimeVersion(version = "0.1.0-alpha", apiVersion = 1, profile = "MOCK")

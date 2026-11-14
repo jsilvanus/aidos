@@ -2,541 +2,122 @@ package dev.aidos.intent
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.kernel.PlatformProfile
 
 /**
- * Canonical derived status values for intent nodes (RFC-0012, §Status is derived).
- */
-enum class DerivedStatus {
-    NOT_STARTED,
-    IN_PROGRESS,
-    NEEDS_REVIEW,
-    DONE,
-    BLOCKED,
-    STALE,
-    ABANDONED,
-}
-
-/**
- * Computes derived status for intent nodes based on graph state (RFC-0012).
+ * Computes derived status and scheduling readiness for dual-mode intent nodes (RFC-0110,
+ * superseding RFC-0012).
  *
- * An intent node has no stored `status` field. Progress is derived from:
- * - Explicit user `asserted_status` overrides when set
- * - Parent hierarchy (`parent_id`) blocking/stale/abandoned inheritance and child rollup
- * - Recursive `DEPENDS_ON` dependency satisfaction (cycle-safe via visiting path tracking)
- * - `TARGETED` and `IMPLEMENTS` rows in `execution_edges` joined with `runs`
- * - `execution_edges.confirmed` and acceptance criteria verification (`verification_met`, `verified_by_kind`)
- * - Produced `content_nodes` state (`DANGLING` -> `STALE`, RFC-0053)
+ * Intent nodes have no stored `status` column. Progress is always derived from:
+ * - Recursive `DEPENDS_ON` prerequisites in `intent_edges`
+ * - `TARGETED` / `IMPLEMENTS` edges in canonical `execution_edges` and Run states in `runs`
+ * - Actor ownership (`HUMAN` vs `AGENT` vs `HYBRID`) and verification (`USER` / `CHECK`)
+ * - Linked `ACCEPTS` acceptance criteria in `intent_nodes`
+ * - Produced `content_nodes` state (`DANGLING` -> `STALE`)
  */
 class DerivedStatusComputer(
     private val driver: SqlDriver,
 ) {
 
-    fun derive(nodeId: String, projectId: String): String {
-        val memo = mutableMapOf<String, String>()
-        val inheritedMemo = mutableMapOf<String, String?>()
-        val visiting = mutableSetOf<String>()
-        return deriveNode(nodeId, projectId, visiting, memo, inheritedMemo)
+    private data class NodeMeta(
+        val type: String,
+        val lifecycle: String,
+        val actorKind: String,
+        val assertedStatus: String?,
+        val verificationMet: Long?,
+        val verifiedByKind: String?,
+    )
+
+    fun derive(nodeId: String, projectId: String): String =
+        deriveInternal(nodeId, projectId, emptySet())
+
+    fun deriveStatus(nodeId: String, projectId: String): DerivedStatus =
+        DerivedStatus.valueOf(derive(nodeId, projectId))
+
+    private fun deriveInternal(nodeId: String, projectId: String, visited: Set<String>): String {
+        val meta = readNodeMeta(nodeId, projectId) ?: return "NOT_STARTED"
+
+        // 1. Explicit merge/snapshot conflict supersedes normal progression (RFC-0053).
+        if (meta.assertedStatus == "CONFLICTED") {
+            return "CONFLICTED"
+        }
+
+        // 2. Unmet recursive dependencies block downstream nodes regardless of actor kind.
+        if (unmetDependencies(nodeId, projectId, visited).isNotEmpty()) {
+            return "BLOCKED"
+        }
+
+        // 3. Stale if produced content became DANGLING (RFC-0053).
+        if (isStale(nodeId, projectId)) {
+            return "STALE"
+        }
+
+        // 4. GROUP containers aggregate their active child nodes when children exist.
+        if (meta.type == "GROUP") {
+            val childIds = activeChildIds(nodeId, projectId)
+            if (childIds.isNotEmpty()) {
+                val childStatuses = childIds.map { childId ->
+                    if (childId in visited) "BLOCKED" else deriveInternal(childId, projectId, visited + nodeId)
+                }
+                return when {
+                    childStatuses.all { it == "DONE" } -> "DONE"
+                    childStatuses.any { it == "CONFLICTED" } -> "CONFLICTED"
+                    childStatuses.any { it == "STALE" } -> "STALE"
+                    childStatuses.any { it == "IN_PROGRESS" } -> "IN_PROGRESS"
+                    childStatuses.any { it == "NEEDS_REVIEW" } -> "NEEDS_REVIEW"
+                    childStatuses.any { it == "BLOCKED" } -> "BLOCKED"
+                    else -> "NOT_STARTED"
+                }
+            }
+        }
+
+        // 5. Active targeting Run -> IN_PROGRESS (or explicit human in-progress assertion).
+        if (hasActiveTargetedRun(nodeId, projectId) ||
+            (meta.actorKind == "HUMAN" && meta.assertedStatus == "IN_PROGRESS")
+        ) {
+            return "IN_PROGRESS"
+        }
+
+        val criteriaMet = areAcceptanceCriteriaMet(nodeId, projectId)
+        val userVerified = meta.verifiedByKind == "USER" && meta.verificationMet == 1L
+        val checkVerified = meta.verifiedByKind == "CHECK" && meta.verificationMet == 1L
+        val hasConfirmedImpl = hasConfirmedImplements(nodeId, projectId)
+        val hasUnconfirmedImpl = hasUnconfirmedImplements(nodeId, projectId)
+
+        return when (meta.actorKind) {
+            "HUMAN" -> when {
+                (userVerified || meta.assertedStatus == "DONE") && criteriaMet -> "DONE"
+                meta.assertedStatus == "NEEDS_REVIEW" || (hasUnconfirmedImpl || !criteriaMet && (userVerified || meta.assertedStatus == "DONE")) ->
+                    "NEEDS_REVIEW"
+                else -> "NOT_STARTED"
+            }
+
+            "HYBRID" -> when {
+                (userVerified || meta.assertedStatus == "DONE") &&
+                    (hasConfirmedImpl || hasUnconfirmedImpl || meta.assertedStatus == "DONE") &&
+                    criteriaMet -> "DONE"
+                hasConfirmedImpl || hasUnconfirmedImpl || checkVerified -> "NEEDS_REVIEW"
+                else -> "NOT_STARTED"
+            }
+
+            else -> when { // AGENT
+                (hasConfirmedImpl || meta.assertedStatus == "DONE") && criteriaMet -> "DONE"
+                hasUnconfirmedImpl || (hasConfirmedImpl && !criteriaMet) -> "NEEDS_REVIEW"
+                else -> "NOT_STARTED"
+            }
+        }
     }
 
-    private fun deriveNode(
+    /**
+     * Returns direct `DEPENDS_ON` target node IDs whose derived status is not `DONE` (or whose
+     * target row is missing). Archived dependency targets do not block.
+     */
+    fun unmetDependencies(
         nodeId: String,
         projectId: String,
-        visiting: MutableSet<String>,
-        memo: MutableMap<String, String>,
-        inheritedMemo: MutableMap<String, String?>,
-    ): String {
-        memo[nodeId]?.let { return it }
-        if (!visiting.add(nodeId)) {
-            // Break dependency or parent cycles safely rather than recursing infinitely.
-            return DerivedStatus.BLOCKED.name
-        }
-        try {
-            val node = loadNode(nodeId, projectId)
-                ?: return DerivedStatus.NOT_STARTED.name
-
-            // 1. Respect explicit user assertion if present.
-            val asserted = node.assertedStatus?.takeIf { it.isNotBlank() }
-            if (asserted != null) {
-                inheritedMemo[nodeId] = if (asserted in INHERITED_PARENT_STATUSES) asserted else null
-                memo[nodeId] = asserted
-                return asserted
-            }
-
-            // 2. Inherit blocking / stale / abandoned state from parent hierarchy.
-            if (node.parentId != null) {
-                val inherited = deriveInheritedParentStatus(node.parentId, projectId, visiting, memo, inheritedMemo)
-                if (inherited != null) {
-                    inheritedMemo[nodeId] = inherited
-                    memo[nodeId] = inherited
-                    return inherited
-                }
-            }
-
-            // 3. Evaluate DEPENDS_ON dependencies recursively (BLOCKED if any dependency is not DONE).
-            if (hasUnmetDependency(nodeId, projectId, visiting, memo, inheritedMemo)) {
-                val blocked = DerivedStatus.BLOCKED.name
-                inheritedMemo[nodeId] = blocked
-                memo[nodeId] = blocked
-                return blocked
-            }
-
-            // 4. Check if a TARGETED Run is in a non-terminal state (IN_PROGRESS).
-            if (hasActiveTargetedRun(nodeId, projectId)) {
-                val inProgress = DerivedStatus.IN_PROGRESS.name
-                inheritedMemo[nodeId] = null
-                memo[nodeId] = inProgress
-                return inProgress
-            }
-
-            // 5. Check if confirmed work became STALE because produced content is DANGLING (RFC-0053).
-            if (isStale(nodeId, projectId)) {
-                val stale = DerivedStatus.STALE.name
-                inheritedMemo[nodeId] = stale
-                memo[nodeId] = stale
-                return stale
-            }
-
-            // 6. Acceptance criteria nodes derive completion directly from their verification fields.
-            if (node.type == "ACCEPTANCE_CRITERION") {
-                val criterionStatus = if (node.verificationMet == 1L && node.verifiedByKind in VALID_NODE_VERIFIERS) {
-                    DerivedStatus.DONE.name
-                } else {
-                    DerivedStatus.NOT_STARTED.name
-                }
-                inheritedMemo[nodeId] = null
-                memo[nodeId] = criterionStatus
-                return criterionStatus
-            }
-
-            // Record intrinsic parent-inheritance status BEFORE rolling up children so child -> parent
-            // inheritance queries do not misinterpret parent -> child rollup traversal as a cycle.
-            val propagatesFailure = implementsEdgeCounts(nodeId, projectId).first == 0 &&
-                latestTargetedRunFailed(nodeId, projectId)
-            inheritedMemo[nodeId] = if (propagatesFailure) DerivedStatus.BLOCKED.name else null
-
-            // 7. Derive completion from execution_edges (IMPLEMENTS.confirmed), acceptance criteria,
-            //    and child sub-goal rollup.
-            val status = computeCompletionOrRollup(nodeId, projectId, visiting, memo, inheritedMemo)
-            memo[nodeId] = status
-            return status
-        } finally {
-            visiting.remove(nodeId)
-        }
-    }
-
-    /**
-     * Evaluates intrinsic blocking/stale/abandoned state along the ancestor chain without rolling up
-     * sibling children, preventing one blocked child from falsely blocking unrelated siblings.
-     */
-    private fun deriveInheritedParentStatus(
-        parentId: String,
-        projectId: String,
-        visiting: MutableSet<String>,
-        memo: MutableMap<String, String>,
-        inheritedMemo: MutableMap<String, String?>,
-    ): String? {
-        if (inheritedMemo.containsKey(parentId)) {
-            return inheritedMemo[parentId]
-        }
-        if (!visiting.add(parentId)) {
-            return DerivedStatus.BLOCKED.name
-        }
-        try {
-            val parent = loadNode(parentId, projectId) ?: run {
-                inheritedMemo[parentId] = null
-                return null
-            }
-            val asserted = parent.assertedStatus?.takeIf { it.isNotBlank() }
-            if (asserted != null) {
-                val inherited = if (asserted in INHERITED_PARENT_STATUSES) asserted else null
-                inheritedMemo[parentId] = inherited
-                return inherited
-            }
-
-            if (parent.parentId != null) {
-                val ancestorStatus = deriveInheritedParentStatus(parent.parentId, projectId, visiting, memo, inheritedMemo)
-                if (ancestorStatus != null) {
-                    inheritedMemo[parentId] = ancestorStatus
-                    return ancestorStatus
-                }
-            }
-
-            if (hasUnmetDependency(parentId, projectId, visiting, memo, inheritedMemo)) {
-                val blocked = DerivedStatus.BLOCKED.name
-                inheritedMemo[parentId] = blocked
-                return blocked
-            }
-
-            val inherited = if (!hasActiveTargetedRun(parentId, projectId)) {
-                when {
-                    isStale(parentId, projectId) -> DerivedStatus.STALE.name
-                    implementsEdgeCounts(parentId, projectId).first == 0 &&
-                        latestTargetedRunFailed(parentId, projectId) -> DerivedStatus.BLOCKED.name
-                    else -> null
-                }
-            } else {
-                null
-            }
-            inheritedMemo[parentId] = inherited
-            return inherited
-        } finally {
-            visiting.remove(parentId)
-        }
-    }
-
-    private fun computeCompletionOrRollup(
-        nodeId: String,
-        projectId: String,
-        visiting: MutableSet<String>,
-        memo: MutableMap<String, String>,
-        inheritedMemo: MutableMap<String, String?>,
-    ): String {
-        val (totalImpl, confirmedImpl) = implementsEdgeCounts(nodeId, projectId)
-        val criteriaMet = meetsAllAcceptanceCriteria(nodeId, projectId)
-        val childIds = childSubGoalIds(nodeId, projectId)
-
-        if (childIds.isNotEmpty()) {
-            val childStatuses = childIds.map { childId ->
-                deriveNode(childId, projectId, visiting, memo, inheritedMemo)
-            }
-            if (childStatuses.all { it == DerivedStatus.ABANDONED.name }) {
-                return DerivedStatus.ABANDONED.name
-            }
-            val activeChildren = childStatuses.filter { it != DerivedStatus.ABANDONED.name }
-            return when {
-                activeChildren.any { it == DerivedStatus.STALE.name } -> DerivedStatus.STALE.name
-                activeChildren.any { it == DerivedStatus.IN_PROGRESS.name } -> DerivedStatus.IN_PROGRESS.name
-                activeChildren.any { it == DerivedStatus.BLOCKED.name } -> DerivedStatus.BLOCKED.name
-                activeChildren.all { it == DerivedStatus.DONE.name } -> {
-                    if ((totalImpl > 0 && confirmedImpl == 0) || !criteriaMet) {
-                        DerivedStatus.NEEDS_REVIEW.name
-                    } else {
-                        DerivedStatus.DONE.name
-                    }
-                }
-                activeChildren.any {
-                    it == DerivedStatus.DONE.name || it == DerivedStatus.NEEDS_REVIEW.name
-                } -> {
-                    if (activeChildren.any { it == DerivedStatus.NOT_STARTED.name }) {
-                        DerivedStatus.IN_PROGRESS.name
-                    } else {
-                        DerivedStatus.NEEDS_REVIEW.name
-                    }
-                }
-                else -> directCompletionStatus(nodeId, projectId, totalImpl, confirmedImpl, criteriaMet)
-            }
-        }
-
-        return directCompletionStatus(nodeId, projectId, totalImpl, confirmedImpl, criteriaMet)
-    }
-
-    private fun directCompletionStatus(
-        nodeId: String,
-        projectId: String,
-        totalImpl: Int,
-        confirmedImpl: Int,
-        criteriaMet: Boolean,
-    ): String {
-        if (confirmedImpl > 0) {
-            return if (criteriaMet) {
-                DerivedStatus.DONE.name
-            } else {
-                DerivedStatus.NEEDS_REVIEW.name
-            }
-        }
-        if (totalImpl > 0) {
-            return DerivedStatus.NEEDS_REVIEW.name
-        }
-        if (latestTargetedRunFailed(nodeId, projectId)) {
-            return DerivedStatus.BLOCKED.name
-        }
-        return DerivedStatus.NOT_STARTED.name
-    }
-
-    /**
-     * Returns true if this node has any DEPENDS_ON edge whose target does not exist or whose
-     * recursively derived status is not DONE.
-     */
-    private fun hasUnmetDependency(
-        nodeId: String,
-        projectId: String,
-        visiting: MutableSet<String>,
-        memo: MutableMap<String, String>,
-        inheritedMemo: MutableMap<String, String?>,
-    ): Boolean {
-        val depIds = dependencyIds(nodeId, projectId)
-        for (depId in depIds) {
-            if (loadNode(depId, projectId) == null) {
-                return true
-            }
-            if (depId in visiting) {
-                return true
-            }
-            val depStatus = deriveNode(depId, projectId, visiting, memo, inheritedMemo)
-            if (depStatus != DerivedStatus.DONE.name) {
-                return true
-            }
-        }
-        return false
-    }
-
-    /**
-     * Returns true if a confirmed IMPLEMENTS run produced a content_node now in DANGLING state.
-     */
-    private fun isStale(nodeId: String, projectId: String): Boolean {
-        var count = 0
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT COUNT(*) FROM execution_edges impl
-                JOIN tasks t ON t.run_id = impl.from_node_id
-                JOIN attempts a ON a.task_id = t.id
-                JOIN execution_edges prod ON prod.from_node_id = a.id
-                JOIN content_nodes cn ON cn.id = prod.to_node_id
-                WHERE impl.project_id = ?
-                  AND impl.to_node_id = ?
-                  AND impl.to_node_kind = 'INTENT_NODE'
-                  AND impl.from_node_kind = 'RUN'
-                  AND impl.edge_kind = 'IMPLEMENTS'
-                  AND impl.confirmed = 1
-                  AND prod.project_id = ?
-                  AND prod.from_node_kind = 'ATTEMPT'
-                  AND prod.to_node_kind = 'CONTENT_NODE'
-                  AND prod.edge_kind = 'PRODUCED'
-                  AND cn.project_id = ?
-                  AND cn.state = 'DANGLING'
-            """.trimIndent(),
-            parameters = 4,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-                bindString(2, projectId)
-                bindString(3, projectId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    count = resultSet.getLong(0)?.toInt() ?: 0
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return count > 0
-    }
-
-    /**
-     * Returns true if a TARGETED Run exists in a non-terminal state
-     * (`PENDING`, `RUNNING`, `YIELDED`, `INTERRUPTED`).
-     */
-    private fun hasActiveTargetedRun(nodeId: String, projectId: String): Boolean {
-        var count = 0
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT COUNT(*) FROM execution_edges ee
-                JOIN runs r ON r.id = ee.from_node_id
-                WHERE ee.project_id = ?
-                  AND ee.to_node_id = ?
-                  AND ee.to_node_kind = 'INTENT_NODE'
-                  AND ee.from_node_kind = 'RUN'
-                  AND ee.edge_kind = 'TARGETED'
-                  AND r.project_id = ?
-                  AND r.state IN ('PENDING', 'RUNNING', 'YIELDED', 'INTERRUPTED')
-            """.trimIndent(),
-            parameters = 3,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-                bindString(2, projectId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    count = resultSet.getLong(0)?.toInt() ?: 0
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return count > 0
-    }
-
-    private fun latestTargetedRunFailed(nodeId: String, projectId: String): Boolean {
-        var latestState: String? = null
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT r.state FROM execution_edges ee
-                JOIN runs r ON r.id = ee.from_node_id
-                WHERE ee.project_id = ?
-                  AND ee.to_node_id = ?
-                  AND ee.to_node_kind = 'INTENT_NODE'
-                  AND ee.from_node_kind = 'RUN'
-                  AND ee.edge_kind = 'TARGETED'
-                  AND r.project_id = ?
-                ORDER BY r.started_at DESC, r.id DESC
-                LIMIT 1
-            """.trimIndent(),
-            parameters = 3,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-                bindString(2, projectId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    latestState = resultSet.getString(0)
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return latestState == "FAILED"
-    }
-
-    /**
-     * Returns `(totalImplementsCount, confirmedImplementsCount)` from `execution_edges`.
-     *
-     * Per RFC-0019 and `schema/project.sql`, an `IMPLEMENTS` edge is confirmed when
-     * `confirmed = 1` and confirmed by `USER` or `ACCEPTANCE_CRITERIA` (never `SESSION`).
-     */
-    private fun implementsEdgeCounts(nodeId: String, projectId: String): Pair<Int, Int> {
-        var total = 0
-        var confirmed = 0
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT
-                    COUNT(*),
-                    COALESCE(SUM(CASE
-                        WHEN confirmed = 1
-                         AND (confirmed_by_kind IS NULL OR confirmed_by_kind IN ('USER', 'ACCEPTANCE_CRITERIA'))
-                        THEN 1 ELSE 0
-                    END), 0)
-                FROM execution_edges
-                WHERE project_id = ?
-                  AND to_node_id = ?
-                  AND to_node_kind = 'INTENT_NODE'
-                  AND from_node_kind = 'RUN'
-                  AND edge_kind = 'IMPLEMENTS'
-            """.trimIndent(),
-            parameters = 2,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    total = resultSet.getLong(0)?.toInt() ?: 0
-                    confirmed = resultSet.getLong(1)?.toInt() ?: 0
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return total to confirmed
-    }
-
-    /**
-     * Checks whether all acceptance criteria linked via `ACCEPTS` edges or `parent_id`
-     * (`type = 'ACCEPTANCE_CRITERION'`) are met (`verification_met = 1` and `verified_by_kind`
-     * in `USER` / `CHECK`).
-     */
-    private fun meetsAllAcceptanceCriteria(nodeId: String, projectId: String): Boolean {
-        var unmetEdgeCriteria = 0
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT COUNT(*) FROM intent_edges ie
-                LEFT JOIN intent_nodes ac ON ac.id = ie.to_node_id AND ac.project_id = ie.project_id
-                WHERE ie.project_id = ?
-                  AND ie.from_node_id = ?
-                  AND ie.edge_kind = 'ACCEPTS'
-                  AND (
-                    ac.id IS NULL
-                    OR (
-                      ac.lifecycle = 'ACTIVE'
-                      AND (
-                        COALESCE(ac.verification_met, 0) != 1
-                        OR COALESCE(ac.verified_by_kind, '') NOT IN ('USER', 'CHECK')
-                      )
-                    )
-                  )
-            """.trimIndent(),
-            parameters = 2,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    unmetEdgeCriteria = resultSet.getLong(0)?.toInt() ?: 0
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        if (unmetEdgeCriteria > 0) {
-            return false
-        }
-
-        var unmetChildCriteria = 0
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT COUNT(*) FROM intent_nodes
-                WHERE project_id = ?
-                  AND parent_id = ?
-                  AND type = 'ACCEPTANCE_CRITERION'
-                  AND lifecycle = 'ACTIVE'
-                  AND (
-                    COALESCE(verification_met, 0) != 1
-                    OR COALESCE(verified_by_kind, '') NOT IN ('USER', 'CHECK')
-                  )
-            """.trimIndent(),
-            parameters = 2,
-            binders = {
-                bindString(0, projectId)
-                bindString(1, nodeId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    unmetChildCriteria = resultSet.getLong(0)?.toInt() ?: 0
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return unmetChildCriteria == 0
-    }
-
-    private fun loadNode(nodeId: String, projectId: String): IntentNodeRecord? {
-        var record: IntentNodeRecord? = null
-        driver.executeQuery(
-            identifier = null,
-            sql = """
-                SELECT id, type, lifecycle, parent_id, asserted_status, verification_met, verified_by_kind
-                FROM intent_nodes
-                WHERE id = ? AND project_id = ?
-            """.trimIndent(),
-            parameters = 2,
-            binders = {
-                bindString(0, nodeId)
-                bindString(1, projectId)
-            },
-            mapper = { resultSet ->
-                if (resultSet.next().value) {
-                    record = IntentNodeRecord(
-                        id = resultSet.getString(0)!!,
-                        type = resultSet.getString(1)!!,
-                        lifecycle = resultSet.getString(2)!!,
-                        parentId = resultSet.getString(3),
-                        assertedStatus = resultSet.getString(4),
-                        verificationMet = resultSet.getLong(5),
-                        verifiedByKind = resultSet.getString(6),
-                    )
-                }
-                QueryResult.Value(Unit)
-            },
-        )
-        return record
-    }
-
-    private fun dependencyIds(nodeId: String, projectId: String): List<String> {
-        val deps = mutableListOf<String>()
+        visited: Set<String> = emptySet(),
+    ): List<String> {
+        val depIds = mutableListOf<String>()
         driver.executeQuery(
             identifier = null,
             sql = """
@@ -548,59 +129,429 @@ class DerivedStatusComputer(
                 bindString(0, projectId)
                 bindString(1, nodeId)
             },
-            mapper = { resultSet ->
-                while (resultSet.next().value) {
-                    resultSet.getString(0)?.let { deps.add(it) }
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    cursor.getString(0)?.let { depIds.add(it) }
                 }
                 QueryResult.Value(Unit)
             },
         )
-        return deps
+        if (depIds.isEmpty()) return emptyList()
+
+        val unmet = mutableListOf<String>()
+        val nextVisited = visited + nodeId
+        for (depId in depIds) {
+            if (depId in nextVisited) {
+                unmet.add(depId)
+                continue
+            }
+            val meta = readNodeMeta(depId, projectId)
+            if (meta == null) {
+                unmet.add(depId)
+                continue
+            }
+            if (meta.lifecycle == "ARCHIVED") {
+                continue
+            }
+            if (deriveInternal(depId, projectId, nextVisited) != "DONE") {
+                unmet.add(depId)
+            }
+        }
+        return unmet
     }
 
-    private fun childSubGoalIds(nodeId: String, projectId: String): List<String> {
-        val children = mutableListOf<String>()
+    fun activeTargetingRunIds(nodeId: String, projectId: String): List<String> {
+        val runIds = mutableListOf<String>()
         driver.executeQuery(
             identifier = null,
             sql = """
-                SELECT id FROM intent_nodes
-                WHERE project_id = ?
-                  AND parent_id = ?
-                  AND lifecycle = 'ACTIVE'
-                  AND type IN ('GOAL', 'SUB_GOAL')
-                ORDER BY priority ASC, created_at ASC, id ASC
+                SELECT r.id FROM execution_edges ee
+                JOIN runs r ON r.id = ee.from_node_id AND ee.from_node_kind = 'RUN'
+                WHERE ee.project_id = ?
+                  AND ee.to_node_id = ?
+                  AND ee.to_node_kind = 'INTENT_NODE'
+                  AND ee.edge_kind = 'TARGETED'
+                  AND r.state IN ('PENDING', 'RUNNING', 'SLEEPING', 'YIELDED', 'INTERRUPTED')
             """.trimIndent(),
             parameters = 2,
             binders = {
                 bindString(0, projectId)
                 bindString(1, nodeId)
             },
-            mapper = { resultSet ->
-                while (resultSet.next().value) {
-                    resultSet.getString(0)?.let { children.add(it) }
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    cursor.getString(0)?.let { runIds.add(it) }
                 }
                 QueryResult.Value(Unit)
             },
         )
-        return children
+        return runIds
     }
 
-    private data class IntentNodeRecord(
-        val id: String,
-        val type: String,
-        val lifecycle: String,
-        val parentId: String?,
-        val assertedStatus: String?,
-        val verificationMet: Long?,
-        val verifiedByKind: String?,
-    )
+    fun resolveDispatchPolicy(
+        nodeId: String,
+        projectId: String,
+        projectDefault: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+    ): EffectiveDispatchPolicy {
+        var currentId: String? = nodeId
+        val visited = mutableSetOf<String>()
+        while (currentId != null && currentId !in visited) {
+            visited.add(currentId)
+            val pair = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT parent_id, dispatch_policy FROM intent_nodes WHERE id = ? AND project_id = ?",
+                mapper = { cursor ->
+                    QueryResult.Value(
+                        if (cursor.next().value) {
+                            cursor.getString(0) to cursor.getString(1)
+                        } else {
+                            null
+                        }
+                    )
+                },
+                parameters = 2,
+            ) {
+                bindString(0, currentId!!)
+                bindString(1, projectId)
+            }.value ?: break
 
-    private companion object {
-        val VALID_NODE_VERIFIERS = setOf("USER", "CHECK")
-        val INHERITED_PARENT_STATUSES = setOf(
-            DerivedStatus.BLOCKED.name,
-            DerivedStatus.STALE.name,
-            DerivedStatus.ABANDONED.name,
+            when (pair.second) {
+                "MANUAL_START" -> return EffectiveDispatchPolicy.MANUAL_START
+                "AUTO_WHEN_READY" -> return EffectiveDispatchPolicy.AUTO_WHEN_READY
+            }
+            currentId = pair.first
+        }
+        return projectDefault
+    }
+
+    fun hasPendingPlatformChecks(nodeId: String, projectId: String): Boolean {
+        var pendingCount = 0
+        driver.executeQuery(
+            identifier = null,
+            sql = """
+                SELECT COUNT(*) FROM intent_edges ie
+                JOIN intent_nodes crit ON crit.id = ie.to_node_id
+                WHERE ie.project_id = ?
+                  AND ie.from_node_id = ?
+                  AND ie.edge_kind = 'ACCEPTS'
+                  AND crit.lifecycle = 'ACTIVE'
+                  AND crit.check_kind = 'SHELL_COMMAND'
+                  AND (crit.verification_met IS NULL OR crit.verification_met = 0)
+            """.trimIndent(),
+            parameters = 2,
+            binders = {
+                bindString(0, projectId)
+                bindString(1, nodeId)
+            },
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    pendingCount = cursor.getLong(0)?.toInt() ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+        )
+        return pendingCount > 0
+    }
+
+    fun statusView(
+        node: IntentNodeRecord,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+    ): IntentNodeStatusView {
+        val status = deriveStatus(node.id, node.projectId)
+        val policy = resolveDispatchPolicy(node.id, node.projectId, projectDefaultPolicy)
+        val unmet = unmetDependencies(node.id, node.projectId)
+        val activeRuns = activeTargetingRunIds(node.id, node.projectId)
+        val pendingPlatform = hasPendingPlatformChecks(node.id, node.projectId)
+        return IntentNodeStatusView(
+            node = node,
+            derivedStatus = status,
+            effectiveDispatchPolicy = policy,
+            unmetDependencyIds = unmet,
+            activeRunIds = activeRuns,
+            pendingPlatformChecks = pendingPlatform,
         )
     }
+
+    fun listActionableForHuman(
+        projectId: String,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+    ): List<IntentNodeStatusView> {
+        val nodes = loadActiveNodes(projectId)
+        return nodes
+            .map { statusView(it, projectDefaultPolicy) }
+            .filter { view ->
+                val n = view.node
+                when (n.actorKind) {
+                    IntentActorKind.HUMAN -> view.derivedStatus in setOf(
+                        DerivedStatus.NOT_STARTED,
+                        DerivedStatus.IN_PROGRESS,
+                        DerivedStatus.NEEDS_REVIEW,
+                    )
+                    IntentActorKind.HYBRID, IntentActorKind.AGENT ->
+                        view.derivedStatus == DerivedStatus.NEEDS_REVIEW
+                }
+            }
+            .sortedWith(
+                compareBy<IntentNodeStatusView>(
+                    { it.node.dueAt == null },
+                    { it.node.dueAt ?: "" },
+                    { it.node.priority },
+                    { it.node.createdAt },
+                )
+            )
+    }
+
+    fun listReadyForAgent(
+        projectId: String,
+        profile: PlatformProfile = PlatformProfile.DESKTOP,
+        locality: IntentMinLocality = IntentMinLocality.ANY,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+        onlyAutoDispatch: Boolean = false,
+    ): List<IntentNodeStatusView> {
+        val nodes = loadActiveNodes(projectId)
+        return nodes
+            .filter { n ->
+                n.actorKind != IntentActorKind.HUMAN &&
+                    n.type in setOf(IntentNodeType.GOAL, IntentNodeType.SUB_GOAL, IntentNodeType.ATOMIC_TASK) &&
+                    isProfileCompatible(n.targetProfile, profile) &&
+                    isLocalityCompatible(n.minLocality, locality)
+            }
+            .map { statusView(it, projectDefaultPolicy) }
+            .filter { view ->
+                view.derivedStatus == DerivedStatus.NOT_STARTED &&
+                    (!onlyAutoDispatch || view.effectiveDispatchPolicy == EffectiveDispatchPolicy.AUTO_WHEN_READY)
+            }
+            .sortedWith(compareBy({ it.node.priority }, { it.node.createdAt }))
+    }
+
+    private fun hasActiveTargetedRun(nodeId: String, projectId: String): Boolean =
+        activeTargetingRunIds(nodeId, projectId).isNotEmpty()
+
+    private fun hasUnconfirmedImplements(nodeId: String, projectId: String): Boolean {
+        var count = 0
+        driver.executeQuery(
+            identifier = null,
+            sql = """
+                SELECT COUNT(*) FROM execution_edges ee
+                WHERE ee.project_id = ?
+                  AND ee.to_node_id = ?
+                  AND ee.to_node_kind = 'INTENT_NODE'
+                  AND ee.edge_kind = 'IMPLEMENTS'
+                  AND ee.confirmed = 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM intent_nodes n
+                    WHERE n.id = ?
+                      AND n.project_id = ?
+                      AND n.verified_by_kind IN ('USER', 'CHECK')
+                      AND n.verification_met = 1
+                  )
+            """.trimIndent(),
+            parameters = 4,
+            binders = {
+                bindString(0, projectId)
+                bindString(1, nodeId)
+                bindString(2, nodeId)
+                bindString(3, projectId)
+            },
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    count = cursor.getLong(0)?.toInt() ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+        )
+        return count > 0
+    }
+
+    private fun hasConfirmedImplements(nodeId: String, projectId: String): Boolean {
+        var count = 0
+        driver.executeQuery(
+            identifier = null,
+            sql = """
+                SELECT COUNT(*) FROM execution_edges ee
+                WHERE ee.project_id = ?
+                  AND ee.to_node_id = ?
+                  AND ee.to_node_kind = 'INTENT_NODE'
+                  AND ee.edge_kind = 'IMPLEMENTS'
+                  AND (
+                    ee.confirmed = 1
+                    OR EXISTS (
+                      SELECT 1 FROM intent_nodes n
+                      WHERE n.id = ?
+                        AND n.project_id = ?
+                        AND n.verified_by_kind IN ('USER', 'CHECK')
+                        AND n.verification_met = 1
+                    )
+                  )
+            """.trimIndent(),
+            parameters = 4,
+            binders = {
+                bindString(0, projectId)
+                bindString(1, nodeId)
+                bindString(2, nodeId)
+                bindString(3, projectId)
+            },
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    count = cursor.getLong(0)?.toInt() ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+        )
+        return count > 0
+    }
+
+    private fun areAcceptanceCriteriaMet(nodeId: String, projectId: String): Boolean {
+        var unmetCount = 0
+        driver.executeQuery(
+            identifier = null,
+            sql = """
+                SELECT COUNT(*) FROM intent_edges ie
+                JOIN intent_nodes crit ON crit.id = ie.to_node_id
+                WHERE ie.project_id = ?
+                  AND ie.from_node_id = ?
+                  AND ie.edge_kind = 'ACCEPTS'
+                  AND crit.lifecycle = 'ACTIVE'
+                  AND (crit.verification_met IS NULL OR crit.verification_met = 0)
+            """.trimIndent(),
+            parameters = 2,
+            binders = {
+                bindString(0, projectId)
+                bindString(1, nodeId)
+            },
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    unmetCount = cursor.getLong(0)?.toInt() ?: 0
+                }
+                QueryResult.Value(Unit)
+            },
+        )
+        return unmetCount == 0
+    }
+
+    private fun isStale(nodeId: String, projectId: String): Boolean {
+        val directStale = runCatching {
+            var count = 0
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT COUNT(*) FROM execution_edges impl
+                    JOIN execution_edges prod
+                      ON prod.project_id = impl.project_id
+                     AND prod.from_node_kind = 'RUN'
+                     AND prod.from_node_id = impl.from_node_id
+                     AND prod.edge_kind = 'PRODUCED'
+                     AND prod.to_node_kind = 'CONTENT_NODE'
+                    JOIN content_nodes cn ON cn.id = prod.to_node_id
+                    WHERE impl.project_id = ?
+                      AND impl.to_node_id = ?
+                      AND impl.to_node_kind = 'INTENT_NODE'
+                      AND impl.edge_kind = 'IMPLEMENTS'
+                      AND cn.state = 'DANGLING'
+                """.trimIndent(),
+                parameters = 2,
+                binders = {
+                    bindString(0, projectId)
+                    bindString(1, nodeId)
+                },
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        count = cursor.getLong(0)?.toInt() ?: 0
+                    }
+                    QueryResult.Value(Unit)
+                },
+            )
+            count > 0
+        }.getOrDefault(false)
+        if (directStale) return true
+
+        return runCatching {
+            var count = 0
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT COUNT(*) FROM execution_edges impl
+                    JOIN tasks t ON t.run_id = impl.from_node_id
+                    JOIN attempts a ON a.task_id = t.id
+                    JOIN execution_edges prod
+                      ON prod.project_id = impl.project_id
+                     AND prod.from_node_kind = 'ATTEMPT'
+                     AND prod.from_node_id = a.id
+                     AND prod.edge_kind = 'PRODUCED'
+                     AND prod.to_node_kind = 'CONTENT_NODE'
+                    JOIN content_nodes cn ON cn.id = prod.to_node_id
+                    WHERE impl.project_id = ?
+                      AND impl.to_node_id = ?
+                      AND impl.to_node_kind = 'INTENT_NODE'
+                      AND impl.edge_kind = 'IMPLEMENTS'
+                      AND cn.state = 'DANGLING'
+                """.trimIndent(),
+                parameters = 2,
+                binders = {
+                    bindString(0, projectId)
+                    bindString(1, nodeId)
+                },
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        count = cursor.getLong(0)?.toInt() ?: 0
+                    }
+                    QueryResult.Value(Unit)
+                },
+            )
+            count > 0
+        }.getOrDefault(false)
+    }
+
+    private fun readNodeMeta(nodeId: String, projectId: String): NodeMeta? =
+        driver.executeQuery(
+            identifier = null,
+            sql = """
+                SELECT type, lifecycle, actor_kind, asserted_status, verification_met, verified_by_kind
+                FROM intent_nodes
+                WHERE id = ? AND project_id = ?
+            """.trimIndent(),
+            mapper = { cursor ->
+                QueryResult.Value(
+                    if (cursor.next().value) {
+                        NodeMeta(
+                            type = cursor.getString(0) ?: "GOAL",
+                            lifecycle = cursor.getString(1) ?: "ACTIVE",
+                            actorKind = cursor.getString(2) ?: "AGENT",
+                            assertedStatus = cursor.getString(3),
+                            verificationMet = cursor.getLong(4),
+                            verifiedByKind = cursor.getString(5),
+                        )
+                    } else {
+                        null
+                    }
+                )
+            },
+            parameters = 2,
+        ) {
+            bindString(0, nodeId)
+            bindString(1, projectId)
+        }.value
+
+    private fun activeChildIds(parentId: String, projectId: String): List<String> {
+        val ids = mutableListOf<String>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM intent_nodes WHERE project_id = ? AND parent_id = ? AND lifecycle = 'ACTIVE'",
+            parameters = 2,
+            binders = {
+                bindString(0, projectId)
+                bindString(1, parentId)
+            },
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    cursor.getString(0)?.let { ids.add(it) }
+                }
+                QueryResult.Value(Unit)
+            },
+        )
+        return ids
+    }
+
+    private fun loadActiveNodes(projectId: String): List<IntentNodeRecord> =
+        IntentGraphRepository.readNodes(driver, projectId, includeArchived = false)
 }

@@ -9,6 +9,8 @@ import dev.aidos.api.CapabilityCommands
 import dev.aidos.api.CapabilityResult
 import dev.aidos.api.CapabilitySummary
 import dev.aidos.api.CommitResult
+import dev.aidos.api.CreateIntentNodeRequest
+import dev.aidos.api.CreateIntentProposalRequest
 import dev.aidos.api.CreateProjectRequest
 import dev.aidos.api.CreateSessionRequest
 import dev.aidos.api.DiffQueries
@@ -19,6 +21,7 @@ import dev.aidos.api.EventSubscriptions
 import dev.aidos.api.GrantCapabilityRequest
 import dev.aidos.api.HunkId
 import dev.aidos.api.IndexStatus
+import dev.aidos.api.IntentCommands
 import dev.aidos.api.KnowledgeQueries
 import dev.aidos.api.KnowledgeQuery
 import dev.aidos.api.KnowledgeResult
@@ -36,10 +39,23 @@ import dev.aidos.api.SessionCommands
 import dev.aidos.api.SessionDetail
 import dev.aidos.api.SessionResult
 import dev.aidos.api.SessionSummary
+import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.api.UserMessage
 import dev.aidos.api.socket.Methods
 import dev.aidos.api.socket.Wire
+import dev.aidos.intent.EffectiveDispatchPolicy
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentEdgeKind
+import dev.aidos.intent.IntentEdgeRecord
+import dev.aidos.intent.IntentMinLocality
+import dev.aidos.intent.IntentNodeRecord
+import dev.aidos.intent.IntentNodeStatusView
+import dev.aidos.intent.IntentOperation
+import dev.aidos.intent.IntentProposal
+import dev.aidos.intent.ProposalResolutionDecision
+import dev.aidos.intent.SnapshotReconcileResult
 import dev.aidos.kernel.FileDiff
+import dev.aidos.kernel.PlatformProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -287,6 +303,102 @@ class SocketRuntimeClient(
                 readerThread.join(2_000)
             }
         }
+    }
+
+    override val intents = object : IntentCommands {
+        override suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord =
+            notWired("intents.createNode")
+
+        override suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord =
+            notWired("intents.updateNode")
+
+        override suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord =
+            notWired("intents.archiveNode")
+
+        override suspend fun getNodeStatus(
+            projectId: String,
+            nodeId: String,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+        ): IntentNodeStatusView? = notWired("intents.getNodeStatus")
+
+        override suspend fun listNodes(
+            projectId: String,
+            includeArchived: Boolean,
+            actorKind: IntentActorKind?,
+            parentId: String?,
+            filterByParent: Boolean,
+        ): List<IntentNodeRecord> = notWired("intents.listNodes")
+
+        override suspend fun listActionableForHuman(
+            projectId: String,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+        ): List<IntentNodeStatusView> = notWired("intents.listActionableForHuman")
+
+        override suspend fun listReadyForAgent(
+            projectId: String,
+            profile: PlatformProfile,
+            locality: IntentMinLocality,
+            projectDefaultPolicy: EffectiveDispatchPolicy,
+            onlyAutoDispatch: Boolean,
+        ): List<IntentNodeStatusView> = notWired("intents.listReadyForAgent")
+
+        override suspend fun completeHumanNode(
+            projectId: String,
+            nodeId: String,
+            userId: String,
+            note: String?,
+        ): IntentNodeRecord = notWired("intents.completeHumanNode")
+
+        override suspend fun addEdge(
+            projectId: String,
+            fromNodeId: String,
+            toNodeId: String,
+            edgeKind: IntentEdgeKind,
+        ): IntentEdgeRecord = notWired("intents.addEdge")
+
+        override suspend fun removeEdge(
+            projectId: String,
+            fromNodeId: String,
+            toNodeId: String,
+            edgeKind: IntentEdgeKind,
+        ): Boolean = notWired("intents.removeEdge")
+
+        override suspend fun listEdges(
+            projectId: String,
+            fromNodeId: String?,
+            toNodeId: String?,
+            edgeKind: IntentEdgeKind?,
+        ): List<IntentEdgeRecord> = notWired("intents.listEdges")
+
+        override suspend fun propose(request: CreateIntentProposalRequest): String =
+            notWired("intents.propose")
+
+        override suspend fun listProposals(projectId: String, state: String?): List<IntentProposal> =
+            notWired("intents.listProposals")
+
+        override suspend fun resolveProposal(
+            projectId: String,
+            proposalId: String,
+            decision: ProposalResolutionDecision,
+            resolvedByUserId: String,
+            editedOperations: List<IntentOperation>?,
+        ): IntentProposal = notWired("intents.resolveProposal")
+
+        override suspend fun confirmImplementation(
+            projectId: String,
+            nodeId: String,
+            confirmedByKind: String,
+            confirmedById: String,
+            criterionIds: List<String>?,
+        ) = notWired("intents.confirmImplementation")
+
+        override suspend fun exportSnapshotJson(projectId: String): String =
+            notWired("intents.exportSnapshotJson")
+
+        override suspend fun importAndReconcileSnapshot(
+            projectId: String,
+            snapshotJson: String,
+        ): SnapshotReconcileResult = notWired("intents.importAndReconcileSnapshot")
     }
 
     override val runtime = object : RuntimeInfo {

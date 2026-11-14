@@ -1,6 +1,26 @@
 package dev.aidos.api
 
+import dev.aidos.intent.EffectiveDispatchPolicy
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentCheckKind
+import dev.aidos.intent.IntentEdgeKind
+import dev.aidos.intent.IntentEdgeRecord
+import dev.aidos.intent.IntentGranularity
+import dev.aidos.intent.IntentGraphRepository
+import dev.aidos.intent.IntentMinLocality
+import dev.aidos.intent.IntentNodeRecord
+import dev.aidos.intent.IntentNodeStatusView
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.intent.IntentOperation
+import dev.aidos.intent.IntentProposal
+import dev.aidos.intent.IntentTargetProfile
+import dev.aidos.intent.NodeDispatchPolicy
+import dev.aidos.intent.ProposalResolutionDecision
+import dev.aidos.intent.SnapshotReconcileResult
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.FileDiff
+import dev.aidos.kernel.PlatformProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.datetime.Instant
 
@@ -19,6 +39,7 @@ interface RuntimeClient {
     val diff: DiffQueries
     val artifacts: ArtifactQueries
     val events: EventSubscriptions
+    val intents: IntentCommands
     val runtime: RuntimeInfo
 }
 
@@ -513,4 +534,153 @@ data class IndexingProgress(
     val blobsSeen: Int,
     val blobsIndexed: Int,
     val blobsFailed: Int,
+)
+
+// ─── Intent Commands (RFC-0110) ───────────────────────────────────────────────
+
+interface IntentCommands {
+    suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord
+    suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord
+    suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord
+    suspend fun getNodeStatus(
+        projectId: String,
+        nodeId: String,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+    ): IntentNodeStatusView?
+
+    suspend fun listNodes(
+        projectId: String,
+        includeArchived: Boolean = false,
+        actorKind: IntentActorKind? = null,
+        parentId: String? = null,
+        filterByParent: Boolean = false,
+    ): List<IntentNodeRecord>
+
+    suspend fun listActionableForHuman(
+        projectId: String,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+    ): List<IntentNodeStatusView>
+
+    suspend fun listReadyForAgent(
+        projectId: String,
+        profile: PlatformProfile = PlatformProfile.DESKTOP,
+        locality: IntentMinLocality = IntentMinLocality.ANY,
+        projectDefaultPolicy: EffectiveDispatchPolicy = EffectiveDispatchPolicy.MANUAL_START,
+        onlyAutoDispatch: Boolean = false,
+    ): List<IntentNodeStatusView>
+
+    suspend fun completeHumanNode(
+        projectId: String,
+        nodeId: String,
+        userId: String = "local-user",
+        note: String? = null,
+    ): IntentNodeRecord
+
+    suspend fun addEdge(
+        projectId: String,
+        fromNodeId: String,
+        toNodeId: String,
+        edgeKind: IntentEdgeKind,
+    ): IntentEdgeRecord
+
+    suspend fun removeEdge(
+        projectId: String,
+        fromNodeId: String,
+        toNodeId: String,
+        edgeKind: IntentEdgeKind,
+    ): Boolean
+
+    suspend fun listEdges(
+        projectId: String,
+        fromNodeId: String? = null,
+        toNodeId: String? = null,
+        edgeKind: IntentEdgeKind? = null,
+    ): List<IntentEdgeRecord>
+
+    suspend fun propose(request: CreateIntentProposalRequest): String
+
+    suspend fun listProposals(projectId: String, state: String? = null): List<IntentProposal>
+
+    suspend fun resolveProposal(
+        projectId: String,
+        proposalId: String,
+        decision: ProposalResolutionDecision,
+        resolvedByUserId: String = "local-user",
+        editedOperations: List<IntentOperation>? = null,
+    ): IntentProposal
+
+    suspend fun confirmImplementation(
+        projectId: String,
+        nodeId: String,
+        confirmedByKind: String = "USER",
+        confirmedById: String = "local-user",
+        criterionIds: List<String>? = null,
+    )
+
+    suspend fun exportSnapshotJson(projectId: String): String
+
+    suspend fun importAndReconcileSnapshot(
+        projectId: String,
+        snapshotJson: String,
+    ): SnapshotReconcileResult
+}
+
+data class CreateIntentNodeRequest(
+    val projectId: String,
+    val title: String,
+    val type: IntentNodeType = IntentNodeType.GOAL,
+    val id: String? = null,
+    val description: String? = null,
+    val priority: Int = 100,
+    val parentId: String? = null,
+    val actorKind: IntentActorKind = IntentActorKind.AGENT,
+    val dispatchPolicy: NodeDispatchPolicy = NodeDispatchPolicy.INHERIT,
+    val granularity: IntentGranularity = IntentGraphRepository.defaultGranularityForType(type),
+    val targetProfile: IntentTargetProfile? = null,
+    val minLocality: IntentMinLocality? = null,
+    val estimatedSteps: Int? = null,
+    val scopePaths: List<String> = emptyList(),
+    val dueAt: String? = null,
+    val recurrenceJson: String? = null,
+    val checkKind: IntentCheckKind? = null,
+    val checkSpec: String? = null,
+    val tags: List<String> = emptyList(),
+)
+
+data class UpdateIntentNodeRequest(
+    val projectId: String,
+    val nodeId: String,
+    val title: String? = null,
+    val description: String? = null,
+    val clearDescription: Boolean = false,
+    val priority: Int? = null,
+    val parentId: String? = null,
+    val clearParentId: Boolean = false,
+    val actorKind: IntentActorKind? = null,
+    val dispatchPolicy: NodeDispatchPolicy? = null,
+    val granularity: IntentGranularity? = null,
+    val targetProfile: IntentTargetProfile? = null,
+    val clearTargetProfile: Boolean = false,
+    val minLocality: IntentMinLocality? = null,
+    val clearMinLocality: Boolean = false,
+    val estimatedSteps: Int? = null,
+    val clearEstimatedSteps: Boolean = false,
+    val scopePaths: List<String>? = null,
+    val dueAt: String? = null,
+    val clearDueAt: Boolean = false,
+    val recurrenceJson: String? = null,
+    val clearRecurrenceJson: Boolean = false,
+    val checkKind: IntentCheckKind? = null,
+    val checkSpec: String? = null,
+    val tags: List<String>? = null,
+)
+
+data class CreateIntentProposalRequest(
+    val projectId: String,
+    val runId: String,
+    val operations: List<IntentOperation>,
+    val rationale: String,
+    val runTaint: String = "TRUSTED",
+    val actor: ActorRef = ActorRef(ActorKind.SESSION, "runtime"),
+    val expiresAtIso: String,
 )

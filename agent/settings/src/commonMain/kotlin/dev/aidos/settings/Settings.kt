@@ -116,6 +116,17 @@ object Settings {
         codec(StringListCodec())
     }
 
+    /**
+     * Default dispatch policy for AGENT-driven intent nodes in a project when a node (and its
+     * ancestor chain) specifies `dispatch_policy = 'INHERIT'` (RFC-0110).
+     */
+    val intentDefaultDispatchPolicy: SettingDescriptor<IntentDispatchPolicy> = setting("intent.default_dispatch_policy") {
+        scopeClass(ScopeClass.PROJECT_SAFE)
+        default(IntentDispatchPolicy.MANUAL_START)
+        description("Default dispatch policy for AGENT-driven intent nodes when dispatch_policy is INHERIT (RFC-0110).")
+        codec(EnumCodec(IntentDispatchPolicy.entries.toTypedArray()))
+    }
+
     // ─── PREFERENCE class — any scope ───────────────────────────────────────
 
     /** Retention window before aged artifacts are eligible for compaction (RFC-0056). */
@@ -279,6 +290,7 @@ object Settings {
         budgetRunModelCallCeiling,
         knowledgeExcludePaths,
         trustUntrustedPaths,
+        intentDefaultDispatchPolicy,
         retentionAgedDays,
         retentionToolResultDays,
         retentionSoftLimitMb,
@@ -347,6 +359,7 @@ enum class VoiceApprovalsLevel {
 }
 
 /**
+/**
  * Taint escalation approval policy for `trust.taint_approval_policy` (RFC-0110, RFC-0027).
  */
 enum class TaintApprovalPolicy {
@@ -355,4 +368,17 @@ enum class TaintApprovalPolicy {
 
     /** Two-gate verification (Gate A Decision Model + Gate B Blind Guardian LLM, RFC-0110). */
     GUARDIAN,
+}
+
+/**
+ * Project-level default dispatch policy for AGENT-driven intent nodes whose `dispatch_policy`
+ * (and ancestor chain) is `INHERIT` (RFC-0110).
+ */
+enum class IntentDispatchPolicy {
+    /** Ready agent tasks wait for explicit user or session trigger. */
+    MANUAL_START,
+
+    /** Ready agent tasks are eligible for automatic dispatch as soon as dependencies are DONE. */
+    AUTO_WHEN_READY,
+}
 }

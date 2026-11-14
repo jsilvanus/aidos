@@ -88,3 +88,7 @@ include(":tunnel-manager")
 
 // RFC-0108 Phase 2: Route planner policy and per-peer remote-access control (kernel-free, multiplatform).
 include(":policy")
+
+// RFC-0113: The Blinded Egress Bridge.
+include(":bridge")
+
