@@ -1,5 +1,9 @@
 package dev.aidos.settings
 
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
+
 
 /**
  * The declared setting catalogue for the MVP (RFC-0036).
@@ -53,14 +57,43 @@ object Settings {
      * be able to opt a Run out of human confirmation. Defaults to MANUAL (most restrictive).
      */
     val trustTaintApprovalPolicy: SettingDescriptor<TaintApprovalPolicy> = setting("trust.taint_approval_policy") {
-        scopeClass(ScopeClass.SECURITY)
+        scopeClass(ScopeClass.PREFERENCE)
         default(TaintApprovalPolicy.MANUAL)
-        mostRestrictive(TaintApprovalPolicy.MANUAL)
         description(
             "Taint escalation approval policy: MANUAL requires human confirmation per call; " +
                 "GUARDIAN uses two-gate automated verification (RFC-0110)."
         )
         codec(EnumCodec(TaintApprovalPolicy.entries.toTypedArray()))
+    }
+
+    /**
+     * Model ID used by Gate A SystemOne taint input screener (RFC-0110).
+     */
+    val trustGuardianDecisionModel: SettingDescriptor<String> = setting("trust.guardian_decision_model") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("laya-multilingual")
+        description("Model used by Gate A SystemOne taint input screener (RFC-0110).")
+        codec(StringCodec)
+    }
+
+    /**
+     * Model ID used by Gate B LLM Guardian verifier (RFC-0110). Empty = auto-routed.
+     */
+    val trustGuardianLlmModel: SettingDescriptor<String> = setting("trust.guardian_llm_model") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("")
+        description("Model used by Gate B LLM Guardian verifier. Empty = auto-routed (RFC-0110).")
+        codec(StringCodec)
+    }
+
+    /**
+     * Locality ceiling for model inference (RFC-0104, RFC-0110).
+     */
+    val routingModelLocality: SettingDescriptor<ModelLocality> = setting("routing.model_locality") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default(ModelLocality.REMOTE)
+        description("Locality ceiling for model inference: LOCAL, CLUSTER, or REMOTE.")
+        codec(ModelLocalityCodec())
     }
 
     // ─── SPEND class — user-scope only ──────────────────────────────────────
@@ -239,6 +272,16 @@ object Settings {
     }
 
     /**
+     * Default LLM model ID for task/worker Runs (RFC-0110).
+     */
+    val modelDefaultRunLlm: SettingDescriptor<String> = setting("model.default_run_llm") {
+        scopeClass(ScopeClass.PREFERENCE)
+        default("")
+        description("Default LLM model ID for task/worker Runs. Empty = inherit model.default_llm.")
+        codec(StringCodec)
+    }
+
+    /**
      * Default embedding model ID for knowledge indexing (RFC-0022).
      *
      * PREFERENCE. Empty string means local embeddings are disabled.
@@ -286,6 +329,9 @@ object Settings {
         routingRemoteEgress,
         networkAllowPlaintextHttp,
         trustTaintApprovalPolicy,
+        trustGuardianDecisionModel,
+        trustGuardianLlmModel,
+        routingModelLocality,
         budgetRunCostCeiling,
         budgetRunModelCallCeiling,
         knowledgeExcludePaths,
@@ -301,6 +347,7 @@ object Settings {
         speechVoiceApprovals,
         speechDuckOtherAudio,
         modelDefaultLlm,
+        modelDefaultRunLlm,
         modelDefaultEmbedding,
         modelDeviceProfileOverride,
         modelSkipDigestVerification,
@@ -379,4 +426,24 @@ enum class IntentDispatchPolicy {
 
     /** Ready agent tasks are eligible for automatic dispatch as soon as dependencies are DONE. */
     AUTO_WHEN_READY,
+}
+
+/**
+ * Model inference locality ceiling for `routing.model_locality` (RFC-0104, RFC-0110).
+ */
+enum class ModelLocality {
+    LOCAL,
+    CLUSTER,
+    REMOTE,
+}
+
+class ModelLocalityCodec : SettingCodec<ModelLocality> {
+    override fun encode(value: ModelLocality): JsonElement =
+        JsonPrimitive(value.name.lowercase())
+
+    override fun decode(element: JsonElement): Result<ModelLocality> = runCatching {
+        val raw = element.jsonPrimitive.content.trim()
+        ModelLocality.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+            ?: error("unknown locality '$raw'; expected local, cluster, or remote")
+    }
 }

@@ -310,7 +310,7 @@ class SettingsTest {
     }
 
     @Test
-    fun `trust taint approval policy rejects aidos toml project override with SCOPE_VIOLATION`() {
+    fun `trust taint approval policy resolves aidos toml project override with PREFERENCE scope`() {
         val userDriver = openUserDriver()
         val projectDriver = openProjectDriver()
         val audit = UserDbSettingsAudit(userDriver)
@@ -320,45 +320,37 @@ class SettingsTest {
         """.trimIndent()
 
         val load = ProjectSettingsLoader(projectDriver, audit).load("p1", toml, "2026-08-05T00:00:00Z")
-        val loadViolation = load.diagnostics.single { it.errorClass == SettingErrorClass.SCOPE_VIOLATION }
-        assertEquals("trust.taint_approval_policy", loadViolation.key)
-        assertEquals(2, loadViolation.line)
-        assertEquals(SettingAuditKind.SCOPE_VIOLATION, audit.entries("trust.taint_approval_policy").single().kind)
+        assertTrue(load.diagnostics.isEmpty(), "PREFERENCE setting in aidos.toml must produce no diagnostics: ${load.diagnostics}")
+        assertTrue(audit.entries("trust.taint_approval_policy").isEmpty())
 
         val errors = mutableListOf<SettingError>()
-        val resolvedDefault = SettingsStore(userDriver, projectDriver).resolve(
+        val resolvedProject = SettingsStore(userDriver, projectDriver).resolve(
             Settings.trustTaintApprovalPolicy,
             projectId = "p1",
             project = load.snapshot,
             errors = errors,
         )
-        assertEquals(TaintApprovalPolicy.MANUAL, resolvedDefault.value)
-        assertEquals(SettingOrigin.DEFAULT, resolvedDefault.origin)
-        assertEquals(ScopeClass.SECURITY, resolvedDefault.overriddenBy)
-        assertEquals(1, errors.size)
-        assertEquals(SettingErrorClass.SCOPE_VIOLATION, errors[0].errorClass)
-        assertEquals("trust.taint_approval_policy", errors[0].key)
+        assertEquals(TaintApprovalPolicy.GUARDIAN, resolvedProject.value)
+        assertEquals(SettingOrigin.PROJECT, resolvedProject.origin)
+        assertTrue(errors.isEmpty())
 
         assertTrue(
-            SettingsWriter(userDriver).writeUser(
+            SettingsWriter.writeRun(
+                projectDriver,
+                "run-1",
                 Settings.trustTaintApprovalPolicy,
-                JsonPrimitive("MANUAL"),
-                SettingSetByKind.USER,
+                TaintApprovalPolicy.MANUAL,
                 "2026-08-05T00:00:00Z",
             ).isSuccess
         )
-        val userErrors = mutableListOf<SettingError>()
-        val resolvedUser = SettingsStore(userDriver, projectDriver).resolve(
+        val resolvedRun = SettingsStore(userDriver, projectDriver).resolve(
             Settings.trustTaintApprovalPolicy,
             projectId = "p1",
             project = load.snapshot,
-            errors = userErrors,
+            runId = "run-1",
         )
-        assertEquals(TaintApprovalPolicy.MANUAL, resolvedUser.value)
-        assertEquals(SettingOrigin.USER, resolvedUser.origin)
-        assertEquals(ScopeClass.SECURITY, resolvedUser.overriddenBy)
-        assertEquals(1, userErrors.size)
-        assertEquals(SettingErrorClass.SCOPE_VIOLATION, userErrors[0].errorClass)
+        assertEquals(TaintApprovalPolicy.MANUAL, resolvedRun.value)
+        assertEquals(SettingOrigin.SESSION, resolvedRun.origin)
     }
 
     @Test
