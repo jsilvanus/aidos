@@ -20,6 +20,8 @@
         <activity
             android:name="fi.italeino.aidos.TasksMainActivity"
             android:exported="true"
+            android:taskAffinity="fi.italeino.aidos.tasks"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:label="Aidos Tasks">
             <intent-filter>
@@ -32,6 +34,8 @@
         <activity
             android:name="fi.italeino.aidos.MainActivity"
             android:exported="true"
+            android:taskAffinity="fi.italeino.aidos.workspace"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:label="Aidos">
             <intent-filter>
