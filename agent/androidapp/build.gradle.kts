@@ -18,9 +18,10 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":api"))
             implementation(project(":ui-common"))
+            implementation(project(":settings"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
         }
 
         val jvmMain by getting {
@@ -28,8 +29,9 @@ kotlin {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
                 implementation(project(":storage"))
+                implementation(project(":settings"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
@@ -37,18 +39,20 @@ kotlin {
                 // (kotlin.plugin.compose) runs its version check against every compilation in
                 // this module, androidTarget included — it fails hard without the runtime on
                 // the classpath even here. Unused at runtime, only satisfies that check.
-                implementation("androidx.compose.runtime:runtime:1.6.0")
+                implementation("androidx.compose.runtime:runtime:1.7.5")
             }
         }
 
         val jvmTest by getting {
             dependencies {
                 implementation(project(":api"))
+                implementation(project(":settings"))
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
+                implementation("org.xerial:sqlite-jdbc:3.45.2.0")
             }
         }
 
@@ -58,28 +62,31 @@ kotlin {
                 implementation(project(":kernel"))
                 implementation(project(":api"))
                 implementation(project(":storage"))
+                implementation(project(":settings"))
+                implementation("dev.aidos.tcr:aidos-tcr:0.1.0")
                 implementation("app.cash.sqldelight:android-driver:2.0.2")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 
                 // Compose and Material Design 3
-                implementation("androidx.compose.ui:ui:1.6.0")
-                implementation("androidx.compose.material3:material3:1.1.0")
-                implementation("androidx.compose.foundation:foundation:1.6.0")
-                implementation("androidx.activity:activity-compose:1.8.0")
-                implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
-                implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.1")
+                implementation("androidx.compose.ui:ui:1.7.5")
+                implementation("androidx.compose.material3:material3:1.3.1")
+                implementation("androidx.compose.material:material-icons-extended:1.7.5")
+                implementation("androidx.compose.foundation:foundation:1.7.5")
+                implementation("androidx.activity:activity-compose:1.9.3")
+                implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+                implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
                 
                 // Navigation
-                implementation("androidx.navigation:navigation-compose:2.7.0")
+                implementation("androidx.navigation:navigation-compose:2.8.3")
                 
                 // Android core
-                implementation("androidx.core:core-ktx:1.10.1")
-                implementation("androidx.appcompat:appcompat:1.6.1")
-                implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
+                implementation("androidx.core:core-ktx:1.15.0")
+                implementation("androidx.appcompat:appcompat:1.7.0")
+                implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
                 // AidosService : LifecycleService (RFC-0050) — the foreground service hosting
                 // RuntimeServiceHost.
-                implementation("androidx.lifecycle:lifecycle-service:2.6.1")
+                implementation("androidx.lifecycle:lifecycle-service:2.8.6")
                 
                 // For scoped storage and file access
                 implementation("androidx.documentfile:documentfile:1.0.1")
@@ -100,12 +107,12 @@ sqldelight {
 // android { } — uncomment when androidTarget() is wired.
 android {
     namespace = "fi.italeino.aidos"
-    compileSdk = 34
+    compileSdk = 35
     
     defaultConfig {
         applicationId = "fi.italeino.aidos"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
     }

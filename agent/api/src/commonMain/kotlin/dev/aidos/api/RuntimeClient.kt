@@ -124,6 +124,9 @@ data class RunOptions(
     val maxTokens: Int? = null,
     val requireApprovalBeforeToolUse: Boolean = false,
     val timeoutSeconds: Int = 300,
+    val taintApprovalPolicy: String? = null,
+    val modelId: String? = null,
+    val modelLocality: String? = null,
 )
 
 data class SessionSummary(

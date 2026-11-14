@@ -11,6 +11,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +20,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import dev.aidos.tcr.agent.AgentLocality
+import dev.aidos.tcr.agent.TcrGuardianConfigUiModel
+import dev.aidos.tcr.agent.TcrTaintApprovalPolicy
+import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.suggestions.SuggestionPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Settings screen (RFC-0103, Phase D).
@@ -37,6 +44,34 @@ fun SettingsScreen() {
     var ramNow by remember { mutableStateOf(readRam(appContext)) }
     var ramBaselineMb by remember { mutableStateOf(SettingsStore.getRamBaselineUsedMb(appContext)) }
     var engineLocalityLimit by remember { mutableStateOf(SettingsStore.getEngineLocalityLimitRaw(appContext)) }
+    var globalMainModelId by remember { mutableStateOf(SettingsStore.getGlobalMainModelId(appContext)) }
+    var globalDefaultRunModelId by remember { mutableStateOf(SettingsStore.getGlobalDefaultRunModelId(appContext)) }
+    var globalLocalityWire by remember { mutableStateOf(SettingsStore.getGlobalLocalityWire(appContext)) }
+    var globalGuardianPolicyRaw by remember { mutableStateOf(SettingsStore.getGlobalGuardianPolicy(appContext)) }
+    var globalDecisionModelId by remember { mutableStateOf(SettingsStore.getGlobalDecisionModelId(appContext)) }
+    var globalGuardianLlmModelId by remember { mutableStateOf(SettingsStore.getGlobalGuardianLlmModelId(appContext)) }
+    var availableLlmModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var availableDecisionModels by remember { mutableStateOf(listOf("laya-multilingual")) }
+
+    LaunchedEffect(Unit) {
+        val installed = withContext(Dispatchers.IO) {
+            runCatching {
+                EngineService.instance?.catalogManager?.listInstalled()?.getOrNull().orEmpty()
+            }.getOrDefault(emptyList())
+        }
+        val llmIds = installed.map { it.modelId }.distinct()
+        availableLlmModels = llmIds
+        availableDecisionModels = (listOf("laya-multilingual") + installed.filter {
+            it.quantization.equals("ONNX", ignoreCase = true) || it.modelId.contains("laya", ignoreCase = true)
+        }.map { it.modelId }).distinct()
+    }
+
+    val syncRuntimeConfig = {
+        EngineService.instance?.agentRuntime?.setRoutingConfig(
+            SettingsStore.buildAgentRoutingConfig(appContext)
+        )
+    }
+
     var state by remember {
         val hfToken = SettingsStore.getHfToken(appContext)
         mutableStateOf(
@@ -76,6 +111,52 @@ fun SettingsScreen() {
                 SettingsStore.setEngineLocalityLimit(appContext, limit)
                 engineLocalityLimit = SettingsStore.getEngineLocalityLimitRaw(appContext)
             },
+            globalMainModelId = globalMainModelId,
+            globalDefaultRunModelId = globalDefaultRunModelId,
+            globalLocality = AgentLocality.fromWire(globalLocalityWire),
+            guardianConfig = TcrGuardianConfigUiModel(
+                policy = if (globalGuardianPolicyRaw.equals("GUARDIAN", ignoreCase = true)) {
+                    TcrTaintApprovalPolicy.GUARDIAN
+                } else {
+                    TcrTaintApprovalPolicy.MANUAL
+                },
+                decisionModelId = globalDecisionModelId,
+                guardianLlmModelId = globalGuardianLlmModelId,
+                availableDecisionModels = availableDecisionModels,
+                availableLlmModels = availableLlmModels,
+            ),
+            availableLlmModels = availableLlmModels,
+            onGlobalMainModelChange = { modelId ->
+                SettingsStore.setGlobalMainModelId(appContext, modelId)
+                globalMainModelId = SettingsStore.getGlobalMainModelId(appContext)
+                syncRuntimeConfig()
+            },
+            onGlobalDefaultRunModelChange = { modelId ->
+                SettingsStore.setGlobalDefaultRunModelId(appContext, modelId)
+                globalDefaultRunModelId = SettingsStore.getGlobalDefaultRunModelId(appContext)
+                syncRuntimeConfig()
+            },
+            onGlobalLocalityChange = { locality ->
+                SettingsStore.setGlobalLocalityWire(appContext, locality.wire)
+                globalLocalityWire = SettingsStore.getGlobalLocalityWire(appContext)
+                syncRuntimeConfig()
+            },
+            onGlobalGuardianPolicyChange = { policy ->
+                SettingsStore.setGlobalGuardianPolicy(appContext, policy.name)
+                globalGuardianPolicyRaw = SettingsStore.getGlobalGuardianPolicy(appContext)
+                syncRuntimeConfig()
+            },
+            onGlobalDecisionModelChange = { modelId ->
+                SettingsStore.setGlobalDecisionModelId(appContext, modelId)
+                globalDecisionModelId = SettingsStore.getGlobalDecisionModelId(appContext)
+                syncRuntimeConfig()
+            },
+            onGlobalGuardianLlmChange = { modelId ->
+                SettingsStore.setGlobalGuardianLlmModelId(appContext, modelId)
+                globalGuardianLlmModelId = SettingsStore.getGlobalGuardianLlmModelId(appContext)
+                syncRuntimeConfig()
+            },
+            showModelRoutingSettings = true,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)

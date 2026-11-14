@@ -48,15 +48,23 @@ class SettingsStore(
         @Suppress("UNUSED_PARAMETER") sessionId: String? = null,
         errors: MutableList<SettingError> = mutableListOf(),
         project: ProjectSettingsSnapshot? = null,
+        runId: String? = null,
     ): Resolved<T> {
         var refusedBy: ScopeClass? = null
 
-        // 1. Session scope (in-memory only, never persisted)
-        val sessionJson = sessionValues[descriptor.key]
+        // 1. Session / Run scope (in-memory sessionValues take precedence over persisted run rows)
+        val inMemorySessionJson = sessionValues[descriptor.key]
+        val persistedRunJson = if (inMemorySessionJson == null && !runId.isNullOrBlank() && projectDriver != null) {
+            readRow(projectDriver, "run", runId, descriptor.key)
+        } else {
+            null
+        }
+        val sessionJson = inMemorySessionJson ?: persistedRunJson
+        val sessionOriginPath = if (inMemorySessionJson != null) "session" else "run:$runId"
         if (sessionJson != null) {
             if (descriptor.scopeClass != ScopeClass.PREFERENCE) {
                 errors.add(SettingError(
-                    key = descriptor.key, originPath = "session", line = null,
+                    key = descriptor.key, originPath = sessionOriginPath, line = null,
                     message = "'${descriptor.key}' is ${descriptor.scopeClass} and cannot be set by a session. Ignored.",
                     errorClass = SettingErrorClass.SCOPE_VIOLATION,
                 ))
@@ -65,10 +73,10 @@ class SettingsStore(
                 val element = runCatching { Json.parseToJsonElement(sessionJson) }.getOrNull()
                 val decoded = element?.let { descriptor.codec.decode(it) }
                 if (decoded != null && decoded.isSuccess) {
-                    return Resolved(decoded.getOrThrow(), SettingOrigin.SESSION, "session")
+                    return Resolved(decoded.getOrThrow(), SettingOrigin.SESSION, sessionOriginPath)
                 }
                 errors.add(SettingError(
-                    key = descriptor.key, originPath = "session", line = null,
+                    key = descriptor.key, originPath = sessionOriginPath, line = null,
                     message = "invalid value for '${descriptor.key}': " +
                         (decoded?.exceptionOrNull()?.message ?: "unparseable JSON") + ". Using default.",
                     errorClass = SettingErrorClass.VALIDATION_FAILED,
@@ -152,6 +160,34 @@ class SettingsStore(
             bindString(1, scopeId)
             bindString(2, key)
         }.value
+
+    companion object {
+        /**
+         * Reads all run-scoped setting overrides (`scope = 'run', scope_id = runId`) from
+         * `projectDriver`, returning a map of setting key to raw JSON value text.
+         */
+        fun readRunValues(projectDriver: SqlDriver?, runId: String): Map<String, String> {
+            if (projectDriver == null || runId.isBlank()) return emptyMap()
+            return projectDriver.executeQuery(
+                identifier = null,
+                sql = "SELECT key, value_json FROM settings WHERE scope = 'run' AND scope_id = ?",
+                mapper = { cursor ->
+                    val values = LinkedHashMap<String, String>()
+                    while (cursor.next().value) {
+                        val key = cursor.getString(0)
+                        val valueJson = cursor.getString(1)
+                        if (key != null && valueJson != null) {
+                            values[key] = valueJson
+                        }
+                    }
+                    QueryResult.Value(values)
+                },
+                parameters = 1,
+            ) {
+                bindString(0, runId)
+            }.value
+        }
+    }
 }
 
 /** One project-scope value as read from `aidos.toml`. [value] is null when the cached text did not parse. */
@@ -251,33 +287,77 @@ class SettingsWriter(
     private fun upsert(
         driver: SqlDriver, scope: String, scopeId: String?, key: String,
         valueJson: String, setByKind: SettingSetByKind, nowIso: String,
-    ) {
-        // The primary key (scope, scope_id, key) does not conflict on a NULL scope_id in SQLite, so
-        // an ON CONFLICT upsert would insert a duplicate user row each time. Delete-then-insert,
-        // in one transaction so a crash between the two cannot lose the setting.
-        driver.inTransaction {
-        driver.execute(
-            identifier = null,
-            sql = "DELETE FROM settings WHERE scope = ? AND scope_id IS ? AND key = ?",
-            parameters = 3,
-        ) {
-            bindString(0, scope)
-            bindString(1, scopeId)
-            bindString(2, key)
+    ) = upsertRow(driver, scope, scopeId, key, valueJson, setByKind, nowIso)
+
+    companion object {
+        /**
+         * Writes a PREFERENCE-class setting at `scope = 'run'`, `scope_id = runId` into the
+         * project database's `settings` table. Rejects non-PREFERENCE descriptors and blank run IDs.
+         */
+        fun <T> writeRun(
+            driver: SqlDriver,
+            runId: String,
+            descriptor: SettingDescriptor<T>,
+            value: T,
+            nowIso: String,
+            setByKind: String = "USER",
+        ): Result<Unit> {
+            if (runId.isBlank()) {
+                return Result.failure(IllegalArgumentException("runId must not be blank"))
+            }
+            if (descriptor.scopeClass != ScopeClass.PREFERENCE) {
+                return Result.failure(
+                    IllegalArgumentException(
+                        "'${descriptor.key}' is ${descriptor.scopeClass} and cannot be set at run scope."
+                    )
+                )
+            }
+            val parsedSetByKind = runCatching {
+                SettingSetByKind.valueOf(setByKind.trim().uppercase())
+            }.getOrElse {
+                return Result.failure(IllegalArgumentException("invalid setByKind '$setByKind'"))
+            }
+            val encoded = descriptor.codec.encode(value)
+            descriptor.codec.decode(encoded).onFailure {
+                return Result.failure(
+                    IllegalArgumentException("invalid value for '${descriptor.key}': ${it.message}")
+                )
+            }
+            upsertRow(driver, "run", runId, descriptor.key, encoded.toString(), parsedSetByKind, nowIso)
+            return Result.success(Unit)
         }
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO settings (scope, scope_id, key, value_json, set_at, set_by_kind) " +
-                "VALUES (?, ?, ?, ?, ?, ?)",
-            parameters = 6,
+
+        private fun upsertRow(
+            driver: SqlDriver, scope: String, scopeId: String?, key: String,
+            valueJson: String, setByKind: SettingSetByKind, nowIso: String,
         ) {
-            bindString(0, scope)
-            bindString(1, scopeId)
-            bindString(2, key)
-            bindString(3, valueJson)
-            bindString(4, nowIso)
-            bindString(5, setByKind.name)
-        }
+            // The primary key (scope, scope_id, key) does not conflict on a NULL scope_id in SQLite, so
+            // an ON CONFLICT upsert would insert a duplicate user row each time. Delete-then-insert,
+            // in one transaction so a crash between the two cannot lose the setting.
+            driver.inTransaction {
+                driver.execute(
+                    identifier = null,
+                    sql = "DELETE FROM settings WHERE scope = ? AND scope_id IS ? AND key = ?",
+                    parameters = 3,
+                ) {
+                    bindString(0, scope)
+                    bindString(1, scopeId)
+                    bindString(2, key)
+                }
+                driver.execute(
+                    identifier = null,
+                    sql = "INSERT INTO settings (scope, scope_id, key, value_json, set_at, set_by_kind) " +
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                    parameters = 6,
+                ) {
+                    bindString(0, scope)
+                    bindString(1, scopeId)
+                    bindString(2, key)
+                    bindString(3, valueJson)
+                    bindString(4, nowIso)
+                    bindString(5, setByKind.name)
+                }
+            }
         }
     }
 }

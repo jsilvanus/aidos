@@ -40,16 +40,18 @@ class SystemOneTaintInputScreener(
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofMillis(timeoutMillis))
         .build(),
+    private val modelIdProvider: () -> String = { modelId },
 ) : TaintInputScreener {
 
     override suspend fun screen(toolName: String, untrustedText: String): InputScreeningVerdict {
+        val activeModelId = modelIdProvider().trim().ifEmpty { modelId }
         if (baseUrl.isBlank() || untrustedText.isBlank()) {
-            return InputScreeningVerdict(instructionSuspected = false, modelId = modelId)
+            return InputScreeningVerdict(instructionSuspected = false, modelId = activeModelId)
         }
 
         val endpointUrl = resolveEndpointUrl(baseUrl)
         val requestBody = buildJsonObject {
-            put("model", modelId)
+            put("model", activeModelId)
             put("state", untrustedText)
             putJsonObject("questions") {
                 putJsonObject(QUESTION_ID) {
@@ -74,27 +76,27 @@ class SystemOneTaintInputScreener(
                 httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString())
             }
             if (response.statusCode() !in 200..299) {
-                InputScreeningVerdict(instructionSuspected = false, modelId = modelId)
+                InputScreeningVerdict(instructionSuspected = false, modelId = activeModelId)
             } else {
-                parseResponse(response.body())
+                parseResponse(response.body(), activeModelId)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
             coroutineContext.ensureActive()
-            InputScreeningVerdict(instructionSuspected = false, modelId = modelId)
+            InputScreeningVerdict(instructionSuspected = false, modelId = activeModelId)
         }
     }
 
-    private fun parseResponse(body: String): InputScreeningVerdict {
+    private fun parseResponse(body: String, fallbackModelId: String): InputScreeningVerdict {
         if (body.isBlank()) {
-            return InputScreeningVerdict(instructionSuspected = false, modelId = modelId)
+            return InputScreeningVerdict(instructionSuspected = false, modelId = fallbackModelId)
         }
         val root = wireJson.parseToJsonElement(body).jsonObject
         val responseModel = (root["model"] as? JsonPrimitive)
             ?.takeIf { it.isString }
             ?.content
-            ?: modelId
+            ?: fallbackModelId
         val answers = root["answers"] as? JsonObject
             ?: return InputScreeningVerdict(instructionSuspected = false, modelId = responseModel)
         val answer = answers[QUESTION_ID] as? JsonObject

@@ -23,9 +23,12 @@ fun createEngineAgentRuntime(
     manager: InferenceRequestManager,
     router: () -> VirtualModelRouter,
     aidin: () -> AidinNode?,
+    initialRoutingConfig: AgentRoutingConfigDto = AgentRoutingConfigDto(),
 ): AgentRuntime {
     fun modelAdapterFor(req: AgentTurnRequest, onPlacement: ((Placement) -> Unit)?): ModelAdapter {
-        val locality = Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY
+        val requestedLocality = Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY
+        val enforcedLocality = req.enforcedLocality?.let { Locality.parse(it) }
+        val locality = if (enforcedLocality != null) requestedLocality.strictest(enforcedLocality) else requestedLocality
         val contextWindow = req.contextWindow ?: 8192
         val r = router()
         return if (r.isVirtualModelId(req.model)) {
@@ -50,5 +53,7 @@ fun createEngineAgentRuntime(
         scope = scope,
         adapterFor = { req -> modelAdapterFor(req, null) },
         adapterWithPlacement = { req, onPlacement -> modelAdapterFor(req, onPlacement) },
-    )
+    ).apply {
+        setRoutingConfig(initialRoutingConfig)
+    }
 }

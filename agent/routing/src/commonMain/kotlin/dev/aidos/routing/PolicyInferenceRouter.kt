@@ -23,6 +23,20 @@ import dev.aidos.kernel.TrustLevel
  * [RoutingPolicy] is serializable and stored in user settings. A change takes effect on the
  * next Run — not mid-Run (changing mid-Run would be a TOCTOU).
  */
+/**
+ * Allowed inference locality tier for [RoutingPolicy] and per-Run / worker overrides (RFC-0104).
+ */
+enum class EnforcedLocality {
+    /** Only local runtime models are permitted. */
+    LOCAL,
+
+    /** Local runtime models and trusted Aidos cluster adapters are permitted; cloud remote is forbidden. */
+    CLUSTER,
+
+    /** Local, cluster, and cloud remote adapters (subject to egress policy) are permitted. */
+    REMOTE,
+}
+
 data class RoutingPolicy(
     /** If false, remote models are never selected regardless of network availability. */
     val allowRemote: Boolean = false,
@@ -40,6 +54,10 @@ data class RoutingPolicy(
     val allowedRemoteModelIds: Set<String> = emptySet(),
     /** Per-kind preferred local model ID. If null, the runtime picks the first loaded. */
     val preferredLocal: Map<ModelKind, String> = emptyMap(),
+    /** Locality ceiling enforced when no per-call override is provided. */
+    val enforcedLocality: EnforcedLocality = EnforcedLocality.REMOTE,
+    /** Optional default preferred model ID across locality tiers. */
+    val preferredModelId: String? = null,
 )
 
 /**
@@ -66,6 +84,7 @@ class PolicyInferenceRouter(
     private val adapterKinds: Map<String, ModelKind> = emptyMap(),
     private val adapterDescriptors: Map<String, ModelDescriptor> = emptyMap(),
     private val adapterCosts: Map<String, Long> = emptyMap(),
+    private val clusterAdapters: List<ModelAdapter> = emptyList(),
 ) : InferenceRouter {
 
     /**
@@ -153,7 +172,19 @@ class PolicyInferenceRouter(
         return raw.toDoubleOrNull()?.let { (it * 100.0).toLong().coerceAtLeast(0L) }
     }
 
-    override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
+    override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision =
+        selectWithOverride(kind = kind, context = context)
+
+    /**
+     * Selects an adapter for [kind] while optionally overriding the preferred model ID and/or
+     * enforced locality ceiling for this specific Run, worker, or Guardian call.
+     */
+    suspend fun selectWithOverride(
+        kind: ModelKind,
+        context: RoutingContext,
+        preferredModelId: String? = null,
+        enforcedLocality: EnforcedLocality? = null,
+    ): RoutingDecision {
         // MOBILE foreground service check (D24): a local inference requires foreground.
         if (context.profile == PlatformProfile.MOBILE &&
             !context.executionWindow.permitsLocalInference()
@@ -161,13 +192,65 @@ class PolicyInferenceRouter(
             return RoutingDecision.ForegroundRequired
         }
 
+        val effectiveLocality = enforcedLocality ?: policy.enforcedLocality
+        val effectivePreferredModel = (preferredModelId ?: policy.preferredModelId)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         val minCtx = context.minimumContextWindow
 
-        // 1. Local candidates — filtered by ModelKind and minimum context window.
+        // 1. Candidates per locality tier filtered by ModelKind and minimum context window.
         val localCandidates = localAdapters
             .filter { matchesKind(it, kind) }
             .filter { minCtx == null || it.contextWindow >= minCtx }
 
+        val clusterCandidates = clusterAdapters
+            .filter { matchesKind(it, kind) }
+            .filter { minCtx == null || it.contextWindow >= minCtx }
+
+        val allRemoteKindCandidates = remoteAdapters
+            .filter { matchesKind(it, kind) }
+            .filter { minCtx == null || it.contextWindow >= minCtx }
+
+        val remoteCandidates = allRemoteKindCandidates.filter { adapter ->
+            policy.allowedRemoteModelIds.isEmpty() || adapter.modelId in policy.allowedRemoteModelIds
+        }
+
+        // 2. Explicit model preference across allowed locality tiers.
+        if (effectivePreferredModel != null) {
+            localCandidates.find { it.modelId == effectivePreferredModel }?.let {
+                return RoutingDecision.Local(it)
+            }
+
+            clusterCandidates.find { it.modelId == effectivePreferredModel }?.let { clusterAdapter ->
+                return if (effectiveLocality == EnforcedLocality.LOCAL) {
+                    RoutingDecision.DisabledByPolicy(
+                        "Model locality enforced to LOCAL; preferred model '$effectivePreferredModel' is on cluster"
+                    )
+                } else if (!context.networkAvailable) {
+                    RoutingDecision.UnavailableOffline(kind)
+                } else {
+                    RoutingDecision.RemoteApproved(clusterAdapter)
+                }
+            }
+
+            allRemoteKindCandidates.find { it.modelId == effectivePreferredModel }?.let { remoteAdapter ->
+                if (effectiveLocality != EnforcedLocality.REMOTE) {
+                    return RoutingDecision.DisabledByPolicy(
+                        "Model locality enforced to $effectiveLocality; preferred model '$effectivePreferredModel' requires remote egress"
+                    )
+                }
+                if (policy.allowedRemoteModelIds.isNotEmpty() &&
+                    remoteAdapter.modelId !in policy.allowedRemoteModelIds
+                ) {
+                    return RoutingDecision.DisabledByPolicy(
+                        "Preferred model '$effectivePreferredModel' is not in allowedRemoteModelIds"
+                    )
+                }
+                return selectFromRemoteCandidates(kind, context, listOf(remoteAdapter))
+            }
+        }
+
+        // 3. Local tier (permitted under LOCAL, CLUSTER, and REMOTE).
         if (localCandidates.isNotEmpty()) {
             val preferred = policy.preferredLocal[kind]
             val adapter = if (preferred != null) {
@@ -178,15 +261,32 @@ class PolicyInferenceRouter(
             return RoutingDecision.Local(adapter)
         }
 
-        // 2. Remote candidates — filtered by ModelKind, minimum context window, and allowlist.
-        val remoteCandidates = remoteAdapters
-            .filter { matchesKind(it, kind) }
-            .filter { minCtx == null || it.contextWindow >= minCtx }
-            .filter { adapter ->
-                policy.allowedRemoteModelIds.isEmpty() || adapter.modelId in policy.allowedRemoteModelIds
-            }
+        if (effectiveLocality == EnforcedLocality.LOCAL) {
+            return RoutingDecision.DisabledByPolicy("Model locality enforced to LOCAL")
+        }
 
-        // 3. Policy forbids remote entirely (M23: NEVER, or the ASK default).
+        // 4. Trusted Aidos cluster tier (permitted under CLUSTER and REMOTE).
+        if (clusterCandidates.isNotEmpty()) {
+            if (!context.networkAvailable) {
+                return RoutingDecision.UnavailableOffline(kind)
+            }
+            return RoutingDecision.RemoteApproved(clusterCandidates.first())
+        }
+
+        if (effectiveLocality == EnforcedLocality.CLUSTER) {
+            return RoutingDecision.DisabledByPolicy("Model locality enforced to CLUSTER")
+        }
+
+        // 5. Cloud remote tier (permitted only under REMOTE).
+        return selectFromRemoteCandidates(kind, context, remoteCandidates)
+    }
+
+    private fun selectFromRemoteCandidates(
+        kind: ModelKind,
+        context: RoutingContext,
+        remoteCandidates: List<ModelAdapter>,
+    ): RoutingDecision {
+        // Policy forbids remote entirely (M23: NEVER, or the ASK default).
         if (!policy.allowRemote) {
             val candidate = remoteCandidates.firstOrNull()
             return if (policy.remoteRequiresApproval && candidate != null) {
@@ -201,7 +301,7 @@ class PolicyInferenceRouter(
             }
         }
 
-        // 4. Remote allowed by policy, but network is unavailable.
+        // Remote allowed by policy, but network is unavailable.
         if (!context.networkAvailable) {
             return RoutingDecision.UnavailableOffline(kind)
         }
@@ -210,7 +310,7 @@ class PolicyInferenceRouter(
             return RoutingDecision.DisabledByPolicy("No allowed remote adapter available for kind $kind")
         }
 
-        // 5. RFC-0028: Budget-aware routing. When budget is constrained, prefer cheaper models.
+        // RFC-0028: Budget-aware routing. When budget is constrained, prefer cheaper models.
         val budgetRemaining = context.budgetRemaining
         val costUnits = budgetRemaining?.costUnits
         val inputTokens = budgetRemaining?.inputTokens
@@ -228,7 +328,7 @@ class PolicyInferenceRouter(
             remoteCandidates.first()
         }
 
-        // 6. Tainted run crossing network boundary requires user confirmation (RFC-0027).
+        // Tainted run crossing network boundary requires user confirmation (RFC-0027).
         return if (context.runTaint == TrustLevel.UNTRUSTED) {
             RoutingDecision.RemotePendingApproval(
                 adapter = remoteAdapter,

@@ -88,6 +88,8 @@ class LlmGuardianApprovalVerifier(
     private val budgetRemaining: () -> Budget? = { null },
     private val executionWindow: () -> ExecutionWindow = { DefaultGuardianExecutionWindow },
     private val maxOutputTokens: Int = DEFAULT_MAX_OUTPUT_TOKENS,
+    private val preferredModelId: () -> String? = { null },
+    private val selectAdapter: (suspend (RoutingContext, String?) -> RoutingDecision)? = null,
 ) : GuardianApprovalVerifier {
 
     override suspend fun verify(request: GuardianApprovalRequest): GuardianVerdict {
@@ -101,7 +103,12 @@ class LlmGuardianApprovalVerifier(
             executionWindow = executionWindow(),
         )
         val decision = try {
-            router.select(ModelKind.LLM, routingCtx)
+            val preferred = preferredModelId()?.trim()?.takeIf { it.isNotEmpty() }
+            if (selectAdapter != null) {
+                selectAdapter(routingCtx, preferred)
+            } else {
+                router.select(ModelKind.LLM, routingCtx)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

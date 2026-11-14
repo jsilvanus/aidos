@@ -2,6 +2,8 @@ package fi.italeino.aidos.engine.ui
 
 import android.content.Context
 import dev.aidos.modelruntime.ModelRunSettings
+import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
+import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
 import fi.italeino.aidos.engine.inference.Locality
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,6 +16,22 @@ private const val KEY_HF_TOKEN = "hf_token"
 private const val KEY_HF_TOKEN_VALIDATED_MS = "hf_token_validated_ms"
 private const val KEY_GROUP_SHARING = "group_sharing_enabled"
 private const val KEY_ENGINE_LOCALITY_LIMIT = "engine_locality_limit"
+private const val KEY_GLOBAL_MAIN_MODEL_ID = "global_main_model_id"
+private const val KEY_GLOBAL_DEFAULT_RUN_MODEL_ID = "global_default_run_model_id"
+private const val KEY_GLOBAL_LOCALITY = "global_locality"
+private const val KEY_GLOBAL_GUARDIAN_POLICY = "global_guardian_policy"
+private const val KEY_GLOBAL_DECISION_MODEL_ID = "global_decision_model_id"
+private const val KEY_GLOBAL_GUARDIAN_LLM_MODEL_ID = "global_guardian_llm_model_id"
+private const val KEY_PROJECT_MAIN_MODEL_ID = "project_main_model_id"
+private const val KEY_PROJECT_DEFAULT_RUN_MODEL_ID = "project_default_run_model_id"
+private const val KEY_PROJECT_ALLOW_MAIN_MODEL_RUN_OVERRIDE = "project_allow_main_model_run_override"
+private const val KEY_PROJECT_ENFORCED_LOCALITY = "project_enforced_locality"
+private const val KEY_PROJECT_GUARDIAN_POLICY = "project_guardian_policy"
+private const val KEY_PROJECT_DECISION_MODEL_ID = "project_decision_model_id"
+private const val KEY_PROJECT_GUARDIAN_LLM_MODEL_ID = "project_guardian_llm_model_id"
+private const val KEY_RUN_GUARDIAN_POLICY_OVERRIDE = "run_guardian_policy_override"
+private const val KEY_RUN_MODEL_OVERRIDE = "run_model_override"
+private const val KEY_RUN_LOCALITY_OVERRIDE = "run_locality_override"
 
 enum class ProviderConfigStatus {
     ENABLED,
@@ -52,6 +70,199 @@ object SettingsStore {
         if (localityWire == null) prefs.edit().remove(KEY_ENGINE_LOCALITY_LIMIT).apply()
         else prefs.edit().putString(KEY_ENGINE_LOCALITY_LIMIT, localityWire).apply()
     }
+
+    private fun normalizePolicy(raw: String?): String =
+        if (raw?.trim().equals("GUARDIAN", ignoreCase = true)) "GUARDIAN" else "MANUAL"
+
+    private fun normalizeLocalityWire(raw: String?): String =
+        raw?.let(Locality::parse)?.wire ?: "any"
+
+    fun getGlobalMainModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_GLOBAL_MAIN_MODEL_ID, "").orEmpty()
+
+    fun setGlobalMainModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_MAIN_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getGlobalDefaultRunModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_GLOBAL_DEFAULT_RUN_MODEL_ID, "").orEmpty()
+
+    fun setGlobalDefaultRunModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_DEFAULT_RUN_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getGlobalLocalityWire(context: Context): String =
+        normalizeLocalityWire(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_GLOBAL_LOCALITY, "any")
+        )
+
+    fun setGlobalLocalityWire(context: Context, localityWire: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_LOCALITY, normalizeLocalityWire(localityWire)).apply()
+    }
+
+    fun getGlobalGuardianPolicy(context: Context): String =
+        normalizePolicy(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_GLOBAL_GUARDIAN_POLICY, "MANUAL")
+        )
+
+    fun setGlobalGuardianPolicy(context: Context, policy: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_GUARDIAN_POLICY, normalizePolicy(policy)).apply()
+    }
+
+    fun getGlobalDecisionModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_GLOBAL_DECISION_MODEL_ID, "laya-multilingual")
+            .orEmpty()
+            .ifBlank { "laya-multilingual" }
+
+    fun setGlobalDecisionModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_DECISION_MODEL_ID, modelId.trim().ifEmpty { "laya-multilingual" })
+            .apply()
+    }
+
+    fun getGlobalGuardianLlmModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_GLOBAL_GUARDIAN_LLM_MODEL_ID, "").orEmpty()
+
+    fun setGlobalGuardianLlmModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_GLOBAL_GUARDIAN_LLM_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getProjectMainModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_MAIN_MODEL_ID, "")
+            .orEmpty()
+            .ifBlank { getGlobalMainModelId(context) }
+
+    fun setProjectMainModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_MAIN_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getProjectDefaultRunModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_DEFAULT_RUN_MODEL_ID, "")
+            .orEmpty()
+            .ifBlank { getGlobalDefaultRunModelId(context) }
+
+    fun setProjectDefaultRunModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_DEFAULT_RUN_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getProjectAllowMainModelRunOverride(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_PROJECT_ALLOW_MAIN_MODEL_RUN_OVERRIDE, true)
+
+    fun setProjectAllowMainModelRunOverride(context: Context, allow: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_PROJECT_ALLOW_MAIN_MODEL_RUN_OVERRIDE, allow).apply()
+    }
+
+    fun getProjectEnforcedLocalityWire(context: Context): String {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_ENFORCED_LOCALITY, null)
+        return raw?.let(::normalizeLocalityWire) ?: getGlobalLocalityWire(context)
+    }
+
+    fun setProjectEnforcedLocalityWire(context: Context, localityWire: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_ENFORCED_LOCALITY, normalizeLocalityWire(localityWire)).apply()
+    }
+
+    fun getProjectGuardianPolicy(context: Context): String {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_GUARDIAN_POLICY, null)
+        return raw?.let(::normalizePolicy) ?: getGlobalGuardianPolicy(context)
+    }
+
+    fun setProjectGuardianPolicy(context: Context, policy: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_GUARDIAN_POLICY, normalizePolicy(policy)).apply()
+    }
+
+    fun getProjectDecisionModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_DECISION_MODEL_ID, "")
+            .orEmpty()
+            .ifBlank { getGlobalDecisionModelId(context) }
+
+    fun setProjectDecisionModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_DECISION_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getProjectGuardianLlmModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PROJECT_GUARDIAN_LLM_MODEL_ID, "")
+            .orEmpty()
+            .ifBlank { getGlobalGuardianLlmModelId(context) }
+
+    fun setProjectGuardianLlmModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PROJECT_GUARDIAN_LLM_MODEL_ID, modelId.trim()).apply()
+    }
+
+    fun getRunGuardianPolicyOverride(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_RUN_GUARDIAN_POLICY_OVERRIDE, null)
+            ?.let(::normalizePolicy)
+
+    fun setRunGuardianPolicyOverride(context: Context, policy: String?) {
+        val edit = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        if (policy == null) edit.remove(KEY_RUN_GUARDIAN_POLICY_OVERRIDE)
+        else edit.putString(KEY_RUN_GUARDIAN_POLICY_OVERRIDE, normalizePolicy(policy))
+        edit.apply()
+    }
+
+    fun getRunModelOverride(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_RUN_MODEL_OVERRIDE, "").orEmpty()
+
+    fun setRunModelOverride(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_RUN_MODEL_OVERRIDE, modelId.trim()).apply()
+    }
+
+    fun getRunLocalityOverrideWire(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_RUN_LOCALITY_OVERRIDE, null)
+            ?.let(Locality::parse)
+            ?.wire
+
+    fun setRunLocalityOverrideWire(context: Context, localityWire: String?) {
+        val edit = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        val parsed = localityWire?.let(Locality::parse)?.wire
+        if (parsed == null) edit.remove(KEY_RUN_LOCALITY_OVERRIDE)
+        else edit.putString(KEY_RUN_LOCALITY_OVERRIDE, parsed)
+        edit.apply()
+    }
+
+    fun buildAgentRoutingConfig(context: Context): AgentRoutingConfigDto = AgentRoutingConfigDto(
+        mainModelId = getProjectMainModelId(context),
+        defaultRunModelId = getProjectDefaultRunModelId(context),
+        allowMainModelRunOverride = getProjectAllowMainModelRunOverride(context),
+        enforcedLocality = getProjectEnforcedLocalityWire(context),
+        guardianPolicy = getProjectGuardianPolicy(context),
+        decisionModelId = getProjectDecisionModelId(context),
+        guardianLlmModelId = getProjectGuardianLlmModelId(context),
+    )
+
+    fun buildAgentRunLaunchConfig(context: Context): AgentRunLaunchConfigDto = AgentRunLaunchConfigDto(
+        guardianPolicyOverride = getRunGuardianPolicyOverride(context),
+        runModelOverride = getRunModelOverride(context),
+        localityOverride = getRunLocalityOverrideWire(context),
+    )
 
     /** Device groups (RFC-0105): discover and link to other Engines on this network. Off by default. */
     fun isGroupSharingEnabled(context: Context): Boolean =

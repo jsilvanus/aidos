@@ -17,6 +17,7 @@ import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.MutationScope
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
@@ -50,6 +51,7 @@ import dev.aidos.prompt.AssemblyResult
 import dev.aidos.prompt.InstructionDiscovery
 import dev.aidos.prompt.InstructionSet
 import dev.aidos.prompt.PromptAssembler
+import dev.aidos.settings.Settings
 import dev.aidos.settings.TaintApprovalPolicy
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -58,10 +60,13 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -203,6 +208,43 @@ private val askUserToolDescriptor = ToolDescriptor(
     ),
 )
 
+private val spawnWorkerToolDescriptor = ToolDescriptor(
+    name = "spawn_worker",
+    title = "Spawn worker",
+    description = "Delegate a bounded subtask to an isolated worker session and child Run. " +
+        "Optionally specify model_id, locality ('local', 'cluster', or 'remote'), " +
+        "capabilities, budget_split_ways, and taint_approval_policy ('MANUAL' or 'GUARDIAN').",
+    inputSchema = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("brief") { put("type", "string") }
+            putJsonObject("capabilities") {
+                put("type", "array")
+                putJsonObject("items") { put("type", "string") }
+            }
+            putJsonObject("budget_split_ways") { put("type", "integer") }
+            putJsonObject("model_id") { put("type", "string") }
+            putJsonObject("locality") {
+                put("type", "string")
+                put("enum", buildJsonArray { add("local"); add("cluster"); add("remote") })
+            }
+            putJsonObject("taint_approval_policy") {
+                put("type", "string")
+                put("enum", buildJsonArray { add("MANUAL"); add("GUARDIAN") })
+            }
+        }
+        put("required", buildJsonArray { add("brief") })
+    },
+    effect = EffectKind.Mutate(MutationScope.IN_PROJECT),
+    requiredPermission = Permission.WORKER_CREATE,
+    recoveryClass = RecoveryClass.UNSAFE,
+    availability = ToolAvailability(
+        profiles = setOf(PlatformProfile.DESKTOP, PlatformProfile.MOBILE, PlatformProfile.HEADLESS_SERVER),
+        tier = AvailabilityTier.UNIVERSAL,
+        requiresNetwork = false,
+    ),
+)
+
 /**
  * The AgentLoop↔executor bridge (RFC-0008, RFC-0009, RFC-0019): a [TaskRunner] that drives the
  * model-call loop one Task at a time instead of one suspend call at a time.
@@ -326,10 +368,40 @@ class AgentLoopTaskRunner(
     private val taintInputScreener: TaintInputScreener? = null,
     /** RFC-0110 Gate B: optional blind verifier for TAINT_REQUIRES_APPROVAL under GUARDIAN policy. */
     private val guardianVerifier: GuardianApprovalVerifier? = null,
+    /** Per-Run taint approval policy resolver (takes precedence over [resolveTaintApprovalPolicy]). */
+    private val resolveTaintApprovalPolicyForRun: ((RunId) -> TaintApprovalPolicy)? = null,
+    /** Per-Run / worker-session preferred model ID resolver. */
+    private val resolveRunModelId: ((RunId, isWorkerSession: Boolean) -> String?)? = null,
+    /** Per-Run locality ceiling resolver ("local", "cluster", or "remote"). */
+    private val resolveRunLocality: ((RunId) -> String?)? = null,
+    /** Optional routing hook allowing per-Run / worker model & locality selection overrides. */
+    private val selectModelDecision: (
+        suspend (ModelKind, RoutingContext, preferredModelId: String?, enforcedLocality: String?) -> RoutingDecision
+    )? = null,
 ) : TaskRunner {
 
     /** Undoes [LargeOutputStore.externalize] for a snapshot read back from `attempts`. */
     private fun resolveStored(snapshot: String): String = largeOutputs?.resolve(snapshot) ?: snapshot
+
+    private fun effectiveTaintApprovalPolicy(runId: RunId): TaintApprovalPolicy =
+        resolveTaintApprovalPolicyForRun?.invoke(runId) ?: resolveTaintApprovalPolicy()
+
+    private suspend fun selectAdapterDecision(
+        run: RunContext,
+        runId: RunId,
+        context: RoutingContext,
+    ): RoutingDecision {
+        if (selectModelDecision == null) {
+            return router.select(ModelKind.LLM, context)
+        }
+        val preferredModelId = resolveRunModelId?.invoke(runId, run.isWorkerSession)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val enforcedLocality = resolveRunLocality?.invoke(runId)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return selectModelDecision.invoke(ModelKind.LLM, context, preferredModelId, enforcedLocality)
+    }
 
     override suspend fun execute(task: Task): TaskResult = when (task.kind) {
         TaskKind.MODEL_CALL -> executeModelCall(task)
@@ -360,7 +432,7 @@ class AgentLoopTaskRunner(
             resolveRemoteAdapter(approvedAdapter)
                 ?: return TaskResult(false, "Approved model '$approvedAdapter' is no longer available")
         } else {
-            when (val decision = router.select(ModelKind.LLM, routingCtx)) {
+            when (val decision = selectAdapterDecision(run, task.runId, routingCtx)) {
                 is RoutingDecision.Local -> decision.adapter
                 is RoutingDecision.RemoteApproved -> decision.adapter
                 is RoutingDecision.RemotePendingApproval ->
@@ -386,9 +458,13 @@ class AgentLoopTaskRunner(
             }
         }
 
-        // ask_user is not registered with the broker (RFC-0006 USER_PROMPT: no FS/git/shell
-        // authority to gate), so it is appended here rather than sourced from descriptorsFor().
-        val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + askUserToolDescriptor
+        // ask_user / spawn_worker are built-in runner tools (no EffectBroker registration needed).
+        val builtInTools = if (workerSpawner != null && !run.isWorkerSession) {
+            listOf(askUserToolDescriptor, spawnWorkerToolDescriptor)
+        } else {
+            listOf(askUserToolDescriptor)
+        }
+        val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + builtInTools
         val history = reconstructHistory(task.runId, task.ordinal)
         val instructionSet = discoverInstructionSet(run.projectId)
         val assemblyReq = AssemblyRequest(
@@ -404,8 +480,9 @@ class AgentLoopTaskRunner(
             is AssemblyResult.TooBig -> {
                 // One re-selection with minimumContextWindow — bounded, not a loop (D22), same
                 // as AgentLoop.kt's Phase 2.
-                val larger = router.select(
-                    ModelKind.LLM,
+                val larger = selectAdapterDecision(
+                    run,
+                    task.runId,
                     routingCtx.copy(minimumContextWindow = ar.minimumContextWindow),
                 )
                 val largerAdapter = when (larger) {
@@ -532,6 +609,9 @@ class AgentLoopTaskRunner(
         if (callRow.toolName == "ask_user") {
             return executeAskUser(task, callRow, run)
         }
+        if (callRow.toolName == "spawn_worker" && workerSpawner != null) {
+            return executeSpawnWorker(task, callRow, run, workerSpawner)
+        }
 
         // RFC-0008 step 8c, M19: resolved fresh here, immediately before the call it gates --
         // not carried from executeModelCall's fan-out -- so a capability revoked in between the
@@ -580,7 +660,7 @@ class AgentLoopTaskRunner(
             if (
                 !taintApproved &&
                 deniedForApproval.reason == DenialReason.TAINT_REQUIRES_APPROVAL &&
-                resolveTaintApprovalPolicy() == TaintApprovalPolicy.GUARDIAN
+                effectiveTaintApprovalPolicy(task.runId) == TaintApprovalPolicy.GUARDIAN
             ) {
                 return handleGuardianTaintGate(
                     task = task,
@@ -739,6 +819,7 @@ class AgentLoopTaskRunner(
 
     private fun descriptorRecoveryClass(run: RunContext, toolName: String): RecoveryClass {
         if (toolName == askUserToolDescriptor.name) return askUserToolDescriptor.recoveryClass
+        if (toolName == spawnWorkerToolDescriptor.name) return spawnWorkerToolDescriptor.recoveryClass
         val descriptor = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
             .firstOrNull { it.name == toolName }
         return descriptor?.recoveryClass ?: RecoveryClass.UNSAFE
@@ -915,6 +996,147 @@ class AgentLoopTaskRunner(
         )
     }
 
+    private suspend fun executeSpawnWorker(
+        task: Task,
+        callRow: ToolCallRow,
+        run: RunContext,
+        spawner: WorkerSpawner,
+    ): TaskResult {
+        val args = parseJsonObject(callRow.argumentsJson)
+        val brief = args["brief"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (brief.isEmpty()) {
+            return finishToolCall(
+                task,
+                callRow,
+                run,
+                ToolCallResult(
+                    callId = callRow.callId,
+                    outcome = ToolOutcome.Failed(
+                        AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "spawn_worker requires non-empty 'brief'")
+                    ),
+                    content = listOf(ContentBlock.Text("spawn_worker requires non-empty 'brief'")),
+                    trustLevel = TrustLevel.TRUSTED,
+                ),
+            )
+        }
+        val capabilities = (args["capabilities"] as? JsonArray)
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            ?: emptyList()
+        val budgetSplitWays = args["budget_split_ways"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1) ?: 1
+        val modelId = args["model_id"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        val locality = args["locality"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        if (locality != null) {
+            val valid = Settings.routingModelLocality.codec.decode(JsonPrimitive(locality))
+            if (valid.isFailure) {
+                return finishToolCall(
+                    task,
+                    callRow,
+                    run,
+                    ToolCallResult(
+                        callId = callRow.callId,
+                        outcome = ToolOutcome.Failed(
+                            AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "Invalid locality '$locality'")
+                        ),
+                        content = listOf(ContentBlock.Text("Invalid locality '$locality': expected local, cluster, or remote")),
+                        trustLevel = TrustLevel.TRUSTED,
+                    ),
+                )
+            }
+        }
+        val taintApprovalPolicy = args["taint_approval_policy"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        if (taintApprovalPolicy != null) {
+            val valid = Settings.trustTaintApprovalPolicy.codec.decode(JsonPrimitive(taintApprovalPolicy.uppercase()))
+            if (valid.isFailure) {
+                return finishToolCall(
+                    task,
+                    callRow,
+                    run,
+                    ToolCallResult(
+                        callId = callRow.callId,
+                        outcome = ToolOutcome.Failed(
+                            AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "Invalid taint_approval_policy '$taintApprovalPolicy'")
+                        ),
+                        content = listOf(ContentBlock.Text("Invalid taint_approval_policy '$taintApprovalPolicy': expected MANUAL or GUARDIAN")),
+                        trustLevel = TrustLevel.TRUSTED,
+                    ),
+                )
+            }
+        }
+
+        val summaryText = buildString {
+            append("Delegated subtask to worker")
+            if (modelId != null) append(" (model=$modelId)")
+            if (locality != null) append(" (locality=${locality.lowercase()})")
+            append(": ")
+            append(brief)
+        }
+        updateToolCallOutcome(callRow.callId, "OK")
+        writeAttempt(
+            task = task,
+            projectId = run.projectId,
+            recoveryClass = spawnWorkerToolDescriptor.recoveryClass.name,
+            modelProvider = null,
+            modelVersion = null,
+            tokensInput = null,
+            tokensOutput = null,
+            outputSnapshot = json.encodeToString(
+                StoredToolResult(
+                    outcome = "OK",
+                    detail = null,
+                    text = summaryText,
+                    trustLevel = run.taintLevel.name,
+                    resultTrust = TrustLevel.TRUSTED.name,
+                )
+            ),
+        )
+
+        if (allSiblingToolCallsTerminal(callRow.modelTaskId, task.id)) {
+            val compositeTaskId = idGen()
+            val nextModelTaskId = idGen()
+            return TaskResult(
+                success = true,
+                appendTasks = listOf(
+                    NewTaskSpec(
+                        id = compositeTaskId,
+                        kind = TaskKind.COMPOSITE,
+                        description = "Spawn worker: $brief",
+                        afterInsert = {
+                            spawner.recordSpawnRequest(
+                                taskId = TaskId(compositeTaskId),
+                                brief = brief,
+                                capabilitiesToDelegate = capabilities,
+                                budgetSplitWays = budgetSplitWays,
+                                modelId = modelId,
+                                locality = locality,
+                                taintApprovalPolicy = taintApprovalPolicy,
+                            )
+                        },
+                    ),
+                    NewTaskSpec(
+                        id = nextModelTaskId,
+                        kind = TaskKind.MODEL_CALL,
+                        description = "Model call",
+                        dependsOnTaskIds = listOf(TaskId(compositeTaskId)),
+                    ),
+                ),
+            )
+        }
+
+        // Mid-batch fallback: sibling TOOL_CALLs remain after this task's ordinal, so appending at
+        // ordinal + 1 would collide with UNIQUE(run_id, ordinal); spawn directly and let the last
+        // sibling append the follow-up MODEL_CALL once resumed.
+        spawner.recordSpawnRequest(
+            taskId = task.id,
+            brief = brief,
+            capabilitiesToDelegate = capabilities,
+            budgetSplitWays = budgetSplitWays,
+            modelId = modelId,
+            locality = locality,
+            taintApprovalPolicy = taintApprovalPolicy,
+        )
+        return spawner.spawn(task)
+    }
+
     private fun loadAskUserAnswer(runId: RunId): String? {
         val detailJson = driver.executeQuery(
             identifier = null,
@@ -1051,13 +1273,15 @@ class AgentLoopTaskRunner(
         val networkAvailable: Boolean,
         val taintLevel: TrustLevel,
         val userMessageSummary: String,
+        val isWorkerSession: Boolean = false,
     )
 
     private fun loadRunContext(runId: RunId): RunContext? =
         driver.executeQuery(
             identifier = null,
-            sql = "SELECT project_id, platform_profile, network_available, taint_level, user_message_summary " +
-                "FROM runs WHERE id = ?",
+            sql = "SELECT r.project_id, r.platform_profile, r.network_available, r.taint_level, " +
+                "r.user_message_summary, s.role " +
+                "FROM runs r LEFT JOIN sessions s ON s.id = r.session_id WHERE r.id = ?",
             mapper = { c ->
                 QueryResult.Value(
                     if (c.next().value) RunContext(
@@ -1066,6 +1290,7 @@ class AgentLoopTaskRunner(
                         networkAvailable = (c.getLong(2) ?: 0L) != 0L,
                         taintLevel = TrustLevel.valueOf(c.getString(3)!!),
                         userMessageSummary = c.getString(4) ?: "",
+                        isWorkerSession = c.getString(5).equals("WORKER", ignoreCase = true),
                     ) else null
                 )
             },

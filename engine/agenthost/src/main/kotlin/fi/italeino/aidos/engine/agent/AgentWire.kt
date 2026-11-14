@@ -34,6 +34,9 @@ data class AgentTurnRequest(
     val parentSessionId: String? = null,
     val parentRunId: String? = null,
     val workerBrief: String? = null,
+    val taintApprovalPolicy: String? = null,
+    val modelChosenByMainModel: Boolean = false,
+    val enforcedLocality: String? = null,
 )
 
 @Serializable
@@ -138,6 +141,38 @@ data class AgentRunSummaryDto(
     val workerOutcome: WorkerOutcomeDto? = null,
     val isParkedOnChild: Boolean = false,
     val awaitingChildRunId: String? = null,
+    val guardianPolicy: String = "MANUAL",
+    val modelChosenByMainModel: Boolean = false,
+    val enforcedLocality: String? = null,
+)
+
+@Serializable
+data class AgentRoutingConfigDto(
+    val mainModelId: String = "",
+    val defaultRunModelId: String = "",
+    val allowMainModelRunOverride: Boolean = true,
+    val enforcedLocality: String = "any",
+    val guardianPolicy: String = "MANUAL",
+    val decisionModelId: String = "laya-multilingual",
+    val guardianLlmModelId: String = "",
+)
+
+@Serializable
+data class AgentRunLaunchConfigDto(
+    val guardianPolicyOverride: String? = null,
+    val runModelOverride: String = "",
+    val localityOverride: String? = null,
+)
+
+@Serializable
+data class AgentExecutionConfigDto(
+    val modelId: String = "",
+    val modelLocality: String? = null,
+    val taintApprovalPolicy: String = "MANUAL",
+    val modelChosenByMainModel: Boolean = false,
+    val enforcedLocality: String? = null,
+    val decisionModelId: String = "laya-multilingual",
+    val guardianLlmModelId: String = "",
 )
 
 @Serializable

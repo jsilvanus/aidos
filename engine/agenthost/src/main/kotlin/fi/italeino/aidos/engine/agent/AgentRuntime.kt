@@ -4,6 +4,7 @@ import dev.aidos.amp.AmpAgentRunner
 import dev.aidos.amp.AmpToolDefinition
 import dev.aidos.amp.AmpToolExecutionResult
 import dev.aidos.kernel.ModelAdapter
+import fi.italeino.aidos.engine.inference.Locality
 import fi.italeino.aidos.engine.inference.Placement
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -12,8 +13,11 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
@@ -67,6 +71,9 @@ class AgentRuntime(
         val parentSessionId: String? = null,
         val parentRunId: String? = null,
         val workerBrief: String? = null,
+        val guardianPolicy: String = "MANUAL",
+        val modelChosenByMainModel: Boolean = false,
+        val enforcedLocality: String? = null,
     ) {
         val state = MutableStateFlow(AgentTurnResponse(AgentTurnResponse.RUNNING, id))
         val waiting = ConcurrentHashMap<String, CompletableDeferred<AmpToolExecutionResult>>()
@@ -83,6 +90,11 @@ class AgentRuntime(
     }
 
     private val runs = ConcurrentHashMap<String, Run>()
+    private val _routingConfig = MutableStateFlow(AgentRoutingConfigDto())
+    private val _runLaunchConfig = MutableStateFlow(AgentRunLaunchConfigDto())
+
+    val routingConfigFlow: StateFlow<AgentRoutingConfigDto> = _routingConfig.asStateFlow()
+    val runLaunchConfigFlow: StateFlow<AgentRunLaunchConfigDto> = _runLaunchConfig.asStateFlow()
 
     private val _events = MutableSharedFlow<Pair<String, AgentEvent>>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
@@ -90,6 +102,64 @@ class AgentRuntime(
     val events: SharedFlow<Pair<String, AgentEvent>> = _events.asSharedFlow()
 
     fun info() = AgentInfo(maxConcurrentRuns = maxConcurrentRuns, maxSteps = defaultMaxSteps, toolWaitSeconds = toolWait.inWholeSeconds)
+
+    fun currentRoutingConfig(): AgentRoutingConfigDto = _routingConfig.value
+
+    fun setRoutingConfig(config: AgentRoutingConfigDto) {
+        _routingConfig.value = config
+    }
+
+    fun updateRoutingConfig(transform: (AgentRoutingConfigDto) -> AgentRoutingConfigDto) {
+        _routingConfig.update(transform)
+    }
+
+    fun currentRunLaunchConfig(): AgentRunLaunchConfigDto = _runLaunchConfig.value
+
+    fun setRunLaunchConfig(config: AgentRunLaunchConfigDto) {
+        _runLaunchConfig.value = config
+    }
+
+    fun updateRunLaunchConfig(transform: (AgentRunLaunchConfigDto) -> AgentRunLaunchConfigDto) {
+        _runLaunchConfig.update(transform)
+    }
+
+    fun effectiveExecutionConfig(request: AgentTurnRequest? = null): AgentExecutionConfigDto {
+        val routing = _routingConfig.value
+        val launch = _runLaunchConfig.value
+        val effectiveModel = request?.model?.takeIf { it.isNotBlank() }
+            ?: launch.runModelOverride.takeIf { it.isNotBlank() }
+            ?: routing.defaultRunModelId.takeIf { it.isNotBlank() }
+            ?: routing.mainModelId
+        val effectivePolicy = normalizePolicy(
+            request?.taintApprovalPolicy ?: launch.guardianPolicyOverride ?: routing.guardianPolicy
+        )
+        val effectiveEnforcedLocality = request?.enforcedLocality
+            ?: launch.localityOverride
+            ?: routing.enforcedLocality.takeIf { it.isNotBlank() }
+        val effectiveLocality = request?.locality ?: launch.localityOverride ?: routing.enforcedLocality.takeIf { it.isNotBlank() }
+        val chosenByMainModel = request?.modelChosenByMainModel == true || (
+            effectiveModel.isNotBlank() &&
+                launch.runModelOverride.isBlank() &&
+                routing.allowMainModelRunOverride &&
+                routing.mainModelId.isNotBlank() &&
+                effectiveModel != routing.defaultRunModelId &&
+                effectiveModel != routing.mainModelId
+            )
+        return AgentExecutionConfigDto(
+            modelId = effectiveModel,
+            modelLocality = effectiveLocality,
+            taintApprovalPolicy = effectivePolicy,
+            modelChosenByMainModel = chosenByMainModel,
+            enforcedLocality = effectiveEnforcedLocality,
+            decisionModelId = routing.decisionModelId,
+            guardianLlmModelId = routing.guardianLlmModelId,
+        )
+    }
+
+    private fun normalizePolicy(raw: String?): String = when (raw?.trim()?.uppercase()) {
+        "GUARDIAN" -> "GUARDIAN"
+        else -> "MANUAL"
+    }
 
     suspend fun start(owner: String, request: AgentTurnRequest): AgentTurnResponse {
         if (request.message.isBlank()) throw AgentRequestException("invalid_request", "message must not be empty")
@@ -102,27 +172,43 @@ class AgentRuntime(
             throw AgentRequestException("too_many_runs", "agent runtime is busy", 429)
         }
 
+        val effective = effectiveExecutionConfig(request)
+        val requestedLocality = Locality.parse(request.locality ?: _runLaunchConfig.value.localityOverride ?: "local_only")
+            ?: Locality.LOCAL_ONLY
+        val enforcedParsed = effective.enforcedLocality?.let { Locality.parse(it) }
+        val resolvedLocality = (if (enforcedParsed != null) requestedLocality.strictest(enforcedParsed) else requestedLocality).wire
+        val resolvedRequest = request.copy(
+            model = effective.modelId.ifBlank { request.model },
+            locality = resolvedLocality,
+            taintApprovalPolicy = effective.taintApprovalPolicy,
+            modelChosenByMainModel = effective.modelChosenByMainModel,
+            enforcedLocality = effective.enforcedLocality,
+        )
+
         val run = Run(
             id = UUID.randomUUID().toString(),
             owner = owner,
-            async = request.async,
-            model = request.model,
-            locality = request.locality ?: "local_only",
-            promptPreview = request.message,
+            async = resolvedRequest.async,
+            model = resolvedRequest.model,
+            locality = resolvedLocality,
+            promptPreview = resolvedRequest.message,
             startedAt = now(),
-            role = request.role ?: "DRIVER",
-            parentSessionId = request.parentSessionId,
-            parentRunId = request.parentRunId,
-            workerBrief = request.workerBrief,
+            role = resolvedRequest.role ?: "DRIVER",
+            parentSessionId = resolvedRequest.parentSessionId,
+            parentRunId = resolvedRequest.parentRunId,
+            workerBrief = resolvedRequest.workerBrief,
+            guardianPolicy = effective.taintApprovalPolicy,
+            modelChosenByMainModel = effective.modelChosenByMainModel,
+            enforcedLocality = effective.enforcedLocality,
         )
 
         val adapter = try {
             if (adapterWithPlacement != null) {
-                adapterWithPlacement.invoke(request) { observedPlacement ->
+                adapterWithPlacement.invoke(resolvedRequest) { observedPlacement ->
                     run.placement = observedPlacement.wire
                 }
             } else {
-                adapterFor(request)
+                adapterFor(resolvedRequest)
             }
         } catch (e: Exception) {
             throw AgentRequestException("invalid_request", e.message ?: "cannot build model adapter")
@@ -216,6 +302,9 @@ class AgentRuntime(
             workerOutcome = r.workerOutcome,
             isParkedOnChild = r.isParkedOnChild,
             awaitingChildRunId = r.awaitingChildRunId,
+            guardianPolicy = r.guardianPolicy,
+            modelChosenByMainModel = r.modelChosenByMainModel,
+            enforcedLocality = r.enforcedLocality,
         )
     }.sortedByDescending { it.startedAt }
 

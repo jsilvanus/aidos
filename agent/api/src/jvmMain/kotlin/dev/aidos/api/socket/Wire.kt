@@ -196,6 +196,9 @@ object Wire {
             message.runOptions.maxTokens?.let { put("maxTokens", it) }
             put("requireApprovalBeforeToolUse", message.runOptions.requireApprovalBeforeToolUse)
             put("timeoutSeconds", message.runOptions.timeoutSeconds)
+            message.runOptions.taintApprovalPolicy?.let { put("taintApprovalPolicy", it) }
+            message.runOptions.modelId?.let { put("modelId", it) }
+            message.runOptions.modelLocality?.let { put("modelLocality", it) }
         })
     }
 
@@ -208,6 +211,9 @@ object Wire {
                 maxTokens = opts?.get("maxTokens")?.jsonPrimitive?.int,
                 requireApprovalBeforeToolUse = opts?.get("requireApprovalBeforeToolUse")?.jsonPrimitive?.content?.toBoolean() ?: false,
                 timeoutSeconds = opts?.get("timeoutSeconds")?.jsonPrimitive?.int ?: 300,
+                taintApprovalPolicy = opts?.get("taintApprovalPolicy")?.jsonPrimitive?.contentOrNull,
+                modelId = opts?.get("modelId")?.jsonPrimitive?.contentOrNull,
+                modelLocality = opts?.get("modelLocality")?.jsonPrimitive?.contentOrNull,
             ),
         )
     }

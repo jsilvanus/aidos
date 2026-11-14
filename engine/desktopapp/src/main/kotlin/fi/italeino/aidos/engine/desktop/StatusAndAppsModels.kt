@@ -1,6 +1,13 @@
 package fi.italeino.aidos.engine.desktop
 
+import dev.aidos.tcr.agent.AgentLocality
+import dev.aidos.tcr.agent.TcrGuardianConfigUiModel
+import dev.aidos.tcr.agent.TcrProjectModelConfigUiModel
+import dev.aidos.tcr.agent.TcrRunLaunchConfigUiModel
+import dev.aidos.tcr.agent.TcrTaintApprovalPolicy
 import fi.italeino.aidos.engine.EngineState
+import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
+import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
 import fi.italeino.aidos.engine.approval.AppApprovalRecord
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.ui.AgentFilterTab
@@ -115,17 +122,151 @@ class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: C
  * Desktop ViewModel managing state for [AgentsPane].
  * Reactive telemetry for active runs, tool waits, model placement, and RFC-0042 egress.
  */
-class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope: CoroutineScope) {
+class DesktopAgentsModel(
+    private val host: DesktopEngineHost,
+    private val scope: CoroutineScope,
+    private val prefs: DesktopPreferences? = null,
+) {
     private val _state = MutableStateFlow(AgentOverviewUiState())
     val state: StateFlow<AgentOverviewUiState> = _state.asStateFlow()
 
+    @Volatile
+    private var cachedInstalledModels: List<String> = emptyList()
+
     init {
+        refresh()
         scope.launch {
             while (true) {
+                refreshInstalledModels()
                 refresh()
                 delay(1_500)
             }
         }
+    }
+
+    private suspend fun refreshInstalledModels() {
+        val installed = withContext(Dispatchers.IO) {
+            host.catalogManager.listInstalled().getOrNull().orEmpty()
+        }
+        cachedInstalledModels = installed.map { it.modelId }.distinct()
+    }
+
+    private fun parsePolicy(raw: String?): TcrTaintApprovalPolicy =
+        if (raw?.trim().equals("GUARDIAN", ignoreCase = true)) {
+            TcrTaintApprovalPolicy.GUARDIAN
+        } else {
+            TcrTaintApprovalPolicy.MANUAL
+        }
+
+    private fun buildProjectConfig(): TcrProjectModelConfigUiModel {
+        val data = prefs?.data?.value ?: DesktopPreferencesData()
+        val policy = parsePolicy(data.projectGuardianPolicy ?: data.globalGuardianPolicy)
+        val decisionModel = data.projectDecisionModelId.ifBlank { data.globalDecisionModelId }
+        val guardianLlm = data.projectGuardianLlmModelId.ifBlank { data.globalGuardianLlmModelId }
+        val locality = AgentLocality.fromWire(data.projectEnforcedLocality ?: data.globalLocality)
+        val mainModel = data.projectMainModelId.ifBlank { data.globalMainModelId }
+        val defaultRunModel = data.projectDefaultRunModelId.ifBlank { data.globalDefaultRunModelId }
+        val decisionChoices = (listOf("laya-multilingual") + cachedInstalledModels).distinct()
+        return TcrProjectModelConfigUiModel(
+            projectId = "engine-default",
+            projectName = "Active Project Defaults",
+            mainModelId = mainModel,
+            defaultRunModelId = defaultRunModel,
+            allowMainModelRunOverride = data.projectAllowMainModelRunOverride,
+            enforcedLocality = locality,
+            guardianConfig = TcrGuardianConfigUiModel(
+                policy = policy,
+                decisionModelId = decisionModel,
+                guardianLlmModelId = guardianLlm,
+                availableDecisionModels = decisionChoices,
+                availableLlmModels = cachedInstalledModels,
+            ),
+            availableLlmModels = cachedInstalledModels,
+            availableDecisionModels = decisionChoices,
+        )
+    }
+
+    private fun buildRunLaunchConfig(): TcrRunLaunchConfigUiModel {
+        val data = prefs?.data?.value ?: DesktopPreferencesData()
+        return TcrRunLaunchConfigUiModel(
+            guardianPolicyOverride = data.runGuardianPolicyOverride?.let(::parsePolicy),
+            runModelOverride = data.runModelOverride,
+            localityOverride = data.runLocalityOverride?.let { AgentLocality.fromWire(it) },
+        )
+    }
+
+    fun syncConfigToRuntime() {
+        val projectConfig = buildProjectConfig()
+        val launchConfig = buildRunLaunchConfig()
+        host.agentRuntime?.apply {
+            setRoutingConfig(
+                AgentRoutingConfigDto(
+                    mainModelId = projectConfig.mainModelId,
+                    defaultRunModelId = projectConfig.defaultRunModelId,
+                    allowMainModelRunOverride = projectConfig.allowMainModelRunOverride,
+                    enforcedLocality = projectConfig.enforcedLocality.wire,
+                    guardianPolicy = projectConfig.guardianConfig.policy.name,
+                    decisionModelId = projectConfig.guardianConfig.decisionModelId,
+                    guardianLlmModelId = projectConfig.guardianConfig.guardianLlmModelId,
+                )
+            )
+            setRunLaunchConfig(
+                AgentRunLaunchConfigDto(
+                    guardianPolicyOverride = launchConfig.guardianPolicyOverride?.name,
+                    runModelOverride = launchConfig.runModelOverride,
+                    localityOverride = launchConfig.localityOverride?.wire,
+                )
+            )
+        }
+        _state.value = _state.value.copy(
+            projectConfig = projectConfig,
+            runLaunchConfig = launchConfig,
+        )
+    }
+
+    fun setMainModel(modelId: String) {
+        prefs?.setProjectMainModelId(modelId)
+        syncConfigToRuntime()
+    }
+
+    fun setDefaultRunModel(modelId: String) {
+        prefs?.setProjectDefaultRunModelId(modelId)
+        syncConfigToRuntime()
+    }
+
+    fun setProjectLocality(locality: AgentLocality) {
+        prefs?.setProjectEnforcedLocality(locality.wire)
+        syncConfigToRuntime()
+    }
+
+    fun setProjectGuardianPolicy(policy: TcrTaintApprovalPolicy) {
+        prefs?.setProjectGuardianPolicy(policy.name)
+        syncConfigToRuntime()
+    }
+
+    fun setDecisionModel(modelId: String) {
+        prefs?.setProjectDecisionModelId(modelId)
+        syncConfigToRuntime()
+    }
+
+    fun setGuardianLlm(modelId: String) {
+        prefs?.setProjectGuardianLlmModelId(modelId)
+        syncConfigToRuntime()
+    }
+
+    fun setRunGuardianPolicyOverride(policy: TcrTaintApprovalPolicy?) {
+        prefs?.setRunGuardianPolicyOverride(policy?.name)
+        syncConfigToRuntime()
+    }
+
+    fun setRunModelOverride(modelId: String) {
+        prefs?.setRunModelOverride(modelId)
+        syncConfigToRuntime()
+    }
+
+    fun setRunLocalityOverride(locality: AgentLocality?) {
+        prefs?.setRunLocalityOverride(locality?.wire)
+        syncConfigToRuntime()
     }
 
     fun selectAppFilter(app: String?) {
@@ -167,15 +308,20 @@ class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope:
     }
 
     fun refresh() {
+        val projectConfig = buildProjectConfig()
+        val runLaunchConfig = buildRunLaunchConfig()
         val runtime = host.agentRuntime
         if (runtime == null) {
             _state.value = _state.value.copy(
                 isEngineRunning = host.isRunning.value,
                 stats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(),
-                runs = emptyList()
+                runs = emptyList(),
+                projectConfig = projectConfig,
+                runLaunchConfig = runLaunchConfig,
             )
             return
         }
+        syncConfigToRuntime()
 
         val rawStats = runtime.stats()
         val rawRuns = runtime.listAll()
@@ -286,6 +432,9 @@ class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope:
                     },
                     isParkedOnChild = r.isParkedOnChild,
                     awaitingChildRunId = r.awaitingChildRunId,
+                    guardianPolicy = parsePolicy(r.guardianPolicy),
+                    modelChosenByMainModel = r.modelChosenByMainModel,
+                    enforcedLocality = r.enforcedLocality?.let { AgentLocality.fromWire(it) },
                 )
             }
         } else {
@@ -296,7 +445,9 @@ class DesktopAgentsModel(private val host: DesktopEngineHost, private val scope:
         _state.value = _state.value.copy(
             isEngineRunning = host.isRunning.value,
             stats = uiStats,
-            runs = uiRuns
+            runs = uiRuns,
+            projectConfig = projectConfig,
+            runLaunchConfig = runLaunchConfig,
         )
     }
 

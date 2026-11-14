@@ -13,7 +13,9 @@ import dev.aidos.androidapp.ui.sessions.SessionListPresenter
 import fi.italeino.aidos.ui.ApprovalCard
 import fi.italeino.aidos.ui.CommitReviewScreen
 import fi.italeino.aidos.ui.EditorScreen
+import fi.italeino.aidos.ui.GlobalSettingsScreen
 import fi.italeino.aidos.ui.HomeScreen
+import fi.italeino.aidos.ui.ProjectSettingsScreen
 import fi.italeino.aidos.ui.RunDetailScreen
 import fi.italeino.aidos.ui.SessionsScreen
 
@@ -40,6 +42,14 @@ fun AidosNavHost(
                         AidosRoute.ProjectDetail(projectId).createRoute(projectId)
                     )
                 },
+                onProjectSettingsSelected = { projectId ->
+                    navController.navigate(
+                        AidosRoute.ProjectSettings(projectId).createRoute(projectId)
+                    )
+                },
+                onOpenSettings = {
+                    navController.navigate(AidosRoute.Settings.route)
+                },
             )
         }
 
@@ -51,6 +61,30 @@ fun AidosNavHost(
                         AidosRoute.ProjectDetail(projectId).createRoute(projectId)
                     )
                 },
+                onProjectSettingsSelected = { projectId ->
+                    navController.navigate(
+                        AidosRoute.ProjectSettings(projectId).createRoute(projectId)
+                    )
+                },
+                onOpenSettings = {
+                    navController.navigate(AidosRoute.Settings.route)
+                },
+            )
+        }
+
+        composable(AidosRoute.Settings.route) {
+            GlobalSettingsScreen(
+                projectsPresenter = projectsPresenter,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(AidosRoute.ProjectSettings(projectId = "{projectId}").route) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
+            ProjectSettingsScreen(
+                projectId = projectId,
+                projectsPresenter = projectsPresenter,
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -59,11 +93,19 @@ fun AidosNavHost(
             SessionsScreen(
                 projectId = projectId,
                 sessionListPresenter = sessionListPresenter,
-                onRunSelected = { runId ->
+                onRunSelected = { sessionId ->
                     navController.navigate(
-                        AidosRoute.RunDetail(projectId, runId).createRoute(projectId, runId)
+                        AidosRoute.RunDetail(projectId, sessionId).createRoute(projectId, sessionId)
                     )
                 },
+                runListPresenter = runListPresenter,
+                projectsPresenter = projectsPresenter,
+                onOpenProjectSettings = {
+                    navController.navigate(
+                        AidosRoute.ProjectSettings(projectId).createRoute(projectId)
+                    )
+                },
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -72,11 +114,19 @@ fun AidosNavHost(
             SessionsScreen(
                 projectId = projectId,
                 sessionListPresenter = sessionListPresenter,
-                onRunSelected = { runId ->
+                onRunSelected = { sessionId ->
                     navController.navigate(
-                        AidosRoute.RunDetail(projectId, runId).createRoute(projectId, runId)
+                        AidosRoute.RunDetail(projectId, sessionId).createRoute(projectId, sessionId)
                     )
                 },
+                runListPresenter = runListPresenter,
+                projectsPresenter = projectsPresenter,
+                onOpenProjectSettings = {
+                    navController.navigate(
+                        AidosRoute.ProjectSettings(projectId).createRoute(projectId)
+                    )
+                },
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -87,6 +137,13 @@ fun AidosNavHost(
                 projectId = projectId,
                 sessionId = sessionId,
                 runListPresenter = runListPresenter,
+                projectsPresenter = projectsPresenter,
+                onOpenProjectSettings = {
+                    navController.navigate(
+                        AidosRoute.ProjectSettings(projectId).createRoute(projectId)
+                    )
+                },
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -109,7 +166,7 @@ fun AidosNavHost(
         composable(AidosRoute.CommitReview.route) {
             CommitReviewScreen(
                 commitPresenter = commitPresenter,
-                onCommit = { message ->
+                onCommit = { _ ->
                     navController.popBackStack()
                 },
             )
@@ -118,7 +175,7 @@ fun AidosNavHost(
         composable(AidosRoute.Editor.route) {
             EditorScreen(
                 filePath = "file.txt",
-                onSave = { content ->
+                onSave = { _ ->
                     navController.popBackStack()
                 },
             )

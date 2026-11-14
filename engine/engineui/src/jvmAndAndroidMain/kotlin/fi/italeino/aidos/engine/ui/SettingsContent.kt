@@ -1,44 +1,32 @@
 package fi.italeino.aidos.engine.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.aidos.tcr.agent.AgentLocality
+import dev.aidos.tcr.agent.TcrGuardianConfigUiModel
+import dev.aidos.tcr.agent.TcrTaintApprovalPolicy
+import dev.aidos.tcr.engine.HfTokenStatus as TcrHfTokenStatus
+import dev.aidos.tcr.engine.RamBaselineState as TcrRamBaselineState
+import dev.aidos.tcr.engine.SettingsContent as TcrSettingsContent
+import dev.aidos.tcr.engine.SettingsState as TcrSettingsState
 
 /**
- * Settings content (RFC-0103, Phase D): Hugging Face token entry/status/clear, and restoring
- * removed model suggestions. No scaffold, so Android shows it as a screen and desktop in a dialog.
- *
- * [state] is hoisted; UI transitions go through [onStateChange], while [onSaveToken] and
- * [onClearToken] are the host's persistence hooks, called before the state update that reports
- * success. [tokenStorageNote] lets a host say where (and how safely) the token is kept.
+ * Settings content (RFC-0103, Phase D): delegates core settings and global model routing /
+ * Guardian UI to the authoritative `dev.aidos.tcr.engine.SettingsContent`, while preserving
+ * token format validation and optional Engine-wide locality cap controls.
  */
 @Composable
 fun SettingsContent(
@@ -55,278 +43,140 @@ fun SettingsContent(
     onRefreshRamBaseline: () -> Unit = {},
     engineLocalityLimit: String? = null,
     onSetEngineLocalityLimit: ((String?) -> Unit)? = null,
+    engineCacheDir: String? = null,
+    globalMainModelId: String = "",
+    globalDefaultRunModelId: String = "",
+    globalLocality: AgentLocality = AgentLocality.ANY,
+    guardianConfig: TcrGuardianConfigUiModel? = null,
+    availableLlmModels: List<String> = emptyList(),
+    onGlobalMainModelChange: (String) -> Unit = {},
+    onGlobalDefaultRunModelChange: (String) -> Unit = {},
+    onGlobalLocalityChange: (AgentLocality) -> Unit = {},
+    onGlobalGuardianPolicyChange: (TcrTaintApprovalPolicy) -> Unit = {},
+    onGlobalDecisionModelChange: (String) -> Unit = {},
+    onGlobalGuardianLlmChange: (String) -> Unit = {},
+    showModelRoutingSettings: Boolean = (
+        guardianConfig != null ||
+            globalMainModelId.isNotBlank() ||
+            globalDefaultRunModelId.isNotBlank() ||
+            globalLocality != AgentLocality.ANY
+        ),
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            "Hugging Face Token",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 8.dp)
-        )
-
-        OutlinedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Status",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (state.hfTokenStatus.isConfigured) {
-                            Text(
-                                "✓ Configured · checked ${formatMinutesAgo(state.hfTokenStatus.lastValidatedMs)}",
-                                fontSize = 11.sp,
-                                color = Color(0xFF22C55E)
-                            )
-                        } else {
-                            Text(
-                                "Not configured",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-                }
-
-                tokenStorageNote?.let {
-                    Text(
-                        it,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-
-                if (state.successMessage != null) {
-                    Text(
-                        "✓ ${state.successMessage}",
-                        fontSize = 11.sp,
-                        color = Color(0xFF22C55E),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-
-                if (state.errorMessage != null) {
-                    Text(
-                        "✗ ${state.errorMessage}",
-                        fontSize = 11.sp,
-                        color = Color(0xFFEF4444),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-
-                if (!state.showTokenInput) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TextButton(
-                            onClick = {
-                                onStateChange(state.copy(showTokenInput = true, tokenInput = ""))
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                if (state.hfTokenStatus.isConfigured) "Change" else "Add",
-                                fontSize = 11.sp
-                            )
-                        }
-                        if (state.hfTokenStatus.isConfigured) {
-                            TextButton(
-                                onClick = {
-                                    onClearToken()
-                                    onStateChange(
-                                        state.copy(
-                                            hfTokenStatus = HfTokenStatus(false),
-                                            successMessage = "Token cleared"
-                                        )
-                                    )
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Clear", fontSize = 11.sp)
-                            }
-                        }
-                    }
+        TcrSettingsContent(
+            state = state.toTcr(),
+            dismissedSuggestionCount = dismissedSuggestionCount,
+            onStateChange = { updated -> onStateChange(updated.toHost()) },
+            onSaveToken = { raw ->
+                val token = raw.trim()
+                val validationError = validateHfToken(token)
+                if (validationError != null) {
+                    onStateChange(state.copy(errorMessage = validationError, successMessage = null))
                 } else {
-                    // Token input field
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surface,
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outline,
-                                RoundedCornerShape(6.dp)
-                            )
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        BasicTextField(
-                            value = state.tokenInput,
-                            onValueChange = { onStateChange(state.copy(tokenInput = it)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            decorationBox = { innerTextField ->
-                                if (state.tokenInput.isEmpty()) {
-                                    Text(
-                                        "hf_...",
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.outline
-                                    )
-                                }
-                                innerTextField()
-                            }
+                    onSaveToken(token)
+                    onStateChange(
+                        state.copy(
+                            showTokenInput = false,
+                            tokenInput = "",
+                            hfTokenStatus = HfTokenStatus(
+                                isConfigured = true,
+                                lastValidatedMs = System.currentTimeMillis(),
+                            ),
+                            successMessage = "Token saved",
+                            errorMessage = null,
                         )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                val token = state.tokenInput.trim()
-                                val validationError = validateHfToken(token)
-                                if (validationError != null) {
-                                    onStateChange(state.copy(errorMessage = validationError, successMessage = null))
-                                    return@Button
-                                }
-                                onSaveToken(token)
-                                onStateChange(
-                                    state.copy(
-                                        showTokenInput = false,
-                                        tokenInput = "",
-                                        hfTokenStatus = HfTokenStatus(
-                                            isConfigured = true,
-                                            lastValidatedMs = System.currentTimeMillis(),
-                                        ),
-                                        successMessage = "Token saved",
-                                        errorMessage = null,
-                                    )
-                                )
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Text("Save", color = Color.White)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                onStateChange(
-                                    state.copy(
-                                        showTokenInput = false,
-                                        tokenInput = "",
-                                        successMessage = null,
-                                        errorMessage = null
-                                    )
-                                )
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Cancel")
-                        }
-                    }
+                    )
                 }
-            }
-        }
-
-        if (ramBaseline != null) {
-            RamBaselineSection(ramBaseline, onSetRamBaseline, onRefreshRamBaseline)
-        }
+            },
+            onClearToken = {
+                onClearToken()
+                onStateChange(
+                    state.copy(
+                        hfTokenStatus = HfTokenStatus(isConfigured = false),
+                        showTokenInput = false,
+                        tokenInput = "",
+                        successMessage = "Token cleared",
+                        errorMessage = null,
+                    )
+                )
+            },
+            onRestoreSuggestions = onRestoreSuggestions,
+            tokenStorageNote = tokenStorageNote.orEmpty(),
+            ramBaseline = ramBaseline?.toTcr(),
+            onSetRamBaselineNow = ramBaseline?.let { baseline ->
+                {
+                    onRefreshRamBaseline()
+                    onSetRamBaseline(baseline.currentUsedMB)
+                }
+            },
+            onClearRamBaseline = ramBaseline?.let { { onSetRamBaseline(null) } },
+            engineCacheDir = engineCacheDir,
+            globalMainModelId = globalMainModelId,
+            globalDefaultRunModelId = globalDefaultRunModelId,
+            globalLocality = globalLocality,
+            guardianConfig = guardianConfig,
+            availableLlmModels = availableLlmModels,
+            onGlobalMainModelChange = onGlobalMainModelChange,
+            onGlobalDefaultRunModelChange = onGlobalDefaultRunModelChange,
+            onGlobalLocalityChange = onGlobalLocalityChange,
+            onGlobalGuardianPolicyChange = onGlobalGuardianPolicyChange,
+            onGlobalDecisionModelChange = onGlobalDecisionModelChange,
+            onGlobalGuardianLlmChange = onGlobalGuardianLlmChange,
+            showModelRoutingSettings = showModelRoutingSettings,
+        )
 
         if (onSetEngineLocalityLimit != null) {
-            EngineLocalitySection(engineLocalityLimit, onSetEngineLocalityLimit)
-        }
-
-        Text(
-            "Suggested Models",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 16.dp)
-        )
-
-        OutlinedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    if (dismissedSuggestionCount == 0) "All suggestions are shown on the Models screen."
-                    else "$dismissedSuggestionCount removed suggestion" +
-                        (if (dismissedSuggestionCount == 1) "" else "s") + " hidden from the Models screen.",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedButton(
-                    onClick = onRestoreSuggestions,
-                    enabled = dismissedSuggestionCount > 0,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                ) {
-                    Text("Restore suggestions")
-                }
-            }
+            EngineLocalitySection(
+                currentLimit = engineLocalityLimit,
+                onSet = onSetEngineLocalityLimit,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun EngineLocalitySection(currentLimit: String?, onSet: (String?) -> Unit) {
-    Text(
-        "Inference locality",
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 16.dp)
-    )
-    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "Engine-wide cap for where inference may run. Requests and app limits can only narrow this further.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "Current: ${when (currentLimit) {
-                    "local_only" -> "local only"
-                    "trusted_cluster" -> "trusted cluster"
-                    "any" -> "any"
-                    else -> "none (any)"
-                }}",
-                fontSize = 11.sp
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { onSet("local_only") }, modifier = Modifier.weight(1f)) { Text("Local only") }
-                OutlinedButton(onClick = { onSet("trusted_cluster") }, modifier = Modifier.weight(1f)) { Text("Cluster") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { onSet("any") }, modifier = Modifier.weight(1f)) { Text("Any") }
-                OutlinedButton(onClick = { onSet(null) }, modifier = Modifier.weight(1f)) { Text("Clear cap") }
+private fun EngineLocalitySection(
+    currentLimit: String?,
+    onSet: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Inference locality",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Engine-wide cap for where inference may run. Requests and app limits can only narrow this further.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Current: ${when (currentLimit) {
+                        "local_only" -> "local only"
+                        "trusted_cluster" -> "trusted cluster"
+                        "any" -> "any"
+                        else -> "none (any)"
+                    }}",
+                    fontSize = 11.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { onSet("local_only") }, modifier = Modifier.weight(1f)) { Text("Local only") }
+                    OutlinedButton(onClick = { onSet("trusted_cluster") }, modifier = Modifier.weight(1f)) { Text("Cluster") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { onSet("any") }, modifier = Modifier.weight(1f)) { Text("Any") }
+                    OutlinedButton(onClick = { onSet(null) }, modifier = Modifier.weight(1f)) { Text("Clear cap") }
+                }
             }
         }
     }
@@ -339,82 +189,32 @@ fun validateHfToken(token: String): String? = when {
     else -> null
 }
 
-private fun formatMinutesAgo(ms: Long?): String {
-    if (ms == null) return "never"
-    val minutesAgo = (System.currentTimeMillis() - ms) / 60_000
-    return when {
-        minutesAgo < 60 -> "${minutesAgo}m ago"
-        minutesAgo < 1440 -> "${minutesAgo / 60}h ago"
-        else -> "${minutesAgo / 1440}d ago"
-    }
-}
+private fun SettingsState.toTcr(): TcrSettingsState = TcrSettingsState(
+    hfTokenStatus = TcrHfTokenStatus(
+        isConfigured = hfTokenStatus.isConfigured,
+        lastValidatedMs = hfTokenStatus.lastValidatedMs,
+    ),
+    showTokenInput = showTokenInput,
+    tokenInput = tokenInput,
+    isLoading = isLoading,
+    successMessage = successMessage,
+    errorMessage = errorMessage,
+)
 
-/**
- * RAM baseline (model fit): the RAM in use after the OS and the user's usual apps, with no model
- * loaded. "Use current usage" captures it; the field takes a value in MB by hand.
- */
-@Composable
-private fun RamBaselineSection(
-    ramBaseline: RamBaselineState,
-    onSet: (Int?) -> Unit,
-    onRefresh: () -> Unit,
-) {
-    var input by remember(ramBaseline.baselineUsedMB) { mutableStateOf(ramBaseline.baselineUsedMB?.toString() ?: "") }
-    val parsed = input.trim().toIntOrNull()?.takeIf { it > 0 && (ramBaseline.totalMB == 0 || it < ramBaseline.totalMB) }
+private fun TcrSettingsState.toHost(): SettingsState = SettingsState(
+    hfTokenStatus = HfTokenStatus(
+        isConfigured = hfTokenStatus.isConfigured,
+        lastValidatedMs = hfTokenStatus.lastValidatedMs,
+    ),
+    showTokenInput = showTokenInput,
+    tokenInput = tokenInput,
+    isLoading = isLoading,
+    successMessage = successMessage,
+    errorMessage = errorMessage,
+)
 
-    Text(
-        "RAM baseline",
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 16.dp)
-    )
-    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "RAM in use after the OS and your usual apps are running, with no model loaded. " +
-                    "Model fit is shown against this baseline as well as against the RAM free right now.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "Now: ${ramBaseline.currentUsedMB} MB in use of ${ramBaseline.totalMB} MB",
-                fontSize = 11.sp
-            )
-            Text(
-                ramBaseline.baselineUsedMB?.let {
-                    "Baseline: $it MB in use, so ${ramBaseline.baselineFreeMB} MB free at baseline"
-                } ?: "No baseline set",
-                fontSize = 11.sp,
-                color = if (ramBaseline.baselineUsedMB != null) Color(0xFF22C55E) else MaterialTheme.colorScheme.outline
-            )
-            Button(
-                onClick = { onSet(ramBaseline.currentUsedMB) },
-                enabled = ramBaseline.currentUsedMB > 0,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Use current usage as baseline")
-            }
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it.filter(Char::isDigit).take(7) },
-                label = { Text("RAM in use at baseline (MB)") },
-                singleLine = true,
-                isError = input.isNotBlank() && parsed == null,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { onSet(parsed) }, enabled = parsed != null, modifier = Modifier.weight(1f)) {
-                    Text("Save")
-                }
-                OutlinedButton(
-                    onClick = { onSet(null) },
-                    enabled = ramBaseline.baselineUsedMB != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Clear")
-                }
-                TextButton(onClick = onRefresh) { Text("Refresh") }
-            }
-        }
-    }
-}
+private fun RamBaselineState.toTcr(): TcrRamBaselineState = TcrRamBaselineState(
+    baselineUsedMB = baselineUsedMB,
+    currentUsedMB = currentUsedMB,
+    totalMB = totalMB,
+)

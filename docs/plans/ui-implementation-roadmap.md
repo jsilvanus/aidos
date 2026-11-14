@@ -61,7 +61,8 @@ Per workspace governance, UI components are divided cleanly across repository bo
 |---|---|---|
 | **Multiplatform Messaging UI** | `agentic-messenger` (`:amp-ui`) | Aidos consumes `:amp-ui` conversation threads, contact sheets, and progressive disclosure approval modals as dependencies for Blinded Egress Bridge chat. |
 | **Voice Capture & STT Core** | `dictator` (`:dictator-client`) | Aidos embeds Dictator's real-time audio waveform, speech-to-intent streaming client, and TipTap/Compose rich text caret engine. |
-| **Core UI Shell & Intent Graph** | `aidos` (`:ui-common`, `:androidapp`, `:desktopapp`) | Aidos owns the adaptive shell, TCR registry, seven presentation paradigms, Intent Graph node renderers, and Multi-Agent Pill overlay. |
+| **Canonical Presentation Registry (TCR)** | `aidos-tcr` (`dev.aidos.tcr.*`) | Aidos consumes authoritative UI components: Actor Pills (`.pill`), Living Doc (`.document`), Mesh (`.mesh`), Agent Controls (`.agent`), and Intent Graph / Gate Cards (`.intent`). |
+| **Core UI Shell & Intent MVI Presenters** | `aidos` (`:ui-common`, `:androidapp`, `:desktopapp`) | Aidos owns the adaptive shell, WindowSizeClass responsive layout, MVI presenters, Runtime API bindings, and composite graph views consuming TCR components. |
 
 ---
 
@@ -253,8 +254,8 @@ agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/
 │   └── BatonHandoffBadge.kt          // Visual indicator for Agent -> Human or Human -> Agent transfer
 ├── gates/
 │   ├── ApprovalGatePresenter.kt      // Manages human consent state for egress and verification
-│   ├── BlindedEgressGateCard.kt      // Explicit cryptographic declassification card (RFC-0113)
-│   ├── SplitVerificationCard.kt      // Shell command / test review card for Mobile -> Desktop handoff
+│   ├── BlindedEgressGateCard.kt      // Consumes TCR EgressGateCard (RFC-0113 cryptographic declassification)
+│   ├── SplitVerificationCard.kt      // Consumes TCR SplitVerificationCard (RFC-0110 Mobile -> Desktop handoff)
 │   └── DiffInspectionSheet.kt        // Expandable bottom sheet / drawer showing file diff preview
 └── projects/
     ├── ProjectHubPresenter.kt        // Lists active projects, classifies LIFE vs CODE

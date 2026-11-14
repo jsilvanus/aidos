@@ -54,7 +54,7 @@ class DesktopModels(
     val status = DesktopStatusModel(host, scope)
     val apps = DesktopAppsModel(host, scope)
     val models = DesktopModelsModel(host, prefs, scope)
-    val agents = DesktopAgentsModel(host, scope)
+    val agents = DesktopAgentsModel(host, scope, prefs)
     val mcp = DesktopMcpModel(host, scope)
 
     init {
@@ -274,7 +274,16 @@ fun EngineHostView(
                             onResetFilters = { models.agents.resetFilters() },
                             onViewLayoutSelected = { models.agents.selectViewLayout(it) },
                             onCancelRun = { models.agents.cancelRun(it) },
-                            onInspectRun = { models.agents.selectRunDetail(it) }
+                            onInspectRun = { models.agents.selectRunDetail(it) },
+                            onMainModelChange = { models.agents.setMainModel(it) },
+                            onDefaultRunModelChange = { models.agents.setDefaultRunModel(it) },
+                            onProjectLocalityChange = { models.agents.setProjectLocality(it) },
+                            onProjectGuardianPolicyChange = { models.agents.setProjectGuardianPolicy(it) },
+                            onDecisionModelChange = { models.agents.setDecisionModel(it) },
+                            onGuardianLlmChange = { models.agents.setGuardianLlm(it) },
+                            onRunGuardianPolicyOverride = { models.agents.setRunGuardianPolicyOverride(it) },
+                            onRunModelOverride = { models.agents.setRunModelOverride(it) },
+                            onRunLocalityOverride = { models.agents.setRunLocalityOverride(it) },
                         )
                     }
                     DesktopRightPaneTab.TOOLS -> {
@@ -291,7 +300,7 @@ fun EngineHostView(
                             onRefreshCatalog = { models.mcp.refreshCatalog(it) },
                             onSearchQueryChange = { models.mcp.search(it) },
                             onTransportFilterChange = { models.mcp.setTransportFilter(it) },
-                            onAdoptionFilterChange = { models.mcp.setAdoptionFilter(it) }
+                            onAdoptionFilterChange = { models.mcp.setAdoptionFilter(it) },
                         )
                     }
                 }
@@ -380,145 +389,129 @@ private fun ModelsColumn(models: DesktopModels, onModelSelected: (String) -> Uni
         )
     }
     Column {
-        Text("Models", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 4.dp))
-        ModelsTabs(state = state, actions = actions)
+        ModelsPane(state = state, actions = actions)
     }
 }
 
 @Composable
 private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> Unit) {
-    val detail = remember(modelId) { DesktopModelDetailModel(modelId, models.host, models.prefs, models.scope) }
-    DisposableEffect(detail) { onDispose { detail.dispose() } }
+    val detail by models.models.detailFor(modelId).collectAsState()
+    val currentDetail = detail
+    val runSettings = models.prefs.runSettingsFor(modelId)
+    val (deviceTotalRamBytes, deviceFreeRamBytes) = remember {
+        DesktopDevice.totalMemoryBytes() to (DesktopDevice.totalMemoryBytes() - DesktopDevice.memory().usedMB * 1024L * 1024L)
+    }
+    val memoryBudget = remember { DesktopDevice.memory() }
+    val freeStorageGb = remember { DesktopDevice.freeStorageGb() }
 
-    val state by detail.state.collectAsState()
-    val loading by detail.loading.collectAsState()
-    val engineState by models.host.state.collectAsState()
-    val prefs by models.prefs.data.collectAsState()
-    val scope = rememberCoroutineScope()
-    var pendingLicenseConfirm by remember { mutableStateOf(false) }
-
-    if (pendingLicenseConfirm) {
-        val licenseName = state.model?.licenseName.orEmpty()
-        AlertDialog(
-            onDismissRequest = { pendingLicenseConfirm = false },
-            title = { Text("Accept Model License") },
-            text = {
-                Text(
-                    "Downloading and running ${state.model?.name ?: modelId} requires accepting its license terms: $licenseName",
-                )
+    val modelActions = remember(models, modelId) {
+        ModelDetailActions(
+            onLoad = { models.models.load(modelId) },
+            onUnload = { models.models.unload(modelId) },
+            onDelete = {
+                models.models.deleteModel(modelId)
+                onBack()
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        pendingLicenseConfirm = false
-                        scope.launch {
-                            detail.acceptLicenseNow()
-                            detail.startDownload()
-                        }
-                    },
-                ) {
-                    Text("Accept & Download")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingLicenseConfirm = false }) {
-                    Text("Cancel")
-                }
-            },
+            onSaveRunSettings = { next -> models.prefs.setRunSettings(modelId, next) },
+            onResetRunSettings = { models.prefs.setRunSettings(modelId, dev.aidos.modelruntime.ModelRunSettings.DEFAULT) },
         )
     }
 
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
-            Text(state.model?.name ?: modelId, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        }
-        ModelDetailContent(
-            state = state,
-            loadingState = loading,
-            engineState = engineState,
-            preferredContext = prefs.preferredContextLength.coerceIn(512, 32768),
-            actions = ModelDetailActions(
-                onPreferredContextChange = models.prefs::setPreferredContextLength,
-                onOpenUrl = ::openInBrowser,
-                onStartDownload = {
-                    if (detail.state.value.model?.licenseName.isNullOrBlank()) {
-                        detail.startDownload()
-                    } else {
-                        scope.launch {
-                            if (detail.isLicenseAccepted()) {
-                                detail.startDownload()
-                            } else {
-                                pendingLicenseConfirm = true
-                            }
-                        }
-                    }
-                },
-                onCancelDownload = detail::cancelDownload,
-                onDelete = detail::delete,
-                onEmbeddingInputChange = detail::setEmbeddingInput,
-                onTestEmbeddings = detail::testEmbeddings,
-                onToggleLoad = detail::toggleLoad,
-                // No chat screen on desktop; the per-kind panel (including a one-shot chat test) covers it.
-                onTestChat = null,
-                onRunSelfTest = detail::runSelfTest,
-                onSelfTestTextChange = detail::setSelfTestText,
-                onSelfTestFileChange = detail::setSelfTestFile,
-                onRunSettingsChange = detail::setRunSettings,
-                onReload = detail::reload,
-            ),
+    if (currentDetail != null) {
+        ModelDetailPane(
+            detail = currentDetail,
+            runSettings = runSettings,
+            deviceTotalRamBytes = deviceTotalRamBytes,
+            deviceFreeRamBytes = deviceFreeRamBytes,
+            memoryBudget = memoryBudget,
+            freeStorageGb = freeStorageGb,
+            actions = modelActions,
+            onBack = onBack,
         )
+    } else {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Model not found")
+                Spacer(modifier = Modifier.height(8.dp))
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun SettingsDialog(prefs: DesktopPreferences, onClose: () -> Unit) {
-    val data by prefs.data.collectAsState()
-    var ramNow by remember { mutableStateOf(DesktopDevice.memory()) }
-    var state by remember {
-        mutableStateOf(
-            SettingsState(
-                hfTokenStatus = HfTokenStatus(
-                    isConfigured = !prefs.data.value.hfToken.isNullOrBlank(),
-                    lastValidatedMs = prefs.data.value.hfTokenValidatedMs,
+    val state = rememberDialogState(size = DpSize(700.dp, 800.dp))
+    DialogWindow(onCloseRequest = onClose, state = state, title = "Settings") {
+        AidosEngineTheme {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                val data by prefs.data.collectAsState()
+                SettingsContent(
+                    data = data,
+                    onSaveHfToken = prefs::saveHfToken,
+                    onClearHfToken = prefs::clearHfToken,
+                    onRestoreSuggestions = prefs::restoreSuggestions,
+                    onSetPreferredContextLength = prefs::setPreferredContextLength,
+                    onSetServerPort = prefs::setServerPort,
+                    onSetAutoStartEngine = prefs::setAutoStartEngine,
+                    onSetLocalityLimit = { prefs.setEngineLocalityLimit(it?.wire) },
+                    onSetGlobalMainModel = prefs::setGlobalMainModelId,
+                    onSetGlobalDefaultRunModel = prefs::setGlobalDefaultRunModelId,
+                    onSetGlobalLocality = prefs::setGlobalLocality,
+                    onSetGlobalGuardianPolicy = prefs::setGlobalGuardianPolicy,
+                    onSetGlobalDecisionModel = prefs::setGlobalDecisionModelId,
+                    onSetGlobalGuardianLlm = prefs::setGlobalGuardianLlmModelId,
+                    onSetProjectMainModel = prefs::setProjectMainModelId,
+                    onSetProjectDefaultRunModel = prefs::setProjectDefaultRunModelId,
+                    onSetProjectAllowMainModelRunOverride = prefs::setProjectAllowMainModelRunOverride,
+                    onSetProjectEnforcedLocality = prefs::setProjectEnforcedLocality,
+                    onSetProjectGuardianPolicy = prefs::setProjectGuardianPolicy,
+                    onSetProjectDecisionModel = prefs::setProjectDecisionModelId,
+                    onSetProjectGuardianLlm = prefs::setProjectGuardianLlmModelId,
+                    onSetRunGuardianPolicyOverride = prefs::setRunGuardianPolicyOverride,
+                    onSetRunModelOverride = prefs::setRunModelOverride,
+                    onSetRunLocalityOverride = prefs::setRunLocalityOverride,
+                    onOpenDiscoveryFolder = {
+                        try {
+                            Desktop.getDesktop().open(DesktopPaths.discoveryFile.parentFile)
+                        } catch (_: Exception) {
+                        }
+                    },
+                    onOpenModelsFolder = {
+                        try {
+                            Desktop.getDesktop().open(DesktopPaths.modelsDir)
+                        } catch (_: Exception) {
+                        }
+                    },
+                    onOpenUrl = { url ->
+                        try {
+                            Desktop.getDesktop().browse(URI(url))
+                        } catch (_: Exception) {
+                        }
+                    },
                 )
-            )
-        )
-    }
-    DialogWindow(
-        onCloseRequest = onClose,
-        title = "Settings",
-        state = rememberDialogState(size = DpSize(520.dp, 560.dp)),
-    ) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            SelectionContainer { SettingsContent(
-                state = state,
-                dismissedSuggestionCount = data.dismissedSuggestions.size,
-                onStateChange = { state = it },
-                onSaveToken = prefs::saveHfToken,
-                onClearToken = prefs::clearHfToken,
-                onRestoreSuggestions = prefs::restoreSuggestions,
-                ramBaseline = RamBaselineState(
-                    baselineUsedMB = data.ramBaselineUsedMb,
-                    currentUsedMB = ramNow.usedMB,
-                    totalMB = ramNow.totalMB,
-                ),
-                onSetRamBaseline = prefs::setRamBaselineUsedMb,
-                onRefreshRamBaseline = { ramNow = DesktopDevice.memory() },
-                engineLocalityLimit = data.engineLocalityLimit,
-                onSetEngineLocalityLimit = prefs::setEngineLocalityLimit,
-                tokenStorageNote = "Debug build: stored unencrypted in ${DesktopPaths.stateDir}.",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-            ) }
+            }
         }
     }
 }
 
-private fun openInBrowser(url: String) {
-    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-        Desktop.getDesktop().browse(URI(url))
+@Composable
+private fun GroupsDialog(models: DesktopModels, onClose: () -> Unit) {
+    val state = rememberDialogState(size = DpSize(700.dp, 800.dp))
+    DialogWindow(onCloseRequest = onClose, state = state, title = "Device Groups (RFC-0105)") {
+        AidosEngineTheme {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                val groupSharingEnabled by models.host.groupSharingEnabled.collectAsState()
+                GroupsContent(
+                    groupSharingEnabled = groupSharingEnabled,
+                    onToggleGroupSharing = { enabled ->
+                        models.prefs.setGroupSharingEnabled(enabled)
+                        models.host.setGroupSharingEnabled(enabled)
+                    },
+                )
+            }
+        }
     }
 }

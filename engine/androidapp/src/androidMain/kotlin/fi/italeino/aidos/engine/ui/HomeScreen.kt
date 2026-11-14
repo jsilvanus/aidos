@@ -30,8 +30,11 @@ import kotlin.time.Duration.Companion.milliseconds
  * Simplified to a single Status pane with Engine On/Off toggle.
  */
 @Composable
-fun HomeScreen(viewModel: StatusViewModel = viewModel()) {
-    AndroidStatusPane(viewModel)
+fun HomeScreen(
+    onOpenAgents: () -> Unit = {},
+    viewModel: StatusViewModel = viewModel(),
+) {
+    AndroidStatusPane(viewModel = viewModel, onOpenAgents = onOpenAgents)
 }
 
 /**
@@ -39,7 +42,10 @@ fun HomeScreen(viewModel: StatusViewModel = viewModel()) {
  * the shared [StatusPane]; this adds the Android hold-to-toggle gesture and Android data sources.
  */
 @Composable
-private fun AndroidStatusPane(viewModel: StatusViewModel) {
+private fun AndroidStatusPane(
+    viewModel: StatusViewModel,
+    onOpenAgents: () -> Unit,
+) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val isEngineRunning by viewModel.isEngineRunning.collectAsState()
@@ -65,18 +71,20 @@ private fun AndroidStatusPane(viewModel: StatusViewModel) {
     val engineStateName = try { EngineService.state.value.name } catch (_: Exception) { "OFF" }
     val linkedPeerCount = try { EngineService.aidin.value?.peers?.value?.count { it.connected } ?: 0 } catch (_: Exception) { 0 }
 
-    StatusPane(
-        state = StatusUiState(
-            isEngineRunning = isEngineRunning,
-            engineStateName = engineStateName,
-            residentModels = residentModels,
-            memory = memory,
-            freeStorageGb = availableGB,
-            approvedApps = approvedApps,
-            pendingAppCount = pendingAppCount,
-            linkedPeerCount = linkedPeerCount,
-        ),
-        engineControl = {
+    Column(modifier = Modifier.fillMaxSize()) {
+        StatusPane(
+            state = StatusUiState(
+                isEngineRunning = isEngineRunning,
+                engineStateName = engineStateName,
+                residentModels = residentModels,
+                memory = memory,
+                freeStorageGb = availableGB,
+                approvedApps = approvedApps,
+                pendingAppCount = pendingAppCount,
+                linkedPeerCount = linkedPeerCount,
+            ),
+            modifier = Modifier.weight(1f),
+            engineControl = {
             // Card-level press to toggle Engine; requires 1s hold to change state.
             var cardPressing by remember { mutableStateOf(false) }
             var cardProgress by remember { mutableFloatStateOf(0f) }
@@ -145,5 +153,14 @@ private fun AndroidStatusPane(viewModel: StatusViewModel) {
                 }
             }
         },
-    )
+        )
+        OutlinedButton(
+            onClick = onOpenAgents,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Text("Agent Runtime & Model Routing")
+        }
+    }
 }

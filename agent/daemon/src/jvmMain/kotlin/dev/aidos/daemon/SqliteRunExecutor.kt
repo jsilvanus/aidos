@@ -15,6 +15,9 @@ import dev.aidos.kernel.EventId
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.SessionId
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingsWriter
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The real [RunExecutor] (RFC-0008/0009): publishes the triggering event, then creates the durable
@@ -63,6 +66,35 @@ class SqliteRunExecutor(
         networkAvailable: Boolean,
     ): RunResult {
         admission?.refusal(projectDriver, projectId)?.let { return RunResult.Error("run.storage_critical", it) }
+
+        val runTaintPolicy = message.runOptions.taintApprovalPolicy
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { raw ->
+                Settings.trustTaintApprovalPolicy.codec
+                    .decode(JsonPrimitive(raw.uppercase()))
+                    .getOrElse {
+                        return RunResult.Error(
+                            "run.invalid_options",
+                            "Invalid taintApprovalPolicy '$raw': expected MANUAL or GUARDIAN",
+                        )
+                    }
+            }
+        val runModelId = message.runOptions.modelId?.trim()?.takeIf { it.isNotEmpty() }
+        val runLocality = message.runOptions.modelLocality
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { raw ->
+                Settings.routingModelLocality.codec
+                    .decode(JsonPrimitive(raw))
+                    .getOrElse {
+                        return RunResult.Error(
+                            "run.invalid_options",
+                            "Invalid modelLocality '$raw': expected local, cluster, or remote",
+                        )
+                    }
+            }
+
         val events = EventStore(projectDriver)
         val eventId = idGen()
         val sequence = events.publish(
@@ -90,6 +122,46 @@ class SqliteRunExecutor(
             deviceId = deviceId,
             networkAvailable = networkAvailable,
         )
+
+        val stampedAt = nowIso()
+        if (runTaintPolicy != null) {
+            SettingsWriter.writeRun(
+                driver = projectDriver,
+                runId = runId.value,
+                descriptor = Settings.trustTaintApprovalPolicy,
+                value = runTaintPolicy,
+                nowIso = stampedAt,
+                setByKind = "USER",
+            ).getOrThrow()
+        }
+        if (runModelId != null) {
+            SettingsWriter.writeRun(
+                driver = projectDriver,
+                runId = runId.value,
+                descriptor = Settings.modelDefaultRunLlm,
+                value = runModelId,
+                nowIso = stampedAt,
+                setByKind = "USER",
+            ).getOrThrow()
+            SettingsWriter.writeRun(
+                driver = projectDriver,
+                runId = runId.value,
+                descriptor = Settings.modelDefaultLlm,
+                value = runModelId,
+                nowIso = stampedAt,
+                setByKind = "USER",
+            ).getOrThrow()
+        }
+        if (runLocality != null) {
+            SettingsWriter.writeRun(
+                driver = projectDriver,
+                runId = runId.value,
+                descriptor = Settings.routingModelLocality,
+                value = runLocality,
+                nowIso = stampedAt,
+                setByKind = "USER",
+            ).getOrThrow()
+        }
 
         val eventRow = events.eventsForProject(projectId, type = EventTypes.USER_COMMAND)
             .last { it.id == eventId }

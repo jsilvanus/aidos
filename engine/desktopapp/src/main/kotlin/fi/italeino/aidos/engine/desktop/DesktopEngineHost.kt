@@ -42,6 +42,8 @@ import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.agentRoutes
+import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
+import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
 import fi.italeino.aidos.engine.agent.createEngineAgentRuntime
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.handshake.HandshakeWire
@@ -251,7 +253,34 @@ class DesktopEngineHost(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = InferenceRequestManager(runtime, licenseStore = licenseAcceptanceStore)
             lateinit var server: EngineHttpServer
-            val agent = createEngineAgentRuntime(scope, manager, router = { server.virtualModelRouter }, aidin = { _aidin.value })
+            val initialPrefs = runCatching {
+                val prefsFile = File(stateDir, "preferences.json")
+                if (prefsFile.isFile) prefsJson.decodeFromString<DesktopPreferencesData>(prefsFile.readText()) else DesktopPreferencesData()
+            }.getOrDefault(DesktopPreferencesData())
+            val initialRouting = AgentRoutingConfigDto(
+                mainModelId = initialPrefs.projectMainModelId.ifBlank { initialPrefs.globalMainModelId },
+                defaultRunModelId = initialPrefs.projectDefaultRunModelId.ifBlank { initialPrefs.globalDefaultRunModelId },
+                allowMainModelRunOverride = initialPrefs.projectAllowMainModelRunOverride,
+                enforcedLocality = initialPrefs.projectEnforcedLocality ?: initialPrefs.globalLocality,
+                guardianPolicy = initialPrefs.projectGuardianPolicy ?: initialPrefs.globalGuardianPolicy,
+                decisionModelId = initialPrefs.projectDecisionModelId.ifBlank { initialPrefs.globalDecisionModelId },
+                guardianLlmModelId = initialPrefs.projectGuardianLlmModelId.ifBlank { initialPrefs.globalGuardianLlmModelId },
+            )
+            val agent = createEngineAgentRuntime(
+                scope,
+                manager,
+                router = { server.virtualModelRouter },
+                aidin = { _aidin.value },
+                initialRoutingConfig = initialRouting,
+            ).apply {
+                setRunLaunchConfig(
+                    AgentRunLaunchConfigDto(
+                        guardianPolicyOverride = initialPrefs.runGuardianPolicyOverride,
+                        runModelOverride = initialPrefs.runModelOverride,
+                        localityOverride = initialPrefs.runLocalityOverride,
+                    )
+                )
+            }
             _agentRuntime = agent
             server = EngineHttpServer(
                 tokens,

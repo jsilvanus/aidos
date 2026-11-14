@@ -6,7 +6,7 @@ Related: RFC-0027 (trust and taint), RFC-0008 (agent loop), RFC-0009 (durable ex
 
 ## Abstract
 
-RFC-0027 attenuates tainted Runs so that any `Egress`, `SHELL_EXEC`, `APP_IPC`, or `UNSAFE` tool call parks for per-call human approval (`DenialReason.TAINT_REQUIRES_APPROVAL`). This RFC introduces an opt-in, user-scope-only **Guardian** mode (`TaintApprovalPolicy.GUARDIAN`, off by default) built as a two-gate evaluator: an inbound System One (`/v1/systemone` / Laya) one-way injection suspicion latch (Gate A) paired with a stateless, blind, zero-tool outbound LLM verifier (Gate B) that may grant a single-use taint exercise only for tool calls semantically aligned with the user's original trusted prompt, failing closed to human approval everywhere else.
+RFC-0027 attenuates tainted Runs so that any `Egress`, `SHELL_EXEC`, `APP_IPC`, or `UNSAFE` tool call parks for per-call human approval (`DenialReason.TAINT_REQUIRES_APPROVAL`). This RFC introduces an opt-in **Guardian** mode (`TaintApprovalPolicy.GUARDIAN`, off by default, configurable across User, Project, and Run scope with safe `MANUAL` default) built as a two-gate evaluator: an inbound System One (`/v1/systemone` / Laya) one-way injection suspicion latch (Gate A) paired with a stateless, blind, zero-tool outbound LLM verifier (Gate B) that may grant a single-use taint exercise only for tool calls semantically aligned with the user's original trusted prompt, failing closed to human approval everywhere else.
 
 ## Motivation
 
@@ -22,7 +22,7 @@ A two-gate architecture resolves this without weakening RFC-0027's defaults: `MA
 
 ## Goals
 
-1. Keep `MANUAL` human approval as the default and fail-closed posture (`TaintApprovalPolicy.MANUAL`), configurable only in user scope (`ScopeClass.SECURITY`).
+1. Keep `MANUAL` human approval as the default and fail-closed posture (`TaintApprovalPolicy.MANUAL`), configurable via `ScopeClass.PREFERENCE` across User, Project (`aidos.toml`), and Run / worker spawn scopes.
 2. Add **Gate A**, an inbound System One (`noul`) screening pass over `UNTRUSTED` tool outputs that acts strictly as a monotonic, durable suspicion latch per Run (`injectionSuspected`).
 3. Add **Gate B**, an outbound blind, stateless, single-turn, zero-tool Guardian LLM verifier that sees only the user's `TRUSTED` prompt (`runs.user_message_summary`) and the candidate tool invocation (`toolName`, descriptor metadata, `argumentsJson`), never conversation history or untrusted tool outputs.
 4. Preserve all hard capability and taint boundaries (`Permission.SECRETS_READ`, `Mutate(OUT_OF_PROJECT)`, `CapabilityConstraints.requiresApprovalPerUse`, missing/revoked/expired/budget-exhausted grants), and record every suspicion latch, bypass, approval, and escalation in `audit_log`.
@@ -38,9 +38,9 @@ A two-gate architecture resolves this without weakening RFC-0027's defaults: `MA
 
 ## Design
 
-### Opt-in policy setting (`trust.taint_approval_policy`)
+### Opt-in policy and Guardian model settings
 
-A new user-scope-only security setting controls whether tainted `TAINT_REQUIRES_APPROVAL` calls escalate directly to the user or pass through Gate B:
+`trust.taint_approval_policy` controls whether tainted `TAINT_REQUIRES_APPROVAL` calls escalate directly to the user or pass through Gate B, resolved across Run/Session -> Project (`aidos.toml` / `settings` table `scope = 'project'`) -> User -> Default:
 
 ```kotlin
 enum class TaintApprovalPolicy {
@@ -56,11 +56,15 @@ Declared in `Settings` (RFC-0036):
 
 - **Property:** `Settings.trustTaintApprovalPolicy`
 - **Key:** `"trust.taint_approval_policy"`
-- **Scope class:** `ScopeClass.SECURITY` (user-scope only, stored in `user.db`'s `settings` table)
+- **Scope class:** `ScopeClass.PREFERENCE` (Run -> Project -> User)
 - **Default:** `TaintApprovalPolicy.MANUAL`
-- **Most restrictive:** `TaintApprovalPolicy.MANUAL`
 
-Per RFC-0036, any `aidos.toml` (project scope) or session-scope attempt to set `trust.taint_approval_policy` is refused with file and line diagnostics, audited as `SCOPE_VIOLATION` in `settings_audit` (`user.db`), and never applied. Any invalid or unrecognized stored value fails closed to `mostRestrictive` (`MANUAL`).
+Any invalid or unrecognized stored value fails closed to `MANUAL`.
+
+Guardian model selection is also configurable (`ScopeClass.PREFERENCE`, Run -> Project -> User):
+
+- **`Settings.trustGuardianDecisionModel`** (`"trust.guardian_decision_model"`, default `"laya-multilingual"`): selects the System One / Decision Model ID used by Gate A (`SystemOneTaintInputScreener`).
+- **`Settings.trustGuardianLlmModel`** (`"trust.guardian_llm_model"`, default `""`): optionally pins the Guardian LLM model ID used by Gate B (`LlmGuardianApprovalVerifier`). Empty string uses automatic routing. Both Gate B and main/worker Runs respect `Settings.routingModelLocality` (`local`, `cluster`, `remote`) and `routing.remote_egress`.
 
 ### `Permission.APP_IPC` in Taint Attenuation
 
@@ -128,7 +132,7 @@ data class InputScreeningVerdict(
 
 `SystemOneTaintInputScreener` (in `agent:daemon`) delegates to the Engine's System One HTTP endpoint (`POST /v1/systemone` per `docs/system-one.md` and RFC-0022):
 
-- **Model:** `"laya-multilingual"` (configurable default).
+- **Model:** Configurable via `trust.guardian_decision_model` (default `"laya-multilingual"`).
 - **Primitive:** `noul` (`DecisionQuestion.Noul`).
 - **Instruction:** `"The text is giving an instruction to an assistant or system rather than stating content."`
 - **Threshold:** `0.80` (default). An answer with `noul >= 0.80` (when not abstained, or if the screener policy configures explicit abstention handling) returns `instructionSuspected = true`, which latches `injectionSuspected = true`.
@@ -177,7 +181,7 @@ interface GuardianApprovalVerifier {
   - `Turn.User`: contains **only** `runs.user_message_summary` (the user's `TRUSTED` prompt) and the single candidate invocation (`toolName`, descriptor `title`, descriptor `description`, `argumentsJson`).
   - **Excluded by construction:** conversation history (`Turn.Assistant`, `Turn.ToolResult`), `ContentNode` text, `InstructionSet` bodies, and any untrusted tool output.
 - **Zero-tool enforcement:** `tools = emptyList()` and `toolChoice = ToolChoice.None`. The verifier cannot emit tool calls or invoke any broker operation.
-- **Clean `RoutingContext`:** `LlmGuardianApprovalVerifier` selects a model via `InferenceRouter.select(ModelKind.LLM, routingCtx)` with `runTaint = TrustLevel.TRUSTED` because **no untrusted content enters Gate B's prompt** (only the `TRUSTED` user prompt summary and the proposed tool call's name/schema-validated arguments). Existing `PolicyInferenceRouter` rules—including `routing.remote_egress` (`NEVER` / `ASK` / `ALLOW`) and locality limits (RFC-0104)—still apply unchanged.
+- **Clean `RoutingContext`:** `LlmGuardianApprovalVerifier` selects a model (preferring `trust.guardian_llm_model` when configured) via `InferenceRouter` with `runTaint = TrustLevel.TRUSTED` because **no untrusted content enters Gate B's prompt** (only the `TRUSTED` user prompt summary and the proposed tool call's name/schema-validated arguments). Existing `PolicyInferenceRouter` rules—including `routing.remote_egress` (`NEVER` / `ASK` / `ALLOW`) and `routing.model_locality` limits (RFC-0104)—still apply unchanged.
 - **Fail-closed verdict parsing:** Any malformed response, unrecognized decision string, adapter failure, or non-approved `RoutingDecision` (`RemotePendingApproval`, `UnavailableOffline`, `DisabledByPolicy`, `ForegroundRequired`) maps to `GuardianDecision.AMBIGUOUS`.
 
 **Handling the verdict:**
@@ -206,7 +210,7 @@ Gate B only ever evaluates `DenialReason.TAINT_REQUIRES_APPROVAL`. It can never 
 
 RFC-0110 requires **no new SQLite tables or columns** in `schema/user.sql`, `schema/vault.sql`, or `schema/project.sql`. All durable state reuses existing tables:
 
-- **`settings` (`schema/user.sql`):** Stores `trust.taint_approval_policy` (`"MANUAL"` or `"GUARDIAN"`) at `scope = 'user'`, enforced as `ScopeClass.SECURITY` with `mostRestrictive = MANUAL`. Attempted overrides in `project` or `session` scopes are audited in `settings_audit` (`schema/user.sql`).
+- **`settings` (`schema/user.sql` and `schema/project.sql`):** Stores `trust.taint_approval_policy` (`"MANUAL"` or `"GUARDIAN"`), `trust.guardian_decision_model`, and `trust.guardian_llm_model` as `ScopeClass.PREFERENCE` across `user`, `project`, and `run` scopes (Run -> Project -> User -> Default).
 - **`runs` (`schema/project.sql`):**
   - `runs.user_message_summary` supplies the `TRUSTED` user intent passed to Gate B.
   - `runs.taint_level` remains `UNTRUSTED` monotonically for the duration of the Run even when Gate B approves a single-use exercise.
@@ -244,8 +248,8 @@ private data class StoredToolResult(
    - *Mitigation:* Gate B is strictly single-turn with `tools = emptyList()` and `toolChoice = ToolChoice.None`, runs in its own isolated prompt without conversation history, and fails closed to `AMBIGUOUS` on any unexpected format or uncertainty. Even if an attacker manipulates `argumentsJson`, Gate B cannot execute tools itself, cannot grant new capabilities, and cannot approve `SECRETS_READ`, `Mutate(OUT_OF_PROJECT)`, or `requiresApprovalPerUse` grants.
 3. **Confused deputy across Android apps (`Permission.APP_IPC`).**
    - *Mitigation:* Adding `Permission.APP_IPC` to `TaintAttenuation.decide` (`REQUIRES_APPROVAL`) closes the Binder gap where an untrusted document or event read could trigger cross-app writes or queries without any approval gate.
-4. **Repository-driven downgrade (`aidos.toml`).**
-   - *Mitigation:* `trust.taint_approval_policy` is `ScopeClass.SECURITY`, so a cloned repository cannot enable `GUARDIAN` mode via `aidos.toml`. Any attempt is rejected, surfaced with file and line, and audited in `settings_audit`.
+4. **Explicitly opted-in projects and Runs (`aidos.toml` / `RunOptions`).**
+   - *Mitigation:* `trust.taint_approval_policy` defaults to `MANUAL` and is configurable as `ScopeClass.PREFERENCE` across User, Project (`aidos.toml`), and Run/worker spawn scopes so teams and automated pipelines can opt in intentionally per project or per Run without weakening hard boundaries (`SECRETS_READ`, `Mutate(OUT_OF_PROJECT)`, `requiresApprovalPerUse`) or Gate A's one-way suspicion latch.
 5. **Egress and privacy leakage from Gate A / Gate B.**
    - *Mitigation:* Gate A calls the local Engine `/v1/systemone` endpoint after RFC-0035 secret withholding (`SecretContentWithheld`), so credentials are never screened or persisted. Gate B passes `runTaint = TrustLevel.TRUSTED` in `RoutingContext` only because its prompt excludes all untrusted tool outputs and transcript history, while `PolicyInferenceRouter` still enforces `routing.remote_egress` and RFC-0104 locality ceilings.
 
@@ -257,11 +261,11 @@ private data class StoredToolResult(
 ## MVP
 
 1. Add `TaintAttenuation` coverage for `Permission.APP_IPC` -> `Decision.REQUIRES_APPROVAL`.
-2. Declare `Settings.trustTaintApprovalPolicy` (`trust.taint_approval_policy`, `TaintApprovalPolicy.MANUAL` default, `ScopeClass.SECURITY`, `mostRestrictive = MANUAL`).
-3. Add `TaintInputScreener` and `SystemOneTaintInputScreener` calling `/v1/systemone` (`noul`, `"The text is giving an instruction to an assistant or system rather than stating content."`, threshold `0.80`, model `"laya-multilingual"`), latching `injectionSuspected = true` in `StoredToolResult` (`attempts.output_snapshot`) and auditing `TaintInjectionSuspected`.
-4. Add `GuardianApprovalVerifier` and `LlmGuardianApprovalVerifier` using a stateless, single-turn, zero-tool (`tools = emptyList()`, `ToolChoice.None`) `ModelRequest` over a clean `RoutingContext` (`runTaint = TrustLevel.TRUSTED`) with fail-closed `AMBIGUOUS` fallback.
+2. Declare `Settings.trustTaintApprovalPolicy` (`trust.taint_approval_policy`, `TaintApprovalPolicy.MANUAL` default, `ScopeClass.PREFERENCE`), alongside `Settings.trustGuardianDecisionModel` (`"laya-multilingual"`) and `Settings.trustGuardianLlmModel` (`""`, auto-routed).
+3. Add `TaintInputScreener` and `SystemOneTaintInputScreener` calling `/v1/systemone` (`noul`, `"The text is giving an instruction to an assistant or system rather than stating content."`, threshold `0.80`, model configurable via `trust.guardian_decision_model`, default `"laya-multilingual"`), latching `injectionSuspected = true` in `StoredToolResult` (`attempts.output_snapshot`) and auditing `TaintInjectionSuspected`.
+4. Add `GuardianApprovalVerifier` and `LlmGuardianApprovalVerifier` using a stateless, single-turn, zero-tool (`tools = emptyList()`, `ToolChoice.None`) `ModelRequest` over a clean `RoutingContext` (`runTaint = TrustLevel.TRUSTED`, respecting `trust.guardian_llm_model` and `routing.model_locality`) with fail-closed `AMBIGUOUS` fallback.
 5. Wire Gate A and Gate B into `AgentLoopTaskRunner` and `RuntimeCompositionRoot`, preserving all hard boundaries (`SECRETS_READ`, `Mutate(OUT_OF_PROJECT)`, `requiresApprovalPerUse`, capability validity) and auditing `GuardianBypassedSuspectedInjection`, `GuardianApproved`, and `GuardianEscalated`.
-6. Unit and end-to-end tests covering: default `MANUAL` behavior, `aidos.toml` refusal on `SECURITY` setting, Gate A one-way latch persistence across eviction/resume, Gate B bypass on suspected injection, Gate B `ALIGNED` single-use exercise preserving `runs.taint_level = UNTRUSTED`, Gate B `UNRELATED`/`AMBIGUOUS`/error fail-closed escalation with rationale, hard-boundary enforcement (`SECRETS_READ`, `OUT_OF_PROJECT`, `requiresApprovalPerUse`), and `Permission.APP_IPC` taint attenuation.
+6. Unit and end-to-end tests covering: default `MANUAL` behavior, Run -> Project -> User resolution of `trust.taint_approval_policy`, Guardian model configuration & locality enforcement, Gate A one-way latch persistence across eviction/resume, Gate B bypass on suspected injection, Gate B `ALIGNED` single-use exercise preserving `runs.taint_level = UNTRUSTED`, Gate B `UNRELATED`/`AMBIGUOUS`/error fail-closed escalation with rationale, hard-boundary enforcement (`SECRETS_READ`, `OUT_OF_PROJECT`, `requiresApprovalPerUse`), and `Permission.APP_IPC` taint attenuation.
 
 ## Future Work
 

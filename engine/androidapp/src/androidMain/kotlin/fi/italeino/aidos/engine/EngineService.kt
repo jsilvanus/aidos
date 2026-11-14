@@ -59,6 +59,7 @@ import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import kotlinx.coroutines.CompletableDeferred
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.AndroidAidin
+import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.agent.createEngineAgentRuntime
 import kotlinx.coroutines.CoroutineScope
@@ -111,6 +112,9 @@ class EngineService : LifecycleService() {
     private var startupJob: Job? = null
 
     var modelRuntime: GlobalModelRuntime? = null
+        private set
+
+    var agentRuntime: AgentRuntime? = null
         private set
 
     var hfClient: HuggingFaceClient? = null
@@ -278,7 +282,11 @@ class EngineService : LifecycleService() {
                     manager = inferenceManager,
                     router = { httpServer.virtualModelRouter },
                     aidin = { _aidin.value },
-                )
+                    initialRoutingConfig = SettingsStore.buildAgentRoutingConfig(this@EngineService),
+                ).apply {
+                    setRunLaunchConfig(SettingsStore.buildAgentRunLaunchConfig(this@EngineService))
+                }
+                agentRuntime = agent
                 httpServer = EngineHttpServer(
                     tokenManager,
                     runtime,

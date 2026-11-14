@@ -26,5 +26,16 @@ rootProject.name = "aidos"
 includeBuild("agent")
 includeBuild("engine")
 includeBuild("sdk")
+
+val aidosTcrCandidates = listOf(
+    file("../aidos-tcr"),
+    file("D:/aidos-tcr"),
+    file("c:/Users/jsilv/Code/aidos-tcr")
+)
+val aidosTcrDir = aidosTcrCandidates.firstOrNull { it.exists() && it.isDirectory }
+if (aidosTcrDir != null) {
+    includeBuild(aidosTcrDir)
+}
+
 include(":kernel")
 project(":kernel").projectDir = file("kernel")

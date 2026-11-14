@@ -1,6 +1,9 @@
 package dev.aidos.daemon
 
 import com.sun.net.httpserver.HttpServer
+import dev.aidos.api.RunOptions
+import dev.aidos.api.RunResult
+import dev.aidos.api.UserMessage
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.GuardianApprovalRequest
 import dev.aidos.executor.GuardianApprovalVerifier
@@ -18,7 +21,9 @@ import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SessionId
 import dev.aidos.kernel.SubjectKind
 import dev.aidos.kernel.UserId
+import dev.aidos.routing.EnforcedLocality
 import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.ModelLocality
 import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.SettingSetByKind
@@ -38,6 +43,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -89,8 +96,10 @@ class RuntimeCompositionRootTest {
         val eid = nextId()
         driver.execute(null,
             "INSERT INTO events (id, project_id, sequence, type, schema_version, category, visibility, " +
-                "timestamp, source, payload, causal_depth) VALUES (?, ?, 0, 'UserMessage', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)", 4
-        ) { bindString(0, eid); bindString(1, pid); bindString(2, nowIso) }
+                "timestamp, source, payload, causal_depth) VALUES (?, ?, " +
+                "(SELECT COALESCE(MAX(sequence) + 1, 0) FROM events WHERE project_id = ?), " +
+                "'UserMessage', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)", 4
+        ) { bindString(0, eid); bindString(1, pid); bindString(2, pid); bindString(3, nowIso) }
         return RunCreator(driver, idGen = { nextId() }, nowIso = { nowIso }).createForUserMessage(
             sessionId = SessionId(sid), projectId = ProjectId(pid), triggerEventId = EventId(eid),
             userMessageSummary = "hello", platformProfile = PlatformProfile.DESKTOP,
@@ -343,10 +352,11 @@ class RuntimeCompositionRootTest {
     // ─── RFC-0110: trust.taint_approval_policy, Gate A screener, and Guardian wiring ────────
 
     @Test
-    fun `resolveTaintApprovalPolicy defaults to MANUAL, reads user GUARDIAN, and ignores project override`() {
+    fun `resolveTaintApprovalPolicy defaults to MANUAL and resolves across Run, Project aidos toml, and User`() {
         assertEquals(TaintApprovalPolicy.MANUAL, RuntimeCompositionRoot.resolveTaintApprovalPolicy(null))
 
         val userDriver = openUserDriver()
+        val projectDriver = openDriver()
         assertEquals(TaintApprovalPolicy.MANUAL, RuntimeCompositionRoot.resolveTaintApprovalPolicy(userDriver))
 
         val snapshot = dev.aidos.settings.ProjectSettingsSnapshot(
@@ -354,15 +364,82 @@ class RuntimeCompositionRootTest {
             mapOf("trust.taint_approval_policy" to dev.aidos.settings.ProjectEntry(JsonPrimitive("GUARDIAN"), line = 2)),
         )
         assertEquals(
-            TaintApprovalPolicy.MANUAL,
+            TaintApprovalPolicy.GUARDIAN,
             RuntimeCompositionRoot.resolveTaintApprovalPolicy(userDriver, snapshot),
-            "SECURITY setting must ignore aidos.toml attempts",
+            "PREFERENCE setting must honor aidos.toml project override",
         )
 
         SettingsWriter(userDriver).writeUser(
-            Settings.trustTaintApprovalPolicy, JsonPrimitive("GUARDIAN"), SettingSetByKind.USER, nowIso,
+            Settings.trustTaintApprovalPolicy, JsonPrimitive("MANUAL"), SettingSetByKind.USER, nowIso,
         )
-        assertEquals(TaintApprovalPolicy.GUARDIAN, RuntimeCompositionRoot.resolveTaintApprovalPolicy(userDriver, snapshot))
+        // Project overrides User for PREFERENCE
+        assertEquals(
+            TaintApprovalPolicy.GUARDIAN,
+            RuntimeCompositionRoot.resolveTaintApprovalPolicy(userDriver, snapshot),
+        )
+
+        // Run overrides Project
+        SettingsWriter.writeRun(
+            driver = projectDriver,
+            runId = "run-manual",
+            descriptor = Settings.trustTaintApprovalPolicy,
+            value = TaintApprovalPolicy.MANUAL,
+            nowIso = nowIso,
+        ).getOrThrow()
+        assertEquals(
+            TaintApprovalPolicy.MANUAL,
+            RuntimeCompositionRoot.resolveTaintApprovalPolicy(
+                userDriver = userDriver,
+                project = snapshot,
+                projectDriver = projectDriver,
+                runId = RunId("run-manual"),
+            ),
+        )
+    }
+
+    @Test
+    fun `guardian models, locality, and worker vs main run model resolution respect Run, Project, User`() {
+        val userDriver = openUserDriver()
+        val projectDriver = openDriver()
+        val pid = ProjectId("proj-1")
+        val snapshot = dev.aidos.settings.ProjectSettingsSnapshot(
+            "aidos.toml",
+            mapOf(
+                "trust.guardian_decision_model" to dev.aidos.settings.ProjectEntry(JsonPrimitive("laya-proj"), line = 2),
+                "trust.guardian_llm_model" to dev.aidos.settings.ProjectEntry(JsonPrimitive("haiku-proj"), line = 3),
+                "routing.model_locality" to dev.aidos.settings.ProjectEntry(JsonPrimitive("cluster"), line = 4),
+                "model.default_llm" to dev.aidos.settings.ProjectEntry(JsonPrimitive("sonnet-main"), line = 5),
+                "model.default_run_llm" to dev.aidos.settings.ProjectEntry(JsonPrimitive("qwen-worker"), line = 6),
+            ),
+        )
+
+        assertEquals("laya-multilingual", RuntimeCompositionRoot.resolveGuardianDecisionModel(null))
+        assertNull(RuntimeCompositionRoot.resolveGuardianLlmModel(null))
+        assertEquals(EnforcedLocality.REMOTE, RuntimeCompositionRoot.resolveModelLocality(null))
+
+        assertEquals("laya-proj", RuntimeCompositionRoot.resolveGuardianDecisionModel(userDriver, snapshot, projectDriver, pid))
+        assertEquals("haiku-proj", RuntimeCompositionRoot.resolveGuardianLlmModel(userDriver, snapshot, projectDriver, pid))
+        assertEquals(EnforcedLocality.CLUSTER, RuntimeCompositionRoot.resolveModelLocality(userDriver, snapshot, projectDriver, pid))
+        assertEquals(
+            "sonnet-main",
+            RuntimeCompositionRoot.resolveRunModelId(userDriver, snapshot, projectDriver, pid, runId = null, isWorkerSession = false),
+        )
+        assertEquals(
+            "qwen-worker",
+            RuntimeCompositionRoot.resolveRunModelId(userDriver, snapshot, projectDriver, pid, runId = null, isWorkerSession = true),
+        )
+
+        SettingsWriter.writeRun(projectDriver, "r-worker", Settings.modelDefaultRunLlm, "custom-worker", nowIso).getOrThrow()
+        SettingsWriter.writeRun(projectDriver, "r-worker", Settings.routingModelLocality, ModelLocality.LOCAL, nowIso).getOrThrow()
+
+        assertEquals(
+            "custom-worker",
+            RuntimeCompositionRoot.resolveRunModelId(userDriver, snapshot, projectDriver, pid, RunId("r-worker"), isWorkerSession = true),
+        )
+        assertEquals(
+            EnforcedLocality.LOCAL,
+            RuntimeCompositionRoot.resolveModelLocality(userDriver, snapshot, projectDriver, pid, RunId("r-worker")),
+        )
     }
 
     private fun startMockSystemOneServer(
@@ -544,21 +621,21 @@ class RuntimeCompositionRootTest {
     ) { bindString(0, projectId) }.value
 
     @Test
-    fun `drive() rejects aidos toml trust taint_approval_policy GUARDIAN and parks manually`() = runTest {
+    fun `drive() honors aidos toml trust taint_approval_policy GUARDIAN and per-Run MANUAL override`() = runTest {
         val driver = openDriver()
         val userDriver = openUserDriver()
-        val root = Files.createTempDirectory("guardian-toml-reject").toFile()
+        val root = Files.createTempDirectory("guardian-toml-pref").toFile()
         File(root, "aidos.toml").writeText("[trust]\ntaint_approval_policy = \"GUARDIAN\"\n")
         val pid = nextId(); val sid = nextId()
         seedProjectAndSession(driver, pid, sid, rootPath = root.path)
-        val runId = seedUntrustedReadThenPushPlan(driver, pid, sid, root, "normal dependency notes")
+        val run1 = seedUntrustedReadThenPushPlan(driver, pid, sid, root, "normal dependency notes")
 
         val diagnostics = mutableListOf<dev.aidos.settings.SettingError>()
         var guardianCalls = 0
         val verifier = object : GuardianApprovalVerifier {
             override suspend fun verify(request: GuardianApprovalRequest): GuardianVerdict {
                 guardianCalls++
-                return GuardianVerdict(GuardianDecision.ALIGNED, "would approve")
+                return GuardianVerdict(GuardianDecision.UNRELATED, "escalate from test")
             }
         }
 
@@ -567,17 +644,86 @@ class RuntimeCompositionRootTest {
             settingsDiagnostics = { diagnostics += it },
             guardianVerifier = verifier,
         ).drive(
-            projectDriver = driver, runId = runId, projectId = ProjectId(pid), sessionId = sid,
+            projectDriver = driver, runId = run1, projectId = ProjectId(pid), sessionId = sid,
             deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = true,
             idGen = { nextId() }, nowIso = { nowIso },
         )
 
-        assertEquals("YIELDED", runState(driver, runId.value))
-        assertEquals(0, guardianCalls, "project aidos.toml must never activate GUARDIAN mode")
-        val violation = diagnostics.single()
-        assertEquals(dev.aidos.settings.SettingErrorClass.SCOPE_VIOLATION, violation.errorClass)
-        assertEquals("aidos.toml:2", violation.originPath)
-        assertEquals(1, dev.aidos.settings.UserDbSettingsAudit(userDriver).entries("trust.taint_approval_policy").size)
+        assertEquals("YIELDED", runState(driver, run1.value))
+        assertEquals(1, guardianCalls, "project aidos.toml must enable GUARDIAN mode")
+        assertTrue(diagnostics.isEmpty(), "expected zero diagnostics: $diagnostics")
+        assertTrue(dev.aidos.settings.UserDbSettingsAudit(userDriver).entries("trust.taint_approval_policy").isEmpty())
+
+        // Per-Run override to MANUAL bypasses Guardian even when project aidos.toml enables GUARDIAN
+        val run2 = seedUntrustedReadThenPushPlan(driver, pid, sid, root, "normal dependency notes")
+        SettingsWriter.writeRun(
+            driver = driver,
+            runId = run2.value,
+            descriptor = Settings.trustTaintApprovalPolicy,
+            value = TaintApprovalPolicy.MANUAL,
+            nowIso = nowIso,
+        ).getOrThrow()
+
+        var guardianCallsRun2 = 0
+        RuntimeCompositionRoot(
+            userDriver = userDriver,
+            settingsDiagnostics = { diagnostics += it },
+            guardianVerifier = object : GuardianApprovalVerifier {
+                override suspend fun verify(request: GuardianApprovalRequest): GuardianVerdict {
+                    guardianCallsRun2++
+                    return GuardianVerdict(GuardianDecision.ALIGNED, "ok")
+                }
+            },
+        ).drive(
+            projectDriver = driver, runId = run2, projectId = ProjectId(pid), sessionId = sid,
+            deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = true,
+            idGen = { nextId() }, nowIso = { nowIso },
+        )
+
+        assertEquals("YIELDED", runState(driver, run2.value))
+        assertEquals(0, guardianCallsRun2, "Run-level MANUAL override must bypass project GUARDIAN")
+    }
+
+    @Test
+    fun `drive() forwards configured trust guardian_decision_model to SystemOneTaintInputScreener`() = runTest {
+        var requestedModel: String? = null
+        val server = startMockSystemOneServer { _, _, _, body ->
+            requestedModel = Json.parseToJsonElement(body).jsonObject["model"]?.jsonPrimitive?.content
+            200 to systemOneOkResponse(0.10, model = requestedModel ?: "laya-multilingual")
+        }
+        try {
+            val baseUrl = "http://127.0.0.1:${server.address.port}"
+            val userDriver = openUserDriver()
+            val driver = openDriver()
+            val root = Files.createTempDirectory("guardian-decision-model").toFile()
+            File(root, "aidos.toml").writeText(
+                """
+                [trust]
+                taint_approval_policy = "GUARDIAN"
+                guardian_decision_model = "laya-custom-decision"
+                """.trimIndent()
+            )
+            val pid = nextId(); val sid = nextId()
+            seedProjectAndSession(driver, pid, sid, rootPath = root.path)
+            val runId = seedUntrustedReadThenPushPlan(driver, pid, sid, root, "benign content")
+
+            RuntimeCompositionRoot(
+                userDriver = userDriver,
+                systemOneBaseUrl = { baseUrl },
+                guardianVerifier = object : GuardianApprovalVerifier {
+                    override suspend fun verify(request: GuardianApprovalRequest) =
+                        GuardianVerdict(GuardianDecision.UNRELATED, "park for test")
+                },
+            ).drive(
+                projectDriver = driver, runId = runId, projectId = ProjectId(pid), sessionId = sid,
+                deviceId = "dev-1", platformProfile = PlatformProfile.DESKTOP, networkAvailable = true,
+                idGen = { nextId() }, nowIso = { nowIso },
+            )
+
+            assertEquals("laya-custom-decision", requestedModel)
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test
@@ -651,5 +797,76 @@ class RuntimeCompositionRootTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun `SqliteRunExecutor send() persists RunOptions overrides at run scope and rejects invalid options`() = runTest {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProjectAndSession(driver, pid, sid, rootPath = "/")
+
+        val exec = SqliteRunExecutor(idGen = { nextId() }, nowIso = { nowIso })
+        val invalid = exec.send(
+            projectDriver = driver,
+            projectId = pid,
+            sessionId = sid,
+            message = UserMessage(
+                content = "bad locality",
+                runOptions = RunOptions(modelLocality = "cloud-invalid"),
+            ),
+            platformProfile = PlatformProfile.DESKTOP,
+            deviceId = "dev-1",
+            networkAvailable = true,
+        )
+        assertIs<RunResult.Error>(invalid)
+
+        val accepted = assertIs<RunResult.Accepted>(
+            exec.send(
+                projectDriver = driver,
+                projectId = pid,
+                sessionId = sid,
+                message = UserMessage(
+                    content = "use local model and guardian",
+                    runOptions = RunOptions(
+                        taintApprovalPolicy = "GUARDIAN",
+                        modelId = "local-coder-32b",
+                        modelLocality = "local",
+                    ),
+                ),
+                platformProfile = PlatformProfile.DESKTOP,
+                deviceId = "dev-1",
+                networkAvailable = true,
+            )
+        )
+        val runValues = SettingsStore.readRunValues(driver, accepted.runId)
+        assertEquals("\"GUARDIAN\"", runValues[Settings.trustTaintApprovalPolicy.key])
+        assertEquals("\"local-coder-32b\"", runValues[Settings.modelDefaultRunLlm.key])
+        assertEquals("\"local-coder-32b\"", runValues[Settings.modelDefaultLlm.key])
+        assertEquals("\"local\"", runValues[Settings.routingModelLocality.key])
+        assertEquals(
+            TaintApprovalPolicy.GUARDIAN,
+            RuntimeCompositionRoot.resolveTaintApprovalPolicy(
+                userDriver = null,
+                projectDriver = driver,
+                runId = RunId(accepted.runId),
+            ),
+        )
+        assertEquals(
+            EnforcedLocality.LOCAL,
+            RuntimeCompositionRoot.resolveModelLocality(
+                userDriver = null,
+                projectDriver = driver,
+                runId = RunId(accepted.runId),
+            ),
+        )
+        assertEquals(
+            "local-coder-32b",
+            RuntimeCompositionRoot.resolveRunModelId(
+                userDriver = null,
+                projectDriver = driver,
+                runId = RunId(accepted.runId),
+                isWorkerSession = false,
+            ),
+        )
     }
 }

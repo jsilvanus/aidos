@@ -41,6 +41,9 @@ The Trusted Component Registry maps each functional domain to its authoritative 
 | **Conversation Mesh & Timelines** | **aidos-tcr** | `dev.aidos.tcr.mesh` | Agentic Messenger (AMP) | • `MessageBubble`<br>• `ContactRow`<br>• `DualViewToggle` (Natural vs Cue ticker)<br>• `CueTickerRow`<br>• `ConversationInputBar` |
 | **Universal Envelopes & Cryptographic Badges** | **aidos-tcr** | `dev.aidos.tcr.mesh`<br>`dev.aidos.tcr.model` | Agentic Messenger (AMP) | • `ProvenanceBadge` (Human Direct vs Delegated Runner)<br>• `PrivacySealBadge` (E2EE vs Local Inference)<br>• `IdentityCard`<br>• `PresenceIndicator`<br>• `UniversalEnvelope` & `UiModels` |
 | **Progressive Disclosure & Co-Pilots** | **aidos-tcr** | `dev.aidos.tcr.mesh` | Agentic Messenger (AMP) | • `ApprovalCard` (Escrowed Topic Requests)<br>• `CalendarCopilotCard`<br>• `WaveformVisualizer` (Voice Playback) |
+| **Intent Graph & Task Visuals** | **aidos-tcr** | `dev.aidos.tcr.intent` | Aidos (RFC-0110, RFC-0111) | • `IntentStatusBadge` (Derived status colors/icons)<br>• `IntentActorBadge` (HUMAN/AGENT/HYBRID)<br>• `DispatchPolicyBadge` (AUTO_WHEN_READY / MANUAL_START)<br>• `GranularityBadge`, `TargetProfileBadge`, `MinLocalityBadge`<br>• `IntentTaskCard` (Tree, List, Kanban rich card) |
+| **Blinded Egress Gate (Zero-Egress Life Messaging)** | **aidos-tcr** | `dev.aidos.tcr.intent` | Aidos (RFC-0113) | • `EgressGateCard` (HMAC token sign, zero-egress release gate) |
+| **Split Verification Review (Mobile -> Desktop Handoff)** | **aidos-tcr** | `dev.aidos.tcr.intent` | Aidos (RFC-0110) | • `SplitVerificationCard` (Desktop test runner gate & check signoff) |
 | **Generative UI Registry & Timeline Dispatcher** | **aidos-tcr** | `dev.aidos.tcr.generative` | Agentic Messenger / Aidos | • `GenerativeUiRegistry`<br>• Timeline Model mappers (`UniversalEnvelope` → Compose) |
 | **Generative UI Host & Desktop Spatial Canvas** | **Aidos Desktop** | `dev.aidos.desktop` | Aidos (RFC-0051) | • Infinite Canvas Viewport & Node Coordinator<br>• Execution Graph Visualizer & Inspection Trees<br>• Spatial Node Frames & Presence Waves |
 | **Core Agent Loop & Runtime Execution** | **Aidos Engine** | `dev.aidos.kernel`<br>`dev.aidos.engine` | Aidos (RFC-0103) | • `AgentRuntime`, `ToolBroker`<br>• Model Adapters (`llama.cpp`, `ONNX Runtime`)<br>• `SystemOne` Decision Routing<br>• STT Transcribe Endpoint |
@@ -110,6 +113,24 @@ Aidos (`jsilvanus/aidos`) provides the foundational runtime, local inference mod
 
 ---
 
+### 3.4. Intent Graph, Blinded Egress & Split Verification (Spec: Aidos RFC-0110, RFC-0111, RFC-0113)
+
+The Intent Graph dual-mode execution architecture (Life & Coding Management) relies on authoritative TCR components:
+
+#### 1. Task Node Visuals (`IntentTaskCard`, `IntentStatusBadge`, `IntentActorBadge`)
+- **Dual-Mode Presentation:** Renders atomic tasks and goals in Tree-List, Pipeline, and Kanban views with actor accents (`HUMAN` gold, `AGENT` cyan, `HYBRID` purple).
+- **Derived-Only Status:** Visualizes non-deferrable invariant states (`NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `NEEDS_REVIEW`, `DONE`, `STALE`, `CONFLICTED`) with zero state mutation in Composables.
+- **Dispatch & Locality Chips:** Surfaces `AUTO_WHEN_READY` vs `MANUAL_START` dispatch policies and air-gapped `LOCAL_ONLY` execution bounds.
+
+#### 2. The Blinded Egress Gate Card (`EgressGateCard`, RFC-0113 §4.3)
+- Quarantines outbound messages originating from air-gapped personal/LIFE projects in-memory.
+- Enforces human-in-the-loop review of message channel, recipient, taint level, and payload snippet.
+- Requires explicit cryptographic HMAC-SHA256 declassification signing before releasing network packets.
+
+#### 3. Split Verification Gate Card (`SplitVerificationCard`, RFC-0110 §Coding Management)
+- Mediates `MOBILE` -> `DESKTOP` verification handoffs when mobile local agents finish code modifications requiring platform-restricted `SHELL_COMMAND` tests (unavailable on Android per RFC-0049).
+- Renders test commands, scope paths, real-time Desktop execution output, and explicit signoff triggers.
+
 ## 4. Cross-Repository Consumption Model
 
 ### Architecture: `aidos-tcr` as Authoritative UI Foundation
@@ -125,6 +146,7 @@ All client applications in the ecosystem fetch their UI components directly from
                       │  • dev.aidos.tcr.document (DocumentInputSection, Flow) │
                       │  • dev.aidos.tcr.actor (CadenceEngine, Constellation)  │
                       │  • dev.aidos.tcr.mesh (MessageBubble, Cards, Badges)   │
+                      │  • dev.aidos.tcr.intent (IntentTaskCard, Badges, Gates)│
                       │  • dev.aidos.tcr.generative (GenerativeUiRegistry)     │
                       │  • dev.aidos.tcr.theme (TcrTheme tokens & colors)      │
                       └───────────────────────────┬────────────────────────────┘

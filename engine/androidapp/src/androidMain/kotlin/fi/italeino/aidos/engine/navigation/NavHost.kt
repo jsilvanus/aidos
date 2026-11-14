@@ -37,7 +37,7 @@ fun EngineNavHost(
         startDestination = EngineRoute.Home.route,
     ) {
         composable(EngineRoute.Home.route) {
-            HomeScreen()
+            HomeScreen(onOpenAgents = { navController.navigate(EngineRoute.Agents.route) })
         }
 
         composable(
@@ -98,7 +98,7 @@ fun EngineNavHost(
         }
 
         composable(EngineRoute.Agents.route) {
-            AgentsScreen()
+            AgentsScreen(onBack = { navController.popBackStack() })
         }
 
         composable(EngineRoute.Settings.route) {

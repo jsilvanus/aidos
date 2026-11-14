@@ -2,6 +2,9 @@ package dev.aidos.executor
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.broker.AuditLog
+import dev.aidos.kernel.ActorKind
+import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.CapabilityManager
 import dev.aidos.kernel.EventId
 import dev.aidos.kernel.Permission
@@ -14,8 +17,12 @@ import dev.aidos.kernel.SuspendedOperation
 import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
 import dev.aidos.kernel.TaskState
+import dev.aidos.settings.SettingDescriptor
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingsWriter
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -23,6 +30,9 @@ data class WorkerSpawnSpec(
     val brief: String,
     val capabilitiesToDelegate: List<String> = emptyList(),
     val budgetSplitWays: Int = 1,
+    val modelId: String? = null,
+    val locality: String? = null,
+    val taintApprovalPolicy: String? = null,
 )
 
 /**
@@ -48,7 +58,11 @@ class WorkerSpawner(
         brief: String,
         capabilitiesToDelegate: List<String> = emptyList(),
         budgetSplitWays: Int = 1,
+        modelId: String? = null,
+        locality: String? = null,
+        taintApprovalPolicy: String? = null,
     ) {
+        val now = nowIso()
         val capsJson = json.encodeToString(capabilitiesToDelegate)
         driver.execute(
             identifier = null,
@@ -64,7 +78,51 @@ class WorkerSpawner(
             bindString(1, brief)
             bindString(2, capsJson)
             bindLong(3, maxOf(1, budgetSplitWays).toLong())
-            bindString(4, nowIso())
+            bindString(4, now)
+        }
+
+        driver.execute(
+            identifier = null,
+            sql = "DELETE FROM settings WHERE scope = 'task_spawn' AND scope_id = ?",
+            parameters = 1,
+        ) {
+            bindString(0, taskId.value)
+        }
+
+        modelId?.trim()?.takeIf { it.isNotEmpty() }?.let { trimmedModelId ->
+            upsertTaskSpawnSetting(taskId.value, Settings.modelDefaultRunLlm, trimmedModelId, now)
+        }
+        locality?.trim()?.takeIf { it.isNotEmpty() }?.let { rawLocality ->
+            val parsedLocality = Settings.routingModelLocality.codec
+                .decode(JsonPrimitive(rawLocality))
+                .getOrThrow()
+            upsertTaskSpawnSetting(taskId.value, Settings.routingModelLocality, parsedLocality, now)
+        }
+        taintApprovalPolicy?.trim()?.takeIf { it.isNotEmpty() }?.let { rawPolicy ->
+            val parsedPolicy = Settings.trustTaintApprovalPolicy.codec
+                .decode(JsonPrimitive(rawPolicy.uppercase()))
+                .getOrThrow()
+            upsertTaskSpawnSetting(taskId.value, Settings.trustTaintApprovalPolicy, parsedPolicy, now)
+        }
+    }
+
+    private fun <T> upsertTaskSpawnSetting(
+        taskId: String,
+        descriptor: SettingDescriptor<T>,
+        value: T,
+        nowIso: String,
+    ) {
+        val encoded = descriptor.codec.encode(value).toString()
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO settings (scope, scope_id, key, value_json, set_at, set_by_kind) " +
+                "VALUES ('task_spawn', ?, ?, ?, ?, 'RUNTIME')",
+            parameters = 4,
+        ) {
+            bindString(0, taskId)
+            bindString(1, descriptor.key)
+            bindString(2, encoded)
+            bindString(3, nowIso)
         }
     }
 
@@ -149,15 +207,84 @@ class WorkerSpawner(
             maxSteps = 24,
         )
 
+        // 5b. Propagate any per-spawn model / locality / guardian overrides to child run scope
+        val chosenModelId = spec.modelId?.trim()?.takeIf { it.isNotEmpty() }
+        if (chosenModelId != null) {
+            SettingsWriter.writeRun(
+                driver = driver,
+                runId = childRunId.value,
+                descriptor = Settings.modelDefaultLlm,
+                value = chosenModelId,
+                nowIso = now,
+                setByKind = "RUNTIME",
+            ).getOrThrow()
+            SettingsWriter.writeRun(
+                driver = driver,
+                runId = childRunId.value,
+                descriptor = Settings.modelDefaultRunLlm,
+                value = chosenModelId,
+                nowIso = now,
+                setByKind = "RUNTIME",
+            ).getOrThrow()
+        }
+        val chosenLocality = spec.locality?.trim()?.takeIf { it.isNotEmpty() }
+        if (chosenLocality != null) {
+            val parsedLocality = Settings.routingModelLocality.codec
+                .decode(JsonPrimitive(chosenLocality))
+                .getOrThrow()
+            SettingsWriter.writeRun(
+                driver = driver,
+                runId = childRunId.value,
+                descriptor = Settings.routingModelLocality,
+                value = parsedLocality,
+                nowIso = now,
+                setByKind = "RUNTIME",
+            ).getOrThrow()
+        }
+        val chosenPolicy = spec.taintApprovalPolicy?.trim()?.takeIf { it.isNotEmpty() }
+        if (chosenPolicy != null) {
+            val parsedPolicy = Settings.trustTaintApprovalPolicy.codec
+                .decode(JsonPrimitive(chosenPolicy.uppercase()))
+                .getOrThrow()
+            SettingsWriter.writeRun(
+                driver = driver,
+                runId = childRunId.value,
+                descriptor = Settings.trustTaintApprovalPolicy,
+                value = parsedPolicy,
+                nowIso = now,
+                setByKind = "RUNTIME",
+            ).getOrThrow()
+        }
+
         // 6. Update worker_spawn_requests
         updateOrInsertSpawnRequest(task.id.value, spec, workerSessionId, childRunId.value)
 
-        // 7. Park parent task
+        // 7. Record spawn detail and audit entry, then park parent task
         val operationDetail = buildJsonObject {
             put("worker_session_id", workerSessionId)
             put("child_run_id", childRunId.value)
             put("brief", spec.brief)
+            if (chosenModelId != null) {
+                put("model_id", chosenModelId)
+            }
+            put("model_chosen_by_main_model", chosenModelId != null)
+            if (chosenLocality != null) {
+                put("locality", chosenLocality.lowercase())
+            }
+            if (chosenPolicy != null) {
+                put("taint_approval_policy", chosenPolicy.uppercase())
+            }
         }.toString()
+
+        AuditLog(driver, parentRunContext.deviceId).write(
+            id = idGen(),
+            projectId = task.projectId.value,
+            kind = "WorkerSpawned",
+            actor = ActorRef(ActorKind.SESSION, task.sessionId.value),
+            subjectRef = workerSessionId,
+            detailJson = operationDetail,
+            nowIso = now,
+        )
 
         return TaskResult(
             success = true,
@@ -169,8 +296,8 @@ class WorkerSpawner(
         )
     }
 
-    private fun loadSpawnSpec(taskId: String): WorkerSpawnSpec? =
-        driver.executeQuery(
+    private fun loadSpawnSpec(taskId: String): WorkerSpawnSpec? {
+        val base = driver.executeQuery(
             identifier = null,
             sql = "SELECT brief, capabilities_json, budget_split_ways FROM worker_spawn_requests WHERE task_id = ?",
             mapper = { c ->
@@ -189,7 +316,50 @@ class WorkerSpawner(
                 )
             },
             parameters = 1,
+        ) { bindString(0, taskId) }.value ?: return null
+
+        val taskSpawnSettings = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT key, value_json FROM settings WHERE scope = 'task_spawn' AND scope_id = ?",
+            mapper = { c ->
+                val map = LinkedHashMap<String, String>()
+                while (c.next().value) {
+                    val k = c.getString(0)
+                    val v = c.getString(1)
+                    if (k != null && v != null) map[k] = v
+                }
+                QueryResult.Value(map)
+            },
+            parameters = 1,
         ) { bindString(0, taskId) }.value
+
+        val modelId = taskSpawnSettings[Settings.modelDefaultRunLlm.key]?.let { raw ->
+            runCatching { json.parseToJsonElement(raw) }
+                .getOrNull()
+                ?.let { Settings.modelDefaultRunLlm.codec.decode(it).getOrNull() }
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        }
+        val locality = taskSpawnSettings[Settings.routingModelLocality.key]?.let { raw ->
+            runCatching { json.parseToJsonElement(raw) }
+                .getOrNull()
+                ?.let { Settings.routingModelLocality.codec.decode(it).getOrNull() }
+                ?.name
+                ?.lowercase()
+        }
+        val taintApprovalPolicy = taskSpawnSettings[Settings.trustTaintApprovalPolicy.key]?.let { raw ->
+            runCatching { json.parseToJsonElement(raw) }
+                .getOrNull()
+                ?.let { Settings.trustTaintApprovalPolicy.codec.decode(it).getOrNull() }
+                ?.name
+        }
+
+        return base.copy(
+            modelId = modelId,
+            locality = locality,
+            taintApprovalPolicy = taintApprovalPolicy,
+        )
+    }
 
     private fun updateOrInsertSpawnRequest(
         taskId: String,

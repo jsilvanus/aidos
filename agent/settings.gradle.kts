@@ -95,3 +95,14 @@ include(":bridge")
 // RFC-0106 / RFC-0111 / RFC-0112: Universal Adaptive UI common components
 include(":ui-common")
 
+// TCR: Trusted Component Registry canonical Compose Multiplatform UI library (RFC-0106, RFC-0110, RFC-0113).
+val aidosTcrCandidates = listOf(
+    file("../aidos-tcr"),
+    file("../../aidos-tcr"),
+    file("D:/aidos-tcr"),
+    file("c:/Users/jsilv/Code/aidos-tcr")
+)
+val aidosTcrDir = aidosTcrCandidates.firstOrNull { it.exists() && it.isDirectory }
+if (aidosTcrDir != null) {
+    includeBuild(aidosTcrDir)
+}

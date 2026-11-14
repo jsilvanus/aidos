@@ -449,4 +449,118 @@ class PolicyInferenceRouterTest {
         )
         assertEquals("partner-custom", tight.adapter.modelId)
     }
+
+    @Test
+    fun `enforcedLocality LOCAL permits local adapters and forbids cluster or remote`() = runTest {
+        val local = fakeAdapter("local-qwen", isLocal = true)
+        val cluster = fakeAdapter("cluster-llama", isLocal = false)
+        val remote = fakeAdapter("remote-sonnet", isLocal = false)
+
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = true, enforcedLocality = EnforcedLocality.LOCAL),
+            localAdapters = listOf(local),
+            remoteAdapters = listOf(remote),
+            clusterAdapters = listOf(cluster),
+        )
+        val localDecision = assertIs<RoutingDecision.Local>(router.select(ModelKind.LLM, ctx()))
+        assertEquals("local-qwen", localDecision.adapter.modelId)
+
+        val noLocalRouter = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = true),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(remote),
+            clusterAdapters = listOf(cluster),
+        )
+        val blocked = assertIs<RoutingDecision.DisabledByPolicy>(
+            noLocalRouter.selectWithOverride(
+                kind = ModelKind.LLM,
+                context = ctx(),
+                enforcedLocality = EnforcedLocality.LOCAL,
+            )
+        )
+        assertTrue(blocked.reason.contains("LOCAL"))
+    }
+
+    @Test
+    fun `enforcedLocality CLUSTER uses local or cluster adapters and forbids cloud remote`() = runTest {
+        val cluster = fakeAdapter("cluster-70b", isLocal = false)
+        val remote = fakeAdapter("remote-opus", isLocal = false)
+
+        val clusterRouter = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = false, enforcedLocality = EnforcedLocality.CLUSTER),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(remote),
+            clusterAdapters = listOf(cluster),
+        )
+        val approved = assertIs<RoutingDecision.RemoteApproved>(clusterRouter.select(ModelKind.LLM, ctx()))
+        assertEquals("cluster-70b", approved.adapter.modelId)
+
+        assertIs<RoutingDecision.UnavailableOffline>(
+            clusterRouter.select(ModelKind.LLM, ctx(networkAvailable = false))
+        )
+
+        val noClusterRouter = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = true, enforcedLocality = EnforcedLocality.CLUSTER),
+            localAdapters = emptyList(),
+            remoteAdapters = listOf(remote),
+            clusterAdapters = emptyList(),
+        )
+        val blocked = assertIs<RoutingDecision.DisabledByPolicy>(noClusterRouter.select(ModelKind.LLM, ctx()))
+        assertTrue(blocked.reason.contains("CLUSTER"))
+    }
+
+    @Test
+    fun `preferredModelId picks matching model within allowed tier and rejects model only in disallowed tier`() = runTest {
+        val local = fakeAdapter("local-small", isLocal = true)
+        val cluster = fakeAdapter("cluster-mid", isLocal = false)
+        val remoteA = fakeAdapter("remote-a", isLocal = false)
+        val remoteB = fakeAdapter("remote-b", isLocal = false)
+
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = true),
+            localAdapters = listOf(local),
+            remoteAdapters = listOf(remoteA, remoteB),
+            clusterAdapters = listOf(cluster),
+        )
+
+        // Pin cluster model explicitly when cluster is allowed even though a local model is present
+        val pickedCluster = assertIs<RoutingDecision.RemoteApproved>(
+            router.selectWithOverride(
+                kind = ModelKind.LLM,
+                context = ctx(),
+                preferredModelId = "cluster-mid",
+                enforcedLocality = EnforcedLocality.CLUSTER,
+            )
+        )
+        assertEquals("cluster-mid", pickedCluster.adapter.modelId)
+
+        // Pin specific remote model when REMOTE is allowed even though local/cluster exist
+        val pickedRemote = assertIs<RoutingDecision.RemoteApproved>(
+            router.selectWithOverride(
+                kind = ModelKind.LLM,
+                context = ctx(),
+                preferredModelId = "remote-b",
+                enforcedLocality = EnforcedLocality.REMOTE,
+            )
+        )
+        assertEquals("remote-b", pickedRemote.adapter.modelId)
+
+        // Preferred model exists ONLY in remote -> DisabledByPolicy under LOCAL or CLUSTER
+        assertIs<RoutingDecision.DisabledByPolicy>(
+            router.selectWithOverride(
+                kind = ModelKind.LLM,
+                context = ctx(),
+                preferredModelId = "remote-b",
+                enforcedLocality = EnforcedLocality.LOCAL,
+            )
+        )
+        assertIs<RoutingDecision.DisabledByPolicy>(
+            router.selectWithOverride(
+                kind = ModelKind.LLM,
+                context = ctx(),
+                preferredModelId = "remote-b",
+                enforcedLocality = EnforcedLocality.CLUSTER,
+            )
+        )
+    }
 }

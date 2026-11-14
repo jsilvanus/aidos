@@ -31,6 +31,7 @@ import dev.aidos.kernel.RoutingDecision
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.SecretId
 import dev.aidos.kernel.SessionId
+import dev.aidos.kernel.SessionRole
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.SubjectKind
 import dev.aidos.kernel.TextOutput
@@ -47,6 +48,9 @@ import dev.aidos.kernel.Turn
 import dev.aidos.kernel.Usage
 import dev.aidos.kernel.UserId
 import dev.aidos.prompt.PromptAssembler
+import dev.aidos.settings.ModelLocality
+import dev.aidos.settings.Settings
+import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.TaintApprovalPolicy
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
@@ -61,6 +65,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -815,5 +820,252 @@ class GuardianApprovalEndToEndTest {
         }.exceptionOrNull()
         assertIs<CancellationException>(cancelled)
         }
+    }
+
+    @Test
+    fun `LlmGuardianApprovalVerifier forwards preferredModelId via selectAdapter and fails closed when DisabledByPolicy`() = runBlocking {
+        val req = GuardianApprovalRequest(
+            userMessageSummary = "Push my branch",
+            toolName = "push",
+            argumentsJson = "{}",
+        )
+        val verifierAdapter = fakeAdapter(
+            listOf(
+                ModelResponse(
+                    outputs = listOf(TextOutput("""{"decision":"ALIGNED","rationale":"requested push"}""")),
+                    stopReason = StopReason.END_TURN,
+                    usage = Usage(1, 1, 2),
+                    model = ModelRef("guardian-custom", "1"),
+                )
+            ),
+            modelId = "guardian-custom",
+        )
+        var capturedPreferred: String? = null
+        val verifier = LlmGuardianApprovalVerifier(
+            router = fakeRouter(fakeAdapter(emptyList())),
+            preferredModelId = { "guardian-custom" },
+            selectAdapter = { _, modelId ->
+                capturedPreferred = modelId
+                RoutingDecision.Local(verifierAdapter)
+            },
+        )
+        val verdict = verifier.verify(req)
+        assertEquals("guardian-custom", capturedPreferred)
+        assertEquals(GuardianDecision.ALIGNED, verdict.decision)
+        assertEquals("guardian-custom", verdict.modelId)
+
+        val blockedVerifier = LlmGuardianApprovalVerifier(
+            router = fakeRouter(fakeAdapter(emptyList())),
+            preferredModelId = { "remote-guardian" },
+            selectAdapter = { _, _ -> RoutingDecision.DisabledByPolicy("Model locality enforced to LOCAL") },
+        )
+        val blockedVerdict = blockedVerifier.verify(req)
+        assertEquals(GuardianDecision.AMBIGUOUS, blockedVerdict.decision)
+        assertTrue(blockedVerdict.rationale.contains("LOCAL"))
+    }
+
+    @Test
+    fun `AgentLoopTaskRunner honors resolveTaintApprovalPolicyForRun per run`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProjectAndSession(driver, pid, sid, eid)
+        val runCreator = RunCreator(driver, { nextId() }, { nowIso })
+        val runId = runCreator.createForUserMessage(
+            SessionId(sid), ProjectId(pid), EventId(eid),
+            "Read dependency readme and push", PlatformProfile.DESKTOP, "dev-1", false, 24,
+        )
+        val caps = SqliteCapabilityManager(driver, UuidV7Generator()) { nowIso }
+        caps.grant(sid, SubjectKind.SESSION, Permission.FS_READ, CapabilityScope.Filesystem(ProjectId(pid), "/"), CapabilityConstraints(), null, UserId("u1")).getOrThrow()
+        caps.grant(sid, SubjectKind.SESSION, Permission.GIT_WRITE, CapabilityScope.Git(ProjectId(pid), emptySet<GitOperation>()), CapabilityConstraints(), null, UserId("u1")).getOrThrow()
+        val audit = AuditLog(driver)
+        val broker = ToolBroker(caps, audit, { nextId() }, { nowIso }, { caps.projectIdForCapability(it) ?: "" })
+        val tools = GuardianTestTools { "plain readme text" }
+        broker.register(tools)
+
+        val adapter = fakeAdapter(
+            listOf(
+                ModelResponse(listOf(ToolCallOutput(ToolCall("c1", "read-file", buildJsonObject { put("path", "node_modules/a") }, null))), StopReason.TOOL_USE, null, ModelRef("m", "1")),
+                ModelResponse(listOf(ToolCallOutput(ToolCall("c2", "push", buildJsonObject {}, null))), StopReason.TOOL_USE, null, ModelRef("m", "1")),
+                endTurnResponse(),
+            )
+        )
+        var verifierCalls = 0
+        val runner = AgentLoopTaskRunner(
+            driver = driver,
+            audit = audit,
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            router = fakeRouter(adapter),
+            assembler = PromptAssembler(),
+            broker = broker,
+            subjectId = sid,
+            resolveCapability = resolver(caps),
+            resolveTaintApprovalPolicy = { TaintApprovalPolicy.MANUAL },
+            resolveTaintApprovalPolicyForRun = { rid ->
+                if (rid == runId) TaintApprovalPolicy.GUARDIAN else TaintApprovalPolicy.MANUAL
+            },
+            guardianVerifier = object : GuardianApprovalVerifier {
+                override suspend fun verify(request: GuardianApprovalRequest): GuardianVerdict {
+                    verifierCalls++
+                    return GuardianVerdict(GuardianDecision.ALIGNED, "per-run GUARDIAN", "g-1")
+                }
+            },
+        )
+        val executor = SqliteExecutor(
+            driver = driver, audit = audit, events = EventStore(driver),
+            idGen = { nextId() }, nowIso = { nowIso }, taskRunner = runner,
+        )
+        executor.drive(runId)
+
+        assertEquals("COMPLETED", runState(driver, runId))
+        assertEquals(1, verifierCalls)
+        assertEquals(1, tools.pushes)
+    }
+
+    @Test
+    fun `spawn_worker tool propagates model_id, locality, and taint_approval_policy to child run and selects worker model`() = runBlocking {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId(); val eid = nextId()
+        seedProjectAndSession(driver, pid, sid, eid)
+        val caps = SqliteCapabilityManager(driver, UuidV7Generator()) { nowIso }
+        caps.grant(
+            sid, SubjectKind.SESSION, Permission.WORKER_CREATE,
+            CapabilityScope.Worker(maxWorkerCount = 4, allowedRoles = setOf(SessionRole.WORKER)),
+            CapabilityConstraints(), null, UserId("u1"),
+        ).getOrThrow()
+
+        val runCreator = RunCreator(driver, { nextId() }, { nowIso })
+        val parentRunId = runCreator.createForUserMessage(
+            SessionId(sid), ProjectId(pid), EventId(eid),
+            "Delegate a coding subtask to a local worker", PlatformProfile.DESKTOP, "dev-1", true, 24,
+        )
+        val audit = AuditLog(driver)
+        val broker = ToolBroker(caps, audit, { nextId() }, { nowIso }, { caps.projectIdForCapability(it) ?: "" })
+        val workerSpawner = WorkerSpawner(driver, caps, runCreator, { nextId() }, { nowIso })
+
+        var sawSpawnWorkerToolOnMain = false
+        var sawSpawnWorkerToolOnWorker = false
+        val mainAdapter = fakeAdapter(
+            listOf(
+                ModelResponse(
+                    outputs = listOf(
+                        ToolCallOutput(
+                            ToolCall(
+                                callId = "spawn-1",
+                                toolName = "spawn_worker",
+                                arguments = buildJsonObject {
+                                    put("brief", "Implement helper")
+                                    put("model_id", "worker-local-qwen")
+                                    put("locality", "local")
+                                    put("taint_approval_policy", "GUARDIAN")
+                                },
+                                capabilityId = null,
+                            )
+                        )
+                    ),
+                    stopReason = StopReason.TOOL_USE,
+                    usage = Usage(10, 5, 15),
+                    model = ModelRef("main-sonnet", "1"),
+                ),
+                ModelResponse(
+                    outputs = listOf(TextOutput("parent complete")),
+                    stopReason = StopReason.END_TURN,
+                    usage = Usage(10, 5, 15),
+                    model = ModelRef("main-sonnet", "1"),
+                ),
+            ),
+            modelId = "main-sonnet",
+            onInvoke = { req ->
+                if (req.tools.any { it.name == "spawn_worker" }) sawSpawnWorkerToolOnMain = true
+            },
+        )
+        val workerAdapter = fakeAdapter(
+            listOf(
+                ModelResponse(
+                    outputs = listOf(TextOutput("worker done")),
+                    stopReason = StopReason.END_TURN,
+                    usage = Usage(5, 5, 10),
+                    model = ModelRef("worker-local-qwen", "1"),
+                )
+            ),
+            modelId = "worker-local-qwen",
+            onInvoke = { req ->
+                if (req.tools.any { it.name == "spawn_worker" }) sawSpawnWorkerToolOnWorker = true
+            },
+        )
+
+        val routedSelections = mutableListOf<Pair<String?, String?>>()
+        val runner = AgentLoopTaskRunner(
+            driver = driver,
+            audit = audit,
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            router = fakeRouter(mainAdapter),
+            assembler = PromptAssembler(),
+            broker = broker,
+            subjectId = sid,
+            resolveCapability = resolver(caps),
+            workerSpawner = workerSpawner,
+            resolveRunModelId = { rid, isWorker ->
+                val runValues = SettingsStore.readRunValues(driver, rid.value)
+                val key = if (isWorker) Settings.modelDefaultRunLlm.key else Settings.modelDefaultLlm.key
+                runValues[key]?.let { raw -> Json.parseToJsonElement(raw).jsonPrimitive.content }
+            },
+            resolveRunLocality = { rid ->
+                val runValues = SettingsStore.readRunValues(driver, rid.value)
+                runValues[Settings.routingModelLocality.key]?.let { raw -> Json.parseToJsonElement(raw).jsonPrimitive.content }
+            },
+            selectModelDecision = { _, _, preferredModelId, enforcedLocality ->
+                routedSelections += (preferredModelId to enforcedLocality)
+                if (preferredModelId == "worker-local-qwen") {
+                    RoutingDecision.Local(workerAdapter)
+                } else {
+                    RoutingDecision.Local(mainAdapter)
+                }
+            },
+        )
+        // Wrap assembler request observation indirectly via adapter onInvoke? Check worker_spawn_requests and audit_log:
+        val executor = SqliteExecutor(
+            driver = driver,
+            audit = audit,
+            events = EventStore(driver),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            taskRunner = runner,
+            workerSpawner = workerSpawner,
+        )
+        executor.drive(parentRunId)
+
+        assertEquals("COMPLETED", runState(driver, parentRunId))
+        val childRunId = driver.executeQuery(
+            null,
+            "SELECT child_run_id FROM worker_spawn_requests WHERE child_run_id IS NOT NULL",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 0,
+        ).value
+        assertNotNull(childRunId)
+        assertEquals("COMPLETED", runState(driver, RunId(childRunId)))
+
+        val childRunSettings = SettingsStore.readRunValues(driver, childRunId)
+        assertEquals("\"worker-local-qwen\"", childRunSettings[Settings.modelDefaultLlm.key])
+        assertEquals("\"worker-local-qwen\"", childRunSettings[Settings.modelDefaultRunLlm.key])
+        assertEquals(
+            "\"${ModelLocality.LOCAL.name.lowercase()}\"",
+            childRunSettings[Settings.routingModelLocality.key],
+        )
+        assertEquals("\"GUARDIAN\"", childRunSettings[Settings.trustTaintApprovalPolicy.key])
+
+        // Main initial turn (null, null), Child worker turn ("worker-local-qwen", "local"), Main resume turn (null, null)
+        assertTrue(sawSpawnWorkerToolOnMain, "Main session must see built-in spawn_worker tool")
+        assertFalse(sawSpawnWorkerToolOnWorker, "Worker session must not see built-in spawn_worker tool")
+        assertEquals(
+            listOf(null to null, "worker-local-qwen" to "local", null to null),
+            routedSelections,
+        )
+
+        val spawnedAudit = auditEntries(driver, "WorkerSpawned").single()
+        val detail = Json.parseToJsonElement(spawnedAudit.detailJson).jsonObject
+        assertEquals("worker-local-qwen", detail["model_id"]?.jsonPrimitive?.content)
+        assertTrue(detail["model_chosen_by_main_model"]?.jsonPrimitive?.boolean == true)
     }
 }

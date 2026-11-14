@@ -27,17 +27,21 @@ import dev.aidos.filesystem.FilesystemTool
 import dev.aidos.filesystem.PathTrustPolicy
 import dev.aidos.git.GitTool
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.UserId
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.retention.BlobStore
+import dev.aidos.routing.EnforcedLocality
 import dev.aidos.routing.PolicyInferenceRouter
 import dev.aidos.routing.RoutingPolicy
 import dev.aidos.settings.EgressPolicy
+import dev.aidos.settings.ModelLocality
 import dev.aidos.settings.ProjectSettingsLoader
 import dev.aidos.settings.ProjectSettingsSnapshot
+import dev.aidos.settings.SettingDescriptor
 import dev.aidos.settings.SettingError
 import dev.aidos.settings.SettingOrigin
 import dev.aidos.settings.Settings
@@ -170,6 +174,7 @@ class RuntimeCompositionRoot(
             networkAvailable = networkAvailable,
             idGen = idGen,
             nowIso = nowIso,
+            runId = runId,
         ).drive(runId)
         // RFC-0037 MVP: collect local, aggregated observability metrics after each driven Run.
         runCatching { MetricsCollector(projectDriver).collect(projectId.value) }
@@ -220,6 +225,7 @@ class RuntimeCompositionRoot(
             networkAvailable = runNetworkAvailable(projectDriver, runId),
             idGen = idGen,
             nowIso = nowIso,
+            runId = runId,
         ).resolveCapabilityApproval(runId, approved, denialReason)
     }
 
@@ -266,6 +272,7 @@ class RuntimeCompositionRoot(
             networkAvailable = networkAvailable,
             idGen = idGen,
             nowIso = nowIso,
+            runId = runId,
         ).resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
                 val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
                 val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
@@ -344,6 +351,7 @@ class RuntimeCompositionRoot(
             networkAvailable = runNetworkAvailable(projectDriver, runId),
             idGen = idGen,
             nowIso = nowIso,
+            runId = runId,
         ).resolveUserPrompt(runId, answer, denialReason)
     }
 
@@ -397,6 +405,7 @@ class RuntimeCompositionRoot(
         networkAvailable: Boolean = false,
         idGen: () -> String,
         nowIso: () -> String,
+        runId: RunId? = null,
     ): SqliteExecutor {
         val audit = AuditLog(projectDriver, deviceId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
@@ -484,6 +493,21 @@ class RuntimeCompositionRoot(
         // routing.remote_egress (SECURITY); resolving the policy against the project scope here
         // makes that attempt provably not apply.
         val egressPolicy = resolveEgressPolicy(userDriver, projectSettings)
+        val baselineLocality = resolveModelLocality(
+            userDriver = userDriver,
+            project = projectSettings,
+            projectDriver = projectDriver,
+            projectId = projectId,
+            runId = null,
+        )
+        val baselinePreferredModelId = resolveRunModelId(
+            userDriver = userDriver,
+            project = projectSettings,
+            projectDriver = projectDriver,
+            projectId = projectId,
+            runId = null,
+            isWorkerSession = false,
+        )
         val router = PolicyInferenceRouter(
             policy = RoutingPolicy(
                 allowRemote = allowRemoteFor(egressPolicy),
@@ -492,6 +516,8 @@ class RuntimeCompositionRoot(
                 // distinctly from an explicit NEVER, not silently identical to it.
                 remoteRequiresApproval = egressPolicy == EgressPolicy.ASK,
                 allowedRemoteModelIds = remoteAdapters.map { it.modelId }.toSet(),
+                enforcedLocality = baselineLocality,
+                preferredModelId = baselinePreferredModelId,
             ),
             remoteAdapters = remoteAdapters,
         )
@@ -513,6 +539,15 @@ class RuntimeCompositionRoot(
                     SystemOneTaintInputScreener(
                         baseUrl = url,
                         bearerToken = systemOneBearerToken,
+                        modelIdProvider = {
+                            resolveGuardianDecisionModel(
+                                userDriver = userDriver,
+                                project = projectSettings,
+                                projectDriver = projectDriver,
+                                projectId = projectId,
+                                runId = runId,
+                            )
+                        },
                     )
                 }
         val resolvedGuardianVerifier: GuardianApprovalVerifier = guardianVerifier
@@ -521,6 +556,30 @@ class RuntimeCompositionRoot(
                 resolveRemoteAdapter = { modelId -> remoteAdapters.find { it.modelId == modelId } },
                 profile = platformProfile,
                 networkAvailable = { networkAvailable },
+                preferredModelId = {
+                    resolveGuardianLlmModel(
+                        userDriver = userDriver,
+                        project = projectSettings,
+                        projectDriver = projectDriver,
+                        projectId = projectId,
+                        runId = runId,
+                    )
+                },
+                selectAdapter = { routingCtx, modelId ->
+                    val locality = resolveModelLocality(
+                        userDriver = userDriver,
+                        project = projectSettings,
+                        projectDriver = projectDriver,
+                        projectId = projectId,
+                        runId = runId,
+                    )
+                    router.selectWithOverride(
+                        kind = ModelKind.LLM,
+                        context = routingCtx,
+                        preferredModelId = modelId,
+                        enforcedLocality = locality,
+                    )
+                },
             )
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
@@ -544,9 +603,56 @@ class RuntimeCompositionRoot(
             resolveToolCapability = capabilityResolver::resolveForTool,
             // RFC-0056: large tool outputs are stored once, content-addressed, under .aidos/blobs.
             largeOutputs = BlobStore(projectDriver, File(rootPath, RetentionMaintenance.BLOBS_DIR), nowIso),
-            resolveTaintApprovalPolicy = { resolveTaintApprovalPolicy(userDriver, projectSettings) },
+            resolveTaintApprovalPolicy = {
+                resolveTaintApprovalPolicy(
+                    userDriver = userDriver,
+                    project = projectSettings,
+                    projectDriver = projectDriver,
+                    projectId = projectId,
+                    runId = runId,
+                )
+            },
             taintInputScreener = resolvedScreener,
             guardianVerifier = resolvedGuardianVerifier,
+            resolveTaintApprovalPolicyForRun = { activeRunId ->
+                resolveTaintApprovalPolicy(
+                    userDriver = userDriver,
+                    project = projectSettings,
+                    projectDriver = projectDriver,
+                    projectId = projectId,
+                    runId = activeRunId,
+                )
+            },
+            resolveRunModelId = { activeRunId, isWorkerSession ->
+                resolveRunModelId(
+                    userDriver = userDriver,
+                    project = projectSettings,
+                    projectDriver = projectDriver,
+                    projectId = projectId,
+                    runId = activeRunId,
+                    isWorkerSession = isWorkerSession,
+                )
+            },
+            resolveRunLocality = { activeRunId ->
+                resolveModelLocality(
+                    userDriver = userDriver,
+                    project = projectSettings,
+                    projectDriver = projectDriver,
+                    projectId = projectId,
+                    runId = activeRunId,
+                ).name.lowercase()
+            },
+            selectModelDecision = { kind, routingCtx, preferredModelId, enforcedLocality ->
+                val loc = enforcedLocality?.let { raw ->
+                    EnforcedLocality.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+                }
+                router.selectWithOverride(
+                    kind = kind,
+                    context = routingCtx,
+                    preferredModelId = preferredModelId,
+                    enforcedLocality = loc,
+                )
+            },
         )
         return SqliteExecutor(
             driver = projectDriver,
@@ -646,19 +752,160 @@ class RuntimeCompositionRoot(
                     .resolve(Settings.routingRemoteEgress, project = project).value
             } ?: Settings.routingRemoteEgress.default
 
+        private fun <T> resolvePreference(
+            descriptor: SettingDescriptor<T>,
+            userDriver: SqlDriver? = null,
+            project: ProjectSettingsSnapshot? = null,
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+        ): T {
+            val storeDriver = userDriver ?: projectDriver
+            if (storeDriver != null) {
+                return SettingsStore(userDriver = storeDriver, projectDriver = projectDriver)
+                    .resolve(
+                        descriptor,
+                        projectId = projectId?.value,
+                        project = project,
+                        runId = runId?.value,
+                    )
+                    .value
+            }
+            val entry = project?.entries?.get(descriptor.key)?.value
+            if (entry != null) {
+                val decoded = descriptor.codec.decode(entry)
+                if (decoded.isSuccess) return decoded.getOrThrow()
+            }
+            return descriptor.default
+        }
+
         /**
-         * RFC-0110: resolves `Settings.trustTaintApprovalPolicy` from [userDriver] (user scope only,
-         * per the setting's SECURITY scope class), falling back to `MANUAL` when no [userDriver] is
-         * supplied. `internal` so tests can verify the resolution without driving a full Run.
+         * RFC-0110: resolves `Settings.trustTaintApprovalPolicy` across Run -> Project -> User
+         * -> Default (`MANUAL`) per PREFERENCE scoping.
          */
         internal fun resolveTaintApprovalPolicy(
             userDriver: SqlDriver?,
             project: ProjectSettingsSnapshot? = null,
-        ): TaintApprovalPolicy =
-            userDriver?.let {
-                SettingsStore(userDriver = it, projectDriver = null)
-                    .resolve(Settings.trustTaintApprovalPolicy, project = project).value
-            } ?: Settings.trustTaintApprovalPolicy.default
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+        ): TaintApprovalPolicy = resolvePreference(
+            descriptor = Settings.trustTaintApprovalPolicy,
+            userDriver = userDriver,
+            project = project,
+            projectDriver = projectDriver,
+            projectId = projectId,
+            runId = runId,
+        )
+
+        /**
+         * Resolves `Settings.trustGuardianDecisionModel` across Run -> Project -> User -> Default.
+         */
+        internal fun resolveGuardianDecisionModel(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+        ): String = resolvePreference(
+            descriptor = Settings.trustGuardianDecisionModel,
+            userDriver = userDriver,
+            project = project,
+            projectDriver = projectDriver,
+            projectId = projectId,
+            runId = runId,
+        ).trim().ifEmpty { Settings.trustGuardianDecisionModel.default }
+
+        /**
+         * Resolves `Settings.trustGuardianLlmModel` across Run -> Project -> User, returning null
+         * when configured as empty (automatic routing).
+         */
+        internal fun resolveGuardianLlmModel(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+        ): String? = resolvePreference(
+            descriptor = Settings.trustGuardianLlmModel,
+            userDriver = userDriver,
+            project = project,
+            projectDriver = projectDriver,
+            projectId = projectId,
+            runId = runId,
+        ).trim().takeIf { it.isNotEmpty() }
+
+        /**
+         * Resolves `Settings.routingModelLocality` across Run -> Project -> User -> Default,
+         * mapping it to [EnforcedLocality].
+         */
+        internal fun resolveModelLocality(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+        ): EnforcedLocality = when (
+            resolvePreference(
+                descriptor = Settings.routingModelLocality,
+                userDriver = userDriver,
+                project = project,
+                projectDriver = projectDriver,
+                projectId = projectId,
+                runId = runId,
+            )
+        ) {
+            ModelLocality.LOCAL -> EnforcedLocality.LOCAL
+            ModelLocality.CLUSTER -> EnforcedLocality.CLUSTER
+            ModelLocality.REMOTE -> EnforcedLocality.REMOTE
+        }
+
+        /**
+         * Resolves the preferred LLM model ID for a Run.
+         *
+         * For worker sessions (`role = WORKER`), `model.default_run_llm` takes precedence over
+         * `model.default_llm`. For main sessions, a Run-scoped `model.default_run_llm` override (if
+         * written explicitly for this Run) wins, followed by `model.default_llm` across Run ->
+         * Project -> User.
+         */
+        internal fun resolveRunModelId(
+            userDriver: SqlDriver?,
+            project: ProjectSettingsSnapshot? = null,
+            projectDriver: SqlDriver? = null,
+            projectId: ProjectId? = null,
+            runId: RunId? = null,
+            isWorkerSession: Boolean = false,
+        ): String? {
+            if (isWorkerSession) {
+                val workerModel = resolvePreference(
+                    descriptor = Settings.modelDefaultRunLlm,
+                    userDriver = userDriver,
+                    project = project,
+                    projectDriver = projectDriver,
+                    projectId = projectId,
+                    runId = runId,
+                ).trim().takeIf { it.isNotEmpty() }
+                if (workerModel != null) return workerModel
+            } else if (runId != null && projectDriver != null) {
+                val runValues = SettingsStore.readRunValues(projectDriver, runId.value)
+                val runOverride = runValues[Settings.modelDefaultRunLlm.key]?.let { raw ->
+                    runCatching { Json.parseToJsonElement(raw) }
+                        .getOrNull()
+                        ?.let { Settings.modelDefaultRunLlm.codec.decode(it).getOrNull() }
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                }
+                if (runOverride != null) return runOverride
+            }
+            return resolvePreference(
+                descriptor = Settings.modelDefaultLlm,
+                userDriver = userDriver,
+                project = project,
+                projectDriver = projectDriver,
+                projectId = projectId,
+                runId = runId,
+            ).trim().takeIf { it.isNotEmpty() }
+        }
 
         /**
          * RFC-0027 + RFC-0036: the effective `trust.untrusted_paths`. Specifying a path can only
