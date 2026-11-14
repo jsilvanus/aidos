@@ -19,11 +19,19 @@ class MainActivity : ComponentActivity() {
 
         val runtimeClient = AndroidRuntimeClientFactory.createRuntimeClient(this)
 
+        val initialProjectId = intent.data?.lastPathSegment
+            ?: intent.getStringExtra("projectId")
+            ?: "default-workspace"
+
         setContent {
             AidosTheme {
                 AidosUniversalApp(
                     runtimeClient = runtimeClient,
                     initialDestinationId = "inbox",
+                    initialProjectId = initialProjectId,
+                    onPinProjectLauncher = { projectId, projectName ->
+                        ProjectLauncher.pinProjectShortcut(this, projectId, projectName)
+                    },
                 )
             }
         }

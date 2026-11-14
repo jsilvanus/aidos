@@ -32,6 +32,7 @@ import dev.aidos.ui.theme.SpacingTokens
 fun ProjectHubScreen(
     presenter: ProjectHubPresenter,
     onProjectClick: (String) -> Unit,
+    onPinProjectClick: ((projectId: String, projectName: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -89,7 +90,25 @@ fun ProjectHubScreen(
                                     color = Color.White,
                                 )
 
-                                ProjectTypeBadge(domain = item.domain)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    ProjectTypeBadge(domain = item.domain)
+                                    if (onPinProjectClick != null) {
+                                        Text(
+                                            text = "📌 Pin",
+                                            style = AidosTypography.baseTypography.labelSmall,
+                                            color = ColorTokens.ActorAgent,
+                                            modifier = Modifier
+                                                .background(Color(0x2238BDF8), shape = RoundedCornerShape(CornerTokens.sm))
+                                                .clickable {
+                                                    onPinProjectClick(item.summary.id, item.summary.name)
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                                        )
+                                    }
+                                }
                             }
 
                             if (item.summary.description.isNotBlank()) {

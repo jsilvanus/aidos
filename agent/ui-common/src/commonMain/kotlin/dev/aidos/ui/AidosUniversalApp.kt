@@ -55,11 +55,13 @@ fun AidosUniversalApp(
     runtimeClient: RuntimeClient,
     initialDestinationId: String = "inbox",
     initialLifeFilterOnly: Boolean = false,
+    initialProjectId: String = "default-workspace",
+    onPinProjectLauncher: ((projectId: String, projectName: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
     var selectedDestinationId by remember { mutableStateOf(initialDestinationId) }
-    var currentProjectId by remember { mutableStateOf("default-workspace") }
+    var currentProjectId by remember { mutableStateOf(initialProjectId) }
 
     // Presenters
     val inboxPresenter = remember {
@@ -232,6 +234,7 @@ fun AidosUniversalApp(
                         currentProjectId = projId
                         selectedDestinationId = "inbox"
                     },
+                    onPinProjectClick = onPinProjectLauncher,
                 )
             }
         }

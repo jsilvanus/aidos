@@ -16,14 +16,14 @@
     <application
         android:usesCleartextTraffic="false">
 
-        <!-- Launcher 1 (RFC-0111): Aidos Tasks (Personal / Life Workspace) -->
+        <!-- Launcher 1 (RFC-0111): Aidos Life (Personal / Life Workspace) -->
         <activity
-            android:name="fi.italeino.aidos.TasksMainActivity"
+            android:name="fi.italeino.aidos.LifeMainActivity"
             android:exported="true"
-            android:taskAffinity="fi.italeino.aidos.tasks"
+            android:taskAffinity="fi.italeino.aidos.life"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:label="Aidos Tasks">
+            android:label="Aidos Life">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -41,6 +41,21 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Project Document Launcher (RFC-0111): Concurrent Document Tasks in Recents -->
+        <activity
+            android:name="fi.italeino.aidos.ProjectActivity"
+            android:exported="true"
+            android:documentLaunchMode="intoExisting"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:label="Aidos Project">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aidos" android:host="project" />
             </intent-filter>
         </activity>
 

@@ -9,10 +9,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
 /**
- * Launcher 1 (RFC-0111): "Aidos Tasks"
+ * Launcher 1 (RFC-0111): "Aidos Life"
  * Directly boots into the user's personal / air-gapped LIFE workspace.
  */
-class TasksMainActivity : ComponentActivity() {
+class LifeMainActivity : ComponentActivity() {
 
     private val scope = CoroutineScope(SupervisorJob())
 
@@ -27,6 +27,10 @@ class TasksMainActivity : ComponentActivity() {
                     runtimeClient = runtimeClient,
                     initialDestinationId = "inbox",
                     initialLifeFilterOnly = true,
+                    initialProjectId = "life",
+                    onPinProjectLauncher = { projectId, projectName ->
+                        ProjectLauncher.pinProjectShortcut(this, projectId, projectName)
+                    },
                 )
             }
         }
