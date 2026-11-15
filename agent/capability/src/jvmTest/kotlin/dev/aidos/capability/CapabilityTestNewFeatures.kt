@@ -895,4 +895,46 @@ class CapabilityTestNewFeatures {
         ) { bindString(0, delegated.id.value) }.value
         assertEquals("WORKER", issuedByKind)
     }
+
+    @Test
+    fun `git scope enforces allowedOperations per git tool operation (RFC-0032)`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000399"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        val readOnlyCap = mgr.grant(
+            subjectId = "session-git-read",
+            subjectKind = SubjectKind.SESSION,
+            permission = Permission.GIT_READ,
+            scope = CapabilityScope.Git(ProjectId(projectId), setOf(dev.aidos.kernel.GitOperation.READ)),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        fun gitOp(name: String, effect: EffectKind, recovery: RecoveryClass) = object : Operation<Unit> {
+            override val name = name
+            override val effect = effect
+            override val recoveryClass = recovery
+        }
+
+        assertEquals(
+            CapabilityCheckResult.Allowed,
+            mgr.validate("session-git-read", readOnlyCap.id, gitOp("git:status", EffectKind.Read, RecoveryClass.PURE), TrustLevel.TRUSTED),
+        )
+        assertEquals(
+            CapabilityCheckResult.Denied(DenialReason.SCOPE_MISMATCH),
+            mgr.validate("session-git-read", readOnlyCap.id, gitOp("git:commit", EffectKind.Mutate(MutationScope.IN_PROJECT), RecoveryClass.IDEMPOTENT), TrustLevel.TRUSTED),
+        )
+        assertEquals(
+            CapabilityCheckResult.Denied(DenialReason.SCOPE_MISMATCH),
+            mgr.validate("session-git-read", readOnlyCap.id, gitOp("git:fetch", EffectKind.Egress("remote"), RecoveryClass.IDEMPOTENT), TrustLevel.TRUSTED),
+        )
+        assertEquals(
+            CapabilityCheckResult.Denied(DenialReason.SCOPE_MISMATCH),
+            mgr.validate("session-git-read", readOnlyCap.id, gitOp("git:push", EffectKind.Egress("remote"), RecoveryClass.UNSAFE), TrustLevel.TRUSTED),
+        )
+    }
 }

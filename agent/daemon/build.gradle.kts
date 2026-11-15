@@ -22,6 +22,7 @@ kotlin {
                 implementation(project(":filesystem"))
                 implementation(project(":git"))
                 implementation(project(":prompt"))
+                implementation(project(":memory"))
                 implementation(project(":routing"))
                 implementation(project(":http"))
                 implementation(project(":amp"))
@@ -29,6 +30,7 @@ kotlin {
                 implementation(project(":settings"))
                 implementation(project(":retention"))
                 implementation(project(":worker"))
+                implementation(project(":intent"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -43,6 +45,7 @@ kotlin {
 
         val jvmTest by getting {
             dependencies {
+                implementation(project(":lock"))
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
             }

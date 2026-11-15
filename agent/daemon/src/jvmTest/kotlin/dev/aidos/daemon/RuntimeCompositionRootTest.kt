@@ -869,4 +869,94 @@ class RuntimeCompositionRootTest {
             ),
         )
     }
+
+    @Test
+    fun `RuntimeCompositionRoot wires ModelRuntime and SessionMemoryStore end-to-end (RFC-0020, RFC-0026)`() = runTest {
+        val driver = openDriver()
+        val pid = "proj-mem-rt"
+        val sid = "sess-mem-rt"
+        val rootDir = Files.createTempDirectory("aidos-mem-rt").toFile()
+        seedProjectAndSession(driver, pid, sid, rootPath = rootDir.path)
+
+        val runId = createRun(driver, pid, sid, networkAvailable = false)
+
+        // Seed a TASK_STATE memory entry tied to this Run, which must expire when the Run completes.
+        val memStore = dev.aidos.memory.SessionMemoryStore(driver)
+        val taskStateId = memStore.write(
+            dev.aidos.memory.MemoryEntry(
+                sessionId = sid,
+                projectId = pid,
+                kind = dev.aidos.memory.MemoryKind.TASK_STATE,
+                content = "Step 1 in progress",
+                sourceRefs = listOf("run:${runId.value}"),
+                createdByKind = dev.aidos.memory.CreatedByKind.RUNTIME,
+                createdById = "runtime",
+                confidence = dev.aidos.memory.Confidence.OBSERVED,
+                trustLevel = dev.aidos.kernel.TrustLevel.TRUSTED,
+            )
+        )
+
+        var promptSawMemory = false
+        val loadedIds = mutableListOf<String>()
+        val runtime = object : dev.aidos.kernel.ModelRuntime {
+            private val desc = dev.aidos.kernel.ModelDescriptor(
+                id = "local-test-model",
+                name = "Local Test",
+                kind = dev.aidos.kernel.ModelKind.LLM,
+                providerId = "llamacpp",
+                isLocal = true,
+                contextWindow = 32_768,
+                sizeBytes = 1024L,
+                digest = null,
+            )
+            override suspend fun catalog() = listOf(desc)
+            override suspend fun installed() = listOf(desc)
+            override suspend fun load(modelId: String): Result<dev.aidos.kernel.ModelAdapter> {
+                loadedIds += modelId
+                return Result.success(object : dev.aidos.kernel.ModelAdapter {
+                    override val providerId = "llamacpp"
+                    override val modelId = modelId
+                    override val modelVersion = "1"
+                    override val contextWindow = 32_768
+                    override val isLocal = true
+                    override fun supportsNativeToolCalls() = true
+                    override suspend fun invoke(request: dev.aidos.kernel.ModelRequest): Result<dev.aidos.kernel.ModelResponse> {
+                        val allText = request.messages.joinToString("\n") { it.toString() }
+                        if (allText.contains("Step 1 in progress")) promptSawMemory = true
+                        return Result.success(
+                            dev.aidos.kernel.ModelResponse(
+                                outputs = listOf(dev.aidos.kernel.TextOutput("All done")),
+                                stopReason = dev.aidos.kernel.StopReason.END_TURN,
+                                usage = null,
+                                model = null,
+                            )
+                        )
+                    }
+                })
+            }
+            override suspend fun unload(modelId: String) = Unit
+            override fun loaded(): List<String> = listOf("local-test-model")
+            override suspend fun delete(modelId: String) = Unit
+        }
+
+        val composition = RuntimeCompositionRoot(modelRuntime = runtime)
+        composition.drive(
+            projectDriver = driver,
+            runId = runId,
+            projectId = ProjectId(pid),
+            sessionId = sid,
+            deviceId = "dev-1",
+            platformProfile = PlatformProfile.DESKTOP,
+            networkAvailable = false,
+            idGen = ::nextId,
+            nowIso = { nowIso },
+        )
+
+        assertEquals(listOf("local-test-model"), loadedIds)
+        assertTrue(promptSawMemory, "SessionMemoryStore entry should be recalled into the model prompt")
+        assertEquals("COMPLETED", runState(driver, runId.value))
+
+        // TASK_STATE entry for the completed Run must be expired and filtered out.
+        assertTrue(memStore.readForSession(sid, nowIso = nowIso).none { it.id == taskStateId })
+    }
 }

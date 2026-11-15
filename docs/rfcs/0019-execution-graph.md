@@ -1,6 +1,7 @@
 # RFC-0019: Execution Graph
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (parallel intra-Run `DEPENDS_ON` execution, compensation graphs, execution graph visualization, cross-session provenance)
 
 ## Abstract
 
@@ -650,3 +651,18 @@ Compensation graphs: when a run fails mid-way, a compensation run can undo parti
 Execution Graph visualization: a frontend component that renders the graph as a tree or timeline.
 
 Cross-session provenance: tracking artifacts that are used as input to sessions that did not produce them.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Execution.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Errors.kt
+  - schema/project.sql
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunCreator.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/IntentRunCoordinator.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentGraphRepository.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TaskAppendingTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+```

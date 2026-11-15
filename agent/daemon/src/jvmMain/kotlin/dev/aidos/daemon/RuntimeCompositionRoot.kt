@@ -12,6 +12,7 @@ import dev.aidos.mcp.McpOperationAdoptionStore
 import dev.aidos.mcp.McpSecretResolver
 import dev.aidos.mcp.McpServerActivator
 import dev.aidos.mcp.McpServerLoadOutcome
+import dev.aidos.mcp.McpServerRegistry
 import dev.aidos.mcp.McpServerStore
 import dev.aidos.capability.SqliteCapabilityManager
 import dev.aidos.executor.AgentLoopTaskRunner
@@ -19,7 +20,10 @@ import dev.aidos.executor.CapabilityApprovalResolution
 import dev.aidos.executor.EventStore
 import dev.aidos.executor.GuardianApprovalVerifier
 import dev.aidos.executor.LlmGuardianApprovalVerifier
+import dev.aidos.executor.RecalledMemoryItem
+import dev.aidos.executor.RemoteModelEgressTool
 import dev.aidos.executor.RunCreator
+import dev.aidos.executor.SqlBudgetLedger
 import dev.aidos.executor.SqliteExecutor
 import dev.aidos.executor.TaintInputScreener
 import dev.aidos.executor.WorkerSpawner
@@ -27,11 +31,18 @@ import dev.aidos.filesystem.FilesystemTool
 import dev.aidos.filesystem.PathTrustPolicy
 import dev.aidos.git.GitTool
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.kernel.CapabilityConstraints
+import dev.aidos.kernel.CapabilityScope
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ModelRuntime
+import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
+import dev.aidos.kernel.SubjectKind
 import dev.aidos.kernel.UserId
+import dev.aidos.memory.Confidence
+import dev.aidos.memory.SessionMemoryStore
 import dev.aidos.prompt.PromptAssembler
 import dev.aidos.retention.BlobStore
 import dev.aidos.routing.EnforcedLocality
@@ -58,6 +69,8 @@ import dev.aidos.vault.SqliteSecretsVault
 import dev.aidos.http.DefaultEgressClient
 import dev.aidos.http.EgressClient
 import java.io.File
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -139,7 +152,13 @@ class RuntimeCompositionRoot(
     },
     /** Optional bearer token provider for [SystemOneTaintInputScreener]. */
     private val systemOneBearerToken: () -> String? = { System.getenv("AIDOS_ENGINE_TOKEN") },
+    /** RFC-0020: optional [ModelRuntime] (e.g. GlobalModelRuntime) for local model lifecycle & routing. */
+    private val modelRuntime: ModelRuntime? = null,
+    /** RFC-0048 / RFC-0049: platform adapter supplying profile, dirs, and execution window. */
+    val platform: PlatformAdapter = DesktopPlatformAdapter(),
 ) {
+    /** RFC-0031: user-scope write path for `mcp_servers` when [userDriver] is present. */
+    val mcpServerRegistry: McpServerRegistry? = userDriver?.let(::McpServerRegistry)
 
     /**
      * Drives [runId] to completion (or a parked/failed stop) using a freshly composed
@@ -176,6 +195,7 @@ class RuntimeCompositionRoot(
             nowIso = nowIso,
             runId = runId,
         ).drive(runId)
+        expireTaskStateIfTerminal(projectDriver, runId, nowIso())
         // RFC-0037 MVP: collect local, aggregated observability metrics after each driven Run.
         runCatching { MetricsCollector(projectDriver).collect(projectId.value) }
             .onFailure { DaemonLog.err("aidos: metrics collection failed: ${it.message}") }
@@ -215,18 +235,38 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val rootPath = projectRootPath(projectDriver, projectId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
+        if (approved) {
+            val capMgr = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
+            val existingActive = runBlocking { capMgr.loadForSubject(sessionId) }
+                .any { it.permission == Permission.NETWORK_EGRESS && it.revokedAt == null }
+            if (!existingActive && !capMgr.hasSubjectCapabilityHistory(sessionId, SubjectKind.SESSION, Permission.NETWORK_EGRESS)) {
+                runBlocking {
+                    capMgr.grant(
+                        subjectId = sessionId,
+                        subjectKind = SubjectKind.SESSION,
+                        permission = Permission.NETWORK_EGRESS,
+                        scope = anthropicScope(),
+                        constraints = CapabilityConstraints(),
+                        expiresAt = Instant.fromEpochSeconds(Instant.parse(nowIso()).epochSeconds + 300),
+                        grantedBy = UserId("user"),
+                    )
+                }
+            }
+        }
         return buildExecutor(
             projectDriver = projectDriver,
             projectId = ProjectId(projectId),
             sessionId = sessionId,
             rootPath = rootPath,
             deviceId = deviceId,
-            platformProfile = PlatformProfile.DESKTOP,
+            platformProfile = platform.profile,
             networkAvailable = runNetworkAvailable(projectDriver, runId),
             idGen = idGen,
             nowIso = nowIso,
             runId = runId,
-        ).resolveCapabilityApproval(runId, approved, denialReason)
+        ).resolveCapabilityApproval(runId, approved, denialReason).also {
+            expireTaskStateIfTerminal(projectDriver, runId, nowIso())
+        }
     }
 
     /**
@@ -268,7 +308,7 @@ class RuntimeCompositionRoot(
             sessionId = sessionId,
             rootPath = rootPath,
             deviceId = deviceId,
-            platformProfile = PlatformProfile.DESKTOP,
+            platformProfile = platform.profile,
             networkAvailable = networkAvailable,
             idGen = idGen,
             nowIso = nowIso,
@@ -347,7 +387,7 @@ class RuntimeCompositionRoot(
             sessionId = sessionId,
             rootPath = rootPath,
             deviceId = deviceId,
-            platformProfile = PlatformProfile.DESKTOP,
+            platformProfile = platform.profile,
             networkAvailable = runNetworkAvailable(projectDriver, runId),
             idGen = idGen,
             nowIso = nowIso,
@@ -390,7 +430,7 @@ class RuntimeCompositionRoot(
         sessionId = sessionId,
         rootPath = rootPath,
         deviceId = deviceId,
-        platformProfile = PlatformProfile.DESKTOP,
+        platformProfile = platform.profile,
         idGen = idGen,
         nowIso = nowIso,
     )
@@ -401,7 +441,7 @@ class RuntimeCompositionRoot(
         sessionId: String,
         rootPath: String,
         deviceId: String,
-        platformProfile: PlatformProfile = PlatformProfile.DESKTOP,
+        platformProfile: PlatformProfile = platform.profile,
         networkAvailable: Boolean = false,
         idGen: () -> String,
         nowIso: () -> String,
@@ -424,11 +464,17 @@ class RuntimeCompositionRoot(
         broker.register(GitTool(File(rootPath), credentials = vault?.let { v ->
             VaultGitCredentialSource(v) { host -> auditSecretUse(audit, projectId.value, "RUNTIME", "git:$host", "git:$host", nowIso, idGen) }
         }))
+        // RFC-0021 / RFC-0023: every remote model invocation routes through EffectBroker.
+        broker.register(RemoteModelEgressTool())
 
         // RFC-0035: registered before any adapter or MCP server ever sees a secret, so any
         // output_snapshot or log that could echo it back is already covered.
         val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
         vault?.registerAllWith(redactor)
+        val memoryStore = SessionMemoryStore(
+            driver = projectDriver,
+            redact = { redactor.redact(it, RedactionBoundary.MEMORY) },
+        )
         val egressClient: EgressClient = DefaultEgressClient(recordSink = SqliteEgressRecorder(projectDriver))
         val redactingMcpSecretResolver = object : McpSecretResolver {
             override suspend fun resolve(reference: String): Result<CharArray> = resolveFor("runtime", reference)
@@ -493,6 +539,21 @@ class RuntimeCompositionRoot(
         // routing.remote_egress (SECURITY); resolving the policy against the project scope here
         // makes that attempt provably not apply.
         val egressPolicy = resolveEgressPolicy(userDriver, projectSettings)
+        if (egressPolicy == EgressPolicy.ALLOW && remoteAdapters.isNotEmpty() &&
+            !capabilityManager.hasSubjectCapabilityHistory(sessionId, SubjectKind.SESSION, Permission.NETWORK_EGRESS)
+        ) {
+            runBlocking {
+                capabilityManager.grant(
+                    subjectId = sessionId,
+                    subjectKind = SubjectKind.SESSION,
+                    permission = Permission.NETWORK_EGRESS,
+                    scope = anthropicScope(),
+                    constraints = CapabilityConstraints(),
+                    expiresAt = null,
+                    grantedBy = UserId("runtime"),
+                )
+            }
+        }
         val baselineLocality = resolveModelLocality(
             userDriver = userDriver,
             project = projectSettings,
@@ -520,6 +581,7 @@ class RuntimeCompositionRoot(
                 preferredModelId = baselinePreferredModelId,
             ),
             remoteAdapters = remoteAdapters,
+            modelRuntime = modelRuntime,
         )
 
         val capabilityResolver = CapabilityResolver(capabilityManager, nowIso)
@@ -581,6 +643,7 @@ class RuntimeCompositionRoot(
                     )
                 },
             )
+        val budgetLedger = SqlBudgetLedger(projectDriver, idGen, nowIso)
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -653,6 +716,36 @@ class RuntimeCompositionRoot(
                     enforcedLocality = loc,
                 )
             },
+            budgetLedger = budgetLedger,
+            invokeRemoteModelWithContext = { adapter, request, capId, pid, attemptId, runTaint ->
+                withContext(
+                    EgressTransportContextElement(
+                        EgressTransportContext(
+                            capabilityId = capId,
+                            projectId = pid,
+                            attemptId = attemptId,
+                            runTaint = runTaint.name,
+                        )
+                    )
+                ) {
+                    adapter.invoke(request)
+                }
+            },
+            recallSessionMemory = { sid, pid ->
+                memoryStore.readForSessionAndProject(sid, pid, nowIso()).map { row ->
+                    RecalledMemoryItem(
+                        id = row.id,
+                        kind = row.kind.name,
+                        content = row.content,
+                        trustLevel = row.trustLevel,
+                        inferred = row.confidence == Confidence.INFERRED,
+                    )
+                }
+            },
+            onMemoryRecalled = { entryIds ->
+                val now = nowIso()
+                entryIds.forEach { memoryStore.refreshFactExpiry(it, now) }
+            },
         )
         return SqliteExecutor(
             driver = projectDriver,
@@ -664,7 +757,20 @@ class RuntimeCompositionRoot(
             reconciler = GitRunReconciler(idGen = idGen, nowIso = nowIso, deviceId = deviceId),
             workerSpawner = workerSpawner,
             workerCommitter = GitWorkerCommitter(projectDriver),
+            budgetLedger = budgetLedger,
         )
+    }
+
+    private fun expireTaskStateIfTerminal(projectDriver: SqlDriver, runId: RunId, nowIso: String) {
+        val state = projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT state FROM runs WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value
+        if (state in setOf("COMPLETED", "FAILED", "CANCELLED")) {
+            SessionMemoryStore(projectDriver).expireTaskStateForRun(runId.value, nowIso)
+        }
     }
 
     private fun loadProjectSettings(

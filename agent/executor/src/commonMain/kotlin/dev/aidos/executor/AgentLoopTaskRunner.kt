@@ -6,8 +6,13 @@ import dev.aidos.broker.AuditLog
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
+import dev.aidos.kernel.Budget
+import dev.aidos.kernel.BudgetLedger
+import dev.aidos.kernel.BudgetScope
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContentNodeId
+import dev.aidos.kernel.ContextItem
+import dev.aidos.kernel.ContextItemKind
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ErrorClass
@@ -17,6 +22,7 @@ import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
+import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.MutationScope
 import dev.aidos.kernel.Permission
 import dev.aidos.kernel.PlatformProfile
@@ -378,6 +384,23 @@ class AgentLoopTaskRunner(
     private val selectModelDecision: (
         suspend (ModelKind, RoutingContext, preferredModelId: String?, enforcedLocality: String?) -> RoutingDecision
     )? = null,
+    /** RFC-0028: optional budget ledger for reserve/settle/release/remaining per Run. */
+    private val budgetLedger: BudgetLedger? = null,
+    /** RFC-0021/0023/0042: optional coroutine-context wrapper for remote model egress metadata. */
+    private val invokeRemoteModelWithContext: (
+        suspend (
+            adapter: ModelAdapter,
+            request: ModelRequest,
+            capabilityId: CapabilityId?,
+            projectId: String,
+            attemptId: String,
+            runTaint: TrustLevel,
+        ) -> Result<ModelResponse>
+    )? = null,
+    /** RFC-0026: recalls active non-expired session + project-promoted memory entries. */
+    private val recallSessionMemory: ((sessionId: String, projectId: String) -> List<RecalledMemoryItem>)? = null,
+    /** RFC-0026: refreshes FACT TTLs when recalled into a Run's context. */
+    private val onMemoryRecalled: ((entryIds: List<String>) -> Unit)? = null,
 ) : TaskRunner {
 
     /** Undoes [LargeOutputStore.externalize] for a snapshot read back from `attempts`. */
@@ -414,16 +437,28 @@ class AgentLoopTaskRunner(
     private suspend fun executeModelCall(task: Task): TaskResult {
         val run = loadRunContext(task.runId) ?: return TaskResult(false, "Run ${task.runId.value} not found")
 
+        // RFC-0026: recall active non-expired memory entries and propagate UNTRUSTED taint.
+        val recalledMemory = recallSessionMemory?.invoke(subjectId, run.projectId.value).orEmpty()
+        val effectiveRunTaint = if (recalledMemory.any { it.trustLevel == TrustLevel.UNTRUSTED }) {
+            if (run.taintLevel != TrustLevel.UNTRUSTED) {
+                updateRunTaint(task.runId, TrustLevel.UNTRUSTED)
+            }
+            TrustLevel.UNTRUSTED
+        } else {
+            run.taintLevel
+        }
+
         // RFC-0008 step 8d: this task may be re-executing after a parked CAPABILITY_APPROVAL was
         // just approved. Recovery is a query (D3) -- the continuations row, not anything held in
         // memory across the park, is what says "use this adapter, skip the router this once."
         // router.select() is a pure function of RoutingPolicy + RoutingContext (neither changes
         // mid-Run), so calling it again here would reproduce the identical RemotePendingApproval.
+        val remainingBudget = budgetLedger?.remaining(BudgetScope.RUN, task.runId.value)
         val routingCtx = RoutingContext(
             profile = run.platformProfile,
             networkAvailable = run.networkAvailable,
-            budgetRemaining = null,
-            runTaint = run.taintLevel,
+            budgetRemaining = remainingBudget,
+            runTaint = effectiveRunTaint,
             executionWindow = UnboundedWindow,
         )
         val approvedAdapter = loadApprovedCapabilityAdapter(task.runId)
@@ -464,14 +499,26 @@ class AgentLoopTaskRunner(
         } else {
             listOf(askUserToolDescriptor)
         }
-        val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable) + builtInTools
+        val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+            .filterNot { it.name == RemoteModelEgressTool.MODEL_EGRESS_TOOL_NAME } + builtInTools
         val history = reconstructHistory(task.runId, task.ordinal)
         val instructionSet = discoverInstructionSet(run.projectId)
+        val memoryContextItems = recalledMemory.map { item ->
+            val text = if (item.inferred) "A previous run concluded: ${item.content}" else item.content
+            ContextItem(
+                contentNodeId = null,
+                kind = ContextItemKind.DOCUMENT_SECTION,
+                content = "[memory:${item.kind.lowercase()}:${item.id}] $text",
+                relevanceScore = 1.0f,
+                tokenCount = (text.length / 4).coerceAtLeast(1),
+                trustLevel = item.trustLevel,
+            )
+        }
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = run.userMessageSummary,
             tools = availableTools,
-
+            knowledgeContext = memoryContextItems,
             conversationHistory = history,
             instructionSet = instructionSet,
         )
@@ -508,8 +555,135 @@ class AgentLoopTaskRunner(
             toolChoice = ToolChoice.Auto,
             maxOutputTokens = pkg.model.contextWindow / 8,
         )
-        val response = adapter.invoke(modelReq).getOrElse {
-            return TaskResult(false, "Model invocation failed: ${it.message}")
+
+        val ledger = budgetLedger
+        val runningAttemptId = if (ledger != null) {
+            startAttempt(
+                task = task,
+                projectId = run.projectId,
+                recoveryClass = RecoveryClass.PURE.name,
+                modelProvider = adapter.providerId,
+                modelVersion = adapter.modelVersion,
+            )
+        } else null
+        val reservation = if (ledger != null && runningAttemptId != null) {
+            val res = reserveForAttempt(
+                ledger = ledger,
+                scope = BudgetScope.RUN,
+                scopeId = task.runId.value,
+                estimate = Budget(modelCalls = 1, steps = 1),
+                attemptId = runningAttemptId,
+            )
+            if (res.isFailure) {
+                val msg = res.exceptionOrNull()?.message ?: "Budget exhausted"
+                failAttempt(runningAttemptId, "budget.exhausted", ErrorClass.EXHAUSTED.name, msg)
+                return TaskResult(false, msg)
+            }
+            res.getOrNull()
+        } else null
+
+        if (recalledMemory.isNotEmpty()) {
+            val factIds = recalledMemory.filter { it.kind.equals("FACT", ignoreCase = true) }.map { it.id }
+            if (factIds.isNotEmpty()) {
+                onMemoryRecalled?.invoke(factIds)
+            }
+        }
+        val responseResult = if (!adapter.isLocal) {
+            val redactedReq = redactModelRequest(modelReq)
+            var resolvedCapId: CapabilityId? = null
+            val hasModelEgressGate = broker
+                .descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
+                .any { it.name == RemoteModelEgressTool.MODEL_EGRESS_TOOL_NAME }
+            if (hasModelEgressGate) {
+                resolvedCapId = resolveCapability(subjectId, Permission.NETWORK_EGRESS)
+                val brokerTaint = if (approvedAdapter != null) TrustLevel.PROJECT else effectiveRunTaint
+                val egressCheck = broker.invoke(
+                    subjectId = subjectId,
+                    call = ToolCall(
+                        callId = "model-egress-${task.id.value}",
+                        toolName = RemoteModelEgressTool.MODEL_EGRESS_TOOL_NAME,
+                        arguments = kotlinx.serialization.json.buildJsonObject {
+                            put("provider", kotlinx.serialization.json.JsonPrimitive(adapter.providerId))
+                            put("model", kotlinx.serialization.json.JsonPrimitive(adapter.modelId))
+                        },
+                        capabilityId = resolvedCapId,
+                    ),
+                    runTaint = brokerTaint,
+                )
+                when (val outcome = egressCheck.outcome) {
+                    is ToolOutcome.Ok -> Unit
+                    is ToolOutcome.Denied -> {
+                        if (ledger != null && reservation != null) {
+                            ledger.release(reservation)
+                        }
+                        if (runningAttemptId != null) {
+                            failAttempt(runningAttemptId, "egress.denied", ErrorClass.DENIED.name, outcome.reason.name)
+                        }
+                        if (outcome.reason == DenialReason.TAINT_REQUIRES_APPROVAL ||
+                            outcome.reason == DenialReason.REQUIRES_APPROVAL
+                        ) {
+                            return TaskResult(
+                                success = true,
+                                park = ParkRequest(
+                                    suspendedOperation = SuspendedOperation.CapabilityApproval(
+                                        requestId = task.runId.value,
+                                        permission = Permission.NETWORK_EGRESS,
+                                    ),
+                                    operationDetailJson = json.encodeToString(
+                                        CapabilityApprovalDetail(
+                                            adapterModelId = adapter.modelId,
+                                            reason = egressCheck.content.filterIsInstance<ContentBlock.Text>()
+                                                .joinToString(" ") { it.text }
+                                                .ifBlank { "Remote model egress requires approval (${outcome.reason})" },
+                                        ),
+                                    ),
+                                    taskState = TaskState.AWAITING_APPROVAL,
+                                ),
+                            )
+                        }
+                        val detail = egressCheck.content.filterIsInstance<ContentBlock.Text>()
+                            .joinToString(" ") { it.text }
+                        return TaskResult(false, "Remote model egress denied (${outcome.reason}): $detail")
+                    }
+                    is ToolOutcome.Failed -> {
+                        if (ledger != null && reservation != null) {
+                            ledger.release(reservation)
+                        }
+                        if (runningAttemptId != null) {
+                            failAttempt(runningAttemptId, "egress.failed", ErrorClass.TRANSIENT.name, outcome.error.message)
+                        }
+                        return TaskResult(false, "Remote model egress failed: ${outcome.error.message}")
+                    }
+                    is ToolOutcome.Cancelled -> {
+                        if (ledger != null && reservation != null) {
+                            ledger.release(reservation)
+                        }
+                        if (runningAttemptId != null) {
+                            failAttempt(runningAttemptId, "egress.cancelled", ErrorClass.TRANSIENT.name, "Cancelled")
+                        }
+                        return TaskResult(false, "Remote model egress cancelled")
+                    }
+                }
+            }
+            invokeRemoteModelWithContext?.invoke(
+                adapter,
+                redactedReq,
+                resolvedCapId,
+                run.projectId.value,
+                runningAttemptId ?: task.id.value,
+                effectiveRunTaint,
+            ) ?: adapter.invoke(redactedReq)
+        } else {
+            adapter.invoke(modelReq)
+        }
+        val response = responseResult.getOrElse { err ->
+            if (ledger != null && reservation != null) {
+                ledger.release(reservation)
+            }
+            if (runningAttemptId != null) {
+                failAttempt(runningAttemptId, "model.invocation_failed", ErrorClass.TRANSIENT.name, err.message ?: "Model invocation failed")
+            }
+            return TaskResult(false, "Model invocation failed: ${err.message}")
         }
 
         // RFC-0022: one ordered `outputs` list replaced the separate text/toolCalls fields.
@@ -521,36 +695,61 @@ class AgentLoopTaskRunner(
             .ifEmpty { null }
         val responseToolCalls = response.outputs.filterIsInstance<ToolCallOutput>().map { it.call }
 
+        val outputSnapshot = json.encodeToString(
+            StoredModelResponse(
+                text = responseText,
+                toolCalls = responseToolCalls.map {
+                    StoredToolCall(it.callId, it.toolName, it.arguments.toString())
+                },
+                stopReason = response.stopReason?.name,
+            )
+        )
+        // RFC-0026: never assumed-benign. A remote adapter that reports no policy at all
+        // (the interface's own `null` default) is UNKNOWN, not treated as ZERO/local-shaped.
+        val providerRetention = if (adapter.isLocal) null else adapter.providerRetention
+            ?: ProviderRetention(
+                policy = RetentionPolicy.UNKNOWN,
+                statedDurationDays = null,
+                trainingUse = TrainingUse.UNSPECIFIED,
+                recordedAt = Instant.parse(nowIso()),
+            )
+
         // RFC-0008 checkpoint 6: "the model response is the most costly thing to reproduce."
         // Persisting it here is what makes the *next* MODEL_CALL task's history reconstruction
         // possible without holding the transcript in memory (D3) — there is no other copy.
-        writeAttempt(
-            task = task,
-            projectId = run.projectId,
-            recoveryClass = RecoveryClass.PURE.name,
-            modelProvider = adapter.providerId,
-            modelVersion = adapter.modelVersion,
-            tokensInput = response.usage?.inputTokens,
-            tokensOutput = response.usage?.outputTokens,
-            outputSnapshot = json.encodeToString(
-                StoredModelResponse(
-                    text = responseText,
-                    toolCalls = responseToolCalls.map {
-                        StoredToolCall(it.callId, it.toolName, it.arguments.toString())
-                    },
-                    stopReason = response.stopReason?.name,
-                )
-            ),
-            // RFC-0026: never assumed-benign. A remote adapter that reports no policy at all
-            // (the interface's own `null` default) is UNKNOWN, not treated as ZERO/local-shaped.
-            providerRetention = if (adapter.isLocal) null else adapter.providerRetention
-                ?: ProviderRetention(
-                    policy = RetentionPolicy.UNKNOWN,
-                    statedDurationDays = null,
-                    trainingUse = TrainingUse.UNSPECIFIED,
-                    recordedAt = Instant.parse(nowIso()),
+        if (runningAttemptId != null) {
+            finishAttempt(
+                attemptId = runningAttemptId,
+                tokensInput = response.usage?.inputTokens,
+                tokensOutput = response.usage?.outputTokens,
+                outputSnapshot = outputSnapshot,
+                providerRetention = providerRetention,
+            )
+        } else {
+            writeAttempt(
+                task = task,
+                projectId = run.projectId,
+                recoveryClass = RecoveryClass.PURE.name,
+                modelProvider = adapter.providerId,
+                modelVersion = adapter.modelVersion,
+                tokensInput = response.usage?.inputTokens,
+                tokensOutput = response.usage?.outputTokens,
+                outputSnapshot = outputSnapshot,
+                providerRetention = providerRetention,
+            )
+        }
+
+        if (ledger != null && reservation != null) {
+            ledger.settle(
+                reservation = reservation,
+                actual = Budget(
+                    modelCalls = 1,
+                    inputTokens = response.usage?.inputTokens?.toLong(),
+                    outputTokens = response.usage?.outputTokens?.toLong(),
+                    steps = 1,
                 ),
-        )
+            )
+        }
 
         // Termination (RFC-0008 "Termination" table): no tool calls, or a terminal stop reason.
         // Appending nothing here is the whole mechanism — drive()'s existing "no runnable tasks,
@@ -927,7 +1126,7 @@ class AgentLoopTaskRunner(
 
         updateToolCallOutcome(callRow.callId, outcomeStr)
         val recoveryClass = descriptorRecoveryClass(run, callRow.toolName)
-        writeAttempt(
+        val attemptId = writeAttempt(
             task = task,
             projectId = run.projectId,
             recoveryClass = recoveryClass.name,
@@ -947,6 +1146,11 @@ class AgentLoopTaskRunner(
                 )
             ),
         )
+        budgetLedger?.let { ledger ->
+            val estimate = Budget(toolInvocations = 1, steps = 1)
+            val res = reserveForAttempt(ledger, BudgetScope.RUN, task.runId.value, estimate, attemptId)
+            res.getOrNull()?.let { ledger.settle(it, estimate) }
+        }
 
         // Fan-in: once every sibling TOOL_CALL task for this model turn is terminal, append the
         // next MODEL_CALL task so the model sees the results (RFC-0008 steps 9-10: append
@@ -1470,6 +1674,136 @@ class AgentLoopTaskRunner(
         }
     }
 
+    private suspend fun reserveForAttempt(
+        ledger: BudgetLedger,
+        scope: BudgetScope,
+        scopeId: String,
+        estimate: Budget,
+        attemptId: String,
+    ): Result<dev.aidos.kernel.ReservationId> = when (ledger) {
+        is SqlBudgetLedger -> ledger.reserve(scope, scopeId, estimate, attemptId)
+        else -> ledger.reserve(scope, scopeId, estimate)
+    }
+
+    private fun nextAttemptNumber(taskId: String): Int =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM attempts WHERE task_id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0)?.toInt() ?: 1 else 1) },
+            parameters = 1,
+        ) { bindString(0, taskId) }.value
+
+    private fun startAttempt(
+        task: Task,
+        projectId: ProjectId,
+        recoveryClass: String,
+        modelProvider: String?,
+        modelVersion: String?,
+    ): String {
+        val existing = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id, attempt_number FROM attempts WHERE task_id = ? AND state = 'RUNNING' ORDER BY attempt_number DESC LIMIT 1",
+            mapper = { c ->
+                QueryResult.Value(if (c.next().value) c.getString(0)!! to (c.getLong(1)?.toInt() ?: 1) else null)
+            },
+            parameters = 1,
+        ) { bindString(0, task.id.value) }.value
+        if (existing != null) {
+            val (existingId, attemptNum) = existing
+            val idempotencyKey = IdempotencyKey.compute(task.id.value, attemptNum, task.toolName ?: task.kind.name)
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE attempts SET model_provider = ?, model_version = ?, recovery_class = ?, idempotency_key = ? WHERE id = ?",
+                parameters = 5,
+            ) {
+                bindString(0, modelProvider)
+                bindString(1, modelVersion)
+                bindString(2, recoveryClass)
+                bindString(3, idempotencyKey)
+                bindString(4, existingId)
+            }
+            return existingId
+        }
+
+        val auditId = idGen()
+        val actor = resolveSessionActor(task.sessionId.value)
+        audit.write(
+            id = auditId,
+            projectId = projectId.value,
+            kind = if (task.kind == TaskKind.MODEL_CALL) "ModelCallStarted" else "ToolCallStarted",
+            actor = actor,
+            subjectRef = task.toolName ?: task.kind.name,
+            nowIso = nowIso(),
+        )
+        val attemptNumber = nextAttemptNumber(task.id.value)
+        val idempotencyKey = IdempotencyKey.compute(task.id.value, attemptNumber, task.toolName ?: task.kind.name)
+        val attemptId = idGen()
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, state, " +
+                "model_provider, model_version, idempotency_key, recovery_class, audit_ref) " +
+                "VALUES (?, ?, ?, ?, 'RUNNING', ?, ?, ?, ?, ?)",
+            parameters = 9,
+        ) {
+            bindString(0, attemptId)
+            bindString(1, task.id.value)
+            bindLong(2, attemptNumber.toLong())
+            bindString(3, nowIso())
+            bindString(4, modelProvider)
+            bindString(5, modelVersion)
+            bindString(6, idempotencyKey)
+            bindString(7, recoveryClass)
+            bindString(8, auditId)
+        }
+        return attemptId
+    }
+
+    private fun finishAttempt(
+        attemptId: String,
+        tokensInput: Int?,
+        tokensOutput: Int?,
+        outputSnapshot: String,
+        providerRetention: ProviderRetention? = null,
+    ) {
+        val redactedSnapshot = redact(outputSnapshot)
+        val retentionJson = providerRetention
+            ?.copy(recordedAt = Instant.parse(nowIso()))
+            ?.let { json.encodeToString(it) }
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET ended_at = ?, state = 'COMPLETED', output_snapshot = ?, " +
+                "provider_retention_json = ?, tokens_input = ?, tokens_output = ? WHERE id = ?",
+            parameters = 6,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, largeOutputs?.externalize(redactedSnapshot) ?: redactedSnapshot)
+            bindString(2, retentionJson)
+            tokensInput?.let { bindLong(3, it.toLong()) } ?: bindString(3, null)
+            tokensOutput?.let { bindLong(4, it.toLong()) } ?: bindString(4, null)
+            bindString(5, attemptId)
+        }
+    }
+
+    private fun failAttempt(
+        attemptId: String,
+        errorCode: String,
+        errorClass: String,
+        message: String,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET ended_at = ?, state = 'FAILED', error_code = ?, error_class = ?, " +
+                "error_detail_json = ? WHERE id = ?",
+            parameters = 5,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, errorCode)
+            bindString(2, errorClass)
+            bindString(3, """{"message":${json.encodeToString(message)}}""")
+            bindString(4, attemptId)
+        }
+    }
+
     private fun writeAttempt(
         task: Task,
         projectId: ProjectId,
@@ -1480,7 +1814,7 @@ class AgentLoopTaskRunner(
         tokensOutput: Int?,
         outputSnapshot: String,
         providerRetention: ProviderRetention? = null,
-    ) {
+    ): String {
         val auditId = idGen()
         val actor = resolveSessionActor(task.sessionId.value)
         audit.write(
@@ -1500,28 +1834,61 @@ class AgentLoopTaskRunner(
         val retentionJson = providerRetention
             ?.copy(recordedAt = Instant.parse(nowIso()))
             ?.let { json.encodeToString(it) }
+        val existingRunningId = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM attempts WHERE task_id = ? AND state = 'RUNNING' ORDER BY attempt_number DESC LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, task.id.value) }.value
+        if (existingRunningId != null) {
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE attempts SET ended_at = ?, state = 'COMPLETED', output_snapshot = ?, " +
+                    "model_provider = COALESCE(?, model_provider), model_version = COALESCE(?, model_version), " +
+                    "provider_retention_json = ?, tokens_input = ?, tokens_output = ?, recovery_class = ? WHERE id = ?",
+                parameters = 9,
+            ) {
+                bindString(0, nowIso())
+                bindString(1, largeOutputs?.externalize(redactedSnapshot) ?: redactedSnapshot)
+                bindString(2, modelProvider)
+                bindString(3, modelVersion)
+                bindString(4, retentionJson)
+                tokensInput?.let { bindLong(5, it.toLong()) } ?: bindString(5, null)
+                tokensOutput?.let { bindLong(6, it.toLong()) } ?: bindString(6, null)
+                bindString(7, recoveryClass)
+                bindString(8, existingRunningId)
+            }
+            return existingRunningId
+        }
+        val attemptNumber = nextAttemptNumber(task.id.value)
+        val idempotencyKey = IdempotencyKey.compute(task.id.value, attemptNumber, task.toolName ?: task.kind.name)
+        val attemptId = idGen()
         driver.execute(
             identifier = null,
             sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, ended_at, state, " +
                 "output_snapshot, model_provider, model_version, provider_retention_json, tokens_input, " +
-                "tokens_output, recovery_class, audit_ref) VALUES (?, ?, 1, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)",
-            parameters = 12,
+                "tokens_output, idempotency_key, recovery_class, audit_ref) " +
+                "VALUES (?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 14,
         ) {
-            bindString(0, idGen())
+            bindString(0, attemptId)
             bindString(1, task.id.value)
-            bindString(2, nowIso())
+            bindLong(2, attemptNumber.toLong())
             bindString(3, nowIso())
+            bindString(4, nowIso())
             // RFC-0056: oversized payloads are stored once, content-addressed, and the row holds a
             // small reference (resolved again by `resolveStored` on every read above).
-            bindString(4, largeOutputs?.externalize(redactedSnapshot) ?: redactedSnapshot)
-            bindString(5, modelProvider)
-            bindString(6, modelVersion)
-            bindString(7, retentionJson)
-            tokensInput?.let { bindLong(8, it.toLong()) } ?: bindString(8, null)
-            tokensOutput?.let { bindLong(9, it.toLong()) } ?: bindString(9, null)
-            bindString(10, recoveryClass)
-            bindString(11, auditId)
+            bindString(5, largeOutputs?.externalize(redactedSnapshot) ?: redactedSnapshot)
+            bindString(6, modelProvider)
+            bindString(7, modelVersion)
+            bindString(8, retentionJson)
+            tokensInput?.let { bindLong(9, it.toLong()) } ?: bindString(9, null)
+            tokensOutput?.let { bindLong(10, it.toLong()) } ?: bindString(10, null)
+            bindString(11, idempotencyKey)
+            bindString(12, recoveryClass)
+            bindString(13, auditId)
         }
+        return attemptId
     }
 
     private data class ToolCallRow(val callId: String, val modelTaskId: TaskId, val toolName: String, val argumentsJson: String)
@@ -1592,6 +1959,28 @@ class AgentLoopTaskRunner(
             bindString(1, excludingTaskId.value)
         }.value
         return nonTerminal == 0L
+    }
+
+    private fun redactModelRequest(request: ModelRequest): ModelRequest {
+        val redactedMessages = request.messages.map { turn ->
+            when (turn) {
+                is Turn.System -> Turn.System(redact(turn.content))
+                is Turn.User -> turn.copy(
+                    content = turn.content.map { block ->
+                        if (block is ContentBlock.Text) ContentBlock.Text(redact(block.text)) else block
+                    }
+                )
+                is Turn.Assistant -> turn.copy(text = turn.text?.let(redact))
+                is Turn.ToolResult -> turn.copy(
+                    result = turn.result.copy(
+                        content = turn.result.content.map { block ->
+                            if (block is ContentBlock.Text) ContentBlock.Text(redact(block.text)) else block
+                        }
+                    )
+                )
+            }
+        }
+        return request.copy(messages = redactedMessages)
     }
 
     private fun resolveSessionActor(sessionId: String): ActorRef {

@@ -23,8 +23,21 @@ object AidosStorage {
     fun openVault(path: String, runtimeVersion: String, nowIso: () -> String): OpenDatabase =
         open(DatabaseKind.VAULT, path, runtimeVersion, nowIso)
 
-    fun openProject(path: String, runtimeVersion: String, nowIso: () -> String): OpenDatabase =
-        open(DatabaseKind.PROJECT, path, runtimeVersion, nowIso)
+    fun openProject(
+        path: String,
+        runtimeVersion: String,
+        nowIso: () -> String,
+    ): OpenDatabase {
+        val opened = open(DatabaseKind.PROJECT, path, runtimeVersion, nowIso)
+        if (opened.result is OpenResult.Ready) {
+            StateModelRecovery.recoverOnOpen(
+                opened.driver,
+                nowIso,
+                { java.util.UUID.randomUUID().toString() },
+            )
+        }
+        return opened
+    }
 
     private fun open(
         kind: DatabaseKind,

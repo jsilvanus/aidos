@@ -475,4 +475,29 @@ class IntentProposalEngineTest {
         val repo = IntentGraphRepository(driver, idGen = { "x" }, nowIso = { "2025-01-01T00:00:00Z" })
         assertNull(repo.getNode("proj1", "unwanted"))
     }
+
+    @Test
+    fun testProposalBlockedWhenGraphIsConflicted() {
+        val (driver, engine) = setupDb()
+        insertNode(driver, "n-conflicted")
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE intent_nodes SET asserted_status = 'CONFLICTED' WHERE id = 'n-conflicted'",
+            parameters = 0,
+        )
+
+        val err = kotlin.runCatching {
+            engine.propose(
+                projectId = "proj1",
+                runId = "run1",
+                operations = listOf(IntentOperation.AddNode(null, "new-goal", "GOAL", "New", null, 1)),
+                rationale = "AI edit while conflicted",
+                runTaint = "TRUSTED",
+                actor = ActorRef(ActorKind.SESSION, "sess1"),
+                expiresAtIso = "2025-02-01T00:00:00Z",
+            )
+        }.exceptionOrNull()
+        assertNotNull(err)
+        assertEquals(true, err.message?.contains("intent.conflicted") == true)
+    }
 }

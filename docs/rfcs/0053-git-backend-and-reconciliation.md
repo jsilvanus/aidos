@@ -1,6 +1,7 @@
 # RFC-0053: Git Backend and External Mutation Reconciliation
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14
+Non-MVP Work: **Remaining** (desktop worktree workers, reachability-aware git gc coordination, libgit2 evaluation)
 
 ## Abstract
 
@@ -311,3 +312,23 @@ by a user's `git gc`.
 
 Evaluate libgit2 if large-repository performance on desktop becomes a real constraint —
 adopted on all profiles or none.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/git/src/jvmMain/kotlin/dev/aidos/git/GitTool.kt
+  - agent/git/src/jvmMain/kotlin/dev/aidos/git/Reconciliation.kt
+  - agent/git/src/jvmTest/kotlin/dev/aidos/git/GitToolTest.kt
+  - agent/git/src/jvmTest/kotlin/dev/aidos/git/ReconciliationTest.kt
+  - agent/worker/src/jvmMain/kotlin/dev/aidos/worker/TreelessWorker.kt
+  - agent/worker/src/jvmTest/kotlin/dev/aidos/worker/TreelessWorkerTest.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentProposalEngine.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentSnapshotCodec.kt
+  - agent/intent/src/jvmTest/kotlin/dev/aidos/intent/IntentProposalEngineTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/GitRunReconciler.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/GitRunReconcilerTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
+  - schema/project.sql
+```

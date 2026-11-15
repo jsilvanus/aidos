@@ -8,6 +8,7 @@ import dev.aidos.git.Reconciliation
 import dev.aidos.git.ReconciliationClassification
 import dev.aidos.git.RepoFingerprint
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.intent.IntentSnapshotCodec
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.StorageLocation
@@ -56,7 +57,14 @@ class GitRunReconciler(
 
     private val json = Json { encodeDefaults = true }
 
-    override suspend fun reconcileBeforeRun(driver: SqlDriver, projectId: ProjectId, runId: RunId): Set<RunId> {
+    /** RFC-0053 detection point 1: fingerprint check & reconciliation on project open. */
+    suspend fun reconcileOnOpen(driver: SqlDriver, projectId: ProjectId): Set<RunId> =
+        reconcile(driver, projectId)
+
+    override suspend fun reconcileBeforeRun(driver: SqlDriver, projectId: ProjectId, runId: RunId): Set<RunId> =
+        reconcile(driver, projectId)
+
+    private fun reconcile(driver: SqlDriver, projectId: ProjectId): Set<RunId> {
         val rootPath = projectRootPath(driver, projectId.value) ?: return emptySet()
         val gitDir = File(rootPath, ".git")
         if (!gitDir.exists()) return emptySet() // not yet a real repository -- nothing to fingerprint
@@ -79,6 +87,7 @@ class GitRunReconciler(
             } else {
                 val (invalidated, dangling) = reconcileContentNodes(driver, projectId.value, g, rootPath, classification, now)
                 val terminated = terminateParkedRuns(driver, projectId.value, now)
+                val intentConflicted = reconcileIntentSnapshot(driver, projectId.value, rootPath, now)
 
                 val auditId = idGen()
                 AuditLog(driver, deviceId).write(
@@ -91,7 +100,8 @@ class GitRunReconciler(
                     driver = driver, id = idGen(), projectId = projectId.value,
                     classification = classification, fromCommit = stored.headCommit, toCommit = current.headCommit,
                     nodesInvalidated = invalidated, nodesDangling = dangling,
-                    runsTerminated = terminated.size, performedAt = now, auditRef = auditId,
+                    runsTerminated = terminated.size, intentConflicted = intentConflicted,
+                    performedAt = now, auditRef = auditId,
                 )
                 writeFingerprint(driver, projectId.value, current)
 
@@ -324,10 +334,29 @@ class GitRunReconciler(
 
     // ── reconciliations ──────────────────────────────────────────────────────────
 
+    private fun reconcileIntentSnapshot(driver: SqlDriver, projectId: String, rootPath: String, now: String): Int {
+        val snapshotFile = listOf("aidos-intent.json", "intent-snapshot.json")
+            .map { File(rootPath, it) }
+            .firstOrNull { it.isFile }
+        if (snapshotFile != null) {
+            runCatching {
+                IntentSnapshotCodec(driver, { now }).importAndReconcile(projectId, snapshotFile.readText())
+            }
+        }
+        return runCatching {
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT COUNT(*) FROM intent_nodes WHERE project_id = ? AND asserted_status = 'CONFLICTED' AND lifecycle != 'ARCHIVED'",
+                mapper = { c -> QueryResult.Value(if (c.next().value) (c.getLong(0) ?: 0L).toInt() else 0) },
+                parameters = 1,
+            ) { bindString(0, projectId) }.value
+        }.getOrDefault(0)
+    }
+
     private fun writeReconciliationContentNodeRow(
         driver: SqlDriver, id: String, projectId: String, classification: ReconciliationClassification,
         fromCommit: String, toCommit: String, nodesInvalidated: Int, nodesDangling: Int,
-        runsTerminated: Int, performedAt: String, auditRef: String,
+        runsTerminated: Int, intentConflicted: Int, performedAt: String, auditRef: String,
     ) {
         driver.execute(
             identifier = null,
@@ -344,8 +373,7 @@ class GitRunReconciler(
             bindLong(5, nodesInvalidated.toLong())
             bindLong(6, nodesDangling.toLong())
             bindLong(7, runsTerminated.toLong())
-            // Always 0 -- RFC-0012's Intent Graph has no live writer yet (see class doc comment).
-            bindLong(8, 0L)
+            bindLong(8, intentConflicted.toLong())
             bindString(9, performedAt)
             bindString(10, auditRef)
         }

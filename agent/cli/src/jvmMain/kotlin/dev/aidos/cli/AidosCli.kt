@@ -31,9 +31,9 @@ class AidosCli(private val client: RuntimeClient) {
 
     // ── Project commands ───────────────────────────────────────────────────────
 
-    suspend fun createProject(name: String, description: String = ""): String {
+    suspend fun createProject(name: String, description: String = "", projectType: String = "generic"): String {
         val result = client.projects.create(
-            CreateProjectRequest(name, description, ProjectLocation.RuntimeManaged(name))
+            CreateProjectRequest(name, description, ProjectLocation.RuntimeManaged(name), projectType = projectType)
         )
         return when (result) {
             is ProjectResult.Success -> result.project.id
@@ -43,6 +43,14 @@ class AidosCli(private val client: RuntimeClient) {
 
     suspend fun listProjects(): List<String> =
         client.projects.list().map { "${it.id}\t${it.name}" }
+
+    suspend fun archiveProject(projectId: String) {
+        client.projects.close(projectId)
+    }
+
+    suspend fun deleteProject(projectId: String, confirm: Boolean) {
+        client.projects.delete(projectId, confirm)
+    }
 
     // ── Session commands ───────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 # RFC-0036: Settings and Configuration
 
 Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0036-requirement-map).
+Non-MVP Work: **Remaining** (dynamic reconfiguration without restart, import settings diff view, policy profiles, settings UI)
 
 ## Abstract
 
@@ -206,3 +207,27 @@ runtime enforces silently.
 
 Policy profiles — named bundles such as "strict offline" or "trusted workstation" — as a way to
 set many related `SECURITY` values coherently rather than one at a time.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SecretsWiring.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/RetentionModel.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/RetentionPolicyResolver.kt
+  - agent/retention/src/jvmTest/kotlin/dev/aidos/retention/Rfc0056RequirementsTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/ProjectSettingsLoader.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SecretRef.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SettingDescriptor.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SettingsAudit.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SettingsStore.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/TomlParser.kt
+  - agent/settings/src/jvmTest/kotlin/dev/aidos/settings/Rfc0036RequirementsTest.kt
+  - agent/settings/src/jvmTest/kotlin/dev/aidos/settings/SettingsTest.kt
+  - schema/project.sql
+  - schema/user.sql
+```

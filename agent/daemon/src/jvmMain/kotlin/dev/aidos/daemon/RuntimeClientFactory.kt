@@ -1,8 +1,12 @@
 package dev.aidos.daemon
 
+import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.api.JvmProjectLocker
+import dev.aidos.api.ProjectLifecyclePort
 import dev.aidos.api.RuntimeClient
 import dev.aidos.api.RealRuntimeClient
+import dev.aidos.executor.ProjectLifecycle
+import dev.aidos.kernel.ProjectId
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
 import dev.aidos.vault.DesktopVault
@@ -40,6 +44,7 @@ object RuntimeClientFactory {
     fun createRuntimeClient(
         home: String = System.getProperty("user.home"),
         installCrashHandler: Boolean = true,
+        platform: PlatformAdapter = DesktopPlatformAdapter(home = home),
     ): RuntimeClient {
         val nowIso = { Clock.System.now().toString() }
         val userDb = AidosStorage.openUser(DesktopPaths.userDb(home), RUNTIME_VERSION, nowIso)
@@ -49,7 +54,7 @@ object RuntimeClientFactory {
                 Thread.setDefaultUncaughtExceptionHandler(
                     CrashHandler(
                         driver = userDb.driver,
-                        platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
+                        platformProfile = platform.profile,
                         runtimeVersion = RUNTIME_VERSION,
                         homeDir = home,
                         previousHandler = existing,
@@ -59,13 +64,27 @@ object RuntimeClientFactory {
         }
         val deviceIdentityStore = dev.aidos.identity.DeviceIdentityStore(userDb.driver, dev.aidos.identity.UuidV7Generator(), nowIso)
         val deviceIdentity = deviceIdentityStore.getOrRegister(
-            platformProfile = dev.aidos.kernel.PlatformProfile.DESKTOP,
-            defaultDisplayName = "Desktop",
+            platformProfile = platform.profile,
+            defaultDisplayName = platform.profile.name.lowercase().replaceFirstChar { it.uppercase() },
         )
 
         return RealRuntimeClient().apply {
             userDriver = userDb.driver
             this.deviceIdentity = deviceIdentity
+            this.runtimeProfile = platform.profile
+            this.availabilityEvaluator = { _, projectPath ->
+                val toml = projectPath?.let { java.io.File(it, "aidos.toml") }
+                    ?.takeIf { it.isFile }
+                    ?.readText()
+                    ?: ""
+                val reqs = dev.aidos.settings.ProjectRequirementsParser.parse(toml)
+                dev.aidos.settings.AvailabilityEvaluator.evaluate(
+                    requirements = reqs,
+                    profile = platform.profile,
+                    networkAvailable = platform.networkAvailable(),
+                    sidecarAvailable = platform.sidecarAvailable(),
+                )
+            }
             projectDbFactory = { projectRoot ->
                 AidosStorage.openProject(DesktopPaths.stateDb(projectRoot), RUNTIME_VERSION, nowIso).driver
             }
@@ -84,6 +103,7 @@ object RuntimeClientFactory {
                 userDriver = userDb.driver,
                 vault = opened?.vault,
                 mcpSecretResolver = opened?.vault?.let { VaultMcpSecretResolver(it) } ?: RuntimeCompositionRoot.envMcpSecretResolver,
+                platform = platform,
             )
             runExecutor = SqliteRunExecutor(
                 nowIso = nowIso,
@@ -94,6 +114,41 @@ object RuntimeClientFactory {
             // same ANTHROPIC_API_KEY) resolves a parked Run as drove it, so the adapter named at
             // park time is the one `approve-run`/`deny-run` actually resumes with.
             effectApprovalGateway = SqliteEffectApprovalGateway(compositionRoot, nowIso = nowIso)
+            projectLifecycle = object : ProjectLifecyclePort {
+                override suspend fun archiveProject(projectDriver: SqlDriver, projectId: String): Result<Unit> =
+                    ProjectLifecycle(projectDriver, nowIso).archiveProject(ProjectId(projectId))
+
+                override suspend fun deleteProject(projectDriver: SqlDriver, projectId: String): Result<Unit> =
+                    ProjectLifecycle(projectDriver, nowIso).deleteProject(ProjectId(projectId))
+            }
+            val reconciler = GitRunReconciler(nowIso = nowIso, deviceId = deviceIdentity.deviceId.value)
+            onProjectCreate = { projectPath -> ensureAidosGitignore(projectPath) }
+            onProjectOpen = { projectId, driver ->
+                reconciler.reconcileOnOpen(driver, ProjectId(projectId))
+            }
+            onSessionArchive = { sessionId, _, projectPath ->
+                if (projectPath != null) {
+                    val gitDir = java.io.File(projectPath, ".git")
+                    if (gitDir.exists()) {
+                        runCatching {
+                            org.eclipse.jgit.api.Git.open(java.io.File(projectPath)).use { git ->
+                                dev.aidos.worker.TreelessWorker(git.repository).pruneWorkerRef(sessionId)
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    /** RFC-0054: Ensure `.aidos/` is listed in `<projectPath>/.gitignore` on project creation. */
+    internal fun ensureAidosGitignore(projectPath: String) {
+        val dir = java.io.File(projectPath)
+        if (!dir.exists()) return
+        val gitignore = java.io.File(dir, ".gitignore")
+        val existingLines = if (gitignore.exists()) gitignore.readLines() else emptyList()
+        if (existingLines.any { it.trim() == ".aidos/" || it.trim() == ".aidos" }) return
+        val prefix = if (gitignore.exists() && gitignore.readText().let { it.isNotEmpty() && !it.endsWith("\n") }) "\n" else ""
+        gitignore.appendText("$prefix.aidos/\n")
     }
 }

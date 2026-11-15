@@ -1,6 +1,7 @@
 # RFC-0010: Projects
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (templates, hierarchies, workspaces, collaborative projects, analytics, snapshots, dependencies, cloning)
 
 ## Abstract
 
@@ -554,3 +555,27 @@ Clone a project to create a variant. Useful for "what if" exploration: "clone th
 - How should projects handle naming conflicts when exported and imported? Should there be a global namespace or is per-machine uniqueness sufficient?
 - Should projects support different "levels of encapsulation"? (e.g., some cross-project sharing of knowledge, but not of state)
 - How should the Intent Graph be initialized? Should projects offer templates for common goal structures?
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - schema/user.sql
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/ProjectLifecyclePort.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientPersistenceTest.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/AidosCli.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SocketRuntimeClient.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonCliIntegrationTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/ProjectLifecycle.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/lock/src/jvmMain/kotlin/dev/aidos/lock/ProjectLock.kt
+  - agent/lock/src/jvmTest/kotlin/dev/aidos/lock/ProjectLockTest.kt
+```

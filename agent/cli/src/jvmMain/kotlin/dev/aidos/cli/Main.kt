@@ -28,6 +28,8 @@ import kotlin.system.exitProcess
  * Commands:
  *   create-project <name> [description]
  *   list-projects
+ *   archive-project <projectId>
+ *   delete-project <projectId> --confirm
  *   create-session <projectId> <name>
  *   list-sessions <projectId>
  *   send <sessionId> <message>
@@ -82,6 +84,7 @@ fun main(args: Array<String>) {
 
     if (rest[0] in PortabilityCli.COMMANDS) exitProcess(runPortability(rest))
     if (rest[0] in SecretsCli.COMMANDS) exitProcess(SecretsCli({ DesktopVault.open() }, dev.aidos.portability.SystemCliIo).run(rest.drop(1)))
+    if (rest[0] in McpCli.COMMANDS) exitProcess(runMcp(rest.drop(1)))
 
     val resolvedSocketPath = socketPath ?: SocketPaths.defaultSocketPath()
     val client = SocketRuntimeClient(resolvedSocketPath, SocketPaths.defaultTokenPath(resolvedSocketPath))
@@ -165,10 +168,27 @@ internal suspend fun dispatch(
 ) {
     when (command) {
         "create-project" -> {
-            requireArgs(args, 1, "create-project <name> [description]")
-            println(cli.createProject(args[0], args.getOrElse(1) { "" }))
+            requireArgs(args, 1, "create-project <name> [description] [--type <type>]")
+            val typeIdx = args.indexOf("--type")
+            val projectType = if (typeIdx >= 0) args.getOrNull(typeIdx + 1) ?: fail("--type requires a value") else "generic"
+            val positional = args.filterIndexed { idx, _ -> idx != typeIdx && idx != typeIdx + 1 }
+            val name = positional.getOrNull(0) ?: fail("create-project requires a name")
+            val desc = positional.getOrElse(1) { "" }
+            println(cli.createProject(name, desc, projectType))
         }
         "list-projects" -> cli.listProjects().forEach(::println)
+        "archive-project" -> {
+            requireArgs(args, 1, "archive-project <projectId>")
+            cli.archiveProject(args[0])
+            println("archived: project ${args[0]}")
+        }
+        "delete-project" -> {
+            requireArgs(args, 1, "delete-project <projectId> --confirm")
+            val confirm = args.drop(1).contains("--confirm")
+            if (!confirm) fail("delete-project requires --confirm")
+            cli.deleteProject(args[0], confirm = true)
+            println("deleted: project ${args[0]}")
+        }
         "create-session" -> {
             requireArgs(args, 2, "create-session <projectId> <name>")
             println(cli.createSession(args[0], args[1]))
@@ -246,6 +266,8 @@ internal fun helpText(): String =
         Commands:
           create-project <name> [description]
           list-projects
+          archive-project <projectId>
+          delete-project <projectId> --confirm
           create-session <projectId> <name>
           list-sessions <projectId>
           send <sessionId> <message>
@@ -259,6 +281,7 @@ internal fun helpText(): String =
           ping
           version
           diagnose [--output PATH] [--include-trace] [--runs ID,...] [--include-sensitive]
+          mcp add|remove|list ...   (RFC-0031; local, no daemon)
 
         --socket-path PATH   Daemon socket (default: ${'$'}XDG_RUNTIME_DIR/aidos/runtime.sock)
     """.trimIndent()
@@ -283,7 +306,18 @@ private fun runPortability(args: List<String>): Int {
         override fun register(projectId: String, path: String, nowIso: String) =
             reg.register(ProjectId(projectId), path, nowIso = nowIso)
     }
-    return PortabilityCli.run(args, registry, newId = { ids.next() }, keys = VaultSigningKeys { DesktopVault.open() }, scanner = exportScanner())
+        return PortabilityCli.run(args, registry, newId = { ids.next() }, keys = VaultSigningKeys { DesktopVault.open() }, scanner = exportScanner())
+}
+
+private fun runMcp(args: List<String>): Int {
+    val openUserDriver = {
+        File(DesktopPaths.userDb()).parentFile.mkdirs()
+        AidosStorage.openUser(DesktopPaths.userDb(), "cli") { Instant.now().toString() }.driver
+    }
+    return McpCli(
+        openDriver = openUserDriver,
+        io = dev.aidos.portability.SystemCliIo,
+    ).run(args)
 }
 
 /**

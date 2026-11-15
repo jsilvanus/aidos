@@ -2,6 +2,10 @@ package dev.aidos.executor
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import dev.aidos.kernel.CapabilityManager
+import dev.aidos.kernel.CapabilityScope
+import dev.aidos.kernel.Permission
+import kotlinx.datetime.Instant
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -43,6 +47,65 @@ class SessionSubscriptionStore(private val driver: SqlDriver) {
             bindString(3, eventTypes?.let { Json.encodeToString(stringListSerializer, it) })
             bindLong(4, if (selfWake) 1L else 0L)
             bindString(5, nowIso)
+        }
+    }
+
+    /**
+     * Capability-checked subscription for a session (RFC-0004 "Subscription Authorization").
+     *
+     * Subscribing to topics beyond the session's own (`session:<sessionId>`) requires an active
+     * [Permission.EVENT_SUBSCRIBE] capability whose [CapabilityScope.Events] covers every
+     * requested pattern.
+     */
+    suspend fun subscribeAuthorized(
+        id: String,
+        sessionId: String,
+        topicPatterns: List<String>,
+        eventTypes: List<String>? = null,
+        selfWake: Boolean = false,
+        nowIso: String,
+        capabilityManager: CapabilityManager,
+    ) {
+        authorizeSessionSubscription(sessionId, topicPatterns, nowIso, capabilityManager)
+        subscribe(id, sessionId, topicPatterns, eventTypes, selfWake, nowIso)
+    }
+
+    private suspend fun authorizeSessionSubscription(
+        sessionId: String,
+        topicPatterns: List<String>,
+        nowIso: String,
+        capabilityManager: CapabilityManager,
+    ) {
+        val ownExact = "session:$sessionId"
+        val ownPrefix = "session:$sessionId:"
+        val externalPatterns = topicPatterns.filter { it != ownExact && !it.startsWith(ownPrefix) }
+        val needsCap = topicPatterns.isEmpty() || externalPatterns.isNotEmpty()
+        if (!needsCap) return
+
+        val now = Instant.parse(nowIso)
+        val grants = capabilityManager.loadForSubject(sessionId).filter { cap ->
+            cap.permission == Permission.EVENT_SUBSCRIBE &&
+                cap.revokedAt == null &&
+                (cap.expiresAt == null || cap.expiresAt!! > now)
+        }
+        val allowedPatterns = grants.flatMap { cap ->
+            (cap.scope as? CapabilityScope.Events)?.topicPatterns ?: emptyList()
+        }
+        if (allowedPatterns.isEmpty()) {
+            throw IllegalArgumentException("Session $sessionId lacks EVENT_SUBSCRIBE capability (RFC-0004)")
+        }
+        if (topicPatterns.isEmpty() && "*" !in allowedPatterns && "**" !in allowedPatterns) {
+            throw IllegalArgumentException("Session $sessionId lacks wildcard EVENT_SUBSCRIBE capability (RFC-0004)")
+        }
+        for (pattern in externalPatterns) {
+            val covered = allowedPatterns.any { allowed ->
+                allowed == pattern || TopicMatcher.matches(allowed, pattern)
+            }
+            if (!covered) {
+                throw IllegalArgumentException(
+                    "Session $sessionId is not authorized to subscribe to topic '$pattern' (RFC-0004)"
+                )
+            }
         }
     }
 

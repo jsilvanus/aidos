@@ -2,10 +2,15 @@ package dev.aidos.executor
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.aidos.broker.AuditLog
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.Budget
 import dev.aidos.kernel.BudgetScope
+import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.RunId
+import dev.aidos.kernel.SessionId
+import dev.aidos.kernel.TaskKind
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
 import java.nio.file.Files
@@ -1107,5 +1112,104 @@ class BudgetAndProjectTest {
 
         assertTrue(result.isSuccess)
         assertEquals(1L, countRows(driver, "SELECT COUNT(*) FROM sessions WHERE project_id = ?", projectId.value))
+    }
+
+    @Test
+    fun `SqliteExecutor terminates run with FAILED and budget_exhausted when SqlBudgetLedger limit is reached`() = runBlocking {
+        val driver = openDriver()
+        val pid = "proj-budget"
+        val sid = "sess-budget"
+        val eid = "evt-budget"
+        seedProject(driver, pid)
+        seedSession(driver, pid, sid, "SLEEPING")
+        driver.execute(
+            null,
+            "INSERT INTO events (id, project_id, sequence, type, schema_version, category, visibility, timestamp, source, payload, causal_depth) " +
+                "VALUES (?, ?, 1, 'UserCommand', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)",
+            3,
+        ) { bindString(0, eid); bindString(1, pid); bindString(2, nowIso) }
+
+        val runId = RunCreator(driver, { idGen.next() }, { nowIso }).createForUserMessage(
+            sessionId = SessionId(sid),
+            projectId = ProjectId(pid),
+            triggerEventId = dev.aidos.kernel.EventId(eid),
+            userMessageSummary = "hello",
+            platformProfile = PlatformProfile.DESKTOP,
+            deviceId = "dev-1",
+            networkAvailable = false,
+            maxSteps = 10,
+        )
+        // Seed RUN budget with 0 remaining model_calls so the first MODEL_CALL task is blocked by SqliteExecutor.
+        seedBudgetLedger(
+            driver = driver,
+            scope = "RUN",
+            scopeId = runId.value,
+            modelCalls = 1,
+            limitJson = """{"model_calls":1}""",
+        )
+
+        val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
+        val executor = SqliteExecutor(
+            driver = driver,
+            audit = AuditLog(driver),
+            events = EventStore(driver),
+            idGen = { idGen.next() },
+            nowIso = { nowIso },
+            taskRunner = object : TaskRunner {
+                override suspend fun execute(task: dev.aidos.kernel.Task): TaskResult =
+                    error("TaskRunner must not execute when budget is exhausted")
+            },
+            budgetLedger = ledger,
+        )
+
+        executor.drive(runId)
+
+        var state: String? = null
+        var errorCode: String? = null
+        driver.executeQuery(
+            null,
+            "SELECT state, error_code FROM runs WHERE id = ?",
+            mapper = { c ->
+                if (c.next().value) {
+                    state = c.getString(0)
+                    errorCode = c.getString(1)
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, runId.value) }
+        assertEquals("FAILED", state)
+        assertEquals("budget.exhausted", errorCode)
+    }
+
+    @Test
+    fun `SqliteExecutor recover releases active budget reservations`() = runBlocking {
+        val driver = openDriver()
+        val pid = "proj-rec"
+        seedProject(driver, pid)
+        seedAttemptForReservation(driver, pid, runId = "run-rec", attemptId = "att-rec", taskId = "task-rec")
+        driver.execute(null, "UPDATE runs SET state = 'RUNNING' WHERE id = 'run-rec'", 0)
+        driver.execute(null, "UPDATE attempts SET state = 'RUNNING' WHERE id = 'att-rec'", 0)
+        seedBudgetLedger(driver, "RUN", "run-rec", modelCalls = 0, limitJson = """{"model_calls":5}""")
+
+        val ledger = SqlBudgetLedger(driver, { idGen.next() }, { nowIso })
+        val resId = ledger.reserve(BudgetScope.RUN, "run-rec", Budget(modelCalls = 2)).getOrThrow()
+
+        val executor = SqliteExecutor(
+            driver = driver,
+            audit = AuditLog(driver),
+            events = EventStore(driver),
+            idGen = { idGen.next() },
+            nowIso = { nowIso },
+            taskRunner = object : TaskRunner {
+                override suspend fun execute(task: dev.aidos.kernel.Task): TaskResult = TaskResult(success = true)
+            },
+            budgetLedger = ledger,
+        )
+
+        val report = executor.recover(ProjectId(pid))
+        assertEquals(1, report.reservationsReleased)
+        assertEquals(0L, countRows(driver, "SELECT COUNT(*) FROM budget_reservations WHERE id = ?", resId.value))
+        assertEquals(5, ledger.remaining(BudgetScope.RUN, "run-rec")?.modelCalls)
     }
 }

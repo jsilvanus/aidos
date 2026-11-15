@@ -3,6 +3,7 @@ package dev.aidos.executor
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.AvailabilityTier
+import dev.aidos.kernel.CapabilityId
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.DenialReason
@@ -918,5 +919,144 @@ class AgentLoopTaskRunnerTest {
         assertIs<CapabilityApprovalResolution.Resumed>(resolution)
 
         assertEquals("IDEMPOTENT", toolCallRecoveryClass(driver, "call-1"))
+    }
+
+    @Test
+    fun `remote model invocation routes through EffectBroker, redacts request, and passes egress context (RFC-0021, RFC-0023)`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        driver.execute(null, "UPDATE runs SET user_message_summary = 'hello sk-secret-123' WHERE id = ?", 1) {
+            bindString(0, runId.value)
+        }
+        val remoteAdapter = object : ModelAdapter {
+            override val providerId = "anthropic"
+            override val modelId = "claude-test"
+            override val modelVersion = "1"
+            override val contextWindow = 100_000
+            override val isLocal = false
+            override fun supportsNativeToolCalls() = true
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> =
+                Result.success(endTurnResponse("ok"))
+        }
+        val invokedTools = mutableListOf<String>()
+        var capturedRequestText = ""
+        var capturedCapId: CapabilityId? = null
+        val gateTool = RemoteModelEgressTool()
+        val broker = object : EffectBroker {
+            override fun register(tool: dev.aidos.kernel.Tool) = Unit
+            override fun descriptorsFor(
+                subjectId: String,
+                profile: PlatformProfile,
+                networkAvailable: Boolean,
+            ): List<ToolDescriptor> = gateTool.operations()
+
+            override suspend fun invoke(
+                subjectId: String,
+                call: ToolCall,
+                runTaint: TrustLevel,
+            ): ToolCallResult {
+                invokedTools += call.toolName
+                return ToolCallResult(
+                    callId = call.callId,
+                    outcome = ToolOutcome.Ok,
+                    content = listOf(ContentBlock.Text("ok")),
+                    trustLevel = TrustLevel.TRUSTED,
+                )
+            }
+
+            override suspend fun preview(subjectId: String, call: ToolCall): Result<Preview> =
+                Result.success(Preview.NoChange)
+
+            override suspend fun cancel(callId: String) = Unit
+        }
+        val runner = AgentLoopTaskRunner(
+            driver = driver,
+            audit = AuditLog(driver, "dev-1"),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            router = object : InferenceRouter {
+                override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision =
+                    RoutingDecision.RemoteApproved(remoteAdapter)
+            },
+            assembler = PromptAssembler(),
+            broker = broker,
+            redact = { it.replace("sk-secret-123", "[REDACTED]") },
+            resolveCapability = { _, perm ->
+                if (perm == Permission.NETWORK_EGRESS) CapabilityId("cap-net-1") else null
+            },
+            invokeRemoteModelWithContext = { adapter, req, capId, _, _, _ ->
+                capturedCapId = capId
+                capturedRequestText = req.messages.joinToString("\n") { it.toString() }
+                adapter.invoke(req)
+            },
+        )
+        val executor = SqliteExecutor(
+            driver = driver,
+            audit = AuditLog(driver, "dev-1"),
+            events = EventStore(driver),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            taskRunner = runner,
+        )
+        executor.drive(runId)
+
+        assertEquals(listOf(RemoteModelEgressTool.MODEL_EGRESS_TOOL_NAME), invokedTools)
+        assertEquals(CapabilityId("cap-net-1"), capturedCapId)
+        assertTrue(!capturedRequestText.contains("sk-secret-123"))
+        assertTrue(capturedRequestText.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun `untrusted recalled session memory propagates UNTRUSTED taint and refreshes FACT expiry (RFC-0026)`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val refreshedIds = mutableListOf<String>()
+        var observedRoutingTaint: TrustLevel? = null
+        val localAdapter = fakeModel(listOf(endTurnResponse("done")))
+        val runner = AgentLoopTaskRunner(
+            driver = driver,
+            audit = AuditLog(driver, "dev-1"),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            router = object : InferenceRouter {
+                override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision {
+                    observedRoutingTaint = context.runTaint
+                    return RoutingDecision.Local(localAdapter)
+                }
+            },
+            assembler = PromptAssembler(),
+            broker = noOpBroker(),
+            recallSessionMemory = { _, _ ->
+                listOf(
+                    RecalledMemoryItem(
+                        id = "mem-fact-1",
+                        kind = "FACT",
+                        content = "External repo uses custom build",
+                        trustLevel = TrustLevel.UNTRUSTED,
+                        inferred = true,
+                    )
+                )
+            },
+            onMemoryRecalled = { ids -> refreshedIds += ids },
+        )
+        val executor = SqliteExecutor(
+            driver = driver,
+            audit = AuditLog(driver, "dev-1"),
+            events = EventStore(driver),
+            idGen = { nextId() },
+            nowIso = { nowIso },
+            taskRunner = runner,
+        )
+        executor.drive(runId)
+
+        assertEquals(TrustLevel.UNTRUSTED, observedRoutingTaint)
+        assertEquals(listOf("mem-fact-1"), refreshedIds)
+        val persistedTaint = driver.executeQuery(
+            null,
+            "SELECT taint_level FROM runs WHERE id = ?",
+            mapper = { c -> check(c.next().value); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) },
+            1,
+        ) { bindString(0, runId.value) }.value
+        assertEquals("UNTRUSTED", persistedTaint)
     }
 }

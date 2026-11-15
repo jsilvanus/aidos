@@ -1,6 +1,7 @@
 # RFC-0027: Trust, Taint, and Untrusted Content
 
 Status: Implemented 2026-11-10 (Accepted 2026-08-03). Partially superseded by [RFC-0110](0110-optional-guardian-approval.md) (Optional Guardian Approval for Tainted Runs). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
+Non-MVP Work: **Remaining** (configurable attenuation policy, taint-aware context assembly, injection-pattern detection, RFC-0110 Guardian escalation)
 
 ## Abstract
 
@@ -236,3 +237,53 @@ attempting to filter the content.
 
 Opt-in two-gate (Decision Model Gate A + Blind Guardian LLM Gate B) taint escalation evaluation
 is specified separately in [RFC-0110](0110-optional-guardian-approval.md).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/agentloop/src/jvmTest/kotlin/dev/aidos/agentloop/injection/InjectionSuiteTest.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/AmpAgentRunner.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/approval/ApprovalPresenter.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BlindedQueryModels.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/TaintAttenuation.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/McpToolBrokerIntegrationTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RemoteModelEgressTool.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/GuardianApprovalEndToEndTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TaintEscalationEndToEndTest.kt
+  - agent/filesystem/src/jvmMain/kotlin/dev/aidos/filesystem/FilesystemTool.kt
+  - agent/filesystem/src/jvmMain/kotlin/dev/aidos/filesystem/PathTrustPolicy.kt
+  - agent/filesystem/src/jvmTest/kotlin/dev/aidos/filesystem/TrustLabelTest.kt
+  - agent/git/src/jvmMain/kotlin/dev/aidos/git/GitTool.kt
+  - agent/http/src/jvmMain/kotlin/dev/aidos/http/HttpTool.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+  - agent/mcp-broker/src/jvmMain/kotlin/dev/aidos/mcp/McpTool.kt
+  - agent/mcp-broker/src/jvmTest/kotlin/dev/aidos/mcp/McpToolTest.kt
+  - agent/mcp-core/src/jvmMain/kotlin/dev/aidos/mcp/core/McpRegistration.kt
+  - agent/mcp-policy/src/jvmMain/kotlin/dev/aidos/mcp/policy/McpTrustPolicy.kt
+  - agent/memory/src/jvmMain/kotlin/dev/aidos/memory/SessionMemoryStore.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/ContextSandboxTest.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+  - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/PolicyInferenceRouterTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretsVault.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Content.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Execution.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Knowledge.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/RuntimeApi.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Tools.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Trust.kt
+  - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+  - schema/project.sql
+  - schema/user.sql
+```

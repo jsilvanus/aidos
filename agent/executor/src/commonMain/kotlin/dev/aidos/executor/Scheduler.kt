@@ -14,27 +14,45 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * RFC-0005's actual wake-to-Run wiring: given a published event, decides which subscribed
- * sessions wake, and for each, creates the Run the way [RunCreator] already does for a user
- * message — "it creates a Run, and RFC-0009 drives it" is this RFC's own Non-goals line, and
- * `drive()` is exactly what picks a `PENDING` Run up from here. This class does **not** call
- * `drive()` itself, for the same reason `AgentLoopTaskRunner`-driven Runs from `sessions.send()`
- * don't either (see `api/RunExecutor.kt`): actually driving a Run to a model response needs a
- * real `InferenceRouter`/`PromptAssembler`/`EffectBroker` composition that doesn't exist in this
- * runtime yet. A durable, un-driven `PENDING` Run is correct either way (D3): nothing is lost by
- * not driving it immediately.
- *
- * [SchedulerMatcher] already does the pure "which sessions match" decision (RFC-0005's own rule:
- * matching "is pure and cheap; it never reads the filesystem and never calls a model"). This
- * class is what *acts* on a match: transitioning a session out of `SLEEPING` and creating a Run
- * touches the step-machine invariants D3/D14 guard — `SchedulerMatcher`'s own doc comment named
- * this as "its own, separate, more careful piece of work," and this is that piece.
- *
- * **Deliberately not built here — RFC-0005's own MVP section excludes it explicitly**: the full
- * admission policy (project lock, availability, budget, least-recently-run fairness ordering),
- * priorities, and deadline scheduling. The one admission check this class *does* make —
- * refusing to wake a session that isn't `SLEEPING` — is basic session-state-machine correctness
- * (RFC-0017: only `SLEEPING` sessions wake), not admission policy.
+ * An event queued for a session that was already `RUNNING` when the event arrived (RFC-0006
+ * "Interrupt Handling"). Runs within a session execute serially — never concurrently.
+ */
+data class QueuedSessionEvent(
+    val event: EventRow,
+    val sourceSessionId: String?,
+    val projectId: ProjectId,
+    val platformProfile: PlatformProfile,
+    val deviceId: String,
+    val networkAvailable: Boolean,
+)
+
+/** Per-session pending event queue (RFC-0006). */
+class SessionEventQueue {
+    private val queues = mutableMapOf<String, ArrayDeque<QueuedSessionEvent>>()
+
+    fun enqueue(sessionId: String, item: QueuedSessionEvent) {
+        queues.getOrPut(sessionId) { ArrayDeque() }.addLast(item)
+    }
+
+    fun dequeue(sessionId: String): QueuedSessionEvent? {
+        val q = queues[sessionId] ?: return null
+        val next = if (q.isEmpty()) null else q.removeFirst()
+        if (q.isEmpty()) queues.remove(sessionId)
+        return next
+    }
+
+    fun clear(sessionId: String): Int {
+        val q = queues.remove(sessionId) ?: return 0
+        return q.size
+    }
+
+    fun pendingFor(sessionId: String): List<QueuedSessionEvent> =
+        queues[sessionId]?.toList() ?: emptyList()
+}
+
+/**
+ * RFC-0005's actual wake-to-Run wiring and RFC-0006's serial session event queue &
+ * `PRIORITY_INTERRUPT` handling.
  */
 class Scheduler(
     private val driver: SqlDriver,
@@ -44,6 +62,7 @@ class Scheduler(
     private val audit: AuditLog,
     private val idGen: () -> String,
     private val nowIso: () -> String,
+    val eventQueue: SessionEventQueue = SessionEventQueue(),
 ) {
     private val transacter = object : TransacterImpl(driver) {}
 
@@ -59,15 +78,15 @@ class Scheduler(
         val depthCeilingRefused: List<String>,
         /** Matched, but the session was not `SLEEPING` (RFC-0017: only a sleeping session wakes). */
         val alreadyRunning: List<String>,
+        /** Sessions whose event was queued because the session was already `RUNNING` (RFC-0006). */
+        val queued: List<String> = emptyList(),
+        /** Sessions interrupted by a `PRIORITY_INTERRUPT` event (RFC-0006). */
+        val interrupted: List<String> = emptyList(),
     )
 
     /**
      * Reacts to one already-published event: matches it against [projectId]'s subscriptions and
-     * wakes whichever sessions RFC-0005's matching rules admit.
-     *
-     * [sourceSessionId] is the session that caused [event]'s publication, if any — passed through
-     * unchanged to [SchedulerMatcher]; see that class's own doc comment for why this isn't derived
-     * from [EventRow.source].
+     * wakes whichever sessions RFC-0005/RFC-0004/RFC-0006 admit.
      */
     fun wake(
         event: EventRow,
@@ -83,9 +102,6 @@ class Scheduler(
             subscriptions = subscriptions.forProject(projectId.value),
         )
 
-        // Self-wake refusals are recorded, not silent (RFC-0005 "Cycles and amplification",
-        // RFC-0037) -- this is a decision, and "why did my subscription never fire" needs an
-        // answer source the same way a causal-depth refusal does, below.
         for (sessionId in match.selfWakeRefused) {
             val actor = resolveSessionActor(sessionId)
             audit.write(
@@ -102,14 +118,35 @@ class Scheduler(
             )
         }
 
+        // RFC-0006: PRIORITY_INTERRUPT cancels active Runs for targeted/matched sessions and clears queue.
+        if (event.type == EventTypes.PRIORITY_INTERRUPT) {
+            val targets = (match.woken + targetSessionFromTopic(event.topic)).filterNotNull().distinct()
+            val interrupted = mutableListOf<String>()
+            for (sessionId in targets) {
+                if (cancelActiveSessionRuns(projectId.value, sessionId, event.id)) {
+                    interrupted.add(sessionId)
+                }
+            }
+            return WakeResult(
+                woken = emptyList(),
+                selfWakeRefused = match.selfWakeRefused,
+                depthCeilingRefused = emptyList(),
+                alreadyRunning = emptyList(),
+                interrupted = interrupted,
+            )
+        }
+
         val woken = mutableListOf<WokenSession>()
         val depthCeilingRefused = mutableListOf<String>()
         val alreadyRunning = mutableListOf<String>()
+        val queued = mutableListOf<String>()
 
         for (sessionId in match.woken) {
-            // Publish SessionWoken before touching session state -- if it's refused (depth
-            // ceiling), there is no valid trigger_event_id to create a Run with, and nothing
-            // about the session has changed yet, so there's nothing to roll back.
+            // RFC-0004: Visibility check — never deliver PRIVILEGED or other-session events.
+            if (!events.canDeliver(event, ActorKind.SESSION, sessionId)) {
+                continue
+            }
+
             val wokenEventId = idGen()
             val seq = events.publish(
                 id = wokenEventId,
@@ -140,13 +177,24 @@ class Scheduler(
                 continue
             }
 
-            // The session transition and the Run it's woken into must be atomic (D3): a session
-            // left RUNNING with no Run to drive it would never transition back to SLEEPING. The
-            // SessionWoken event above is informational (same tier as drive()'s own
-            // RunStepCompleted/ToolCompleted publishes, which aren't transactional with the task
-            // state change they describe either) -- in the rare case a session stops being
-            // SLEEPING between the match and this point, the event stays published (an honest
-            // record that a wake was attempted) but nothing else happens.
+            // RFC-0006: If session is already RUNNING, queue the event rather than waking concurrently.
+            if (isSessionRunning(sessionId)) {
+                eventQueue.enqueue(
+                    sessionId,
+                    QueuedSessionEvent(
+                        event = event,
+                        sourceSessionId = sourceSessionId,
+                        projectId = projectId,
+                        platformProfile = platformProfile,
+                        deviceId = deviceId,
+                        networkAvailable = networkAvailable,
+                    ),
+                )
+                alreadyRunning.add(sessionId)
+                queued.add(sessionId)
+                continue
+            }
+
             var created: WokenSession? = null
             transacter.transaction {
                 val updated = updateSessionToRunning(sessionId)
@@ -163,17 +211,145 @@ class Scheduler(
                     created = WokenSession(sessionId, runId.value, wokenEventId)
                 }
             }
-            if (created != null) woken.add(created) else alreadyRunning.add(sessionId)
+            if (created != null) {
+                woken.add(created)
+            } else {
+                alreadyRunning.add(sessionId)
+            }
         }
 
-        return WakeResult(woken, match.selfWakeRefused, depthCeilingRefused, alreadyRunning)
+        return WakeResult(
+            woken = woken,
+            selfWakeRefused = match.selfWakeRefused,
+            depthCeilingRefused = depthCeilingRefused,
+            alreadyRunning = alreadyRunning,
+            queued = queued,
+        )
     }
+
+    /**
+     * Called when a Run for [sessionId] completes, yields, or is cancelled (RFC-0006):
+     * dequeues the next pending event and starts a new Run for it, or returns the session to
+     * `SLEEPING` if the queue is empty.
+     */
+    fun onRunFinished(sessionId: String): WokenSession? {
+        val next = eventQueue.dequeue(sessionId)
+        if (next == null) {
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE sessions SET state = 'SLEEPING', state_updated_at = ?, row_version = row_version + 1 " +
+                    "WHERE id = ? AND state = 'RUNNING'",
+                parameters = 2,
+            ) {
+                bindString(0, nowIso())
+                bindString(1, sessionId)
+            }
+            return null
+        }
+
+        val wokenEventId = idGen()
+        val seq = events.publish(
+            id = wokenEventId,
+            projectId = next.projectId.value,
+            type = EventTypes.SESSION_WOKEN,
+            source = "scheduler",
+            topic = "session:$sessionId",
+            payload = buildJsonObject { put("session_id", sessionId) }.toString(),
+            causedBy = next.event.id,
+            causalDepth = next.event.causalDepth + 1,
+            nowIso = nowIso(),
+        ) ?: return null
+
+        val runId = runCreator.createForEvent(
+            sessionId = SessionId(sessionId),
+            projectId = next.projectId,
+            triggerEventId = EventId(wokenEventId),
+            contextSummary = "Woken by ${next.event.type}" + (next.event.topic?.let { " ($it)" } ?: ""),
+            platformProfile = next.platformProfile,
+            deviceId = next.deviceId,
+            networkAvailable = next.networkAvailable,
+        )
+        return WokenSession(sessionId, runId.value, wokenEventId)
+    }
+
+    private fun cancelActiveSessionRuns(projectId: String, sessionId: String, eventId: String): Boolean {
+        eventQueue.clear(sessionId)
+        val now = nowIso()
+        var cancelledAny = false
+        transacter.transaction {
+            val activeRunIds = mutableListOf<String>()
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT id FROM runs WHERE session_id = ? AND state IN ('PENDING', 'RUNNING', 'YIELDED')",
+                mapper = { c ->
+                    while (c.next().value) activeRunIds.add(c.getString(0)!!)
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) { bindString(0, sessionId) }
+
+            for (runId in activeRunIds) {
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE runs SET state = 'CANCELLED', ended_at = ?, row_version = row_version + 1 " +
+                        "WHERE id = ? AND state IN ('PENDING', 'RUNNING', 'YIELDED')",
+                    parameters = 2,
+                ) { bindString(0, now); bindString(1, runId) }
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE tasks SET state = 'SKIPPED', ended_at = ?, row_version = row_version + 1 " +
+                        "WHERE run_id = ? AND state IN ('PENDING', 'RUNNING', 'AWAITING_APPROVAL', 'AWAITING_INPUT')",
+                    parameters = 2,
+                ) { bindString(0, now); bindString(1, runId) }
+                driver.execute(
+                    identifier = null,
+                    sql = "DELETE FROM continuations WHERE run_id = ?",
+                    parameters = 1,
+                ) { bindString(0, runId) }
+                audit.write(
+                    id = idGen(),
+                    projectId = projectId,
+                    kind = "RunCancelled",
+                    actor = ActorRef(ActorKind.RUNTIME, "priority-interrupt"),
+                    subjectRef = runId,
+                    detailJson = buildJsonObject {
+                        put("reason", "priority_interrupt")
+                        put("event_id", eventId)
+                        put("session_id", sessionId)
+                    }.toString(),
+                    nowIso = now,
+                )
+                cancelledAny = true
+            }
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE sessions SET state = 'SLEEPING', state_updated_at = ?, row_version = row_version + 1 " +
+                    "WHERE id = ? AND state = 'RUNNING'",
+                parameters = 2,
+            ) { bindString(0, now); bindString(1, sessionId) }
+        }
+        return cancelledAny
+    }
+
+    private fun targetSessionFromTopic(topic: String?): String? {
+        if (topic == null || !topic.startsWith("session:")) return null
+        val id = topic.removePrefix("session:").substringBefore(':')
+        return id.takeIf { it.isNotBlank() && it != "*" && it != "**" }
+    }
+
+    private fun isSessionRunning(sessionId: String): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT state FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) == "RUNNING" else false) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
 
     private fun updateSessionToRunning(sessionId: String): Long =
         driver.execute(
             identifier = null,
-            sql = "UPDATE sessions SET state = 'RUNNING', state_updated_at = ?, last_active_at = ? " +
-                "WHERE id = ? AND state = 'SLEEPING'",
+            sql = "UPDATE sessions SET state = 'RUNNING', state_updated_at = ?, last_active_at = ?, " +
+                "row_version = row_version + 1 WHERE id = ? AND state = 'SLEEPING'",
             parameters = 3,
         ) {
             bindString(0, nowIso())

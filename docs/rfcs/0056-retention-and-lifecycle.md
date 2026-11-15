@@ -1,6 +1,7 @@
 # RFC-0056: Retention, Compaction, and Storage Lifecycle
 
 Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0056-requirement-map).
+Non-MVP Work: **Remaining** (cold export, Git content verification before compaction, Stage 2 DERIVED eviction, retention UI)
 
 ## Abstract
 
@@ -271,3 +272,27 @@ principle ("skeletons are permanent; flesh is reclaimable") or any never-delete 
   before compaction, and cold export. Deleting SECRET-labelled content on detection (Security
   section) is also not built: RFC-0035 redaction at write time is what keeps secrets out of the
   stored payloads today, and there is no detector yet to trigger a purge afterward.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RetentionMaintenance.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteRunExecutor.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RetentionWiringTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/LargeOutputStore.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectFiles.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/BlobStore.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/Compactor.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/RetentionModel.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/RetentionPolicyResolver.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/Sql.kt
+  - agent/retention/src/jvmMain/kotlin/dev/aidos/retention/StoragePressure.kt
+  - agent/retention/src/jvmTest/kotlin/dev/aidos/retention/RetentionFixture.kt
+  - agent/retention/src/jvmTest/kotlin/dev/aidos/retention/Rfc0056RequirementsTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
+  - schema/project.sql
+```

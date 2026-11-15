@@ -62,6 +62,7 @@ object AidosDaemon {
         // what actually releases the socket and token files, not the sleep loop below.
         Runtime.getRuntime().addShutdownHook(thread(start = false) {
             runBlocking { server.stop() }
+            (client as? dev.aidos.api.RealRuntimeClient)?.shutdown()
         })
 
         // Keep the daemon process alive; shutdown is driven by the hook above.

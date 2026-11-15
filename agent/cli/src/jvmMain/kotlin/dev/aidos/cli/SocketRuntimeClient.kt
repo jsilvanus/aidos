@@ -177,12 +177,22 @@ class SocketRuntimeClient(
             Wire.decodeProjectResult(call(Methods.PROJECTS_CREATE, Wire.encodeCreateProjectRequest(request)).jsonObject)
         }
         override suspend fun open(projectId: String): ProjectResult = notWired("projects.open")
-        override suspend fun close(projectId: String): Unit = notWired("projects.close")
+        override suspend fun close(projectId: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.PROJECTS_CLOSE, buildJsonObject { put("projectId", projectId) }).let { }
+        }
         override suspend fun list(): List<ProjectSummary> = withContext(Dispatchers.IO) {
             Wire.decodeProjectSummaryList(call(Methods.PROJECTS_LIST, JsonObject(emptyMap())).jsonArray)
         }
         override suspend fun get(projectId: String): ProjectDetail? = notWired("projects.get")
-        override suspend fun delete(projectId: String, confirm: Boolean): Unit = notWired("projects.delete")
+        override suspend fun delete(projectId: String, confirm: Boolean): Unit = withContext(Dispatchers.IO) {
+            call(
+                Methods.PROJECTS_DELETE,
+                buildJsonObject {
+                    put("projectId", projectId)
+                    put("confirm", confirm)
+                },
+            ).let { }
+        }
     }
 
     override val sessions = object : SessionCommands {
@@ -407,6 +417,15 @@ class SocketRuntimeClient(
         }
         override suspend fun ping(): Boolean = withContext(Dispatchers.IO) {
             call(Methods.RUNTIME_PING, JsonObject(emptyMap())).jsonPrimitive.boolean
+        }
+        override suspend fun profile(): dev.aidos.kernel.PlatformProfile = withContext(Dispatchers.IO) {
+            dev.aidos.kernel.PlatformProfile.valueOf(
+                call(Methods.RUNTIME_PROFILE, JsonObject(emptyMap())).jsonPrimitive.content
+            )
+        }
+        override suspend fun availability(projectId: String): dev.aidos.kernel.AvailabilityReport = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { put("projectId", projectId) }
+            Wire.decodeAvailabilityReport(call(Methods.RUNTIME_AVAILABILITY, params).jsonObject)
         }
     }
 }

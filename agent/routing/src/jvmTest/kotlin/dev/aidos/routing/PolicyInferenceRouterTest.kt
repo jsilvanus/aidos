@@ -8,6 +8,7 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
@@ -562,5 +563,58 @@ class PolicyInferenceRouterTest {
                 enforcedLocality = EnforcedLocality.CLUSTER,
             )
         )
+    }
+
+    @Test
+    fun `discovers and loads local model through ModelRuntime (RFC-0020)`() = runTest {
+        val loadedIds = mutableListOf<String>()
+        val runtime = object : ModelRuntime {
+            private val descriptors = listOf(
+                ModelDescriptor(
+                    id = "local-qwen-7b",
+                    name = "Qwen 7B",
+                    kind = ModelKind.LLM,
+                    providerId = "llamacpp",
+                    isLocal = true,
+                    contextWindow = 32_768,
+                    sizeBytes = 4_000_000_000L,
+                    digest = null,
+                ),
+                ModelDescriptor(
+                    id = "local-llama-8b",
+                    name = "Llama 8B",
+                    kind = ModelKind.LLM,
+                    providerId = "llamacpp",
+                    isLocal = true,
+                    contextWindow = 32_768,
+                    sizeBytes = 4_500_000_000L,
+                    digest = null,
+                ),
+            )
+            override suspend fun catalog() = descriptors
+            override suspend fun installed() = descriptors
+            override suspend fun load(modelId: String): Result<ModelAdapter> {
+                loadedIds += modelId
+                return Result.success(fakeAdapter(modelId, isLocal = true, contextWindow = 32_768))
+            }
+            override suspend fun unload(modelId: String) = Unit
+            override fun loaded(): List<String> = listOf("local-llama-8b")
+            override suspend fun delete(modelId: String) = Unit
+        }
+        val router = PolicyInferenceRouter(
+            policy = RoutingPolicy(allowRemote = false),
+            modelRuntime = runtime,
+        )
+
+        // Prefers already-loaded model when no explicit preference is given.
+        val decision = assertIs<RoutingDecision.Local>(router.select(ModelKind.LLM, ctx()))
+        assertEquals("local-llama-8b", decision.adapter.modelId)
+
+        // Explicit preferredModelId loads the requested installed model from ModelRuntime.
+        val preferred = assertIs<RoutingDecision.Local>(
+            router.selectWithOverride(ModelKind.LLM, ctx(), preferredModelId = "local-qwen-7b")
+        )
+        assertEquals("local-qwen-7b", preferred.adapter.modelId)
+        assertEquals(listOf("local-llama-8b", "local-qwen-7b"), loadedIds)
     }
 }

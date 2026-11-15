@@ -283,4 +283,89 @@ class GitToolTest {
         Git.open(dir).use { g -> g.repository.config.apply { setString("remote", "origin", "url", remote.toURI().toString()); save() } }
         assertIs<ToolOutcome.Ok>(tool.execute(mockHandle, "git:push", buildJsonObject { }).outcome)
     }
+
+    @Test
+    fun `fetch updates remote tracking refs without touching working tree (RFC-0032)`() = runTest {
+        val (dir, tool) = tempRepo()
+        val remote = Files.createTempDirectory("git-tool-fetch-remote").toFile()
+        Git.init().setBare(true).setDirectory(remote).call().close()
+        Git.open(dir).use { g ->
+            g.repository.config.apply {
+                setString("remote", "origin", "url", remote.toURI().toString())
+                setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*")
+                save()
+            }
+            g.push().setRemote("origin").call()
+        }
+
+        // Another clone pushes a new commit to the remote
+        val other = Files.createTempDirectory("git-tool-other-clone").toFile()
+        Git.cloneRepository().setURI(remote.toURI().toString()).setDirectory(other).call().use { g ->
+            g.repository.config.apply {
+                setString("user", null, "name", "Other")
+                setString("user", null, "email", "other@test.com")
+                setBoolean("commit", null, "gpgsign", false)
+                save()
+            }
+            File(other, "upstream.txt").writeText("from upstream\n")
+            g.add().addFilepattern("upstream.txt").call()
+            g.commit().setMessage("upstream commit").call()
+            g.push().call()
+        }
+
+        // Dirty working tree locally must remain untouched by fetch
+        File(dir, "README.md").writeText("# Local dirty edit\n")
+        val fetchResult = tool.execute(mockHandle, "git:fetch", buildJsonObject { put("remote", "origin") })
+        assertIs<ToolOutcome.Ok>(fetchResult.outcome)
+        assertEquals("# Local dirty edit\n", File(dir, "README.md").readText())
+        assertTrue(!File(dir, "upstream.txt").exists(), "fetch must not touch the working tree")
+    }
+
+    @Test
+    fun `merge_ff fast-forwards cleanly and rejects diverged branches (RFC-0032)`() = runTest {
+        val (dir, tool) = tempRepo()
+        val baseBranch = Git.open(dir).use { it.repository.branch }
+        tool.execute(mockHandle, "git:branch", buildJsonObject { put("name", "feature") })
+        tool.execute(mockHandle, "git:switch", buildJsonObject { put("branch", "feature") })
+        File(dir, "feat.txt").writeText("feature work\n")
+        tool.execute(mockHandle, "git:add", buildJsonObject { put("path", "feat.txt") })
+        tool.execute(mockHandle, "git:commit", buildJsonObject { put("message", "feat") })
+
+        tool.execute(mockHandle, "git:switch", buildJsonObject { put("branch", baseBranch) })
+        val ffOk = tool.execute(mockHandle, "git:merge_ff", buildJsonObject { put("ref", "feature") })
+        assertIs<ToolOutcome.Ok>(ffOk.outcome)
+        assertTrue(File(dir, "feat.txt").exists())
+
+        // Now diverge both branches and confirm merge_ff fails rather than creating a 3-way merge
+        File(dir, "main_only.txt").writeText("main\n")
+        tool.execute(mockHandle, "git:add", buildJsonObject { put("path", "main_only.txt") })
+        tool.execute(mockHandle, "git:commit", buildJsonObject { put("message", "main diverge") })
+
+        tool.execute(mockHandle, "git:switch", buildJsonObject { put("branch", "feature") })
+        File(dir, "feat_only.txt").writeText("feat\n")
+        tool.execute(mockHandle, "git:add", buildJsonObject { put("path", "feat_only.txt") })
+        tool.execute(mockHandle, "git:commit", buildJsonObject { put("message", "feat diverge") })
+
+        tool.execute(mockHandle, "git:switch", buildJsonObject { put("branch", baseBranch) })
+        val ffFail = tool.execute(mockHandle, "git:merge_ff", buildJsonObject { put("ref", "feature") })
+        assertIs<ToolOutcome.Failed>(ffFail.outcome)
+    }
+
+    @Test
+    fun `switch and checkout preview names dirty files with line counts and execution discards changes (RFC-0053)`() = runTest {
+        val (dir, tool) = tempRepo()
+        tool.execute(mockHandle, "git:branch", buildJsonObject { put("name", "other") })
+        File(dir, "README.md").writeText("line 1\nline 2\nline 3\n")
+        File(dir, "scratch.txt").writeText("untracked 1\nuntracked 2\n")
+
+        val preview = tool.preview(mockHandle, "git:switch", buildJsonObject { put("branch", "other") }).getOrThrow()
+        val desc = assertIs<Preview.Description>(preview)
+        assertContains(desc.text, "README.md (3 lines)")
+        assertContains(desc.text, "scratch.txt (2 lines)")
+
+        val switchResult = tool.execute(mockHandle, "git:switch", buildJsonObject { put("branch", "other") })
+        assertIs<ToolOutcome.Ok>(switchResult.outcome)
+        assertEquals("# Test", File(dir, "README.md").readText().trim())
+        assertTrue(!File(dir, "scratch.txt").exists(), "untracked dirty file must be discarded on switch")
+    }
 }

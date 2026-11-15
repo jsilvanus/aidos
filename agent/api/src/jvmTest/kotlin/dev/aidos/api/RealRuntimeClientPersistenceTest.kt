@@ -182,4 +182,28 @@ class RealRuntimeClientPersistenceTest {
         assertEquals(deviceIdentity.deviceId.value, runDeviceId)
         assertFalse(runDeviceId == "runtime", "device_id must not be literal 'runtime'")
     }
+
+    @Test
+    fun `create persists projectType and applies type defaults via applyTypeDefaults (RFC-0047)`() = runTest {
+        val client = persistentClient()
+        val created = client.projects.create(
+            CreateProjectRequest(
+                name = "journal",
+                description = "Personal journal",
+                location = ProjectLocation.RuntimeManaged("journal"),
+                projectType = "personal",
+            )
+        )
+        assertIs<ProjectResult.Success>(created)
+
+        val detail = client.projects.get(created.project.id)
+        assertNotNull(detail)
+        assertEquals("personal", detail.projectType)
+
+        val userDb = AidosStorage.openUser(DesktopPaths.userDb(home.path), "test", nowIso)
+        val projectDb = AidosStorage.openProject(DesktopPaths.stateDb("${home.path}/.aidos/projects/journal"), "test", nowIso)
+        val store = dev.aidos.settings.SettingsStore(userDb.driver, projectDb.driver)
+        val egress = store.resolve(dev.aidos.settings.Settings.routingRemoteEgress)
+        assertEquals(dev.aidos.settings.EgressPolicy.NEVER, egress.value)
+    }
 }

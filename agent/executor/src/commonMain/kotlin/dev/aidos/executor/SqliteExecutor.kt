@@ -8,11 +8,17 @@ import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.BackoffStrategy
+import dev.aidos.kernel.BudgetLedger
+import dev.aidos.kernel.BudgetScope
 import dev.aidos.kernel.ErrorClass
+import dev.aidos.kernel.ErrorCodes
 import dev.aidos.kernel.EventId
+import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.Executor
 import dev.aidos.kernel.ProjectId
+import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.RecoveryReport
+import dev.aidos.kernel.ReservationId
 import dev.aidos.kernel.RetryPolicy
 import dev.aidos.kernel.RunId
 import dev.aidos.kernel.RunState
@@ -22,10 +28,15 @@ import dev.aidos.kernel.Task
 import dev.aidos.kernel.TaskId
 import dev.aidos.kernel.TaskKind
 import dev.aidos.kernel.TaskState
+import dev.aidos.storage.RowVersionCas
+import dev.aidos.storage.StateModelRecovery
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
@@ -57,7 +68,15 @@ class SqliteExecutor(
     private val workerSpawner: WorkerSpawner? = null,
     /** RFC-0011's worker committer seam. */
     private val workerCommitter: WorkerCommitter? = null,
+    /** RFC-0028's budget ledger for production budget enforcement. */
+    private val budgetLedger: BudgetLedger? = null,
+    /** RFC-0009's deadline budget window. Null means unbounded (desktop/tests). */
+    private val executionWindow: ExecutionWindow? = null,
+    /** Minimum remaining window (ms) required to start a step (RFC-0009). */
+    private val estimatedStepMillis: Long = 1_000L,
 ) : Executor {
+
+    private val cancelledRuns = mutableSetOf<String>()
 
     /**
      * Drives a Run to completion.
@@ -92,6 +111,16 @@ class SqliteExecutor(
         while (true) {
             val currentRun = loadRun(runId) ?: break
             if (currentRun.state.isTerminal) break
+            if (isCancelRequested(runId)) {
+                finalizeCancellation(runId, currentRun.projectId)
+                break
+            }
+            val remainingMs = executionWindow?.remainingMillis()
+            if (remainingMs != null && remainingMs < estimatedStepMillis) {
+                // RFC-0009 deadline budget: stop cleanly at a checkpoint without starting work
+                // that cannot finish in the remaining window.
+                return
+            }
             if (stepIndex >= currentRun.maxSteps) {
                 // Budget ceiling: terminate with FAILED.
                 updateRunState(runId, RunState.FAILED,
@@ -114,9 +143,24 @@ class SqliteExecutor(
 
             // Execute each runnable.
             for (task in runnables) {
+                val exhausted = checkBudgetExhausted(runId, currentRun.sessionId, currentRun.projectId, task.kind)
+                if (exhausted != null) {
+                    updateRunState(
+                        runId,
+                        RunState.FAILED,
+                        AidosError("budget.exhausted", ErrorClass.EXHAUSTED, "Budget exhausted for $exhausted"),
+                    )
+                    resumeAwaitingParent(runId)
+                    return
+                }
+
                 stepIndex++
-                updateTaskState(task.id, TaskState.RUNNING)
-                incrementStepIndex(runId, stepIndex)
+                val (intentAttemptId, attemptNumber) = recordTaskIntent(
+                    task = task,
+                    runId = runId,
+                    projectId = currentRun.projectId,
+                    newStepIndex = stepIndex,
+                )
 
                 val result = if (task.kind == TaskKind.COMPOSITE && workerSpawner != null) {
                     workerSpawner.spawn(task)
@@ -124,13 +168,22 @@ class SqliteExecutor(
                     taskRunner.execute(task)
                 }
 
-                // RFC-0008 step 8d: park rather than complete/fail. The task row and the
-                // continuations row land in the same transaction as the RUNNING→parked
-                // transition, so a crash between them leaves the task RUNNING with no attempt —
-                // exactly the case `recover()` already resets to PENDING and retries safely.
+                if (isCancelRequested(runId)) {
+                    markAttemptCancelledIfRunning(intentAttemptId)
+                    updateTaskState(task.id, TaskState.CANCELLED)
+                    finalizeCancellation(runId, currentRun.projectId)
+                    return
+                }
+
+                // RFC-0008 step 8d: park rather than complete/fail.
                 if (result.park != null) {
                     val park = result.park
                     inTransaction {
+                        driver.execute(
+                            identifier = null,
+                            sql = "DELETE FROM attempts WHERE id = ? AND state = 'RUNNING'",
+                            parameters = 1,
+                        ) { bindString(0, intentAttemptId) }
                         updateTaskState(task.id, park.taskState)
                         writeContinuation(runId, task.id, park)
                     }
@@ -190,16 +243,41 @@ class SqliteExecutor(
                     return
                 }
 
-                val newState = if (result.success) TaskState.COMPLETED else TaskState.FAILED
+                val error = if (result.success) {
+                    null
+                } else {
+                    result.error ?: AidosError(
+                        "task.failed",
+                        ErrorClass.TRANSIENT,
+                        "Task ${task.id.value} failed: ${result.errorMessage}",
+                    )
+                }
+                val willRetry = !result.success &&
+                    error != null &&
+                    task.retryPolicy.permits(error, result.recoveryClass, attemptNumber)
 
-                // The task's own completion and any follow-on Tasks it produces are one
-                // checkpoint (RFC-0009). A crash between "this task is done" and "here is what
-                // comes next" must never be observable: if it were, drive() would see an
-                // all-terminal task set on resume and complete the Run one step early, silently
-                // truncating a Run that still had a next model step to take (RFC-0008's
-                // MODEL_CALL → TOOL_CALL → MODEL_CALL fan-out).
+                val newState = when {
+                    result.success -> TaskState.COMPLETED
+                    willRetry -> TaskState.PENDING
+                    else -> TaskState.FAILED
+                }
+
                 inTransaction {
-                    updateTaskState(task.id, newState)
+                    if (result.success) {
+                        markAttemptCompletedIfRunning(intentAttemptId)
+                    } else {
+                        markAttemptFailedIfRunning(
+                            attemptId = intentAttemptId,
+                            errorCode = error!!.code,
+                            errorClass = error.errorClass.name,
+                            errorDetail = """{"message":${json.encodeToString(kotlinx.serialization.serializer(), error.message)}}""",
+                        )
+                    }
+                    if (willRetry) {
+                        resetTaskToPending(task.id.value)
+                    } else {
+                        updateTaskState(task.id, newState)
+                    }
                     if (result.success && result.appendTasks.isNotEmpty()) {
                         appendTasks(runId, currentRun, task.ordinal, result.appendTasks)
                     }
@@ -226,11 +304,6 @@ class SqliteExecutor(
                     nowIso = nowIso(),
                 )
 
-                // Publish RFC-0004's ToolCompleted (MVP item 2) for a successful task — a FACT,
-                // not a SIGNAL: the tool result is a durable outcome, not lossy progress. Topic
-                // follows the RFC's own worked example (tool:<name>:<id>); failures publish no
-                // event here since "ToolFailed" is outside the RFC's MVP-scoped type list
-                // (EventTypes doc comment) and inventing one wasn't this slice's call to make.
                 if (result.success) {
                     val operation = task.toolName ?: task.kind.name
                     events.publish(
@@ -251,15 +324,73 @@ class SqliteExecutor(
                     )
                 }
 
-                if (!result.success) {
-                    // Task failed — fail the Run.
-                    updateRunState(runId, RunState.FAILED,
-                        AidosError("task.failed", ErrorClass.TRANSIENT, "Task ${task.id.value} failed: ${result.errorMessage}"))
+                if (!result.success && !willRetry) {
+                    // Task failed unrecoverably (or retries exhausted) — fail the Run.
+                    updateRunState(runId, RunState.FAILED, error)
                     resumeAwaitingParent(runId)
                     return
                 }
             }
         }
+    }
+
+    /**
+     * Cooperative Run cancellation (RFC-0006 "Cancellation").
+     *
+     * Sets the cancellation flag for an actively-driven Run and immediately transitions
+     * `PENDING` or `YIELDED` Runs to `CANCELLED`, marking parked tasks `CANCELLED` and unstarted
+     * `PENDING` tasks `SKIPPED`.
+     */
+    suspend fun cancelRun(
+        runId: RunId,
+        reason: String? = null,
+        actor: ActorRef = ActorRef(ActorKind.USER, "user"),
+    ): Boolean {
+        val run = loadRun(runId) ?: return false
+        if (run.state.isTerminal) return false
+        cancelledRuns.add(runId.value)
+        if (run.state != RunState.RUNNING) {
+            finalizeCancellation(runId, run.projectId, reason, actor)
+        }
+        return true
+    }
+
+    private fun isCancelRequested(runId: RunId): Boolean =
+        runId.value in cancelledRuns || loadRun(runId)?.state == RunState.CANCELLED
+
+    private suspend fun finalizeCancellation(
+        runId: RunId,
+        projectId: ProjectId,
+        reason: String? = null,
+        actor: ActorRef = ActorRef(ActorKind.USER, "user"),
+    ) {
+        val now = nowIso()
+        inTransaction {
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE tasks SET state = 'CANCELLED', ended_at = ?, row_version = row_version + 1 " +
+                    "WHERE run_id = ? AND state IN ('AWAITING_APPROVAL', 'AWAITING_INPUT')",
+                parameters = 2,
+            ) { bindString(0, now); bindString(1, runId.value) }
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE tasks SET state = 'SKIPPED', ended_at = ?, row_version = row_version + 1 " +
+                    "WHERE run_id = ? AND state = 'PENDING'",
+                parameters = 2,
+            ) { bindString(0, now); bindString(1, runId.value) }
+            deleteContinuation(runId)
+        }
+        updateRunState(runId, RunState.CANCELLED)
+        audit.write(
+            id = idGen(),
+            projectId = projectId.value,
+            kind = "RunCancelled",
+            actor = actor,
+            subjectRef = runId.value,
+            detailJson = reason?.let { buildJsonObject { put("reason", it) }.toString() } ?: "{}",
+            nowIso = now,
+        )
+        resumeAwaitingParent(runId)
     }
 
     /**
@@ -276,6 +407,9 @@ class SqliteExecutor(
     }
 
     override suspend fun recover(projectId: ProjectId): RecoveryReport {
+        // RFC-0017: run open-time state-model recovery pass before session/run recovery.
+        StateModelRecovery.recoverOnOpen(driver, nowIso, idGen)
+
         // Find all RUNNING attempts for this project.
         val runningAttempts = runningAttemptsForProject(projectId.value)
 
@@ -285,6 +419,12 @@ class SqliteExecutor(
         var reservationsReleased = 0
 
         for (attempt in runningAttempts) {
+            if (budgetLedger != null) {
+                for (resId in activeReservationsForAttempt(attempt.id)) {
+                    budgetLedger.release(ReservationId(resId))
+                    reservationsReleased++
+                }
+            }
             when (attempt.recoveryClass) {
                 "UNSAFE" -> {
                     // Never retried. Reported as INDETERMINATE. (RFC-0009, RFC-0029)
@@ -352,6 +492,65 @@ class SqliteExecutor(
         )
     }
 
+    private suspend fun checkBudgetExhausted(
+        runId: RunId,
+        sessionId: SessionId,
+        projectId: ProjectId,
+        taskKind: TaskKind,
+    ): String? {
+        val ledger = budgetLedger ?: return null
+        val scopes = listOf(
+            BudgetScope.RUN to runId.value,
+            BudgetScope.SESSION to sessionId.value,
+            BudgetScope.PROJECT to projectId.value,
+        )
+        for ((scope, scopeId) in scopes) {
+            val rem = ledger.remaining(scope, scopeId) ?: continue
+            val remSteps = rem.steps
+            val remCostUnits = rem.costUnits
+            val remInputTokens = rem.inputTokens
+            val remOutputTokens = rem.outputTokens
+            val remModelCalls = rem.modelCalls
+            val remToolInvocations = rem.toolInvocations
+            val exhaustedDim = when {
+                remSteps != null && remSteps <= 0 -> "steps"
+                remCostUnits != null && remCostUnits <= 0L -> "cost_units"
+                remInputTokens != null && remInputTokens <= 0L -> "input_tokens"
+                remOutputTokens != null && remOutputTokens <= 0L -> "output_tokens"
+                taskKind == TaskKind.MODEL_CALL && remModelCalls != null && remModelCalls <= 0 -> "model_calls"
+                taskKind == TaskKind.TOOL_CALL && remToolInvocations != null && remToolInvocations <= 0 -> "tool_invocations"
+                else -> null
+            }
+            if (exhaustedDim != null) {
+                return "${scope.name}:$scopeId ($exhaustedDim)"
+            }
+        }
+        return null
+    }
+
+    private fun activeReservationsForAttempt(attemptId: String): List<String> {
+        val ids = mutableListOf<String>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id, reserved_json FROM budget_reservations WHERE attempt_id = ?",
+            mapper = { c ->
+                while (c.next().value) {
+                    val id = c.getString(0) ?: continue
+                    val raw = c.getString(1) ?: continue
+                    val status = runCatching {
+                        Json.parseToJsonElement(raw).jsonObject["status"]?.toString()?.trim('"')
+                    }.getOrNull()
+                    if (status == null || status == "RESERVED") {
+                        ids.add(id)
+                    }
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, attemptId) }
+        return ids
+    }
+
     private fun resolveSessionActor(sessionId: String): ActorRef {
         val role = driver.executeQuery(
             identifier = null,
@@ -391,40 +590,154 @@ class SqliteExecutor(
 
     private fun updateRunState(runId: RunId, state: RunState, error: AidosError? = null) {
         val isTerminal = state.isTerminal
-        driver.execute(
-            identifier = null,
-            sql = "UPDATE runs SET state = ?, " +
-                "ended_at = CASE WHEN ? = 1 THEN ? ELSE ended_at END, " +
-                "error_code = ?, error_class = ?, error_detail_json = ? " +
-                "WHERE id = ?",
-            parameters = 7,
-        ) {
-            bindString(0, state.name)
-            bindLong(1, if (isTerminal) 1L else 0L)
-            bindString(2, if (isTerminal) nowIso() else null)
-            bindString(3, error?.code)
-            bindString(4, error?.errorClass?.name)
-            bindString(5, error?.detail?.toString())
-            bindString(6, runId.value)
+        RowVersionCas.withRetry {
+            val rowVer = RowVersionCas.readRowVersion(driver, "runs", runId.value) ?: return@withRetry true
+            RowVersionCas.updateWithCas(
+                driver = driver,
+                table = "runs",
+                id = runId.value,
+                expectedRowVersion = rowVer,
+                setClause = "state = ?, ended_at = CASE WHEN ? = 1 THEN ? ELSE ended_at END, " +
+                    "error_code = ?, error_class = ?, error_detail_json = ?",
+                setParameterCount = 6,
+            ) {
+                bindString(0, state.name)
+                bindLong(1, if (isTerminal) 1L else 0L)
+                bindString(2, if (isTerminal) nowIso() else null)
+                bindString(3, error?.code)
+                bindString(4, error?.errorClass?.name)
+                bindString(5, error?.detail?.toString())
+            }
         }
     }
 
     private fun updateTaskState(taskId: TaskId, state: TaskState) {
         val isTerminal = state.isTerminal
+        RowVersionCas.withRetry {
+            val rowVer = RowVersionCas.readRowVersion(driver, "tasks", taskId.value) ?: return@withRetry true
+            RowVersionCas.updateWithCas(
+                driver = driver,
+                table = "tasks",
+                id = taskId.value,
+                expectedRowVersion = rowVer,
+                setClause = "state = ?, started_at = CASE WHEN state = 'PENDING' AND ? = 0 THEN ? ELSE started_at END, " +
+                    "ended_at = CASE WHEN ? = 1 THEN ? ELSE ended_at END",
+                setParameterCount = 5,
+            ) {
+                bindString(0, state.name)
+                bindLong(1, if (isTerminal) 1L else 0L)
+                bindString(2, nowIso())
+                bindLong(3, if (isTerminal) 1L else 0L)
+                bindString(4, if (isTerminal) nowIso() else null)
+            }
+        }
+    }
+
+    /**
+     * RFC-0009: Writes the `INTENT` row (`attempts` in `RUNNING` state with `idempotency_key`)
+     * atomically with `tasks.state = 'RUNNING'` and `runs.step_index` before any effect executes.
+     * If a prior failed attempt exists for this task, also writes a `RETRY_OF` edge (RFC-0019).
+     */
+    private fun recordTaskIntent(
+        task: Task,
+        runId: RunId,
+        projectId: ProjectId,
+        newStepIndex: Int,
+    ): Pair<String, Int> {
+        val auditId = idGen()
+        val actor = resolveSessionActor(task.sessionId.value)
+        audit.write(
+            id = auditId,
+            projectId = projectId.value,
+            kind = "TaskIntentRecorded",
+            actor = actor,
+            subjectRef = task.toolName ?: task.kind.name,
+            nowIso = nowIso(),
+        )
+        val attemptId = idGen()
+        var attemptNumber = 1
+        inTransaction {
+            updateTaskState(task.id, TaskState.RUNNING)
+            incrementStepIndex(runId, newStepIndex)
+
+            val priorAttempt = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT id, attempt_number FROM attempts WHERE task_id = ? ORDER BY attempt_number DESC LIMIT 1",
+                mapper = { c ->
+                    QueryResult.Value(
+                        if (c.next().value) c.getString(0)!! to (c.getLong(1)?.toInt() ?: 1) else null
+                    )
+                },
+                parameters = 1,
+            ) { bindString(0, task.id.value) }.value
+
+            attemptNumber = (priorAttempt?.second ?: 0) + 1
+            val idempotencyKey = IdempotencyKey.compute(
+                taskId = task.id.value,
+                attemptNumber = attemptNumber,
+                canonicalArguments = task.toolName ?: task.kind.name,
+            )
+
+            driver.execute(
+                identifier = null,
+                sql = "INSERT INTO attempts (id, task_id, attempt_number, started_at, state, " +
+                    "idempotency_key, recovery_class, audit_ref) VALUES (?, ?, ?, ?, 'RUNNING', ?, 'PURE', ?)",
+                parameters = 7,
+            ) {
+                bindString(0, attemptId)
+                bindString(1, task.id.value)
+                bindLong(2, attemptNumber.toLong())
+                bindString(3, nowIso())
+                bindString(4, idempotencyKey)
+                bindString(5, auditId)
+            }
+
+            if (priorAttempt != null) {
+                writeRetryOfEdge(projectId, attemptId, priorAttempt.first)
+            }
+        }
+        return attemptId to attemptNumber
+    }
+
+    private fun markAttemptCompletedIfRunning(attemptId: String) {
         driver.execute(
             identifier = null,
-            sql = "UPDATE tasks SET state = ?, " +
-                "started_at = CASE WHEN state = 'PENDING' AND ? = 0 THEN ? ELSE started_at END, " +
-                "ended_at = CASE WHEN ? = 1 THEN ? ELSE ended_at END " +
-                "WHERE id = ?",
-            parameters = 6,
+            sql = "UPDATE attempts SET state = 'COMPLETED', ended_at = ? WHERE id = ? AND state = 'RUNNING'",
+            parameters = 2,
         ) {
-            bindString(0, state.name)
-            bindLong(1, if (isTerminal) 1L else 0L)
-            bindString(2, nowIso())
-            bindLong(3, if (isTerminal) 1L else 0L)
-            bindString(4, if (isTerminal) nowIso() else null)
-            bindString(5, taskId.value)
+            bindString(0, nowIso())
+            bindString(1, attemptId)
+        }
+    }
+
+    private fun markAttemptFailedIfRunning(
+        attemptId: String,
+        errorCode: String,
+        errorClass: String,
+        errorDetail: String,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET state = 'FAILED', ended_at = ?, error_code = ?, " +
+                "error_class = ?, error_detail_json = ? WHERE id = ? AND state = 'RUNNING'",
+            parameters = 5,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, errorCode)
+            bindString(2, errorClass)
+            bindString(3, errorDetail)
+            bindString(4, attemptId)
+        }
+    }
+
+    private fun markAttemptCancelledIfRunning(attemptId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET state = 'CANCELLED', ended_at = ? WHERE id = ? AND state = 'RUNNING'",
+            parameters = 2,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, attemptId)
         }
     }
 
@@ -505,7 +818,7 @@ class SqliteExecutor(
         driver.executeQuery(
             identifier = null,
             sql = "SELECT t.id, t.run_id, t.session_id, r.project_id, t.ordinal, t.kind, t.description, " +
-                "t.tool_name, t.state FROM tasks t JOIN runs r ON r.id = t.run_id " +
+                "t.tool_name, t.state, t.retry_policy_json FROM tasks t JOIN runs r ON r.id = t.run_id " +
                 "WHERE t.run_id = ? AND t.state = 'PENDING' ORDER BY t.ordinal",
             mapper = { cursor ->
                 while (cursor.next().value) {
@@ -525,11 +838,7 @@ class SqliteExecutor(
                             startedAt = null,
                             endedAt = null,
                             awaitingRunId = null,
-                            retryPolicy = RetryPolicy(
-                                maxAttempts = 1,
-                                retryOn = emptySet(),
-                                backoff = BackoffStrategy.None,
-                            ),
+                            retryPolicy = parseRetryPolicy(cursor.getString(9)),
                             approvalChannel = null,
                             approvalPhrase = null,
                         )
@@ -604,7 +913,32 @@ class SqliteExecutor(
         return states
     }
 
+    private fun parseRetryPolicy(rawJson: String?): RetryPolicy {
+        if (rawJson.isNullOrBlank() || rawJson == "{}") {
+            return RetryPolicy(maxAttempts = 1, retryOn = emptySet(), backoff = BackoffStrategy.None)
+        }
+        return runCatching {
+            val obj = json.parseToJsonElement(rawJson).jsonObject
+            val maxAttempts = obj["maxAttempts"]?.jsonPrimitive?.intOrNull ?: 1
+            val retryOn = obj["retryOn"]?.jsonArray?.mapNotNull { el ->
+                runCatching { ErrorClass.valueOf(el.jsonPrimitive.content) }.getOrNull()
+            }?.toSet() ?: setOf(ErrorClass.TRANSIENT, ErrorClass.RATE_LIMITED)
+            RetryPolicy(maxAttempts = maxAttempts, retryOn = retryOn, backoff = BackoffStrategy.None)
+        }.getOrElse {
+            RetryPolicy(maxAttempts = 1, retryOn = emptySet(), backoff = BackoffStrategy.None)
+        }
+    }
+
+    /**
+     * Adds a `DEPENDS_ON` edge `[taskId] -> [dependsOnTaskId]` after verifying acyclicity
+     * (RFC-0019 "Acyclicity"). Rejects cycles with [ExecutionCycleException] (`execution.cycle_rejected`).
+     */
     fun addDependency(projectId: ProjectId, taskId: TaskId, dependsOnTaskId: TaskId) {
+        if (taskId == dependsOnTaskId || isReachableViaDependsOn(dependsOnTaskId.value, taskId.value)) {
+            throw ExecutionCycleException(
+                "Adding DEPENDS_ON from ${taskId.value} to ${dependsOnTaskId.value} creates a cycle"
+            )
+        }
         driver.execute(
             identifier = null,
             sql = "INSERT INTO execution_edges (id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind) " +
@@ -615,6 +949,91 @@ class SqliteExecutor(
             bindString(1, projectId.value)
             bindString(2, taskId.value)
             bindString(3, dependsOnTaskId.value)
+        }
+    }
+
+    private fun isReachableViaDependsOn(startTaskId: String, targetTaskId: String): Boolean {
+        val visited = mutableSetOf<String>()
+        val queue = ArrayDeque<String>()
+        queue.addLast(startTaskId)
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            if (current == targetTaskId) return true
+            if (!visited.add(current)) continue
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT to_node_id FROM execution_edges WHERE from_node_id = ? " +
+                    "AND from_node_kind = 'TASK' AND to_node_kind = 'TASK' AND edge_kind = 'DEPENDS_ON'",
+                mapper = { c ->
+                    while (c.next().value) {
+                        val next = c.getString(0) ?: continue
+                        if (next !in visited) queue.addLast(next)
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) { bindString(0, current) }
+        }
+        return false
+    }
+
+    /** Writes a `TARGETED` edge from [runId] to [intentNodeId] (RFC-0019). */
+    fun writeTargetedEdge(projectId: ProjectId, runId: RunId, intentNodeId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT OR IGNORE INTO execution_edges " +
+                "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind, confirmed) " +
+                "VALUES (?, ?, ?, 'RUN', ?, 'INTENT_NODE', 'TARGETED', 0)",
+            parameters = 4,
+        ) {
+            bindString(0, idGen())
+            bindString(1, projectId.value)
+            bindString(2, runId.value)
+            bindString(3, intentNodeId)
+        }
+    }
+
+    /** Writes an `IMPLEMENTS` edge from [runId] to [intentNodeId] (RFC-0019). */
+    fun writeImplementsEdge(
+        projectId: ProjectId,
+        runId: RunId,
+        intentNodeId: String,
+        confirmed: Boolean = false,
+        confirmedByKind: String? = null,
+        confirmedById: String? = null,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT OR REPLACE INTO execution_edges " +
+                "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind, " +
+                "confirmed, confirmed_by_kind, confirmed_by_id, confirmed_at) " +
+                "VALUES (?, ?, ?, 'RUN', ?, 'INTENT_NODE', 'IMPLEMENTS', ?, ?, ?, ?)",
+            parameters = 8,
+        ) {
+            bindString(0, idGen())
+            bindString(1, projectId.value)
+            bindString(2, runId.value)
+            bindString(3, intentNodeId)
+            bindLong(4, if (confirmed) 1L else 0L)
+            bindString(5, confirmedByKind)
+            bindString(6, confirmedById)
+            bindString(7, if (confirmed) nowIso() else null)
+        }
+    }
+
+    /** Writes a `RETRY_OF` edge from [retryAttemptId] to [priorAttemptId] (RFC-0019). */
+    fun writeRetryOfEdge(projectId: ProjectId, retryAttemptId: String, priorAttemptId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT OR IGNORE INTO execution_edges " +
+                "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind) " +
+                "VALUES (?, ?, ?, 'ATTEMPT', ?, 'ATTEMPT', 'RETRY_OF')",
+            parameters = 4,
+        ) {
+            bindString(0, idGen())
+            bindString(1, projectId.value)
+            bindString(2, retryAttemptId)
+            bindString(3, priorAttemptId)
         }
     }
 
@@ -1132,6 +1551,12 @@ data class NewTaskSpec(
     val afterInsert: () -> Unit = {},
 )
 
+/** Thrown when adding a `DEPENDS_ON` edge would create a cycle (RFC-0019). */
+class ExecutionCycleException(
+    message: String,
+    val code: String = ErrorCodes.EXECUTION_CYCLE_REJECTED,
+) : IllegalArgumentException(message)
+
 /** Result of running a single task. */
 data class TaskResult(
     val success: Boolean,
@@ -1145,6 +1570,10 @@ data class TaskResult(
      * [TaskRunner] should never set both; `drive()` checks `park` first).
      */
     val park: ParkRequest? = null,
+    /** Structured error for RFC-0019 retry policy evaluation. */
+    val error: AidosError? = null,
+    /** Effect recovery class for RFC-0019 retry safety gating. */
+    val recoveryClass: RecoveryClass = RecoveryClass.PURE,
 )
 
 /**

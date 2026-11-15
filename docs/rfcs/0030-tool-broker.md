@@ -1,6 +1,7 @@
 # RFC-0030: Tool Broker
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (tool middleware, tool composition pipelines, smart retries, profiling, rate limiting)
 
 ## Abstract
 
@@ -459,3 +460,26 @@ interface and could not be deferred past the first tool.
 ## Open Questions
 
 None.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/approval/ApprovalPresenter.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/AuditLog.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/JsonSchemaValidator.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/ToolBroker.kt
+  - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditTest.kt
+  - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/EffectBrokerM11Test.kt
+  - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/JsonSchemaValidatorTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEffectApprovalGateway.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/McpToolBrokerIntegrationTest.kt
+  - agent/http/src/jvmMain/kotlin/dev/aidos/http/HttpTool.kt
+  - agent/http/src/jvmTest/kotlin/dev/aidos/http/HttpToolTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/KtorEffectBroker.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Diff.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Effects.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Tools.kt
+  - schema/project.sql
+```

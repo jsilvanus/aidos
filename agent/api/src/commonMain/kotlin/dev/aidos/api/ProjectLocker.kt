@@ -26,6 +26,9 @@ interface ProjectLocker {
 
     /** Releases the lock for [projectId], if this instance holds it. No-op otherwise. */
     fun release(projectId: String)
+
+    /** Releases all held locks on runtime shutdown (RFC-0055). */
+    fun releaseAll() = Unit
 }
 
 /** Result of [ProjectLocker.tryAcquire] (RFC-0055). */

@@ -178,4 +178,76 @@ class SessionMemoryTest {
         val stored = redacting.readForSession("sess-1").single().content
         assertEquals("The password is «redacted:pw»", stored)
     }
+
+    @Test
+    fun `inspect returns entry metadata and delete permanently removes without tombstone (RFC-0026)`() {
+        val id1 = store.write(baseEntry(kind = MemoryKind.DECISION).copy(content = "Use SQLite WAL"))
+        val id2 = store.write(baseEntry(kind = MemoryKind.DECISION).copy(content = "Use SQLite WAL + NORMAL"))
+        store.supersede(id1, id2)
+
+        val inspected = store.inspect(id2)
+        assertNotNull(inspected)
+        assertEquals("Use SQLite WAL + NORMAL", inspected.content)
+        assertEquals(listOf("run:abc123"), inspected.sourceRefs)
+        assertEquals(null, inspected.expiresAt)
+
+        // Deleting id2 must also succeed even though id1 had superseded_by = id2, leaving no tombstone.
+        assertTrue(store.delete(id2))
+        assertEquals(null, store.inspect(id2))
+        val count = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM memory_entries WHERE id = ?",
+            mapper = { c -> c.next(); QueryResult.Value(c.getLong(0) ?: 0L) },
+            parameters = 1,
+        ) { bindString(0, id2) }.value
+        assertEquals(0L, count)
+    }
+
+    @Test
+    fun `FACT defaults to 90-day expiry, refreshes on recall, and expired entries are filtered and swept (RFC-0026)`() {
+        val factId = store.write(baseEntry(kind = MemoryKind.FACT))
+        val inspectedFact = store.inspect(factId)!!
+        assertNotNull(inspectedFact.expiresAt, "FACT should have a default 90-day expiresAt")
+
+        val expiredTaskId = store.write(
+            baseEntry(kind = MemoryKind.TASK_STATE, sourceRefs = listOf("run:run-expired"))
+                .copy(content = "In-progress step")
+        )
+        assertEquals(1, store.expireTaskStateForRun("run-expired", nowIso = "2026-01-02T00:00:00Z"))
+
+        val visibleLater = store.readForSession("sess-1", nowIso = "2026-01-03T00:00:00Z")
+        assertEquals(listOf(factId), visibleLater.map { it.id })
+
+        assertTrue(store.refreshFactExpiry(factId, nowIso = "2027-01-01T00:00:00Z"))
+        val refreshed = store.inspect(factId)!!
+        assertTrue(refreshed.expiresAt!! > inspectedFact.expiresAt)
+
+        val swept = store.deleteExpired(nowIso = "2026-01-03T00:00:00Z")
+        assertEquals(1, swept)
+        assertEquals(null, store.inspect(expiredTaskId))
+    }
+
+    @Test
+    fun `readForSessionAndProject includes project-promoted entries alongside session entries`() {
+        val now = "2026-01-01T00:00:00Z"
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO sessions (id, project_id, name, role, state, created_at, last_active_at, state_updated_at) VALUES ('sess-2', 'proj-1', 'Other', 'DRIVER', 'RUNNING', ?, ?, ?)",
+            parameters = 3,
+        ) { bindString(0, now); bindString(1, now); bindString(2, now) }
+
+        val promotedId = store.write(baseEntry(kind = MemoryKind.DECISION).copy(content = "Promoted decision"))
+        assertTrue(store.promoteToProject(promotedId, userId = "user-1"))
+        val unpromotedOtherId = store.write(
+            baseEntry(kind = MemoryKind.FACT).copy(content = "Private to sess-1")
+        )
+        val sess2Id = store.write(
+            baseEntry(kind = MemoryKind.FACT)
+                .copy(sessionId = "sess-2", createdById = "sess-2", content = "Owned by sess-2")
+        )
+
+        val visibleToSess2 = store.readForSessionAndProject("sess-2", "proj-1", nowIso = now)
+        assertEquals(setOf(promotedId, sess2Id), visibleToSess2.map { it.id }.toSet())
+        assertTrue(unpromotedOtherId !in visibleToSess2.map { it.id })
+    }
 }

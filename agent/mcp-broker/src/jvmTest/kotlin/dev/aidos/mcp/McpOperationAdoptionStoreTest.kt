@@ -24,7 +24,7 @@ class McpOperationAdoptionStoreTest {
 
     private fun openProjectDb(): SqlDriver {
         val root = Files.createTempDirectory("mcp-adoption-test").toFile()
-        return AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { "2026-08-17T00:00:00Z" }.driver
+        return AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0", nowIso = { "2026-08-17T00:00:00Z" }).driver
     }
 
     /** `mcp_operation_adoptions.project_id` has an FK to `projects(id)`; every test needs one row. */

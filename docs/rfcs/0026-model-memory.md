@@ -1,6 +1,7 @@
 # RFC-0026: Model Memory
 
-Status: Accepted 2026-08-04
+Status: Implemented 2026-11-14 (Accepted 2026-08-04). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (auto-invalidation of FACTs on source_refs change, 90-day retention report, user-stated preferences)
 
 ## Abstract
 
@@ -276,3 +277,17 @@ under these stated policies."
 
 User-stated preferences as a first-class instruction source, so the legitimate half of "remember
 how I like things" is served explicitly rather than by inference.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/memory/src/jvmMain/kotlin/dev/aidos/memory/SessionMemoryStore.kt
+  - agent/memory/src/jvmTest/kotlin/dev/aidos/memory/SessionMemoryTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RemoteModelEgressTool.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - schema/project.sql
+```

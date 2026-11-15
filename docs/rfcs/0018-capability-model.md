@@ -1,6 +1,7 @@
 # RFC-0018: Capability Model
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (delegation attenuation validation, capability certificates, policy language, time-bounded renewal, bundles)
 
 ## Abstract
 
@@ -532,3 +533,20 @@ Policy language (RFC-0003 Future Work) for declarative capability sets.
 Time-bounded capabilities with automatic renewal prompts.
 
 Capability bundles: predefined sets of capabilities for common session roles (e.g., "coding session" bundle).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/approval/ApprovalPresenter.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/ScheduledJobManager.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteDirHandle.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTestNewFeatures.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CapabilityResolutionEndToEndTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
+  - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+  - schema/project.sql
+```

@@ -1,6 +1,7 @@
 # RFC-0041: Export & Import
 
 Status: Implemented 2026-11-10 (MVP scope; was Draft). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0041-requirement-map).
+Non-MVP Work: **Remaining** (snapshot exports, selective export, incremental export, cloud backup, project merging, UI)
 
 ## Abstract
 
@@ -506,3 +507,21 @@ Open Questions resolved by this build: partial exports and incremental, snapshot
 - Should exports be versioned for backward compatibility?
 - Should there be automatic deduplication across export versions?
 - Should export files be timestamped to prevent modification?
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SecretsCli.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/DeviceIdentity.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ArchiveCrypto.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ArchiveFormat.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/PortabilityCli.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectExporter.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectFiles.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectImporter.kt
+  - agent/portability/src/jvmTest/kotlin/dev/aidos/portability/PortabilityCliTest.kt
+  - agent/portability/src/jvmTest/kotlin/dev/aidos/portability/PortabilityTest.kt
+```

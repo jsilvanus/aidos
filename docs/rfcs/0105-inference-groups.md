@@ -3,6 +3,7 @@
 Status: Implemented 2026-11-13 (Accepted 2026-10-26 by the owner). Owner choices settled the same day (D50): child-process
 split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
 Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested, with host-path production integration wired**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Host integration now resolves split GGUF artifacts from installed model records (not filename guesses) and is covered by desktop host tests. See [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (coordinator election, GGUF transfer, checkpoint/KV-cache migration, tensor parallelism, ONNX split, BLE/Wi-Fi Direct, model attestation)
 
 Related: RFC-0103 (Aidos Engine), RFC-0104 (inference locality, D47), RFC-0003 (security),
 RFC-0046 (identity), `docs/aidin.md` (AIDIN design background), `IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md`
@@ -342,3 +343,56 @@ export AIDOS_LLAMA_RPC_DIR=/path/to/llama.cpp/build/bin
 - Phase 3 emulation tests: `engine` CI runs `SplitInferenceTest` on every PR
 - Phase 3 native validation: `llama-rpc-native` CI runs `NativeSplitInferenceTest` on demand and on PR changes to aidin
 
+## Implementation Files
+
+```yaml
+files:
+  - agent/policy/src/commonMain/kotlin/dev/aidos/policy/RoutePlannerPolicy.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapter.kt
+  - engine/aidin/src/androidMain/kotlin/dev/aidos/aidin/AndroidAidin.kt
+  - engine/aidin/src/androidMain/kotlin/dev/aidos/aidin/NsdDiscovery.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/Canonical.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/LinkMessages.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/Liveness.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/SplitPlan.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/Types.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/AidinNode.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/AidinState.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/Discovery.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/Groups.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/LocalAddresses.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/NodeKeyStore.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/Pairing.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/PeerLink.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/PeerTls.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/SigningKey.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/SplitHosting.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/SplitProcessSupervisors.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/TrustStore.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/Wire.kt
+  - engine/aidin/src/jvmMain/kotlin/dev/aidos/aidin/DesktopAidin.kt
+  - engine/aidin/src/jvmMain/kotlin/dev/aidos/aidin/JmdnsDiscovery.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/AidinNodeTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/DiscoveryTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/IdentityAndPairingTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/NativeSplitInferenceTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/PeerLinkTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/PeerTrackerTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitHostingTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitInferenceTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/TrustStoreTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsStore.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopGroups.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferences.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/inference/Locality.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/inference/VirtualModelRouter.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/VirtualModelAndDelegationTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsPane.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/QrCode.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/GgufLoader.kt
+```

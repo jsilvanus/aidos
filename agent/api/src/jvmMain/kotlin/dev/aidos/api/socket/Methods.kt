@@ -10,6 +10,8 @@ package dev.aidos.api.socket
 object Methods {
     const val PROJECTS_CREATE = "projects.create"
     const val PROJECTS_LIST = "projects.list"
+    const val PROJECTS_CLOSE = "projects.close"
+    const val PROJECTS_DELETE = "projects.delete"
 
     const val SESSIONS_CREATE = "sessions.create"
     const val SESSIONS_LIST = "sessions.list"
@@ -30,6 +32,8 @@ object Methods {
 
     const val RUNTIME_PING = "runtime.ping"
     const val RUNTIME_VERSION = "runtime.version"
+    const val RUNTIME_PROFILE = "runtime.profile"
+    const val RUNTIME_AVAILABILITY = "runtime.availability"
 
     /** Methods that require the connection to be [dev.aidos.api.socket.Hello.interactive] (RFC-0055). */
     val REQUIRES_INTERACTIVE = setOf(

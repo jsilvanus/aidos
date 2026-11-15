@@ -12,6 +12,13 @@ Each RFC progresses through the following statuses:
 - **Deprecated**: The system or design approach is no longer used or recommended.
 - **Superseded**: A newer RFC has replaced this one.
 
+### Non-MVP Work marker
+
+Every `IMPLEMENTED` RFC document MUST include a `Non-MVP Work:` header line immediately after its `Status:` line with one of two machine-friendly values:
+
+- `Non-MVP Work: **None**` — if no Future Work / post-MVP items remain unimplemented.
+- `Non-MVP Work: **Remaining**` — if Future Work / post-MVP items remain unimplemented, optionally followed by a brief parenthetical summary.
+
 ### Accepted is not implemented
 
 Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, two (0046, and 0036 since 2026-11-10) are fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.
@@ -122,6 +129,36 @@ Minimal viable product. What is the smallest useful implementation?
 
 Enhancements or extensions possible after MVP.
 
+### Implementation Files
+
+**Mandatory for every RFC document.** Every RFC MUST include a top-level `## Implementation Files` section listing every file in the repository where that RFC is implemented (production code, schemas, and tests).
+
+To allow automated parsers to aggregate file lists across any group of RFCs without heuristics, the section MUST contain a fenced `yaml` block with a single `files` key holding repo-root-relative POSIX paths (or `[]` if not yet implemented):
+
+````markdown
+## Implementation Files
+
+```yaml
+files:
+  - agent/example/src/commonMain/kotlin/dev/aidos/example/Example.kt
+  - agent/example/src/jvmTest/kotlin/dev/aidos/example/ExampleTest.kt
+```
+````
+
+If an RFC has no implementation files yet, use:
+
+````markdown
+## Implementation Files
+
+```yaml
+files: []
+```
+````
+
+Rules for the `files` list:
+- Use exact repo-root-relative paths with forward slashes (`/`), one path per entry, no globs or prose.
+- Keep the list updated in the same commit whenever implementation files are added, moved, or removed.
+
 ## Numbering
 
 RFCs are numbered in ranges by topic area:
@@ -192,4 +229,4 @@ record why in the RFC itself.
 3. Use the template below.
 4. Submit for review and discussion.
 5. Iterate until accepted.
-6. Update status to "Accepted" or "Implemented".
+6. Update status to "Accepted" or "Implemented", and keep `## Implementation Files` current as code is added or changed.

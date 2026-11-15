@@ -393,4 +393,42 @@ class SettingsTest {
         assertEquals(IntentDispatchPolicy.AUTO_WHEN_READY, resolved.value)
         assertEquals(SettingOrigin.PROJECT, resolved.origin)
     }
+
+    @Test
+    fun `workspace scope resolves between project and user and rejects SECURITY keys with audit (RFC-0054)`() {
+        val userDriver = openUserDriver()
+        val projectDriver = openProjectDriver()
+        val audit = UserDbSettingsAudit(userDriver)
+        val store = SettingsStore(userDriver, projectDriver, audit = audit, nowIso = { "2026-11-14T00:00:00Z" })
+        val writer = SettingsWriter(userDriver, projectDriver, audit = audit)
+
+        // Create workspace and assign project to it in user.db
+        userDriver.execute(
+            null,
+            "INSERT INTO workspaces (id, name, created_at) VALUES ('ws-1', 'Work', '2026-11-14T00:00:00Z')",
+            0,
+        )
+        userDriver.execute(
+            null,
+            "INSERT INTO project_registry (project_id, path, workspace_id, last_opened_at) VALUES ('proj-ws', '/tmp/p', 'ws-1', '2026-11-14T00:00:00Z')",
+            0,
+        )
+
+        // Workspace sets a PREFERENCE setting; user sets a different value -> workspace wins
+        assertTrue(writer.writeUser(Settings.retentionAgedDays, JsonPrimitive(30), SettingSetByKind.USER, "2026-11-14T00:00:00Z").isSuccess)
+        assertTrue(writer.writeWorkspace(Settings.retentionAgedDays, "ws-1", JsonPrimitive(14), SettingSetByKind.USER, "2026-11-14T00:00:00Z").isSuccess)
+
+        val resolved = store.resolve(Settings.retentionAgedDays, projectId = "proj-ws")
+        assertEquals(14, resolved.value)
+        assertEquals(SettingOrigin.WORKSPACE, resolved.origin)
+        assertEquals("workspace:ws-1", resolved.originPath)
+
+        // Workspace cannot set a SECURITY key; refused and audited as SCOPE_VIOLATION
+        val refused = writer.writeWorkspace(Settings.routingRemoteEgress, "ws-1", JsonPrimitive("ALLOW"), SettingSetByKind.USER, "2026-11-14T00:00:00Z")
+        assertTrue(refused.isFailure)
+        val violations = audit.entries("routing.remote_egress").filter { it.kind == SettingAuditKind.SCOPE_VIOLATION }
+        assertEquals(1, violations.size)
+        assertEquals("workspace", violations.single().scope)
+        assertEquals("ws-1", violations.single().scopeId)
+    }
 }

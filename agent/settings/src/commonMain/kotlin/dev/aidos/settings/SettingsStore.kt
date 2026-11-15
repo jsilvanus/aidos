@@ -33,6 +33,9 @@ class SettingsStore(
     private val userDriver: SqlDriver,
     /** Driver for state.db — holds the project-scope cache. */
     private val projectDriver: SqlDriver?,
+    /** Optional audit sink for recording scope violations discovered during resolution (RFC-0054). */
+    private val audit: SettingsAuditSink? = null,
+    private val nowIso: () -> String = { "1970-01-01T00:00:00Z" },
 ) {
 
     /**
@@ -49,6 +52,7 @@ class SettingsStore(
         errors: MutableList<SettingError> = mutableListOf(),
         project: ProjectSettingsSnapshot? = null,
         runId: String? = null,
+        workspaceId: String? = null,
     ): Resolved<T> {
         var refusedBy: ScopeClass? = null
 
@@ -67,6 +71,16 @@ class SettingsStore(
                     key = descriptor.key, originPath = sessionOriginPath, line = null,
                     message = "'${descriptor.key}' is ${descriptor.scopeClass} and cannot be set by a session. Ignored.",
                     errorClass = SettingErrorClass.SCOPE_VIOLATION,
+                ))
+                audit?.record(SettingAuditEntry(
+                    occurredAt = nowIso(),
+                    kind = SettingAuditKind.SCOPE_VIOLATION,
+                    scope = "session",
+                    scopeId = sessionId ?: runId,
+                    key = descriptor.key,
+                    oldValueJson = null,
+                    newValueJson = sessionJson,
+                    actor = ActorRef(ActorKind.SESSION, sessionId ?: runId ?: "session"),
                 ))
                 refusedBy = descriptor.scopeClass
             } else {
@@ -105,6 +119,16 @@ class SettingsStore(
                         "Ignored. Set it in your own settings if you want it.",
                     errorClass = SettingErrorClass.SCOPE_VIOLATION,
                 ))
+                audit?.record(SettingAuditEntry(
+                    occurredAt = nowIso(),
+                    kind = SettingAuditKind.SCOPE_VIOLATION,
+                    scope = "project",
+                    scopeId = projectId,
+                    key = descriptor.key,
+                    oldValueJson = null,
+                    newValueJson = entry.value?.toString() ?: entry.rawText,
+                    actor = ActorRef(ActorKind.RUNTIME, projectId ?: "project"),
+                ))
                 refusedBy = descriptor.scopeClass
             } else {
                 val decoded = entry.value?.let { descriptor.codec.decode(it) }
@@ -122,7 +146,47 @@ class SettingsStore(
             }
         }
 
-        // 3. Workspace scope — RFC-0036 MVP: a single implicit workspace, no workspace rows.
+        // 3. Workspace scope (RFC-0054): resolve from user.db settings(scope='workspace', scope_id=workspaceId).
+        val effectiveWorkspaceId = workspaceId ?: projectId?.let { lookupWorkspaceId(it) }
+        if (!effectiveWorkspaceId.isNullOrBlank()) {
+            val workspaceText = readRow(userDriver, "workspace", effectiveWorkspaceId, descriptor.key)
+            if (workspaceText != null) {
+                if (descriptor.scopeClass.userOnly) {
+                    errors.add(SettingError(
+                        key = descriptor.key,
+                        originPath = "workspace:$effectiveWorkspaceId",
+                        line = null,
+                        message = "'${descriptor.key}' is ${descriptor.scopeClass} and cannot be set at workspace scope. Ignored.",
+                        errorClass = SettingErrorClass.SCOPE_VIOLATION,
+                    ))
+                    audit?.record(SettingAuditEntry(
+                        occurredAt = nowIso(),
+                        kind = SettingAuditKind.SCOPE_VIOLATION,
+                        scope = "workspace",
+                        scopeId = effectiveWorkspaceId,
+                        key = descriptor.key,
+                        oldValueJson = null,
+                        newValueJson = workspaceText,
+                        actor = ActorRef(ActorKind.RUNTIME, effectiveWorkspaceId),
+                    ))
+                    refusedBy = descriptor.scopeClass
+                } else {
+                    val decoded = runCatching { Json.parseToJsonElement(workspaceText) }
+                        .fold({ descriptor.codec.decode(it) }, { Result.failure(it) })
+                    if (decoded.isSuccess) {
+                        return Resolved(decoded.getOrThrow(), SettingOrigin.WORKSPACE, "workspace:$effectiveWorkspaceId", refusedBy)
+                    }
+                    errors.add(SettingError(
+                        key = descriptor.key,
+                        originPath = "workspace:$effectiveWorkspaceId",
+                        line = null,
+                        message = "invalid value for '${descriptor.key}': ${decoded.exceptionOrNull()?.message}. Using default.",
+                        errorClass = SettingErrorClass.VALIDATION_FAILED,
+                    ))
+                    return Resolved(descriptor.default, SettingOrigin.DEFAULT, null, refusedBy)
+                }
+            }
+        }
 
         // 4. User scope
         val userText = readRow(userDriver, "user", null, descriptor.key)
@@ -148,6 +212,16 @@ class SettingsStore(
     }
 
     private fun originPath(source: String, line: Int?) = if (line != null) "$source:$line" else source
+
+    private fun lookupWorkspaceId(projectId: String): String? =
+        runCatching {
+            userDriver.executeQuery(
+                identifier = null,
+                sql = "SELECT workspace_id FROM project_registry WHERE project_id = ?",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, projectId) }.value
+        }.getOrNull()
 
     private fun readRow(driver: SqlDriver, scope: String, scopeId: String?, key: String): String? =
         driver.executeQuery(
@@ -264,6 +338,43 @@ class SettingsWriter(
         }
         if (projectDriver == null) return Result.failure(IllegalStateException("no project driver"))
         upsert(projectDriver, "project", projectId, descriptor.key, value.toString(), setByKind, nowIso)
+        return Result.success(Unit)
+    }
+
+    /**
+     * Write a setting to workspace scope in `user.db` (RFC-0054).
+     *
+     * Rejects SECURITY and SPEND settings — returns an error rather than writing — and audits the
+     * attempt as a [SettingAuditKind.SCOPE_VIOLATION].
+     */
+    fun writeWorkspace(
+        descriptor: SettingDescriptor<*>,
+        workspaceId: String,
+        value: JsonElement,
+        setByKind: SettingSetByKind,
+        nowIso: String,
+        actor: ActorRef = defaultActor(setByKind),
+    ): Result<Unit> {
+        if (workspaceId.isBlank()) {
+            return Result.failure(IllegalArgumentException("workspaceId must not be blank"))
+        }
+        if (descriptor.scopeClass.userOnly) {
+            audit?.record(SettingAuditEntry(
+                occurredAt = nowIso, kind = SettingAuditKind.SCOPE_VIOLATION, scope = "workspace",
+                scopeId = workspaceId, key = descriptor.key, oldValueJson = null,
+                newValueJson = value.toString(), actor = actor,
+            ))
+            return Result.failure(
+                IllegalArgumentException(
+                    "'${descriptor.key}' is ${descriptor.scopeClass} and cannot be set at workspace scope."
+                )
+            )
+        }
+        descriptor.codec.decode(value).onFailure {
+            return Result.failure(IllegalArgumentException(
+                "invalid value for '${descriptor.key}': ${it.message}"))
+        }
+        upsert(userDriver, "workspace", workspaceId, descriptor.key, value.toString(), setByKind, nowIso)
         return Result.success(Unit)
     }
 

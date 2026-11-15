@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -191,6 +192,17 @@ class RuntimeSocketServer(
             Wire.encodeProjectResult(client.projects.create(Wire.decodeCreateProjectRequest(params)))
         Methods.PROJECTS_LIST ->
             Wire.encodeProjectSummaryList(client.projects.list())
+        Methods.PROJECTS_CLOSE -> {
+            client.projects.close(params["projectId"]!!.jsonPrimitive.content)
+            JsonObject(emptyMap())
+        }
+        Methods.PROJECTS_DELETE -> {
+            client.projects.delete(
+                params["projectId"]!!.jsonPrimitive.content,
+                params["confirm"]?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+            JsonObject(emptyMap())
+        }
         Methods.SESSIONS_CREATE ->
             Wire.encodeSessionResult(client.sessions.create(Wire.decodeCreateSessionRequest(params)))
         Methods.SESSIONS_LIST ->
@@ -231,6 +243,10 @@ class RuntimeSocketServer(
             JsonPrimitive(client.runtime.ping())
         Methods.RUNTIME_VERSION ->
             Wire.encodeRuntimeVersion(client.runtime.version())
+        Methods.RUNTIME_PROFILE ->
+            JsonPrimitive(client.runtime.profile().name)
+        Methods.RUNTIME_AVAILABILITY ->
+            Wire.encodeAvailabilityReport(client.runtime.availability(params["projectId"]!!.jsonPrimitive.content))
         else -> throw UnsupportedOperationException("method not wired over socket transport (M10 scope): $method")
     }
 

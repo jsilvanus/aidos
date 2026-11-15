@@ -1,6 +1,7 @@
 # RFC-0017: State Model
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (background content-hash reconciliation, point-in-time backup, multi-device sync merge protocol)
 
 ## Abstract
 
@@ -311,3 +312,18 @@ Content-hash reconciliation: a background job that periodically verifies that SQ
 Backup and point-in-time recovery: export a consistent snapshot of SQLite + Git at a given timestamp.
 
 Multi-device sync: when Git sync across devices is added, a merge protocol is needed for SQLite operational state that has no Git equivalent.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Content.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/RuntimeApi.kt
+  - schema/project.sql
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/StateModel.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/MigrationRunner.kt
+  - agent/storage/src/jvmMain/kotlin/dev/aidos/storage/AidosStorage.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/ProjectLifecycle.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/StateModelTest.kt
+```

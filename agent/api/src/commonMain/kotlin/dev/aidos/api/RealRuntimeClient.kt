@@ -4,7 +4,10 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.ProjectRegistry
+import dev.aidos.identity.ProjectType
 import dev.aidos.identity.UuidV7Generator
+import dev.aidos.identity.applyTypeDefaults
+import dev.aidos.settings.SettingsWriter
 import dev.aidos.intent.DerivedStatusComputer
 import dev.aidos.intent.EffectiveDispatchPolicy
 import dev.aidos.intent.IntentActorKind
@@ -23,6 +26,7 @@ import dev.aidos.intent.ProposalResolutionDecision
 import dev.aidos.intent.SnapshotReconcileResult
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
+import dev.aidos.kernel.AvailabilityReport
 import dev.aidos.kernel.FileDiff
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
@@ -83,6 +87,12 @@ class RealRuntimeClient : RuntimeClient {
      */
     var knowledgeService: KnowledgeService? = null
 
+    /** RFC-0049: current runtime platform profile, set by composition root / host. */
+    var runtimeProfile: PlatformProfile = PlatformProfile.DESKTOP
+
+    /** RFC-0049: evaluates project `[requirements]` against the current platform profile. */
+    var availabilityEvaluator: ((projectId: String, projectPath: String?) -> AvailabilityReport)? = null
+
     // ── Persistent storage (RFC-0010, RFC-0040) ───────────────────────────────
     // All three are unset by default, preserving the pre-Phase-4 in-memory-only behavior.
     // Wired by external infrastructure once available (JVM: daemon's RuntimeClientFactory;
@@ -122,6 +132,28 @@ class RealRuntimeClient : RuntimeClient {
      * `RealRuntimeClient` depending on `executor` directly (a module cycle, same as [runExecutor]).
      */
     var effectApprovalGateway: EffectApprovalGateway? = null
+
+    /**
+     * Optional project lifecycle port (RFC-0002, RFC-0010) for archiving (`CLOSED`) and
+     * FK-ordered project deletion. Unset preserves the pre-wiring in-memory/unregister behavior.
+     */
+    var projectLifecycle: ProjectLifecyclePort? = null
+
+    /** Optional hook run after a project is created (e.g. RFC-0054 `.gitignore` entry for `.aidos/`). */
+    var onProjectCreate: ((projectPath: String) -> Unit)? = null
+
+    /** Optional hook run when a project is opened (e.g. RFC-0053 repo fingerprint check). */
+    var onProjectOpen: (suspend (projectId: String, driver: SqlDriver) -> Unit)? = null
+
+    /** Optional hook run when a session is archived (e.g. RFC-0032/0053 worker-ref pruning). */
+    var onSessionArchive: (suspend (sessionId: String, projectId: String, projectPath: String?) -> Unit)? = null
+
+    /** Releases all held project locks and closes open project drivers on daemon shutdown (RFC-0055). */
+    fun shutdown() {
+        projectLocker?.releaseAll()
+        _openProjectDrivers.values.forEach { runCatching { it.close() } }
+        _openProjectDrivers.clear()
+    }
 
     /** Recorded on every Run for provenance (RFC-0049); no device-profile detection exists here. */
     var platformProfile: PlatformProfile = PlatformProfile.DESKTOP
@@ -296,6 +328,42 @@ class RealRuntimeClient : RuntimeClient {
             "Project path is locked by another Aidos instance (${outcome.instanceId}, since ${outcome.acquiredAt})",
         )
 
+    private fun recordLockBreak(
+        driver: SqlDriver,
+        projectId: String,
+        outcome: ProjectLockOutcome.AcquiredAfterBreakingStale,
+        nowIso: String,
+    ) {
+        val auditId = projectIdGen.next()
+        val breakId = projectIdGen.next()
+        val deviceId = deviceIdentity?.deviceId?.value ?: "runtime"
+        AuditLog(driver, deviceId).write(
+            id = auditId,
+            projectId = projectId,
+            kind = "LockBroken",
+            actorKind = "RUNTIME",
+            actorId = instanceId,
+            subjectRef = projectId,
+            detailJson = "{\"previousInstanceId\":\"${outcome.previousInstanceId}\",\"previousHeartbeatAt\":\"${outcome.previousHeartbeatAt}\"}",
+            nowIso = nowIso,
+        )
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO lock_breaks " +
+                "(id, project_id, previous_instance_id, previous_heartbeat_at, broken_by_instance_id, broken_at, audit_ref) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            parameters = 7,
+        ) {
+            bindString(0, breakId)
+            bindString(1, projectId)
+            bindString(2, outcome.previousInstanceId)
+            bindString(3, outcome.previousHeartbeatAt)
+            bindString(4, instanceId)
+            bindString(5, nowIso)
+            bindString(6, auditId)
+        }
+    }
+
     // ── Path resolution ────────────────────────────────────────────────────────
 
     /**
@@ -344,37 +412,41 @@ class RealRuntimeClient : RuntimeClient {
             val projectPath = resolveProjectPath(request.location)
 
             val locker = projectLocker
+            var lockBreak: ProjectLockOutcome.AcquiredAfterBreakingStale? = null
             if (locker != null) {
                 when (val outcome = locker.tryAcquire(id, projectPath, instanceId)) {
                     is ProjectLockOutcome.HeldByOther -> return lockedByOtherError(outcome)
-                    is ProjectLockOutcome.AcquiredAfterBreakingStale,
+                    is ProjectLockOutcome.AcquiredAfterBreakingStale -> lockBreak = outcome
                     ProjectLockOutcome.Acquired -> Unit
-                    // RFC-0055: "locks are never broken silently" -- AcquiredAfterBreakingStale
-                    // should surface to the user and be recorded (LockBreakRecord). No audit-log
-                    // write path exists yet from this class; not invented here, flagged in
-                    // PIPELINE.md instead of silently swallowing it.
                 }
             }
 
+            val resolvedType = ProjectType.fromValue(request.projectType)
             val driver = ensureProjectDriverOpen(id, projectPath)
             if (driver != null) {
                 driver.execute(
                     identifier = null,
                     sql = "INSERT INTO projects " +
                         "(id, name, description, root_path, project_type, state, created_at, updated_at, state_updated_at) " +
-                        "VALUES (?, ?, ?, ?, 'generic', 'OPEN', ?, ?, ?)",
-                    parameters = 7,
+                        "VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)",
+                    parameters = 8,
                 ) {
                     bindString(0, id)
                     bindString(1, request.name)
                     bindString(2, request.description)
                     bindString(3, projectPath)
-                    bindString(4, nowIso)
+                    bindString(4, resolvedType.value)
                     bindString(5, nowIso)
                     bindString(6, nowIso)
+                    bindString(7, nowIso)
                 }
+                lockBreak?.let { recordLockBreak(driver, id, it, nowIso) }
                 projectRegistry()?.register(ProjectId(id), projectPath, nowIso = nowIso)
+                userDriver?.let { uDriver ->
+                    applyTypeDefaults(resolvedType, id, SettingsWriter(uDriver, driver), nowIso)
+                }
             }
+            onProjectCreate?.invoke(projectPath)
 
             val summary = ProjectSummary(
                 id = id, name = request.name, description = request.description,
@@ -401,10 +473,11 @@ class RealRuntimeClient : RuntimeClient {
                 ?: return ProjectResult.Error("project.not_found", "Project $projectId not found")
 
             val locker = projectLocker
+            var lockBreak: ProjectLockOutcome.AcquiredAfterBreakingStale? = null
             if (locker != null) {
                 when (val outcome = locker.tryAcquire(projectId, path, instanceId)) {
                     is ProjectLockOutcome.HeldByOther -> return lockedByOtherError(outcome)
-                    is ProjectLockOutcome.AcquiredAfterBreakingStale,
+                    is ProjectLockOutcome.AcquiredAfterBreakingStale -> lockBreak = outcome
                     ProjectLockOutcome.Acquired -> Unit
                 }
             }
@@ -414,11 +487,29 @@ class RealRuntimeClient : RuntimeClient {
                 locker?.release(projectId)
                 return ProjectResult.Error("project.not_found", "Project $projectId has no recorded state")
             }
-            if (cached != null) ensureProjectDriverOpen(projectId, path)
+            val driver = if (cached != null) ensureProjectDriverOpen(projectId, path) else _openProjectDrivers[projectId]
+            if (driver != null) {
+                lockBreak?.let { recordLockBreak(driver, projectId, it, Clock.System.now().toString()) }
+                onProjectOpen?.invoke(projectId, driver)
+            }
             return ProjectResult.Success(summary)
         }
 
+        private fun openProjectDriverForLifecycle(projectId: String): SqlDriver? {
+            _openProjectDrivers[projectId]?.let { return it }
+            val path = _projectPaths[projectId]
+                ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
+                ?: return null
+            return ensureProjectDriverOpen(projectId, path)
+        }
+
         override suspend fun close(projectId: String) {
+            val lifecycle = projectLifecycle
+            if (lifecycle != null) {
+                val driver = openProjectDriverForLifecycle(projectId)
+                    ?: throw IllegalStateException("Project $projectId not found")
+                lifecycle.archiveProject(driver, projectId).getOrThrow()
+            }
             projectLocker?.release(projectId)
             _openProjectDrivers.remove(projectId)?.close()
         }
@@ -435,18 +526,29 @@ class RealRuntimeClient : RuntimeClient {
                 ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
                     ?.let { path -> hydrateProjectSummary(projectId, path) }
                 ?: return null
-            return ProjectDetail(p, p.projectPath, "generic")
+            val driver = resolveProjectDriver(projectId)
+            val projectType = driver?.executeQuery(
+                identifier = null,
+                sql = "SELECT project_type FROM projects WHERE id = ?",
+                mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, projectId) }?.value ?: "generic"
+            return ProjectDetail(p, p.projectPath, projectType)
         }
 
         override suspend fun delete(projectId: String, confirm: Boolean) {
             if (confirm) {
+                val lifecycle = projectLifecycle
+                if (lifecycle != null) {
+                    val driver = openProjectDriverForLifecycle(projectId)
+                        ?: throw IllegalStateException("Project $projectId not found")
+                    lifecycle.deleteProject(driver, projectId).getOrThrow()
+                }
                 projectLocker?.release(projectId)
                 _openProjectDrivers.remove(projectId)?.close()
                 projectRegistry()?.unregister(ProjectId(projectId))
                 _projects.remove(projectId)
                 _projectPaths.remove(projectId)
-                // Deliberately does not touch the project's own directory or state.db -- RFC-0010's
-                // MVP is archive, not destroy. This only stops the runtime tracking the project.
             }
         }
     }
@@ -571,6 +673,28 @@ class RealRuntimeClient : RuntimeClient {
 
         override suspend fun cancel(sessionId: String, runId: String) {
             _runs[runId]?.let { _runs[runId] = it.copy(state = "CANCELLED") }
+            val projectId = _runProjectIds[runId]
+            val driver = projectId?.let { _openProjectDrivers[it] }
+            if (driver != null) {
+                val now = Clock.System.now().toString()
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE runs SET state = 'CANCELLED', ended_at = ?, row_version = row_version + 1 " +
+                        "WHERE id = ? AND session_id = ? AND state IN ('PENDING', 'RUNNING', 'YIELDED')",
+                    parameters = 3,
+                ) { bindString(0, now); bindString(1, runId); bindString(2, sessionId) }
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE tasks SET state = 'SKIPPED', ended_at = ?, row_version = row_version + 1 " +
+                        "WHERE run_id = ? AND state = 'PENDING'",
+                    parameters = 2,
+                ) { bindString(0, now); bindString(1, runId) }
+                driver.execute(
+                    identifier = null,
+                    sql = "DELETE FROM continuations WHERE run_id = ?",
+                    parameters = 1,
+                ) { bindString(0, runId) }
+            }
         }
 
         override suspend fun list(projectId: String): List<SessionSummary> {
@@ -600,9 +724,19 @@ class RealRuntimeClient : RuntimeClient {
         }
 
         override suspend fun archive(sessionId: String) {
-            _sessions[sessionId]?.let {
-                _sessions[sessionId] = it.copy(state = SessionState.ARCHIVED)
+            val existing = _sessions[sessionId] ?: return
+            _sessions[sessionId] = existing.copy(state = SessionState.ARCHIVED)
+            val nowIso = Clock.System.now().toString()
+            _openProjectDrivers[existing.projectId]?.execute(
+                identifier = null,
+                sql = "UPDATE sessions SET state = 'ARCHIVED', archived_at = ?, state_updated_at = ? WHERE id = ?",
+                parameters = 3,
+            ) {
+                bindString(0, nowIso)
+                bindString(1, nowIso)
+                bindString(2, sessionId)
             }
+            onSessionArchive?.invoke(sessionId, existing.projectId, _projectPaths[existing.projectId])
         }
 
         override suspend fun delete(sessionId: String) { _sessions.remove(sessionId) }
@@ -1003,8 +1137,24 @@ class RealRuntimeClient : RuntimeClient {
 
     override val runtime: RuntimeInfo = object : RuntimeInfo {
         override suspend fun version(): RuntimeVersion =
-            RuntimeVersion(version = "0.1.0-alpha", apiVersion = 1, profile = "REAL")
+            RuntimeVersion(version = "0.1.0-alpha", apiVersion = 1, profile = runtimeProfile.name)
 
         override suspend fun ping(): Boolean = true
+
+        override suspend fun profile(): PlatformProfile = runtimeProfile
+
+        override suspend fun availability(projectId: String): AvailabilityReport {
+            val path = _projectPaths[projectId]
+                ?: _projects[projectId]?.projectPath
+                ?: projectRegistry()?.resolveById(ProjectId(projectId))?.getOrNull()
+            return availabilityEvaluator?.invoke(projectId, path)
+                ?: AvailabilityReport(
+                    profile = runtimeProfile,
+                    networkAvailable = true,
+                    satisfied = emptyList(),
+                    degraded = emptyList(),
+                    unsatisfied = emptyList(),
+                )
+        }
     }
 }

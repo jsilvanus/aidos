@@ -1,6 +1,7 @@
 # RFC-0040: Storage
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (per-database encryption, FTS5 over content nodes, incremental export, storage diagnostics)
 
 ## Abstract
 
@@ -274,3 +275,28 @@ None. The previous version's list was answered elsewhere as the architecture set
 live outside the operational database (D21), retention is RFC-0056, WAL growth is bounded by
 explicit checkpoints above, and export is RFC-0041. Sharding and backup-key management were
 questions about a distributed product this one is not.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/AndroidRuntimeClientFactory.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientPersistenceTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonCliIntegrationTest.kt
+  - agent/storage/src/androidMain/kotlin/dev/aidos/storage/AndroidStorage.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/DatabaseKind.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/MigrationRunner.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/OpenDatabase.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/SqlScript.kt
+  - agent/storage/src/jvmMain/kotlin/dev/aidos/storage/AidosStorage.kt
+  - agent/storage/src/jvmMain/kotlin/dev/aidos/storage/JvmSqlDriver.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/AidosStorageTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/KernelSchemaMapTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/MigrationRunnerTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/SqlScriptTest.kt
+  - schema/project.sql
+  - schema/user.sql
+  - schema/vault.sql
+```

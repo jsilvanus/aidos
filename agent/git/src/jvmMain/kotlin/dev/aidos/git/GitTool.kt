@@ -31,6 +31,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.MergeCommand
+import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.Repository
@@ -99,6 +101,9 @@ class GitTool(
         op("git:branch", "Branch", "Create or list branches", EffectKind.Mutate(MutationScope.IN_PROJECT), Permission.GIT_WRITE, RecoveryClass.IDEMPOTENT, UNIVERSAL),
         op("git:log", "Log", "Show commit history", EffectKind.Read, Permission.GIT_READ, RecoveryClass.PURE, UNIVERSAL),
         op("git:checkout", "Checkout", "Switch branch — discards uncommitted changes", EffectKind.Mutate(MutationScope.IN_PROJECT, reversible = false), Permission.GIT_WRITE, RecoveryClass.CHECKABLE, UNIVERSAL),
+        op("git:switch", "Switch", "Switch branch — discards uncommitted changes", EffectKind.Mutate(MutationScope.IN_PROJECT, reversible = false), Permission.GIT_WRITE, RecoveryClass.CHECKABLE, UNIVERSAL),
+        op("git:fetch", "Fetch", "Fetch from remote without touching working tree", EffectKind.Egress("remote"), Permission.NETWORK_EGRESS, RecoveryClass.IDEMPOTENT, NETWORKED),
+        op("git:merge_ff", "Fast-forward merge", "Fast-forward current branch to target ref", EffectKind.Mutate(MutationScope.IN_PROJECT), Permission.GIT_WRITE, RecoveryClass.IDEMPOTENT, UNIVERSAL),
         op("git:push", "Push", "Push to remote — UNSAFE, cannot be retried", EffectKind.Egress("remote"), Permission.NETWORK_EGRESS, RecoveryClass.UNSAFE, NETWORKED),
     )
 
@@ -122,13 +127,16 @@ class GitTool(
             "git:branch"   -> runCatching { gitBranch(arguments) }.fold({ ok(it) }, { err(operation, it) })
             "git:log"      -> runCatching { gitLog(arguments) }.fold({ ok(it) }, { err(operation, it) })
             "git:checkout" -> runCatching { gitCheckout(arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "git:switch"   -> runCatching { gitCheckout(arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "git:fetch"    -> runCatching { gitFetch(arguments) }.fold({ ok(it) }, { err(operation, it) })
+            "git:merge_ff" -> runCatching { gitMergeFf(arguments) }.fold({ ok(it) }, { err(operation, it) })
             "git:push"     -> runCatching { gitPush() }.fold({ ok(it) }, { err(operation, it) })
             else           -> err(operation, "unknown operation: $operation")
         }
 
     override suspend fun preview(handle: ResourceHandle, operation: String, arguments: JsonObject): Result<Preview> =
         when (operation) {
-            "git:add", "git:commit", "git:checkout" -> runCatching { previewMutation(operation, arguments) }
+            "git:add", "git:commit", "git:checkout", "git:switch" -> runCatching { previewMutation(operation, arguments) }
             else -> Result.failure(UnsupportedOperationException("no preview for $operation"))
         }
 
@@ -250,12 +258,62 @@ class GitTool(
 
     private fun gitCheckout(args: JsonObject): List<ContentBlock> {
         val name = args["branch"]?.jsonPrimitive?.content
-            ?: return listOf(ContentBlock.Text("error: missing 'branch'"))
+            ?: args["name"]?.jsonPrimitive?.content
+            ?: error("missing 'branch'")
         val git = openGit()
         git.use { g ->
-            g.checkout().setName(name).call()
+            requireNotNull(g.repository.resolve(name)) { "unknown branch or ref: $name" }
+            // RFC-0053: switching branches discards uncommitted working-tree changes after preview/confirmation.
+            if (g.repository.resolve("HEAD") != null) {
+                g.reset().setMode(ResetCommand.ResetType.HARD).call()
+            }
+            g.clean().setCleanDirectories(true).setForce(true).call()
+            g.checkout().setName(name).setForced(true).call()
         }
         return listOf(ContentBlock.Text("switched to branch: $name"))
+    }
+
+    /** RFC-0032: fetch from remote without touching the working tree. */
+    private fun gitFetch(args: JsonObject): List<ContentBlock> {
+        val remote = args["remote"]?.jsonPrimitive?.content ?: "origin"
+        val git = openGit()
+        val result = git.use { g ->
+            val fetch = g.fetch().setRemote(remote)
+            val url = g.repository.config.getString("remote", remote, "url")
+            val cred = url?.let { credentials?.credentialFor(it) }
+            try {
+                if (cred != null) {
+                    fetch.setCredentialsProvider(
+                        org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider(cred.username, String(cred.secret))
+                    )
+                }
+                fetch.call()
+            } finally {
+                cred?.secret?.fill('\u0000')
+            }
+        }
+        val updates = result.trackingRefUpdates.map { "${it.localName}: ${it.result}" }
+        return listOf(ContentBlock.Text(updates.joinToString("\n").ifBlank { "fetched from $remote" }))
+    }
+
+    /** RFC-0032: fast-forward only merge; fails cleanly if branches diverged. */
+    private fun gitMergeFf(args: JsonObject): List<ContentBlock> {
+        val refName = args["ref"]?.jsonPrimitive?.content
+            ?: args["branch"]?.jsonPrimitive?.content
+            ?: error("missing 'ref'")
+        val git = openGit()
+        return git.use { g ->
+            val targetId = g.repository.resolve(refName)
+                ?: error("unknown ref: $refName")
+            val mergeResult = g.merge()
+                .include(targetId)
+                .setFastForward(MergeCommand.FastForwardMode.FF_ONLY)
+                .call()
+            check(mergeResult.mergeStatus.isSuccessful) {
+                "cannot fast-forward to '$refName': ${mergeResult.mergeStatus}"
+            }
+            listOf(ContentBlock.Text("fast-forwarded to $refName (${targetId.name.take(8)})"))
+        }
     }
 
     /** `push` is UNSAFE: cannot be retried and cannot be un-done. Declared as Egress. */
@@ -289,12 +347,21 @@ class GitTool(
         val git = openGit()
         return git.use { g ->
             when (operation) {
-                "git:checkout" -> {
+                "git:checkout", "git:switch" -> {
                     val status = g.status().call()
-                    if (status.modified.isEmpty() && status.added.isEmpty()) {
+                    val dirtyPaths = (status.modified + status.added + status.changed +
+                        status.removed + status.missing + status.untracked).distinct().sorted()
+                    if (dirtyPaths.isEmpty()) {
                         Preview.NoChange
                     } else {
-                        Preview.Description("Checkout will discard ${status.modified.size + status.added.size} file(s) with uncommitted changes")
+                        val details = dirtyPaths.joinToString(", ") { path ->
+                            val file = File(repoDir, path)
+                            val lines = if (file.isFile) file.readLines().size else 0
+                            "$path ($lines lines)"
+                        }
+                        Preview.Description(
+                            "Switching branch will discard ${dirtyPaths.size} file(s) with uncommitted changes (commit first to keep): $details"
+                        )
                     }
                 }
                 else -> {

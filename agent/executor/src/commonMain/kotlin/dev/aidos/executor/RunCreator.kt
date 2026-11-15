@@ -44,9 +44,10 @@ class RunCreator(
         deviceId: String,
         networkAvailable: Boolean,
         maxSteps: Int = 24,
+        targetIntentNodeId: String? = null,
     ): RunId = create(
         sessionId, projectId, triggerEventId, userMessageSummary,
-        platformProfile, deviceId, networkAvailable, maxSteps,
+        platformProfile, deviceId, networkAvailable, maxSteps, targetIntentNodeId,
     )
 
     /**
@@ -67,9 +68,10 @@ class RunCreator(
         deviceId: String,
         networkAvailable: Boolean,
         maxSteps: Int = 24,
+        targetIntentNodeId: String? = null,
     ): RunId = create(
         sessionId, projectId, triggerEventId, contextSummary,
-        platformProfile, deviceId, networkAvailable, maxSteps,
+        platformProfile, deviceId, networkAvailable, maxSteps, targetIntentNodeId,
     )
 
     private fun create(
@@ -81,6 +83,7 @@ class RunCreator(
         deviceId: String,
         networkAvailable: Boolean,
         maxSteps: Int,
+        targetIntentNodeId: String?,
     ): RunId {
         val runId = RunId(idGen())
         transacter.transaction {
@@ -114,6 +117,20 @@ class RunCreator(
                 bindString(3, projectId.value)
                 bindString(4, TaskKind.MODEL_CALL.name)
                 bindString(5, "Model call for user message")
+            }
+            if (targetIntentNodeId != null) {
+                driver.execute(
+                    identifier = null,
+                    sql = "INSERT INTO execution_edges " +
+                        "(id, project_id, from_node_id, from_node_kind, to_node_id, to_node_kind, edge_kind, confirmed) " +
+                        "VALUES (?, ?, ?, 'RUN', ?, 'INTENT_NODE', 'TARGETED', 0)",
+                    parameters = 4,
+                ) {
+                    bindString(0, idGen())
+                    bindString(1, projectId.value)
+                    bindString(2, runId.value)
+                    bindString(3, targetIntentNodeId)
+                }
             }
         }
         return runId

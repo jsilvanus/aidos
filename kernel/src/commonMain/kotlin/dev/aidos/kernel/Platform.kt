@@ -20,6 +20,9 @@ enum class AvailabilityTier {
 
     /** Requires connectivity. Remote models, HTTP MCP, git fetch/push. */
     NETWORKED,
+
+    /** Requires a companion app installed, approved, and reachable. MOBILE only (RFC-0103). */
+    SIDECAR,
 }
 
 data class ToolAvailability(
@@ -27,8 +30,14 @@ data class ToolAvailability(
     val tier: AvailabilityTier,
     val requiresNetwork: Boolean = false,
 ) {
-    fun availableOn(profile: PlatformProfile, networkAvailable: Boolean): Boolean =
-        profile in profiles && (!requiresNetwork || networkAvailable)
+    fun availableOn(
+        profile: PlatformProfile,
+        networkAvailable: Boolean,
+        sidecarAvailable: Boolean = false,
+    ): Boolean =
+        profile in profiles &&
+            (!requiresNetwork || networkAvailable) &&
+            (tier != AvailabilityTier.SIDECAR || sidecarAvailable)
 }
 
 /**

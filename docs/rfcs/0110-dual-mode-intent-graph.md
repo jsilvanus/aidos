@@ -1,6 +1,7 @@
 # RFC-0110: Dual-Mode Intent Graph (Life & Coding Management)
 
 Status: **Draft**
+Non-MVP Work: **Remaining** (Android/Desktop Compose UI views, socket wire protocol for intents.*, WorkManager AUTO_WHEN_READY trigger, SHELL_COMMAND runner)
 Phase: **1 (Foundation) / 3 (UX & Multi-Surface)**
 Depends on: **0002 (Core Data Model), 0003 (Agent Model), 0006 (Security Model), 0010 (Project Model), 0012 (Intent Graph — superseded), 0019 (Execution Graph), 0049 (Platform Capability Profiles), 0052 (Runtime API), 0053 (Git Backend and Reconciliation), 0104 (Inference Locality)**
 Related: **0008 (Execution Engine), 0011 (Prompt Assembly), 0044 (Notifications and Background Work), 0047 (Project Templates), 0054 (Scope Model), 0107 (Remote Agent Hosting)**
@@ -190,3 +191,40 @@ CREATE INDEX idx_proposals_pending ON intent_proposals(project_id, expires_at) W
 - Socket wire protocol (`Methods`/`Wire`) support for `intents.*` and live AIDIN push replication.
 - Automated background `AUTO_WHEN_READY` WorkManager/scheduler trigger hook for `AGENT` tasks on device wake/sync.
 - Automatic mechanical `SHELL_COMMAND` runner integration on `DESKTOP` Run completion.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/InMemoryIntentCommands.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/GuardianApproval.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/IntentRunCoordinator.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/GuardianApprovalEndToEndTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/IntentRunCoordinatorTest.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/DerivedStatusComputer.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentCycleDetector.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentGraphRepository.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentModels.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentProposalEngine.kt
+  - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentSnapshotCodec.kt
+  - agent/intent/src/jvmTest/kotlin/dev/aidos/intent/DerivedStatusComputerTest.kt
+  - agent/intent/src/jvmTest/kotlin/dev/aidos/intent/IntentCycleDetectorTest.kt
+  - agent/intent/src/jvmTest/kotlin/dev/aidos/intent/IntentProposalEngineTest.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/IntentPromptRenderer.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/IntentPromptRendererTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/SplitVerificationCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/ColorSemantics.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseOneTest.kt
+  - schema/project.sql
+```

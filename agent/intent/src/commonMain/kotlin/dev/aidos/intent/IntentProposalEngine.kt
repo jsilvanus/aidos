@@ -140,6 +140,12 @@ class IntentProposalEngine(
         require(operations.isNotEmpty()) { "Proposal must include at least one operation." }
         require(rationale.isNotBlank()) { "Proposal rationale must not be blank." }
 
+        // RFC-0053: When the Intent Graph is CONFLICTED, AI-proposed intent edits are blocked
+        // (user edits remain allowed).
+        if (actor.kind != ActorKind.USER && hasConflictedNodes(projectId)) {
+            throw IllegalStateException("intent.conflicted: Intent graph has CONFLICTED nodes; resolve conflicts before proposing AI edits.")
+        }
+
         validateBatch(projectId, operations, actor)
 
         val proposalId = idGen()
@@ -572,6 +578,14 @@ class IntentProposalEngine(
             expiresAt = cursor.getString(10),
         )
     }
+
+    private fun hasConflictedNodes(projectId: String): Boolean =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT 1 FROM intent_nodes WHERE project_id = ? AND asserted_status = 'CONFLICTED' AND lifecycle != 'ARCHIVED' LIMIT 1",
+            mapper = { cursor -> QueryResult.Value(cursor.next().value) },
+            parameters = 1,
+        ) { bindString(0, projectId) }.value
 
     private fun escapeJson(value: String): String =
         value.replace("\\", "\\\\").replace("\"", "\\\"")

@@ -20,6 +20,8 @@ kotlin {
                 implementation(project(":vault"))
                 implementation(project(":identity"))
                 implementation(project(":storage"))
+                implementation(project(":mcp-broker"))
+                implementation(project(":mcp-core"))
                 implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")

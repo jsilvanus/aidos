@@ -105,6 +105,7 @@ Aidos uses RFCs to drive implementation. This means:
 2. **Implementation follows RFC** — Code realizes the RFC design.
 3. **RFCs are stable** — Once accepted, they're the source of truth.
 4. **Deviations are exceptions** — If implementation reveals problems, update the RFC first, then code.
+5. **Implementation file tracking** — Every RFC document MUST include a `## Implementation Files` section containing a fenced `yaml` block (`files: [...]` with repo-root-relative POSIX paths, or `files: []` if unimplemented) so a parser can fetch the file list for any group of RFCs. Keep it updated in the same commit as implementation changes (see `docs/rfcs/README.md`).
 
 ### If you find an RFC problem:
 
@@ -379,7 +380,7 @@ Before reviewing any PR:
 4. **Are commits clear?** — Commit messages explain *why*.
 5. **Is error handling present?** — What happens when things go wrong?
 6. **Are permissions checked?** — RFC-0003 compliance.
-7. **Is it documented?** — Code comments link to RFCs where relevant.
+7. **Is it documented?** — Code comments link to RFCs where relevant, and each affected RFC's `## Implementation Files` YAML list is updated.
 
 ## License
 

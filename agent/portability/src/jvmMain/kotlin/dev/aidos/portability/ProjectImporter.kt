@@ -156,7 +156,23 @@ object ProjectImporter {
             if (replaced != null) Files.move(target.toPath(), replaced.toPath())
             try {
                 if (finalTarget.exists()) finalTarget.delete() // an empty directory; checked above
-                Files.move(project.toPath(), finalTarget.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                var placed = false
+                var lastErr: Exception? = null
+                for (attempt in 0 until 6) {
+                    try {
+                        if (attempt == 0) {
+                            Files.move(project.toPath(), finalTarget.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                        } else {
+                            Files.move(project.toPath(), finalTarget.toPath())
+                        }
+                        placed = true
+                        break
+                    } catch (e: Exception) {
+                        lastErr = e
+                        Thread.sleep(50L * (attempt + 1))
+                    }
+                }
+                if (!placed) throw lastErr!!
             } catch (e: Exception) {
                 if (replaced != null && !target.exists()) Files.move(replaced.toPath(), target.toPath())
                 throw PortabilityException("import.place_failed", "could not place the project at ${finalTarget.path}: ${e.message}")

@@ -24,6 +24,7 @@ class MockRuntimeClient : RuntimeClient {
     // ── Mutable state ──────────────────────────────────────────────────────────
 
     private val _projects = mutableMapOf<String, ProjectSummary>()
+    private val _projectTypes = mutableMapOf<String, String>()
     private val _sessions = mutableMapOf<String, SessionSummary>()
     private val _runs = mutableMapOf<String, RunSummary>()
     private val _capabilities = mutableMapOf<String, CapabilitySummary>()
@@ -71,6 +72,7 @@ class MockRuntimeClient : RuntimeClient {
                 createdAt = now, lastActiveAt = now, sessionCount = 0,
             )
             _projects[id] = summary
+            _projectTypes[id] = request.projectType
             emit(RuntimeEvent.SessionCreated(
                 eventId = nextId(), timestamp = now, projectId = id, sessionId = id,
                 name = request.name, role = SessionRole.DRIVER,
@@ -90,7 +92,7 @@ class MockRuntimeClient : RuntimeClient {
 
         override suspend fun get(projectId: String): ProjectDetail? {
             val p = _projects[projectId] ?: return null
-            return ProjectDetail(p, p.projectPath, "generic")
+            return ProjectDetail(p, p.projectPath, _projectTypes[projectId] ?: "generic")
         }
 
         override suspend fun delete(projectId: String, confirm: Boolean) {
@@ -279,5 +281,17 @@ class MockRuntimeClient : RuntimeClient {
             RuntimeVersion(version = "0.1.0-alpha", apiVersion = 1, profile = "MOCK")
 
         override suspend fun ping(): Boolean = true
+
+        override suspend fun profile(): dev.aidos.kernel.PlatformProfile =
+            dev.aidos.kernel.PlatformProfile.DESKTOP
+
+        override suspend fun availability(projectId: String): dev.aidos.kernel.AvailabilityReport =
+            dev.aidos.kernel.AvailabilityReport(
+                profile = dev.aidos.kernel.PlatformProfile.DESKTOP,
+                networkAvailable = true,
+                satisfied = emptyList(),
+                degraded = emptyList(),
+                unsatisfied = emptyList(),
+            )
     }
 }

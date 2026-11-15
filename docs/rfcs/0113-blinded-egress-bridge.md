@@ -1,6 +1,7 @@
 # RFC-0113: The Blinded Egress Bridge — Cross-Domain Messaging with Zero-Egress Life Projects
 
 **Status:** Implemented 2026-11-14  
+Non-MVP Work: **None**
 **Date:** 2026-11-14  
 **Authors:** Aidos Core Architecture Team  
 **Related RFCs:** [RFC-0003 Security](0003-security.md), [RFC-0006 Session Execution Contract](0006-session-execution-contract.md), [RFC-0010 Projects](0010-projects.md), [RFC-0018 Capability Model](0018-capability-model.md), [RFC-0027 Trust and Taint](0027-trust-and-taint.md), [RFC-0042 Networking and Egress](0042-networking-and-egress.md), [RFC-0047 Project Types](0047-project-templates-and-project-types.md), [RFC-0106 Desktop Generative UI](0106-desktop-generative-ui.md), [RFC-0110 Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md), [RFC-0112 Universal Adaptive UI](0112-universal-adaptive-ui-and-blinded-egress-bridge.md)  
@@ -257,3 +258,14 @@ An attacker sending an SMS:
 The Blinded Egress Bridge reconciles two seemingly contradictory requirements:
 1. **Absolute Local Privacy:** Life projects stay strictly air-gapped (`routing.remote_egress = never`).
 2. **Everyday Utility:** Messaging channels can seamlessly schedule meetings, coordinate tasks, and answer availability questions without manual data copying and without privacy leaks.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BlindedQueryDispatcher.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BlindedQueryModels.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/EgressGateCoordinator.kt
+  - agent/bridge/src/jvmTest/kotlin/dev/aidos/bridge/BlindedBridgeTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/BlindedEgressGateCard.kt
+```

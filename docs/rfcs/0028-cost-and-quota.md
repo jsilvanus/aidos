@@ -1,6 +1,7 @@
 # RFC-0028: Cost, Quota, and Runaway Control
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (cost-aware routing, learned step-cost estimation, per-provider rate-limit quota tracking)
 
 ## Abstract
 
@@ -226,3 +227,22 @@ mobile deadline decisions (RFC-0009).
 
 Per-provider quota tracking against real rate limits, so budget exhaustion and provider
 throttling are distinguishable.
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Budget.kt
+  - agent/agentloop/src/commonMain/kotlin/dev/aidos/agentloop/AgentLoop.kt
+  - agent/agentloop/src/jvmTest/kotlin/dev/aidos/agentloop/AgentLoopTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqlBudgetLedger.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerTest.kt
+```

@@ -1,6 +1,7 @@
 # RFC-0034: Filesystem
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (streaming reads, chmod, change notifications, remote filesystem, transactional writes, content validation)
 
 ## Abstract
 
@@ -483,3 +484,16 @@ Write validation:
   decide it with a number.
 - Trash before permanent deletion. Attractive given `delete` is irreversible, and it is a second
   storage cost on the device with the least of it.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteDirHandle.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/SqliteDirHandleTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/filesystem/src/jvmMain/kotlin/dev/aidos/filesystem/FilesystemTool.kt
+  - agent/filesystem/src/jvmTest/kotlin/dev/aidos/filesystem/FilesystemToolTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
+  - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+```

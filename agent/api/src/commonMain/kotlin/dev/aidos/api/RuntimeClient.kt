@@ -19,6 +19,7 @@ import dev.aidos.intent.ProposalResolutionDecision
 import dev.aidos.intent.SnapshotReconcileResult
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
+import dev.aidos.kernel.AvailabilityReport
 import dev.aidos.kernel.FileDiff
 import dev.aidos.kernel.PlatformProfile
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +61,7 @@ data class CreateProjectRequest(
     val location: ProjectLocation,
     val initGit: Boolean = true,
     val templateId: String? = null,
+    val projectType: String = "generic",
 )
 
 /** Where a project lives — resolved by the runtime, not dictated by the client (RFC-0052). */
@@ -494,6 +496,8 @@ sealed class RuntimeEvent {
 interface RuntimeInfo {
     suspend fun version(): RuntimeVersion
     suspend fun ping(): Boolean
+    suspend fun profile(): PlatformProfile
+    suspend fun availability(projectId: String): AvailabilityReport
 }
 
 data class RuntimeVersion(

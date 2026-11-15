@@ -1,6 +1,7 @@
 # RFC-0035: Secrets and Credentials
 
 Status: Implemented 2026-11-10 (Accepted 2026-08-03). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0035-requirement-map).
+Non-MVP Work: **Remaining** (breach-response report, provider-assisted rotation, Android hardware-backed attestation)
 
 ## Abstract
 
@@ -291,3 +292,49 @@ Recorded 2026-11-10 with the implementation. The design above is unchanged; thes
 7. **`secrets:read` grants** are refused at grant time unless they name specific secret ids; an empty list, a blank id, `*` or `?` is rejected.
 8. **Consumer allow-lists.** A secret with an allow-list can only be resolved by a named consumer (`MCP_SERVER:<server>`, `PROVIDER:<name>`, `GIT_REMOTE:<host>`); the runtime's anonymous resolve refuses it.
 9. **Export.** Project files that contain credentials are left out of the archive and named in the export warnings; export signing keys (RFC-0041) can be kept in the vault (`keygen --vault`).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SecretsCli.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/SecretsCliTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SecretsWiring.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SecretsWiringTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/EventStoreReplayTest.kt
+  - agent/git/src/jvmMain/kotlin/dev/aidos/git/GitTool.kt
+  - agent/git/src/jvmTest/kotlin/dev/aidos/git/GitToolTest.kt
+  - agent/mcp-broker/src/jvmMain/kotlin/dev/aidos/mcp/McpServerActivator.kt
+  - agent/mcp-broker/src/jvmMain/kotlin/dev/aidos/mcp/McpServerStore.kt
+  - agent/mcp-broker/src/jvmTest/kotlin/dev/aidos/mcp/McpServerStoreTest.kt
+  - agent/mcp-core/src/jvmMain/kotlin/dev/aidos/mcp/core/McpRegistration.kt
+  - agent/memory/src/jvmMain/kotlin/dev/aidos/memory/SessionMemoryStore.kt
+  - agent/memory/src/jvmTest/kotlin/dev/aidos/memory/SessionMemoryTest.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/PortabilityCli.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectExporter.kt
+  - agent/portability/src/jvmTest/kotlin/dev/aidos/portability/PortabilityCliTest.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/ContextSandboxTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SecretRef.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/TunnelManager.kt
+  - agent/vault/src/androidMain/kotlin/dev/aidos/vault/AndroidKeystoreKeyProvider.kt
+  - agent/vault/src/androidMain/kotlin/dev/aidos/vault/AndroidKeystoreVault.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/DesktopVault.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/Redactor.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretsVault.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SqliteSecretsVault.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/Rfc0035RequirementsTest.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/VaultTest.kt
+  - schema/project.sql
+  - schema/user.sql
+  - schema/vault.sql
+```

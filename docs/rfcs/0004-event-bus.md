@@ -1,6 +1,7 @@
 # RFC-0004: Event Bus
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (real-time event streaming, event compression, distributed events, complex event processing, time-travel debugging, event source plugins)
 
 ## Abstract
 
@@ -560,3 +561,22 @@ Allow external systems to generate events:
 - Custom webhooks.
 
 These flow through the Event Bus alongside system events.
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventTypes.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SessionSubscriptionStore.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SubscriptionRegistry.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/TopicMatcher.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/EventStoreReplayTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/EventTypesTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SessionSubscriptionStoreTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SubscriptionRegistryTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TopicMatcherTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+```

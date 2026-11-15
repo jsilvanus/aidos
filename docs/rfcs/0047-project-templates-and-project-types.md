@@ -1,6 +1,7 @@
 # RFC-0047: Project Templates and Project Types
 
-Status: Accepted 2026-08-04
+Status: Implemented 2026-11-14 (Accepted 2026-08-04). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (built-in templates, template instantiation, substitution, prohibition-list validation, user template export, intent seeding)
 
 ## Abstract
 
@@ -231,3 +232,19 @@ Type-specific frontend surfaces: a journal does not want a diff viewer, and a co
 want a mood tracker.
 
 Distribution, if and only if the plugin trust story lands first (RFC-0043).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/MockRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Wire.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientPersistenceTest.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/AidosCli.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+  - schema/project.sql
+```

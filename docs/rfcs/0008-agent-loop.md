@@ -1,6 +1,7 @@
 # RFC-0008: Agent Loop and Tool-Use Protocol
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (parallel Read execution, tool descriptor caching/prompt-prefix reuse, sub-agent tools)
 
 ## Abstract
 
@@ -302,3 +303,21 @@ Tool descriptor caching and prompt-prefix reuse to reduce per-step cost on remot
 
 Sub-agent tools: exposing a worker session as a tool to a driver session, which unifies
 RFC-0011's worker model with the tool-call mechanism.
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - agent/agentloop/src/commonMain/kotlin/dev/aidos/agentloop/AgentLoop.kt
+  - agent/agentloop/src/jvmTest/kotlin/dev/aidos/agentloop/AgentLoopTest.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/JsonSchemaValidator.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteRunExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunCreator.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqlBudgetLedger.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
+```

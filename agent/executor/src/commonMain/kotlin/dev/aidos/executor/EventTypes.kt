@@ -42,4 +42,6 @@ object EventTypes {
     const val SESSION_SLEEPING = "SessionSleeping"
     const val ARTIFACT_CREATED = "ArtifactCreated"
     const val ERROR = "Error"
+    /** RFC-0006: immediate run cancellation and pending event queue clear. */
+    const val PRIORITY_INTERRUPT = "PRIORITY_INTERRUPT"
 }

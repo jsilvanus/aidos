@@ -14,6 +14,7 @@ kotlin {
             // ProjectRegistry (user-scope project_id -> path cache) is fully portable commonMain
             // code; RealRuntimeClient uses it directly rather than through a platform adapter.
             implementation(project(":identity"))
+            implementation(project(":settings"))
             api(project(":intent"))
             implementation(project(":broker"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")

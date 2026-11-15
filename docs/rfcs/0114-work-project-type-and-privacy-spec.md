@@ -1,6 +1,7 @@
 # RFC-0114: Work Project Type, Privacy Invariants, and Default Policies
 
 **Status:** Accepted 2026-11-14  
+Non-MVP Work: **None**
 **Date:** 2026-11-14  
 **Authors:** Aidos Project Type & Privacy Security Architecture  
 **Related RFCs:** [RFC-0003 Security](0003-security.md), [RFC-0010 Projects](0010-projects.md), [RFC-0018 Capability Model](0018-capability-model.md), [RFC-0027 Trust and Taint](0027-trust-and-taint.md), [RFC-0036 Settings and Configuration](0036-settings-and-configuration.md), [RFC-0042 Networking and Egress](0042-networking-and-egress.md), [RFC-0047 Project Templates and Project Types](0047-project-templates-and-project-types.md), [RFC-0049 Platform Profiles](0049-platform-capability-profiles.md), [RFC-0051 Desktop & LAN Engine Sharing](0051-lan-engine-sharing.md), [RFC-0104 Inference Locality](0104-inference-locality.md), [RFC-0110 Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md), [RFC-0113 Blinded Egress Bridge](0113-blinded-egress-bridge.md)  
@@ -188,3 +189,11 @@ The `WORK` project type is verified via automated tests in `agent/identity/src/j
 - `ProjectType WORK is defined and resolves case-insensitively`
 - `work type default sets remote egress to ask at user scope`
 - `work type default writes dispatch policy and untrusted paths at project scope`
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+```

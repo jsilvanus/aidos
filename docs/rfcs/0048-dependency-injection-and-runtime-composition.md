@@ -1,6 +1,7 @@
 # RFC-0048: Dependency Injection and Runtime Composition
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (runtime feature flags, hot-swapping providers, plugin service injection, generated dependency diagram)
 
 ## Abstract
 
@@ -228,3 +229,17 @@ behind the same consumer-owned interfaces, never granted access to the root itse
 
 A generated dependency diagram from the composition root, as living architecture documentation
 that cannot drift from the code.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/LifecycleScopes.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/PlatformAdapter.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch6RfcTests.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ModuleDependencyRuleTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/TestRuntime.kt
+```

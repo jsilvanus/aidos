@@ -5,6 +5,7 @@ import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
+import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.RoutingContext
 import dev.aidos.kernel.RoutingDecision
@@ -85,6 +86,7 @@ class PolicyInferenceRouter(
     private val adapterDescriptors: Map<String, ModelDescriptor> = emptyMap(),
     private val adapterCosts: Map<String, Long> = emptyMap(),
     private val clusterAdapters: List<ModelAdapter> = emptyList(),
+    private val modelRuntime: ModelRuntime? = null,
 ) : InferenceRouter {
 
     /**
@@ -203,6 +205,10 @@ class PolicyInferenceRouter(
             .filter { matchesKind(it, kind) }
             .filter { minCtx == null || it.contextWindow >= minCtx }
 
+        val runtimeInstalledLocal = modelRuntime?.installed()
+            .orEmpty()
+            .filter { it.isLocal && it.kind == kind && (minCtx == null || it.contextWindow >= minCtx) }
+
         val clusterCandidates = clusterAdapters
             .filter { matchesKind(it, kind) }
             .filter { minCtx == null || it.contextWindow >= minCtx }
@@ -219,6 +225,11 @@ class PolicyInferenceRouter(
         if (effectivePreferredModel != null) {
             localCandidates.find { it.modelId == effectivePreferredModel }?.let {
                 return RoutingDecision.Local(it)
+            }
+            runtimeInstalledLocal.find { it.id == effectivePreferredModel }?.let { descriptor ->
+                modelRuntime?.load(descriptor.id)?.getOrNull()?.let { adapter ->
+                    return RoutingDecision.Local(adapter)
+                }
             }
 
             clusterCandidates.find { it.modelId == effectivePreferredModel }?.let { clusterAdapter ->
@@ -259,6 +270,16 @@ class PolicyInferenceRouter(
                 localCandidates.first()
             }
             return RoutingDecision.Local(adapter)
+        }
+        if (runtimeInstalledLocal.isNotEmpty() && modelRuntime != null) {
+            val preferred = policy.preferredLocal[kind]
+            val loadedIds = modelRuntime.loaded().toSet()
+            val descriptor = (preferred?.let { p -> runtimeInstalledLocal.find { it.id == p } })
+                ?: runtimeInstalledLocal.firstOrNull { it.id in loadedIds }
+                ?: runtimeInstalledLocal.first()
+            modelRuntime.load(descriptor.id).getOrNull()?.let { adapter ->
+                return RoutingDecision.Local(adapter)
+            }
         }
 
         if (effectiveLocality == EnforcedLocality.LOCAL) {

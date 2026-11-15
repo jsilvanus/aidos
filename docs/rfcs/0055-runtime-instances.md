@@ -1,6 +1,7 @@
 # RFC-0055: Runtime Instances and Process Concurrency
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14
+Non-MVP Work: **Remaining** (read-only instances with live event subscription, paired remote runtime for PLATFORM-tier steps)
 
 ## Abstract
 
@@ -216,3 +217,19 @@ Read-only instances with live event subscription to the owning instance.
 
 Paired remote runtime: a phone connecting to a desktop runtime to execute `PLATFORM`-tier steps
 it cannot run locally (RFC-0049 Future Work). This is where the daemon shape pays off.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/lock/src/jvmMain/kotlin/dev/aidos/lock/ProjectLock.kt
+  - agent/lock/src/jvmTest/kotlin/dev/aidos/lock/ProjectLockTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/ProjectLocker.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/JvmProjectLocker.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/main.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
+  - schema/project.sql
+```

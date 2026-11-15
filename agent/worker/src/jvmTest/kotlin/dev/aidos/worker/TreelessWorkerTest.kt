@@ -228,4 +228,35 @@ class TreelessWorkerTest {
 
         dir.deleteRecursively()
     }
+
+    @Test
+    fun `pruneWorkerRef and pruneAllWorkerRefs delete refs under refs aidos workers (RFC-0032)`() {
+        val (git, dir) = makeRepo()
+        val repo = git.repository
+        val worker = TreelessWorker(repo)
+        worker.commit(
+            workerId = "w-1",
+            changes = listOf(FileChange.Write("a.txt", "a".toByteArray())),
+            authorName = "Worker 1",
+            authorEmail = "w1@aidos.dev",
+            message = "w1",
+        )
+        worker.commit(
+            workerId = "w-2",
+            changes = listOf(FileChange.Write("b.txt", "b".toByteArray())),
+            authorName = "Worker 2",
+            authorEmail = "w2@aidos.dev",
+            message = "w2",
+        )
+
+        assertTrue(worker.pruneWorkerRef("w-1"))
+        assertTrue(repo.findRef("refs/aidos/workers/w-1") == null)
+        assertTrue(!worker.pruneWorkerRef("w-1"), "pruning already-deleted ref returns false")
+        assertNotNull(repo.findRef("refs/aidos/workers/w-2"))
+
+        assertEquals(1, worker.pruneAllWorkerRefs())
+        assertTrue(repo.findRef("refs/aidos/workers/w-2") == null)
+
+        dir.deleteRecursively()
+    }
 }

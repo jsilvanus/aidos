@@ -1,6 +1,7 @@
 # RFC-0021: Model Providers
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (additional remote adapters, streaming, batch/cached-prefix APIs, published provider SPI)
 
 ## Abstract
 
@@ -264,3 +265,22 @@ the envelope was worth having.
 - Where should redaction sit — in the broker before the adapter, or in the adapter? Broker is
   cleaner and provider-agnostic; adapter is the only place that knows the wire format well enough
   to redact structured fields rather than text.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Models.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/AnthropicAdapter.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/AnthropicAdapterTest.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/OpenAiHttpModelAdapter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RemoteModelEgressTool.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/EgressProviderTransports.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEgressRecorder.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/EgressProviderTransportsTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
+  - schema/project.sql
+```

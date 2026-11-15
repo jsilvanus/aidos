@@ -1,6 +1,7 @@
 # RFC-0006: Session Execution Contract
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (mid-stream AI yield, full continuation resumption for all async operation types, compensation protocols, configurable priority interrupt policies)
 
 ## Abstract
 
@@ -364,3 +365,19 @@ Compensation protocols for partially completed tool sequences (RFC-0019 Executio
 Fine-grained TOCTOU protection using atomic capability exercise records.
 
 Multi-event priority queuing with configurable interrupt policies.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Execution.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/RuntimeApi.kt
+  - schema/project.sql
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventTypes.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CrashRecoveryTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+```

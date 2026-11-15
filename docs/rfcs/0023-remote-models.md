@@ -1,6 +1,7 @@
 # RFC-0023: Remote Models
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (automatic privacy detection, cost optimization, provider comparison UI, usage reporting, audit dashboard)
 
 ## Abstract
 
@@ -452,3 +453,22 @@ Recent remote queries:
 - Should there be a "low-bandwidth" mode that always prefers local models?
 - How should tiered model selection work (fast and cheap vs. slow and expensive)?
 - Should users be able to set spending alerts (notify at $X/month)?
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/AnthropicAdapter.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/AnthropicAdapterTest.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/OpenAiHttpModelAdapter.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RemoteModelEgressTool.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/EgressProviderTransports.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEgressRecorder.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RealSocketIntegrationTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
+  - schema/project.sql
+```

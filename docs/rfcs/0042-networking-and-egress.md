@@ -1,6 +1,7 @@
 # RFC-0042: Networking and Egress
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (per-destination byte budgets, pre-flight egress preview, Tor/proxy-chain transport)
 
 ## Abstract
 
@@ -298,3 +299,21 @@ A pre-flight egress preview: showing what would be sent, before it is, for high-
 content.
 
 Tor or proxy-chain support for users who need it, as an explicitly configured transport.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/EgressProviderTransports.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEgressRecorder.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/EgressProviderTransportsTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
+  - agent/http/src/jvmMain/kotlin/dev/aidos/http/EgressClient.kt
+  - agent/http/src/jvmMain/kotlin/dev/aidos/http/EgressSecurityPolicy.kt
+  - agent/http/src/jvmMain/kotlin/dev/aidos/http/HttpTool.kt
+  - agent/http/src/jvmTest/kotlin/dev/aidos/http/EgressSecurityPolicyTest.kt
+  - agent/http/src/jvmTest/kotlin/dev/aidos/http/HttpToolTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
+  - schema/project.sql
+```

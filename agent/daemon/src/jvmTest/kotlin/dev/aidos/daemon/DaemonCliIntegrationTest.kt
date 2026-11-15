@@ -1,10 +1,13 @@
 package dev.aidos.daemon
 
 import dev.aidos.cli.AidosCli
+import dev.aidos.storage.AidosStorage
+import dev.aidos.storage.DesktopPaths
 import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.AfterTest
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -79,5 +82,33 @@ class DaemonCliIntegrationTest {
 
         // Session can now use voice input/output via daemon
         // Full implementation in Phase 4.5 socket transport
+    }
+
+    @Test
+    fun `daemon and CLI can archive project to CLOSED state and delete project with confirm`() = runTest {
+        val runtimeClient = RuntimeClientFactory.createRuntimeClient(home = tempHome.path, installCrashHandler = false)
+        val cli = AidosCli(runtimeClient)
+
+        val projectId = cli.createProject("lifecycle-proj", "Archive and delete test")
+        val stateDbPath = DesktopPaths.stateDb("${tempHome.path}/.aidos/projects/lifecycle-proj")
+
+        cli.archiveProject(projectId)
+
+        val db = AidosStorage.openProject(stateDbPath, "test") { "2026-08-05T00:00:00Z" }
+        var state: String? = null
+        db.driver.executeQuery(
+            null,
+            "SELECT state FROM projects WHERE id = ?",
+            mapper = { c ->
+                if (c.next().value) state = c.getString(0)
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, projectId) }
+        db.driver.close()
+        assertEquals("CLOSED", state)
+
+        cli.deleteProject(projectId, confirm = true)
+        assertTrue(cli.listProjects().none { it.startsWith("$projectId\t") })
     }
 }

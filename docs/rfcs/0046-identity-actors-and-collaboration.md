@@ -1,6 +1,7 @@
 # RFC-0046: Identity, Actors, and Future Collaboration
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-04). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (signed audit records, operational state merge semantics, multi-device attribution reporting)
 
 ## Abstract
 
@@ -206,3 +207,26 @@ projects.
 
 Multi-device attribution reporting: "this project has been worked on from three devices", which
 is useful for a single user today and needs nothing beyond what is already reserved.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/AuditLog.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/ToolBroker.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/identity/src/androidMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/DeviceIdentity.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/DeviceIdentityStore.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/jvmMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+  - agent/memory/src/jvmMain/kotlin/dev/aidos/memory/SessionMemoryStore.kt
+  - agent/memory/src/jvmTest/kotlin/dev/aidos/memory/SessionMemoryTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/KernelSchemaMapTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Ids.kt
+  - schema/project.sql
+  - schema/user.sql
+```

@@ -1,6 +1,7 @@
 # RFC-0002: Runtime
 
 Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (distribution/remote execution, semantic/cross-project knowledge, plugins, streaming, replay, multi-modal workflows)
 
 ## Abstract
 
@@ -461,3 +462,27 @@ The MVP focuses on text. Future versions should natively support:
 - Image handling (vision, OCR).
 - Multimodal AI models.
 - Annotation and markup of media.
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - schema/user.sql
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/ProjectLifecyclePort.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEffectApprovalGateway.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteRunExecutor.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonCliIntegrationTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/ProjectLifecycle.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqlBudgetLedger.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
+```

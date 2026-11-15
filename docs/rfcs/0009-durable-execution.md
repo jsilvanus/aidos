@@ -1,6 +1,7 @@
 # RFC-0009: Durable Execution Model
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (`CHECKABLE` recovery probes, historical step-cost estimation, speculative continuation)
 
 ## Abstract
 
@@ -256,3 +257,18 @@ Step cost estimation from historical `Attempt` durations, to make deadline decis
 
 Speculative continuation on desktop: begin the next step before the checkpoint commits, and
 roll back if the commit fails.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Execution.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Effects.kt
+  - schema/project.sql
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/IdempotencyKey.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunCreator.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CrashRecoveryTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+```

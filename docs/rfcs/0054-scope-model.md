@@ -1,6 +1,7 @@
 # RFC-0054: Scope Model — User, Workspace, Project
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14
+Non-MVP Work: **Remaining** (cross-project knowledge queries, workspace shared resources/instructions, device scope)
 
 ## Abstract
 
@@ -255,3 +256,22 @@ Cross-project knowledge queries, gated by an explicit capability naming source p
 Workspace-level shared resources and instruction files.
 
 Device scope, if a user runs one installation across multiple devices with divergent hardware.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - agent/identity/src/commonMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/jvmMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/androidMain/kotlin/dev/aidos/identity/UuidV7Generator.kt
+  - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SettingsStore.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SettingsAudit.kt
+  - agent/settings/src/jvmTest/kotlin/dev/aidos/settings/SettingsTest.kt
+  - agent/settings/src/jvmTest/kotlin/dev/aidos/settings/Rfc0036RequirementsTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
+  - schema/user.sql
+  - schema/project.sql
+```

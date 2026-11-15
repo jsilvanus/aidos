@@ -160,6 +160,39 @@ class TreelessWorker(private val repository: Repository) {
             revWalk.close()
         }
     }
+
+    /**
+     * Prunes the worker ref `refs/aidos/workers/[workerId]` (RFC-0032, RFC-0053).
+     * Returns true if the ref existed and was deleted, false if it did not exist.
+     */
+    fun pruneWorkerRef(workerId: String): Boolean {
+        val refName = "$WORKER_REF_PREFIX$workerId"
+        if (repository.findRef(refName) == null) return false
+        val update = repository.updateRef(refName)
+        update.isForceUpdate = true
+        val result = update.delete()
+        return result == RefUpdate.Result.FORCED ||
+            result == RefUpdate.Result.FAST_FORWARD ||
+            result == RefUpdate.Result.NEW
+    }
+
+    /**
+     * Prunes all `refs/aidos/workers/` refs in the repository (RFC-0032, RFC-0053).
+     * Returns the number of refs deleted.
+     */
+    fun pruneAllWorkerRefs(): Int {
+        val refs = repository.refDatabase.getRefsByPrefix(WORKER_REF_PREFIX)
+        var deleted = 0
+        for (ref in refs) {
+            val update = repository.updateRef(ref.name)
+            update.isForceUpdate = true
+            val result = update.delete()
+            if (result == RefUpdate.Result.FORCED || result == RefUpdate.Result.FAST_FORWARD || result == RefUpdate.Result.NEW) {
+                deleted++
+            }
+        }
+        return deleted
+    }
 }
 
 /** A change to apply in a treeless commit (RFC-0053). */

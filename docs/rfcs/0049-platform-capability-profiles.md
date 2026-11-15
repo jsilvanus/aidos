@@ -1,6 +1,7 @@
 # RFC-0049: Platform Capability Profiles
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (`BUNDLED` tool set, desktop worktree workers, queued offline network intents, paired remote execution)
 
 ## Abstract
 
@@ -319,3 +320,24 @@ network at the moment of use. Reaching for "the desktop can do that" twice is a 
 noticing, but these two are not the same reach.
 
 Per-tool capability probing at startup rather than static profile tables.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/MockRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Wire.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SocketRuntimeClient.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/PlatformAdapter.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch6RfcTests.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/settings/src/commonMain/kotlin/dev/aidos/settings/ProjectRequirements.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Platform.kt
+  - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+```

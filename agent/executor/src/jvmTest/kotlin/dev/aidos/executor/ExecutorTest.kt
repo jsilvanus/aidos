@@ -391,6 +391,14 @@ class ExecutorTest {
                 "timestamp, source, payload, causal_depth) VALUES (?, ?, 0, 'UserMessage', 1, 'SIGNAL', 'SESSION', ?, 'user', '{}', 0)", 4
         ) { bindString(0, nextId()); bindString(1, pid); bindString(2, nowIso) }
 
+        assertEquals(8, EventStore.MAX_CAUSAL_DEPTH, "RFC-0028 specifies maxCausalDepth = 8")
+
+        val atLimit = store.publish(
+            id = nextId(), projectId = pid, type = "SessionWake", source = "executor",
+            causalDepth = EventStore.MAX_CAUSAL_DEPTH, nowIso = nowIso,
+        )
+        assertEquals(1L, atLimit, "Event at causal_depth == MAX_CAUSAL_DEPTH (8) should be accepted")
+
         val overLimit = EventStore.MAX_CAUSAL_DEPTH + 1
         val result = store.publish(
             id = nextId(), projectId = pid, type = "SessionWake", source = "executor",
@@ -398,9 +406,9 @@ class ExecutorTest {
         )
         assertEquals(null, result, "Event with causal_depth > MAX_CAUSAL_DEPTH should be refused")
 
-        // Events count should still be 1 (just the seeded trigger)
+        // Events count should be 2 (seeded trigger + depth-8 event)
         val seeded = store.eventsForProject(pid)
-        assertEquals(1, seeded.size, "No new event should have been inserted")
+        assertEquals(2, seeded.size, "No event exceeding MAX_CAUSAL_DEPTH should have been inserted")
     }
 
     @Test

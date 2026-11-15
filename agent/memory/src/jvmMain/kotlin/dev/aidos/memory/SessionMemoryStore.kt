@@ -41,16 +41,21 @@ class SessionMemoryStore(
             "source_refs must not be empty — every memory entry must have provenance (RFC-0026)"
         }
         val id = UUID.randomUUID().toString()
-        val now = Instant.now().toString()
+        val nowInstant = Instant.now()
+        val now = nowInstant.toString()
+        val resolvedExpiresAt = entry.expiresAt ?: when (entry.kind) {
+            MemoryKind.FACT -> nowInstant.plusSeconds(DEFAULT_FACT_TTL_DAYS * 86_400L).toString()
+            MemoryKind.DECISION, MemoryKind.TASK_STATE -> null
+        }
         val sourceRefsJson = Json.encodeToString(entry.sourceRefs)
 
         driver.execute(
             identifier = null,
             sql = """INSERT INTO memory_entries
                 (id, session_id, project_id, kind, content, source_refs_json,
-                 created_by_kind, created_by_id, confidence, trust_level, scope, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SESSION', ?)""",
-            parameters = 11,
+                 created_by_kind, created_by_id, confidence, trust_level, scope, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SESSION', ?, ?)""",
+            parameters = 12,
         ) {
             bindString(0, id)
             bindString(1, entry.sessionId)
@@ -63,41 +68,184 @@ class SessionMemoryStore(
             bindString(8, entry.confidence.name)
             bindString(9, entry.trustLevel.name)
             bindString(10, now)
+            bindString(11, resolvedExpiresAt)
         }
         return id
     }
 
-    /** Reads all active (non-superseded) entries for a session. */
-    fun readForSession(sessionId: String): List<MemoryRow> {
+    /** Reads all active (non-superseded, non-expired) entries for a session. */
+    fun readForSession(
+        sessionId: String,
+        nowIso: String = Instant.now().toString(),
+    ): List<MemoryRow> {
         val rows = mutableListOf<MemoryRow>()
         driver.executeQuery(
             identifier = null,
             sql = """SELECT id, kind, content, source_refs_json, trust_level, scope, confidence,
-                     created_by_kind, created_by_id, created_at
-                     FROM memory_entries WHERE session_id = ? AND superseded_by IS NULL
+                     created_by_kind, created_by_id, created_at, expires_at, superseded_by
+                     FROM memory_entries
+                     WHERE session_id = ? AND superseded_by IS NULL
+                       AND (expires_at IS NULL OR expires_at > ?)
                      ORDER BY created_at""",
             mapper = { cursor ->
                 while (cursor.next().value) {
-                    rows.add(
-                        MemoryRow(
-                            id = cursor.getString(0)!!,
-                            kind = MemoryKind.valueOf(cursor.getString(1)!!),
-                            content = cursor.getString(2)!!,
-                            sourceRefs = Json.decodeFromString(cursor.getString(3)!!),
-                            trustLevel = TrustLevel.valueOf(cursor.getString(4)!!),
-                            scope = MemoryScope.valueOf(cursor.getString(5)!!),
-                            confidence = Confidence.valueOf(cursor.getString(6)!!),
-                            createdByKind = CreatedByKind.valueOf(cursor.getString(7)!!),
-                            createdById = cursor.getString(8)!!,
-                            createdAt = cursor.getString(9)!!,
-                        )
-                    )
+                    rows.add(mapRow(cursor))
+                }
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            parameters = 2,
+        ) {
+            bindString(0, sessionId)
+            bindString(1, nowIso)
+        }
+        return rows
+    }
+
+    /**
+     * Reads all active, non-expired entries visible to [sessionId]: its own session-scoped
+     * entries plus [projectId]'s user-promoted `PROJECT` entries (RFC-0026).
+     */
+    fun readForSessionAndProject(
+        sessionId: String,
+        projectId: String,
+        nowIso: String = Instant.now().toString(),
+    ): List<MemoryRow> {
+        val rows = mutableListOf<MemoryRow>()
+        driver.executeQuery(
+            identifier = null,
+            sql = """SELECT id, kind, content, source_refs_json, trust_level, scope, confidence,
+                     created_by_kind, created_by_id, created_at, expires_at, superseded_by
+                     FROM memory_entries
+                     WHERE (session_id = ? OR (project_id = ? AND scope = 'PROJECT'))
+                       AND superseded_by IS NULL
+                       AND (expires_at IS NULL OR expires_at > ?)
+                     ORDER BY created_at""",
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    rows.add(mapRow(cursor))
+                }
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            parameters = 3,
+        ) {
+            bindString(0, sessionId)
+            bindString(1, projectId)
+            bindString(2, nowIso)
+        }
+        return rows
+    }
+
+    /** Inspects a single memory entry by [entryId] (including provenance and expiry metadata). */
+    fun inspect(entryId: String): MemoryRow? {
+        var found: MemoryRow? = null
+        driver.executeQuery(
+            identifier = null,
+            sql = """SELECT id, kind, content, source_refs_json, trust_level, scope, confidence,
+                     created_by_kind, created_by_id, created_at, expires_at, superseded_by
+                     FROM memory_entries WHERE id = ?""",
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    found = mapRow(cursor)
                 }
                 app.cash.sqldelight.db.QueryResult.Value(Unit)
             },
             parameters = 1,
-        ) { bindString(0, sessionId) }
-        return rows
+        ) { bindString(0, entryId) }
+        return found
+    }
+
+    /**
+     * Deletes an entry permanently — no tombstone retains the content (RFC-0026).
+     * Clears any `superseded_by` back-references first so the foreign key constraint allows deletion.
+     */
+    fun delete(entryId: String): Boolean {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE memory_entries SET superseded_by = NULL WHERE superseded_by = ?",
+            parameters = 1,
+        ) { bindString(0, entryId) }
+        val count = driver.execute(
+            identifier = null,
+            sql = "DELETE FROM memory_entries WHERE id = ?",
+            parameters = 1,
+        ) { bindString(0, entryId) }
+        return count.value > 0L
+    }
+
+    /** Refreshes a `FACT` entry's 90-day expiry on recall (RFC-0026). */
+    fun refreshFactExpiry(
+        entryId: String,
+        nowIso: String = Instant.now().toString(),
+    ): Boolean {
+        val newExpiry = Instant.parse(nowIso).plusSeconds(DEFAULT_FACT_TTL_DAYS * 86_400L).toString()
+        val count = driver.execute(
+            identifier = null,
+            sql = "UPDATE memory_entries SET expires_at = ? WHERE id = ? AND kind = 'FACT'",
+            parameters = 2,
+        ) {
+            bindString(0, newExpiry)
+            bindString(1, entryId)
+        }
+        return count.value > 0L
+    }
+
+    /** Expires `TASK_STATE` entries tied to [runId] when that Run reaches a terminal state (RFC-0026). */
+    fun expireTaskStateForRun(
+        runId: String,
+        nowIso: String = Instant.now().toString(),
+    ): Int {
+        val count = driver.execute(
+            identifier = null,
+            sql = """UPDATE memory_entries
+                SET expires_at = ?
+                WHERE kind = 'TASK_STATE'
+                  AND source_refs_json LIKE ?
+                  AND (expires_at IS NULL OR expires_at > ?)""",
+            parameters = 3,
+        ) {
+            bindString(0, nowIso)
+            bindString(1, "%\"run:$runId\"%")
+            bindString(2, nowIso)
+        }
+        return count.value.toInt()
+    }
+
+    /** Permanently deletes all entries whose `expires_at` is at or before [nowIso]. */
+    fun deleteExpired(nowIso: String = Instant.now().toString()): Int {
+        driver.execute(
+            identifier = null,
+            sql = """UPDATE memory_entries SET superseded_by = NULL
+                WHERE superseded_by IN (
+                    SELECT id FROM memory_entries WHERE expires_at IS NOT NULL AND expires_at <= ?
+                )""",
+            parameters = 1,
+        ) { bindString(0, nowIso) }
+        val count = driver.execute(
+            identifier = null,
+            sql = "DELETE FROM memory_entries WHERE expires_at IS NOT NULL AND expires_at <= ?",
+            parameters = 1,
+        ) { bindString(0, nowIso) }
+        return count.value.toInt()
+    }
+
+    private fun mapRow(cursor: app.cash.sqldelight.db.SqlCursor): MemoryRow =
+        MemoryRow(
+            id = cursor.getString(0)!!,
+            kind = MemoryKind.valueOf(cursor.getString(1)!!),
+            content = cursor.getString(2)!!,
+            sourceRefs = Json.decodeFromString(cursor.getString(3)!!),
+            trustLevel = TrustLevel.valueOf(cursor.getString(4)!!),
+            scope = MemoryScope.valueOf(cursor.getString(5)!!),
+            confidence = Confidence.valueOf(cursor.getString(6)!!),
+            createdByKind = CreatedByKind.valueOf(cursor.getString(7)!!),
+            createdById = cursor.getString(8)!!,
+            createdAt = cursor.getString(9)!!,
+            expiresAt = cursor.getString(10),
+            supersededBy = cursor.getString(11),
+        )
+
+    companion object {
+        const val DEFAULT_FACT_TTL_DAYS: Long = 90L
     }
 
     /**
@@ -152,6 +300,7 @@ data class MemoryEntry(
     val confidence: Confidence,
     /** Max taint of sources — the Run taint at write time (RFC-0027). */
     val trustLevel: TrustLevel,
+    val expiresAt: String? = null,
 )
 
 data class MemoryRow(
@@ -165,4 +314,6 @@ data class MemoryRow(
     val createdByKind: CreatedByKind,
     val createdById: String,
     val createdAt: String,
+    val expiresAt: String? = null,
+    val supersededBy: String? = null,
 )

@@ -338,6 +338,21 @@ class SqliteCapabilityManager(
                 }
             }
 
+            // RFC-0032: Enforce per-operation Git scope when allowedOperations is non-empty.
+            val capScope = cap.scope
+            if (capScope is CapabilityScope.Git && capScope.allowedOperations.isNotEmpty() && operation.name.startsWith("git:")) {
+                val requiredGitOp = when (operation.name) {
+                    "git:status", "git:diff", "git:log" -> GitOperation.READ
+                    "git:add", "git:commit", "git:branch", "git:checkout", "git:switch", "git:merge_ff" -> GitOperation.WRITE
+                    "git:fetch" -> GitOperation.PULL
+                    "git:push" -> GitOperation.PUSH
+                    else -> null
+                }
+                if (requiredGitOp != null && requiredGitOp !in capScope.allowedOperations) {
+                    return@transactionWithResult CapabilityCheckResult.Denied(DenialReason.SCOPE_MISMATCH)
+                }
+            }
+
             // RFC-0008 step 8d, TOOL_CALL continuation (branch `claude/continuation-flow`, follow-up):
             // a grant issued with requiresApprovalPerUse was silently unenforced -- every use passed
             // validate() exactly as if the constraint didn't exist, since nothing here ever read it.

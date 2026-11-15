@@ -57,7 +57,7 @@ class McpExternalInteropTest {
 
     private fun openProjectDb(projectId: String = "proj-interop"): SqlDriver {
         val root = Files.createTempDirectory("mcp-interop-proj").toFile()
-        val driver = AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0") { nowIso }.driver
+        val driver = AidosStorage.openProject(DesktopPaths.stateDb(root.path), "test-1.0", nowIso = { nowIso }).driver
         driver.execute(
             identifier = null,
             sql = "INSERT INTO projects (id, name, root_path, created_at, updated_at, state_updated_at) " +

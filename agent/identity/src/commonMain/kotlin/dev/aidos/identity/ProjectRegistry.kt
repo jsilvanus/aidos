@@ -79,7 +79,9 @@ class ProjectRegistry(
             identifier = null,
             sql = "INSERT INTO project_registry (project_id, path, workspace_id, last_opened_at) " +
                 "VALUES (?, ?, ?, ?) " +
-                "ON CONFLICT(project_id) DO UPDATE SET path = excluded.path, last_opened_at = excluded.last_opened_at",
+                "ON CONFLICT(project_id) DO UPDATE SET path = excluded.path, " +
+                "workspace_id = COALESCE(excluded.workspace_id, project_registry.workspace_id), " +
+                "last_opened_at = excluded.last_opened_at",
             parameters = 4,
         ) {
             bindString(0, projectId.value)
@@ -88,6 +90,27 @@ class ProjectRegistry(
             bindString(3, nowIso)
         }
     }
+
+    /** Ensures a workspace row exists in `user.db` (`workspaces` table, RFC-0054). */
+    fun ensureWorkspace(workspaceId: String, name: String, nowIso: String) {
+        userDriver.execute(
+            identifier = null,
+            sql = "INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
+            parameters = 3,
+        ) {
+            bindString(0, workspaceId)
+            bindString(1, name)
+            bindString(2, nowIso)
+        }
+    }
+
+    /** Returns the workspace ID associated with [projectId], if any (RFC-0054). */
+    fun workspaceForProject(projectId: ProjectId): String? = userDriver.executeQuery(
+        identifier = null,
+        sql = "SELECT workspace_id FROM project_registry WHERE project_id = ?",
+        mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+        parameters = 1,
+    ) { bindString(0, projectId.value) }.value
 
     /** True when [projectId] has a registry row, even if its directory has since moved. */
     fun isRegistered(projectId: ProjectId): Boolean = userDriver.executeQuery(

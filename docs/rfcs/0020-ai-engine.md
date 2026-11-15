@@ -1,6 +1,7 @@
 # RFC-0020: AI Engine
 
-Status: Implemented 2026-11-13 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Status: Implemented 2026-11-14 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (adaptive routing, cost optimization, speculative decoding, ensembles, distillation, voice-first, streaming)
 
 ## Abstract
 
@@ -613,3 +614,17 @@ Interactive refinement possible
 - Should the engine support batching multiple requests to the same model for efficiency?
 - How should inference caching work (cache model outputs for identical inputs)?
 - Should sessions be able to specify model preferences (faster but less accurate vs. slower but more accurate)?
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Models.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+  - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/PolicyInferenceRouterTest.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeFactory.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+```

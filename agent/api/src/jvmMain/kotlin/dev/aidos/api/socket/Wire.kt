@@ -23,6 +23,8 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -57,6 +59,7 @@ object Wire {
         put("description", request.description)
         put("initGit", request.initGit)
         request.templateId?.let { put("templateId", it) }
+        put("projectType", request.projectType)
         put("location", when (val loc = request.location) {
             is ProjectLocation.RuntimeManaged -> buildJsonObject {
                 put("kind", "runtimeManaged"); put("slug", loc.slug)
@@ -86,6 +89,7 @@ object Wire {
             location = location,
             initGit = json["initGit"]?.jsonPrimitive?.content?.toBoolean() ?: true,
             templateId = json["templateId"]?.jsonPrimitive?.contentOrNull,
+            projectType = json["projectType"]?.jsonPrimitive?.contentOrNull ?: "generic",
         )
     }
 
@@ -410,4 +414,21 @@ object Wire {
         apiVersion = json["apiVersion"]!!.jsonPrimitive.int,
         profile = json["profile"]!!.jsonPrimitive.content,
     )
+
+    fun encodeAvailabilityReport(report: dev.aidos.kernel.AvailabilityReport): JsonObject = buildJsonObject {
+        put("profile", report.profile.name)
+        put("networkAvailable", report.networkAvailable)
+        put("satisfied", buildJsonArray { report.satisfied.forEach { add(it) } })
+        put("degraded", buildJsonArray { report.degraded.forEach { add(it) } })
+        put("unsatisfied", buildJsonArray { report.unsatisfied.forEach { add(it) } })
+    }
+
+    fun decodeAvailabilityReport(json: JsonObject): dev.aidos.kernel.AvailabilityReport =
+        dev.aidos.kernel.AvailabilityReport(
+            profile = dev.aidos.kernel.PlatformProfile.valueOf(json["profile"]!!.jsonPrimitive.content),
+            networkAvailable = json["networkAvailable"]!!.jsonPrimitive.content.toBoolean(),
+            satisfied = json["satisfied"]!!.jsonArray.map { it.jsonPrimitive.content },
+            degraded = json["degraded"]!!.jsonArray.map { it.jsonPrimitive.content },
+            unsatisfied = json["unsatisfied"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
 }
