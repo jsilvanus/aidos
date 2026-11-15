@@ -53,6 +53,8 @@ data class ServicePlan(
     val removeFiles: List<String>,
     /** True when applying this needs an administrator (or root) shell. */
     val needsElevation: Boolean,
+    /** Windows only: a command that exits 0 when the service is registered (there is no file to look for). */
+    val queryCommand: List<String>? = null,
 )
 
 /** Generates the per-OS service definitions. Pure: it writes and runs nothing, so it is tested everywhere. */
@@ -160,6 +162,7 @@ ${if (user) "" else "  <key>UserName</key>\n  <string>${xml(s.runAsUser!!)}</str
             uninstall = listOf(listOf("schtasks", "/End", "/TN", task), listOf("schtasks", "/Delete", "/F", "/TN", task)),
             removeFiles = emptyList(),
             needsElevation = !user,
+            queryCommand = listOf("schtasks", "/Query", "/TN", task),
         )
     }
 

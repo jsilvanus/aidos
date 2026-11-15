@@ -26,6 +26,7 @@ import dev.aidos.api.RealRuntimeClient
 import dev.aidos.api.RuntimeClient
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.AidosUniversalApp
+import dev.aidos.tcr.engine.BackgroundPane
 import dev.aidos.tcr.engine.LanSharingPane
 import dev.aidos.tcr.engine.RemotePeersActions
 import dev.aidos.tcr.engine.RemotePeersPane
@@ -46,6 +47,7 @@ enum class DesktopRightPaneTab {
     PEERS,
     SHELL,
     TUNNELS,
+    BACKGROUND,
 }
 
 enum class DesktopViewMode {
@@ -70,6 +72,7 @@ class DesktopModels(
     val peers = DesktopRemotePeersModel(host, scope)
     val shell = DesktopShellGrantsModel(scope) { AgentRuntimeAttach.connect() }
     val tunnels = DesktopTunnelsModel(host, scope)
+    val background = DesktopBackgroundModel(scope)
 
     init {
         scope.launch {
@@ -286,6 +289,11 @@ fun EngineHostView(
                     onClick = { onSelectRightPaneTab(DesktopRightPaneTab.TUNNELS) },
                     text = { Text("Tunnels") }
                 )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.BACKGROUND,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.BACKGROUND); models.background.refresh() },
+                    text = { Text("Background") }
+                )
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -349,6 +357,10 @@ fun EngineHostView(
                             )
                         }
                         RemotePeersPane(state = peersState, actions = actions)
+                    }
+                    DesktopRightPaneTab.BACKGROUND -> {
+                        val bgState by models.background.state.collectAsState()
+                        BackgroundPane(state = bgState, onSetEnabled = models.background::setEnabled)
                     }
                     DesktopRightPaneTab.TUNNELS -> {
                         val tunnelState by models.tunnels.state.collectAsState()

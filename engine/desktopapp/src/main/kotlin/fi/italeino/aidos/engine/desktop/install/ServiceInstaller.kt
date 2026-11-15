@@ -30,6 +30,11 @@ class ServiceInstaller(
         return Result.Installed
     }
 
+    /** True when the service is registered: its definition file exists, or (Windows) its task answers a query. */
+    fun isInstalled(plan: ServicePlan): Boolean =
+        if (plan.files.isNotEmpty()) plan.files.all { File(it.path).isFile }
+        else plan.queryCommand?.let { run(it) == 0 } ?: false
+
     fun uninstall(plan: ServicePlan): Result {
         if (plan.needsElevation && !isElevated()) return Result.NeedsElevation("Removing a machine-wide service needs an administrator (or root) shell.")
         // Stopping an already-stopped service fails harmlessly; carry on to remove the files.
