@@ -1,7 +1,7 @@
 # RFC-0022: Local Models
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (remote-model cookbook section, cross-session auto-tuning, on-device G3/M21 budget validation)
 ## Abstract
 
 Local models are what make offline-first real: without on-device inference, "works on a plane" is
@@ -411,3 +411,18 @@ M21, and it gates G3.
 - How should a model that runs well on one device and badly on another be presented, once
   measurements exist across devices? Aggregating them would be misleading; showing only the
   local measurement discards useful information.
+
+## Implementation Files
+
+```yaml
+files:
+  - engine/cookbook/src/commonMain/kotlin/dev/aidos/cookbook/Cookbook.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/ModelRunSettings.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppAdapter.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/cookbook/src/jvmTest/kotlin/dev/aidos/cookbook/CookbookEngineTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
+```
