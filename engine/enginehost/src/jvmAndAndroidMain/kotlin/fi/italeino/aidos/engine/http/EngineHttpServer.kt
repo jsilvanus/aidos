@@ -170,6 +170,7 @@ class EngineHttpServer(
      * local token), not to any approved app. Null means this Engine exposes no management API.
      */
     private val lanControl: fi.italeino.aidos.engine.control.LanControl? = null,
+    private val tunnelsControl: fi.italeino.aidos.engine.control.TunnelsControl? = null,
     private val adminSubjects: Set<String> = setOf(TokenManager.ENGINE_SUBJECT),
     /** RFC-0115 / D59: the pending-approvals feed behind the tray, served at `/v1/admin/approvals` (loopback only, admin only). */
     private val approvalsControl: fi.italeino.aidos.engine.control.ApprovalsControl? = null,
@@ -353,6 +354,7 @@ class EngineHttpServer(
                 }
 
                 if (!lan) lanControl?.let { adminLanRoutes(it, adminSubjects) }
+                if (!lan) tunnelsControl?.let { adminTunnelsRoutes(it, adminSubjects) }
                 if (!lan) approvalsControl?.let { adminApprovalsRoutes(it, adminSubjects) }
                 if (!lan) onAdminShutdown?.let { adminShutdownRoute(it, adminSubjects) }
                 extraRoutes?.invoke(this)

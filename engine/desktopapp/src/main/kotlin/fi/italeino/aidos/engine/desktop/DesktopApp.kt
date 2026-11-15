@@ -71,7 +71,7 @@ class DesktopModels(
     val lan = DesktopLanSharingModel(scope) { EngineAttach.lanControl(host) }
     val peers = DesktopRemotePeersModel(host, scope)
     val shell = DesktopShellGrantsModel(scope) { AgentRuntimeAttach.connect() }
-    val tunnels = DesktopTunnelsModel(host, scope)
+    val tunnels = DesktopTunnelsModel(scope) { EngineAttach.tunnelsControl(host) }
     val background = DesktopBackgroundModel(scope)
 
     init {

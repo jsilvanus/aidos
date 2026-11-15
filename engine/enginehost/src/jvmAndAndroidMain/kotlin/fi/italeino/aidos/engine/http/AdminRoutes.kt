@@ -73,3 +73,20 @@ internal fun Route.adminShutdownRoute(shutdown: () -> Unit, adminSubjects: Set<S
         }
     }
 }
+
+/** `/v1/admin/tunnels`: SSH reverse tunnels (RFC-0108, RFC-0115). Loopback and admin only. */
+internal fun Route.adminTunnelsRoutes(control: fi.italeino.aidos.engine.control.TunnelsControl, adminSubjects: Set<String>) {
+    suspend fun admin(call: ApplicationCall, block: suspend () -> Unit) = adminGuard(call, adminSubjects, block)
+    fun id(call: ApplicationCall) = call.parameters["id"].orEmpty()
+
+    get("/v1/admin/tunnels") { admin(call) { call.respond(control.list()) } }
+    post("/v1/admin/tunnels") {
+        admin(call) { call.respond(fi.italeino.aidos.engine.control.ControlValue(control.create(call.receive()))) }
+    }
+    post("/v1/admin/tunnels/{id}/probe") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ControlValue(control.probeHostKey(id(call)))) } }
+    post("/v1/admin/tunnels/{id}/confirm") { admin(call) { control.confirmHostKey(id(call)); call.respond(HttpStatusCode.NoContent) } }
+    post("/v1/admin/tunnels/{id}/start") { admin(call) { control.start(id(call)); call.respond(HttpStatusCode.NoContent) } }
+    post("/v1/admin/tunnels/{id}/stop") { admin(call) { control.stop(id(call)); call.respond(HttpStatusCode.NoContent) } }
+    post("/v1/admin/tunnels/{id}/rotate-key") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ControlValue(control.rotateKey(id(call)))) } }
+    delete("/v1/admin/tunnels/{id}") { admin(call) { control.delete(id(call)); call.respond(HttpStatusCode.NoContent) } }
+}

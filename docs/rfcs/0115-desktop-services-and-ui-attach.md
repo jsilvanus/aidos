@@ -144,7 +144,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Installers, first cut done:** `--install-service <engine|tray>` and `--uninstall-service` (`install/` package). Per user: systemd `--user` unit, launchd LaunchAgent, Scheduled Task at logon. Machine-wide (`--system --run-as NAME`): systemd system unit with `User=`, LaunchDaemon with `UserName`, Scheduled Task at startup as the named user (schtasks asks for the password); root and SYSTEM are refused, a non-elevated shell gets a hint and nothing is written, a failed install removes its files. The tray is per-user only. Generated definitions and the installer are unit tested for all three OS families; applying them to a real service manager is not yet exercised.
 - **Agent daemon in the tray and installers, done:** the tray polls the Engine and the Agent daemon (capability requests, ids `cap:`) through one composite feed; one source failing does not hide the other. `--install-service agent --exec <command>` installs the daemon the same way as the Engine.
 - **Run in background, done:** a Background tab (aidos-tcr `BackgroundPane`, `DesktopBackgroundModel`) with one switch that registers or removes the per-user Engine service and tray icon through the installer, showing each service's state and any failure. Machine-wide installs stay on the command line.
-- **Next:** the remaining `EngineControl` groups pane by pane (peers and remote access, tunnels, apps and models, status), vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
+- **Tunnels group, done:** `TunnelsControl` with `LocalTunnelsControl` and `HttpTunnelsControl`, `/v1/admin/tunnels` (list, create, probe, confirm, start, stop, rotate-key, delete; loopback and admin only), the Tunnels presenter knows only the interface and `EngineAttach.tunnelsControl` picks the implementation. The same create-probe-confirm-start walk is tested in-process and through the admin API.
+- **Next:** the remaining `EngineControl` groups pane by pane (peers and remote access, apps and models, status), vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -183,4 +184,8 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/AgentApprovals.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopBackgroundModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopBackgroundModelTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/TunnelsControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpTunnelsControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalTunnelsControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsModel.kt
 ```

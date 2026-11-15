@@ -50,7 +50,7 @@ class DesktopTunnelsTest {
         modelsDir = root.resolve("models").apply { mkdirs() },
         stateDir = root,
         serverPort = { 0 },
-        discoveryFile = null,
+        discoveryFile = root.resolve("engine.json"),
         groupSharing = { true },
         aidinFactory = { s ->
             AidinNode(FileNodeKeyStore(root.resolve("aidin/node-key")).loadOrCreate(), FileAidinStateStore(root.resolve("aidin/state.json")), s, "test",
@@ -171,7 +171,7 @@ class DesktopTunnelsTest {
         runBlocking { host.start() }
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
         try {
-            val model = DesktopTunnelsModel(host, scope, pollMillis = 50)
+            val model = DesktopTunnelsModel(scope, pollMillis = 50) { fi.italeino.aidos.engine.desktop.LocalTunnelsControl(host) }
             eventually("can publish") { model.state.value.canPublish }
             model.create("home", "server.example.org", 22, "tunnel", 47100)
             eventually("listed, needs host key") { model.state.value.tunnels.singleOrNull()?.status == TunnelStatusUi.NEEDS_HOST_KEY }
@@ -184,6 +184,32 @@ class DesktopTunnelsTest {
             eventually("up") { model.state.value.tunnels.single().status == TunnelStatusUi.UP }
             model.start("no-such-tunnel")
             eventually("error shown") { model.state.value.error != null }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `the same walk works through the loopback admin API of a running Engine`() {
+        runBlocking { host.start() }
+        val running = checkNotNull(EngineAttach.runningEngine(root.resolve("engine.json"), selfPid = -1)) { "engine.json not written" }
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val model = DesktopTunnelsModel(scope, pollMillis = 50) { EngineAttach.tunnelsControl(host, running) }
+            eventually("can publish") { model.state.value.canPublish }
+            model.create("home", "server.example.org", 22, "tunnel", 47100)
+            eventually("listed") { model.state.value.tunnels.singleOrNull()?.status == TunnelStatusUi.NEEDS_HOST_KEY }
+            val id = model.state.value.tunnels.single().id
+            model.probeHostKey(id)
+            eventually("fingerprint shown") { model.state.value.tunnels.single().pendingHostKey == "SHA256:serverKeyOne" }
+            model.confirmHostKey(id)
+            eventually("pinned") { model.state.value.tunnels.single().pinnedHostKey != null }
+            model.start(id)
+            eventually("up") { model.state.value.tunnels.single().status == TunnelStatusUi.UP }
+            model.start("no-such-tunnel")
+            eventually("the Engine's message reaches the pane") { model.state.value.error?.contains("no such tunnel") == true }
+            model.delete(id)
+            eventually("deleted") { model.state.value.tunnels.isEmpty() }
         } finally {
             scope.cancel()
         }

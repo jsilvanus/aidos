@@ -1,7 +1,9 @@
 package fi.italeino.aidos.engine.desktop
 
 import fi.italeino.aidos.engine.control.HttpLanControl
+import fi.italeino.aidos.engine.control.HttpTunnelsControl
 import fi.italeino.aidos.engine.control.LanControl
+import fi.italeino.aidos.engine.control.TunnelsControl
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -35,4 +37,7 @@ object EngineAttach {
 
     fun lanControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): LanControl =
         running?.let { HttpLanControl(it.baseUrl, it.token) } ?: LocalLanControl(host.lanSharing)
+
+    fun tunnelsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): TunnelsControl =
+        running?.let { HttpTunnelsControl(it.baseUrl, it.token) } ?: LocalTunnelsControl(host)
 }
