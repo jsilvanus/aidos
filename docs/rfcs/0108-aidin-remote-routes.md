@@ -302,7 +302,8 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - **Desktop.** `DesktopEngineHost.remoteRouting` is created with the AIDIN node (hints and switch persisted in `remote-routing.json`, decisions in `remote-routing-audit.log`).
 - **Phase 5.** `PeerRunReaper` lets a hosted peer run continue for 5 minutes after its origin drops, resumable by `seq`, then cancels it; a returning peer resets the clock.
 - **UI (2026-11-15):** the desktop *Peers* tab shows each peer's link route (LAN, Direct, SSH tunnel), the "Allow remote access" switch, the address hints with add and remove, and a recent-activity list from the audit.
-- **Not integrated:** the `tunnel-manager` is not wired into the desktop Engine (tunnel key page, `SSH_TUNNEL_KEY` vault kinds, setup-key installer, RFC-0042 egress grant); the same screens on Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
+- **SSH tunnels on the desktop (2026-11-15).** `DesktopTunnels` wires `tunnel-manager` into the Engine, with a *Tunnels* tab (`SshTunnelsPane`, presenter `DesktopTunnelsModel`). The tunnel key is an Ed25519 pair whose private half lives in the vault; the pane shows only the restricted `authorized_keys` line (`restrict,port-forwarding,permitlisten=...,command="/bin/false"`), which is kept with the config so it can be shown again after a restart. **No trust on first use:** "Check server" reads the host key fingerprint (a rejecting policy ends the connection right after key exchange, before any login), the user compares and confirms, and only then is it pinned and the tunnel allowed to start (`STRICT_PRE_PINNED`); a later change stops the tunnel in `HostKeyChanged` and the pin is never overwritten. The forward's target is the remote-ingress listener, so a peer arriving through the tunnel is classed `SSH_TUNNEL` and still needs "Allow remote access". Saved, confirmed tunnels start with the Engine. Tested with a fake SSH server (host-key presentation, forward up, changed key, rotation, restart persistence).
+- **Not integrated:** the optional setup-key installer (appending the line to the server's `authorized_keys` for the user), the `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY` and `SSH_SETUP_KEY` vault kinds (tunnel keys use the generic `SSH_KEY` kind), the RFC-0042 egress grant for the tunnel server; the same screens on Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
 
 ## Implementation Files
 
@@ -337,4 +338,7 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModelTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnels.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsModel.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsTest.kt
 ```

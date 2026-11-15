@@ -504,6 +504,10 @@ deny network:*
 
 This allows projects to express complex policies declaratively.
 
+### Revocation epoch fix (2026-11-15)
+
+`SqliteCapabilityManager.revoke` bumps the project's revocation epoch so caches and open handles re-read. `validate` also denies any grant whose stored epoch is below the current one, so every grant issued before the bump was silently revoked along with the one the user meant: revoking one capability killed all the project's other grants. Surviving grants are now re-stamped to the new epoch in the same transaction, and `CapabilityTest` has a test that an unrelated grant stays valid after another is revoked.
+
 ## Implementation Files
 
 ```yaml

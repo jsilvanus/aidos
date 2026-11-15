@@ -186,6 +186,9 @@ class AidinNode(
         }
     }
 
+    /** The port of the remote-ingress listener, or null when it has not been started. */
+    val remoteIngressPort: Int? get() = remoteIngress?.port
+
     /** How the link to [nodeId] arrived, or null when there is no active link. */
     fun routeOf(nodeId: NodeId): LinkRoute? = links[nodeId]?.route
 

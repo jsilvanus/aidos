@@ -119,6 +119,10 @@ class DesktopEngineHost(
     /** Builds the group node; tests replace it to avoid real mDNS and fixed ports. */
     private val aidinFactory: ((CoroutineScope) -> AidinNode)? = null,
     private val aidinPort: Int = DesktopAidin.DEFAULT_PORT,
+    /** Opens the user vault that holds SSH tunnel keys; only called when the user first uses a tunnel. */
+    private val tunnelVault: () -> dev.aidos.vault.SecretsVault = { dev.aidos.vault.DesktopVault.open().vault },
+    /** Injectable so tests need no SSH server. */
+    private val tunnelTransport: fi.italeino.sshtunnel.SshTransport = fi.italeino.sshtunnel.SshjTransport(),
     /**
      * Where the pinned `llama-server` and `ggml-rpc-server` live (the `llama-rpc-native` CI
      * artifact, RFC-0105 phase 3). Without them this machine neither anchors nor helps a split.
@@ -227,6 +231,11 @@ class DesktopEngineHost(
     var remoteAgent: DesktopRemoteAgent?
         get() = _remoteAgent.value
         private set(value) { _remoteAgent.value = value }
+
+    /** RFC-0108 SSH reverse tunnels; null while group sharing (AIDIN) is off. */
+    @Volatile
+    var tunnels: DesktopTunnels? = null
+        private set
 
     /** RFC-0108 hints and per-peer remote-access switch; null while group sharing (AIDIN) is off. */
     @Volatile
@@ -403,6 +412,10 @@ class DesktopEngineHost(
             val routing = RemoteRouting(node, scope, File(stateDir, "remote-routing.json"), audit = { a -> appendRoutingAudit(a) })
             routing.start()
             remoteRouting = routing
+            // RFC-0108 phase 3: the user's SSH reverse tunnels publish the remote-ingress listener; saved, confirmed ones start now.
+            val tunnels = DesktopTunnels(stateDir, node = { _aidin.value }, scope = scope, vaultProvider = tunnelVault, transport = tunnelTransport, onAuditLine = ::addAuditLine)
+            this.tunnels = tunnels
+            runCatching { tunnels.startSaved() }.onFailure { addAuditLine("tunnels: ${it.message}") }
             // RFC-0108 phase 5: a hosted run outlives a dropped origin for a bounded window, then is cancelled.
             _agentRuntime?.let { rt ->
                 val reaper = PeerRunReaper(rt, window = PEER_RUN_GRACE)
@@ -451,6 +464,7 @@ class DesktopEngineHost(
     }
 
     private fun stopAidin() {
+        tunnels = null
         remoteRouting = null
         _split.value?.let { runCatching { it.close() } }
         _split.value = null

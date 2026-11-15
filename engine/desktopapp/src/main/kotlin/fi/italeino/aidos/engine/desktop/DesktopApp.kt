@@ -30,6 +30,8 @@ import dev.aidos.tcr.engine.LanSharingPane
 import dev.aidos.tcr.engine.RemotePeersActions
 import dev.aidos.tcr.engine.RemotePeersPane
 import dev.aidos.tcr.engine.ShellGrantsPane
+import dev.aidos.tcr.engine.SshTunnelsActions
+import dev.aidos.tcr.engine.SshTunnelsPane
 import fi.italeino.aidos.engine.ui.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -43,6 +45,7 @@ enum class DesktopRightPaneTab {
     SHARING,
     PEERS,
     SHELL,
+    TUNNELS,
 }
 
 enum class DesktopViewMode {
@@ -66,6 +69,7 @@ class DesktopModels(
     val lan = DesktopLanSharingModel(host)
     val peers = DesktopRemotePeersModel(host, scope)
     val shell = DesktopShellGrantsModel(scope) { DesktopRuntimeClient.create() }
+    val tunnels = DesktopTunnelsModel(host, scope)
 
     init {
         scope.launch {
@@ -277,6 +281,11 @@ fun EngineHostView(
                     onClick = { onSelectRightPaneTab(DesktopRightPaneTab.SHELL); models.shell.refresh() },
                     text = { Text("Shell") }
                 )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.TUNNELS,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.TUNNELS) },
+                    text = { Text("Tunnels") }
+                )
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -340,6 +349,21 @@ fun EngineHostView(
                             )
                         }
                         RemotePeersPane(state = peersState, actions = actions)
+                    }
+                    DesktopRightPaneTab.TUNNELS -> {
+                        val tunnelState by models.tunnels.state.collectAsState()
+                        val actions = remember(models) {
+                            SshTunnelsActions(
+                                onCreate = models.tunnels::create,
+                                onProbeHostKey = models.tunnels::probeHostKey,
+                                onConfirmHostKey = models.tunnels::confirmHostKey,
+                                onStart = models.tunnels::start,
+                                onStop = models.tunnels::stop,
+                                onRotateKey = models.tunnels::rotateKey,
+                                onDelete = models.tunnels::delete,
+                            )
+                        }
+                        SshTunnelsPane(state = tunnelState, actions = actions)
                     }
                     DesktopRightPaneTab.SHELL -> {
                         val shellState by models.shell.state.collectAsState()

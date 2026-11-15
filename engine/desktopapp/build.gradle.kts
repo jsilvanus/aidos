@@ -41,6 +41,10 @@ dependencies {
     implementation(project(":capability"))
     implementation(project(":identity"))
     implementation(project(":kernel"))
+    // RFC-0108: SSH reverse tunnels (library, manager, and the vault that holds their keys).
+    implementation(project(":tunnel-manager"))
+    implementation(project(":ssh-tunnel"))
+    implementation(project(":vault"))
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
 
     implementation(compose.desktop.currentOs)

@@ -136,7 +136,7 @@ ShellLog {
 
 ### Granting it (2026-11-15)
 
-A grant made through the runtime API (the CLI's `grant`) is now a real capability when the host supplies a capability manager (the daemon does): `aidos-cli grant <sessionId> SHELL_EXEC "shell:<dir>[|cmd1,cmd2]"` writes a `Shell` scope to the project's `capabilities` table, `grants <sessionId>` lists the active ones with their directory and commands, and `revoke-grant <capabilityId>` revokes. Before this the API only kept an in-memory placeholder, so no one could grant shell at all. There is no graphical grant screen yet: the desktop Engine app's runtime client is not database-backed.
+A grant made through the runtime API (the CLI's `grant`) is now a real capability when the host supplies a capability manager (the daemon does): `aidos-cli grant <sessionId> SHELL_EXEC "shell:<dir>[|cmd1,cmd2]"` writes a `Shell` scope to the project's `capabilities` table, `grants <sessionId>` lists the active ones with their directory and commands, and `revoke-grant <capabilityId>` revokes. Before this the API only kept an in-memory placeholder, so no one could grant shell at all. The desktop Engine app has a *Shell* tab (`ShellGrantsPane` in aidos-tcr, presenter `DesktopShellGrantsModel`): pick a project and session, then grant a working directory and an optional program list with an expiry, and revoke. It runs on `DesktopRuntimeClient`, an in-process database-backed client over the same `~/.aidos` files the daemon uses (no daemon needed, no project lock taken), so a grant made there is a row the daemon's tools read on their next call.
 
 ## Security
 
@@ -197,4 +197,8 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ShellGrantApiTest.kt
   - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/AidosCli.kt
   - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRuntimeClient.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopShellGrantsModel.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopShellGrantsModelTest.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
 ```
