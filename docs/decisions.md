@@ -545,12 +545,12 @@ Other projects in the ecosystem are not Generative UI hosts, but they author, cr
 
 Aidos Desktop consumes these atomic and molecular Trusted Component Registry (TCR) primitives directly from Dictator's Kotlin Multiplatform layer (`dictator-core` for headless state machines, actor models, cadence timers, and selection buffers) and Compose Multiplatform UI components, rather than implementing duplicate editor or actor pill logic inside Aidos.
 
-It is likely that the TCR will at some point move into a specific separate repository, but for now, all UI components are owned by the applications that first came up with them.
+**Amended 2026-11-15 (owner): superseded by the registry.** The TCR is now the separate repository `jsilvanus/aidos-tcr`, and the UI components migrated there. Applications keep the domain *specifications* (Dictator for text editing and actor pills, Amp for the conversation mesh, Aidos for intent graph and Engine panes) but not the implementations; duplicates left in application repositories are to be removed (RFC-0123).
 
 See canonical specification: [TCR Component Domain Owners](TCR_COMPONENT_DOMAIN_OWNERS.md).
 
 **Why:** Dictator is the dedicated voice-first, cursor-aware document editor in the ecosystem. Keeping text-manipulation primitives, cadence safety timers, and actor pill interaction grammars in Dictator preserves single-source-of-truth ownership while enabling Aidos Desktop Generative UI to assemble interfaces reliably.
-**RFCs:** 0051 (Desktop), 0103.
+**RFCs:** 0051 (Desktop), 0103, 0123.
 
 ### D47 — Where a request may be served is Engine-enforced "locality", derived fail-closed · `SETTLED`
 
@@ -564,7 +564,7 @@ to **`local_only`** — cluster, remote, a specific provider or any must be expl
 group identity, which does not exist yet. Allowing a specific provider (rather than all `remote`)
 is wanted and not built. Details: RFC-0104.
 
-### D48 — The desktop host serves the agent runtime beside the Engine, over the same loopback API · `PROPOSED`
+### D48 — The desktop host serves the agent runtime beside the Engine, over the same loopback API · `SETTLED`
 
 The desktop Aidos app (`engine/desktopapp`) hosts the agent loop (`agent/amp`'s `AmpAgentRunner`) in the same process as the model Engine and exposes it under `/v1/agent/` on the Engine's loopback server (additive to Engine API v1). It reuses the Engine's bearer tokens and per-app approval, and the agent calls the models through the Engine's own `/v1/chat/completions` rather than around it. The agent code stays in the `agent/` Gradle root and is included into the engine build by path (`:amp`, like `:kernel`); the HTTP surface lives in the JVM-only `engine/agenthost` module so Android's Engine does not inherit it.
 
@@ -634,7 +634,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 ---
 
-## D51. MCP Binder transport: apps on the device as MCP servers (proposed)
+## D51. MCP Binder transport: apps on the device as MCP servers (settled)
 
 **Decision.** `McpTransport` gains a third variant, `Binder(packageName, serviceClass, signingCertSha256)`, for MCP servers that are other apps on the same Android device. MCP JSON-RPC is carried unchanged by the `kotlin-mcp-android-binder` library: Binder bootstraps a session and returns a socket pair, so messages are not limited by the ~1 MiB transaction buffer and get kernel backpressure.
 
@@ -650,7 +650,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 ---
 
-## D52. Agent placement and tool hosting: models and agents are separate, routable services (proposed)
+## D52. Agent placement and tool hosting: models and agents are separate, routable services (settled)
 
 **Decision.** Every Aidos Engine (desktop and Android) serves **models** and **agents** as two separate services. Either can be routed to another Aidos Engine, limited by a trust level (RFC-0104 locality: `local_only` < `trusted_cluster` < `any`). A third-party LLM provider is always placement `remote`. Roles:
 
@@ -680,7 +680,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 **RFCs:** 0107 (draft), 0105, 0104, 0027, 0031; D47, D48, D49, D50, D51.
 
-## D53. Remote routes: a tunnel is a transport, not a placement (proposed)
+## D53. Remote routes: a tunnel is a transport, not a placement (settled)
 
 **Decision.** A peer is reached by a *route* (`lan`, `direct host:port`, or an Engine-managed `ssh-reverse` tunnel to a server the user owns). The peer link's node-key mutual TLS runs end to end inside any route, so a tunnel, VPS or overlay network is an untrusted carrier. Consequences:
 
@@ -751,6 +751,16 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
+## D62. STT and vision run on ONNX Runtime · `SETTLED`
+
+**Decision (owner 2026-11-15, recorded from existing practice).** Speech-to-text (Whisper) and vision (SmolVLM) models run on ONNX Runtime in the Engine, on desktop and Android, with pre- and post-processing in Kotlin. Not faster-whisper (Python/CTranslate2, cannot run in a JVM or Android service) and not whisper.cpp (a second native runtime and a per-ABI build). Models are directory packages exported from Hugging Face checkpoints; a fine-tune from `liturgos-auditor` is re-exported to ONNX, never loaded as CTranslate2 weights. Finnish needs Whisper small or larger.
+**RFCs:** 0117, 0022; D44, D45.
+
+## D63. Engine API v1 freeze policy · `SETTLED`
+
+**Decision (owner 2026-11-15, recorded from `sdk/CONTRACT.md`).** Within a major API version only additive changes are allowed (optional Bundle key, endpoint, JSON field, interface method with a default); anything else bumps `apiVersion`. Neither side refuses on a version or SDK string; a client whose supported range does not overlap the Engine's reports `IncompatibleVersion`. Features are detected by handshake `endpoints`, never by version number. Tripwire tests pin the contract on both sides.
+**RFCs:** 0121, 0103.
+
 ---
 
 ## Revision history
@@ -776,4 +786,5 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 | 2026-11-10 | D53 proposed: remote routes; a tunnel is a transport, not a placement; layer split LAN only; Engine-managed SSH tunnels. |
 | 2026-11-14 | D49 amended: Single APK with multi-process native isolation (`:main` and `:native_inference`) for crash resilience and Android system assistant integration. |
 | 2026-11-14 | D54 settled: Universal UI parity across Desktop and Android (OTG/DeX responsive switching) and Blinded Egress Bridge for messaging across zero-egress Life and Code projects (RFC-0112). |
+| 2026-11-15 | D46 amended: TCR superseded component ownership (aidos-tcr). D48, D51, D52, D53 settled. D62 (STT and vision on ONNX Runtime) and D63 (API v1 freeze policy) recorded. |
 | 2026-11-15 | D55 to D61 all accepted by the owner (RFC-0115); implementation starts with Agent-runtime attach. Before that: D55 and D58 settled, D59 settled with a tray-icon requirement, D56 amended to support per-user and system services; D57, D60, D61 still open (RFC-0115). Earlier: D55-D61 proposed (tentative numbers): desktop background services and the app as a UI over them (RFC-0115): three parties, per-user services, Windows socket plus ACL, loopback admin API, leave services running, Agent attach first, pane-by-pane `EngineControl`. |

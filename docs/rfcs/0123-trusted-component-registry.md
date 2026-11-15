@@ -64,7 +64,7 @@ Not built: a manifest that the generator validates against, versioned component 
 
 ## Open Questions
 
-1. **Ownership is contradictory.** D46 says "for now, all UI components are owned by the applications that first came up with them" and the Amp README repeats it; the TCR domain-owners document says the registry is the sole implementer and apps keep only specifications. This RFC follows the domain-owners document. D46 needs amending, and Amp's `amp-ui` (29 files) must either migrate or be declared the interim home.
+1. ~~Ownership is contradictory.~~ Settled by the owner 2026-11-15: the registry supersedes D46's per-app ownership, and the components migrated there; D46 is amended. What remains is removing the duplicates in Aidos `engineui` and Amp `amp-ui`.
 2. Should the duplicates be deleted now (Aidos engineui panes, Amp amp-ui components) or kept as fallbacks until the registry versions are stable?
 3. Where does the validated component manifest live, and who may add a component?
 4. A sibling-checkout dependency is fragile for contributors; publish the registry as an artifact?
