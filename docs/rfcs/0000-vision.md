@@ -192,3 +192,9 @@ A plugin system should allow users to add custom tools, knowledge providers, and
 ### Collaboration
 
 When multi-user support is added, it will be mediated through Git and async patterns, not through real-time protocol changes.
+
+## Implementation Files
+
+```yaml
+files: []
+```

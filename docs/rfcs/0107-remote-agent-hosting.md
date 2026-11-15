@@ -38,3 +38,9 @@ Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0
 2. Android host runs the agent runtime and Binder MCP broker. **Runtime built** (`createEngineAgentRuntime`, shared with desktop; compiles and starts on an emulator, not yet exercised with a model); Binder MCP broker not built.
 3. Peer agent endpoints, scope `agent`, MCP tool relay, tool-host taint and approval.
 4. Real two-device run (owner's devices).
+
+## Implementation Files
+
+```yaml
+files: []
+```

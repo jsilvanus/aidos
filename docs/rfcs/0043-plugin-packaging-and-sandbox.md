@@ -141,3 +141,9 @@ The WASM host itself, once MCP has proven the extension boundary.
 Host API expansion under policy, versioned by protocol rather than by in-process ABI.
 
 A curated plugin index — a discovery aid, explicitly not a trust authority.
+
+## Implementation Files
+
+```yaml
+files: []
+```

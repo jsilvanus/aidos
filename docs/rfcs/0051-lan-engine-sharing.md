@@ -391,3 +391,9 @@ The QR code is deliberately **not** the pairing protocol. It is a convenient tra
 **LAN mode uses HTTPS from the first implementation.** Aidos uses the standard Android/JVM/Ktor TLS stack and does not implement TLS/cryptography itself. The Engine has a persistent local TLS identity whose fingerprint is established during pairing.
 
 The Aidos SDK is recommended for automated pairing, but **the LAN protocol does not require the SDK or a dedicated Aidos application**.
+
+## Implementation Files
+
+```yaml
+files: []
+```

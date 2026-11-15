@@ -504,3 +504,9 @@ The probability that Aidos becomes exceptional is meaningfully positive. The vis
 ---
 
 *This review represents a second-pass, independent architectural assessment. It should be treated as one input, not as a prescription. The people building Aidos know their context better than any reviewer can. The value of this review is identifying the questions that most deserve deliberate answers before the first line of production code is committed.*
+
+## Implementation Files
+
+```yaml
+files: []
+```

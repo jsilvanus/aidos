@@ -436,7 +436,7 @@ Sensitivity inference: the Knowledge Engine can suggest sensitivity levels based
 
 ```yaml
 files:
-  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Types.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Content.kt
   - schema/project.sql
   - agent/storage/build.gradle.kts
   - agent/storage/src/commonMain/kotlin/dev/aidos/storage/SqliteContentNodeStore.kt

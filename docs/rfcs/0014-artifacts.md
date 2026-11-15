@@ -658,3 +658,9 @@ Provenance chain is verifiable
 - How should artifact conflicts be handled if two sessions create conflicting artifacts addressing the same intent?
 - Should artifacts have expiration dates (auto-archive after N days)?
 - How should artifacts relate to Git commits? Is a commit an artifact?
+
+## Implementation Files
+
+```yaml
+files: []
+```

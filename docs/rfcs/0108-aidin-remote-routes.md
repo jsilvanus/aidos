@@ -291,3 +291,9 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - `agent/vault`: Vault with `jvm()` target (SQLite) and `android()` target (Android Keystore)
 - `agent/tunnel-manager`: Engine adapter (JVM/Android via vault and ssh-tunnel)
 - `agent/androidapp`: Android app shell ready for tunnel manager integration
+
+## Implementation Files
+
+```yaml
+files: []
+```

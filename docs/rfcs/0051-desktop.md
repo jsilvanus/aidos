@@ -575,3 +575,9 @@ Theme engine:
 - How should very large projects handle UI responsiveness?
 - Should desktop support custom views/dashboards?
 - Should there be a "dev mode" with enhanced debugging?
+
+## Implementation Files
+
+```yaml
+files: []
+```

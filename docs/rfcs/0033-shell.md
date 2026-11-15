@@ -162,3 +162,9 @@ Not included:
 - Should shell output size be limited to prevent memory issues?
 - Should interactive commands be supported?
 - Should environment variables be accessible (with permission)?
+
+## Implementation Files
+
+```yaml
+files: []
+```

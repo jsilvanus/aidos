@@ -246,3 +246,9 @@ As Aidos evolves, these principles should remain stable. Future work that might 
 - **Privacy-respecting analytics**: Principle 2 (user control) suggests analytics should be opt-in and transparent. This remains true as the system grows.
 
 The principles are meant to be robust to these challenges, not to be overturned by them.
+
+## Implementation Files
+
+```yaml
+files: []
+```

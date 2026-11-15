@@ -302,3 +302,9 @@ Orchestrators communicate strictly via typed, blinded queries:
 * **Phase 5: In-Process Analytics & On-The-Fly APIs**
   - Embed DuckDB for local Parquet/CSV data mining.
   - Implement runtime OpenAPI-to-MCP transpiler.
+
+## Implementation Files
+
+```yaml
+files: []
+```

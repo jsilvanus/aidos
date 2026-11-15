@@ -637,3 +637,9 @@ Needed for KMP testing, desktop/mobile differences, provider replacement, plugin
 Before implementation, pause acceptance of the current RFC set and add a short “architecture reset” milestone. Do not rewrite everything. Instead, resolve the foundational contracts that cut across all RFCs: state, capabilities, execution graph, resource graph, prompt construction, observability, and runtime language choice.
 
 The simplest durable version of Aidos is not “many engines coordinated by events.” It is a small local-first kernel with explicit state, explicit authority, explicit execution, and replaceable providers. Build that first, then let the platform grow.
+
+## Implementation Files
+
+```yaml
+files: []
+```

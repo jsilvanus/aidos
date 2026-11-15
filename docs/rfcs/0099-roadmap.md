@@ -426,3 +426,9 @@ document's own 2026-08-14 amendment above for what it changes about Phase 3/G3
 **Roadmap and reviews**
 RFC-0099 Roadmap (this document) · RFC-0100, RFC-0101, RFC-0102 Architecture reviews ·
 `docs/reviews/architecture-review-2026-08.md` third-pass review
+
+## Implementation Files
+
+```yaml
+files: []
+```

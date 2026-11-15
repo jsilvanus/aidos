@@ -86,3 +86,9 @@ The MVP should include:
 ## Future Work
 
 Future work includes distributed execution, richer plugin ecosystems, full observability, team semantics, and more advanced prompt and knowledge pipelines.
+
+## Implementation Files
+
+```yaml
+files: []
+```

@@ -368,3 +368,9 @@ Spoken confession and counselling are pastoral confidentiality, and religious be
 - D49: foreground-service type for connected-device audio.
 - `docs/rfcs/STATUS.md`: row added with this RFC.
 - A decisions entry (D54) if Juha accepts the open-spec and trust proposals.
+
+## Implementation Files
+
+```yaml
+files: []
+```

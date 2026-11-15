@@ -658,3 +658,9 @@ Session is implementing a cache
 - How should resources handle versioning if Git is unavailable (MVP offline)?
 - Should resources support embedded media (images, diagrams)?
 - How should cross-project resource sharing work (future)?
+
+## Implementation Files
+
+```yaml
+files: []
+```
