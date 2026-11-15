@@ -1512,6 +1512,10 @@ class AgentLoopTaskRunner(
             put("modelVersion", pkg.model.modelVersion)
             pkg.instructionSetHash?.let { put("instructionSetHash", it) }
             put("totalTokensEstimate", pkg.totalTokensEstimate)
+            // RFC-0016: files dropped by the instruction budget are reported, not silent.
+            put("droppedInstructionFiles", kotlinx.serialization.json.buildJsonArray {
+                pkg.droppedInstructionFiles.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+            })
             put("provenance", kotlinx.serialization.json.buildJsonObject {
                 put("contextNodeIds", kotlinx.serialization.json.buildJsonArray {
                     prov.contextNodeIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }

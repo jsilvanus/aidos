@@ -1,7 +1,7 @@
 # RFC-0016: Instruction Engine
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (additional formats, nested files, categories, priorities, filtering, conflict detection, provider plugins, instruction editing UI, instruction generation)
 ## Abstract
 
 Instruction files — `AGENTS.md`, `CLAUDE.md` — are prose written by a human for a model to read.
@@ -330,3 +330,21 @@ Deliberately dropped from the previous version's Future Work, with reasons:
 
 None. Adoption scope was settled on 2026-08-03: per project for the decision, per user for
 recognition.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/InstructionDiscovery.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/InstructionAdoptionStore.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/InstructionsCli.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/PromptAssemblerTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/InstructionAdoptionStoreTest.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/InstructionsCliTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+  - schema/project.sql
+  - schema/user.sql
+```

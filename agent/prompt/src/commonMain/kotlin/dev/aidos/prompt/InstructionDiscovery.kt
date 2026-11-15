@@ -34,7 +34,7 @@ object InstructionDiscovery {
             val file = File(projectRoot, name)
             if (file.exists() && file.isFile) {
                 val content = file.readText()
-                val blobHash = sha256(content)
+                val blobHash = gitBlobHash(file.readBytes())
                 sources.add(InstructionSource(filename = name, blobHash = blobHash, content = content))
             }
         }
@@ -62,6 +62,16 @@ object InstructionDiscovery {
     fun computeHash(sources: List<InstructionSource>): String {
         val input = sources.joinToString("|") { "${it.filename}:${it.blobHash}" }
         return sha256(input)
+    }
+
+    /**
+     * Git blob object id (`sha1("blob <len>\u0000" + bytes)`), so an instruction file's identity
+     * matches what `git hash-object` reports and what the repository already records (RFC-0016).
+     */
+    fun gitBlobHash(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-1")
+        digest.update("blob ${bytes.size}\u0000".toByteArray(Charsets.UTF_8))
+        return digest.digest(bytes).joinToString("") { "%02x".format(it) }
     }
 
     private fun sha256(text: String): String {

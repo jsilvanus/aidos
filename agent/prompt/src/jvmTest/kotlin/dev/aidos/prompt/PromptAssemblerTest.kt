@@ -229,3 +229,41 @@ class InstructionDiscoveryTest {
         assertTrue(!set.adopted)
     }
 }
+
+class InstructionBudgetAndBlobHashTest {
+    private fun model(window: Int) = object : dev.aidos.kernel.ModelAdapter {
+        override val providerId = "t"; override val modelId = "m"; override val modelVersion = "1"
+        override val contextWindow = window; override val isLocal = true
+        override fun supportsNativeToolCalls() = false
+        override suspend fun invoke(request: dev.aidos.kernel.ModelRequest) =
+            Result.failure<dev.aidos.kernel.ModelResponse>(UnsupportedOperationException())
+    }
+
+    @Test
+    fun `blob hash matches git hash-object`() {
+        // Same as: echo hello | git hash-object --stdin
+        assertEquals("ce013625030ba8dba906f756967f9e9ca394464a",
+            InstructionDiscovery.gitBlobHash("hello\n".toByteArray()))
+    }
+
+    @Test
+    fun `files that overflow the instruction reservation are dropped whole and reported`() {
+        val small = InstructionSource("AGENTS.md", "h1", "Be concise.")
+        val huge = InstructionSource("CLAUDE.md", "h2", "x ".repeat(20_000))
+        val set = InstructionSet("sethash", listOf(small, huge), "", adopted = true)
+        val result = PromptAssembler().assemble(AssemblyRequest(model = model(8192), userMessage = "hi", instructionSet = set))
+        val pkg = (result as AssemblyResult.Ok).pkg
+        assertEquals(listOf("CLAUDE.md"), pkg.droppedInstructionFiles)
+        val system = pkg.request.messages.filterIsInstance<Turn.System>().first().content
+        assertTrue(system.contains("Be concise."))
+        assertTrue(system.contains("omitted because they exceed the instruction budget: CLAUDE.md"))
+        assertTrue(!system.contains("x x x x"))
+    }
+
+    @Test
+    fun `everything fits - nothing is dropped`() {
+        val set = InstructionSet("h", listOf(InstructionSource("AGENTS.md", "h1", "ok")), "", adopted = true)
+        val pkg = (PromptAssembler().assemble(AssemblyRequest(model = model(8192), userMessage = "hi", instructionSet = set)) as AssemblyResult.Ok).pkg
+        assertTrue(pkg.droppedInstructionFiles.isEmpty())
+    }
+}

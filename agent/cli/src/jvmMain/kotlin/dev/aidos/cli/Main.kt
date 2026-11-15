@@ -85,6 +85,7 @@ fun main(args: Array<String>) {
     if (rest[0] in PortabilityCli.COMMANDS) exitProcess(runPortability(rest))
     if (rest[0] in SecretsCli.COMMANDS) exitProcess(SecretsCli({ DesktopVault.open() }, dev.aidos.portability.SystemCliIo).run(rest.drop(1)))
     if (rest[0] in McpCli.COMMANDS) exitProcess(runMcp(rest.drop(1)))
+    if (rest[0] in InstructionsCli.COMMANDS) exitProcess(runInstructions(rest.drop(1)))
 
     val resolvedSocketPath = socketPath ?: SocketPaths.defaultSocketPath()
     val client = SocketRuntimeClient(resolvedSocketPath, SocketPaths.defaultTokenPath(resolvedSocketPath))
@@ -266,6 +267,7 @@ internal fun helpText(): String =
         Commands:
           create-project <name> [description]
           list-projects
+          instructions <status|adopt|revoke> <project-root>   (RFC-0016, local)
           archive-project <projectId>
           delete-project <projectId> --confirm
           create-session <projectId> <name>
@@ -330,3 +332,12 @@ private fun exportScanner(): SecretScanner {
     }
     return SecretScanner { text -> redactor.detections(text) }
 }
+
+private fun runInstructions(args: List<String>): Int = InstructionsCli(
+    openProjectDriver = { root -> AidosStorage.openProject(DesktopPaths.stateDb(root), "cli") { Instant.now().toString() }.driver },
+    openUserDriver = {
+        File(DesktopPaths.userDb()).parentFile.mkdirs()
+        AidosStorage.openUser(DesktopPaths.userDb(), "cli") { Instant.now().toString() }.driver
+    },
+    io = dev.aidos.portability.SystemCliIo,
+).run(args)

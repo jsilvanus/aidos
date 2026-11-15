@@ -16,6 +16,8 @@ import dev.aidos.kernel.TrustLevel
 
 // Safety margin reserved for the model's response (RFC-0025).
 private const val SAFETY_MARGIN = 256
+/** RFC-0016: instruction files may use at most one quarter of the prompt budget. */
+private const val INSTRUCTION_RESERVATION_DIVISOR = 4
 
 /**
  * A fully assembled prompt package ready to send to a model (RFC-0025).
@@ -34,6 +36,8 @@ data class PromptPackage(
     val request: ModelRequest,
     val instructionSetHash: String?,
     val totalTokensEstimate: Int,
+    /** RFC-0016: instruction files dropped because the instruction reservation overflowed. */
+    val droppedInstructionFiles: List<String> = emptyList(),
     val provenance: PromptProvenance = PromptProvenance(),
 )
 
@@ -120,8 +124,25 @@ class PromptAssembler(
         }
         // Unadopted instruction sets never reach the system turn (RFC-0016).
         val instructionSet = request.instructionSet
+        var droppedInstructionFiles: List<String> = emptyList()
         if (instructionSet != null && instructionSet.adopted) {
-            systemParts.add(renderInstructions(instructionSet))
+            // RFC-0016: instructions share a bounded reservation, filled in precedence order;
+            // files that do not fit are dropped whole and reported, never silently truncated.
+            val reservation = (budget / INSTRUCTION_RESERVATION_DIVISOR).coerceAtLeast(0)
+            val kept = mutableListOf<InstructionSource>()
+            val dropped = mutableListOf<String>()
+            var used = 0
+            for (source in instructionSet.sources) {
+                val cost = estimateTokens(renderInstructionSource(source))
+                if (dropped.isEmpty() && used + cost <= reservation) {
+                    kept.add(source); used += cost
+                } else dropped.add(source.filename)
+            }
+            droppedInstructionFiles = dropped
+            if (kept.isNotEmpty()) systemParts.add(kept.joinToString("\n\n", transform = ::renderInstructionSource))
+            if (dropped.isNotEmpty()) {
+                systemParts.add("[Instruction files omitted because they exceed the instruction budget: ${dropped.joinToString(", ")}]")
+            }
         }
         val systemText = systemParts.joinToString("\n\n")
 
@@ -263,6 +284,7 @@ class PromptAssembler(
                 model = adapter,
                 request = modelRequest,
                 instructionSetHash = instructionSet?.hash,
+                droppedInstructionFiles = droppedInstructionFiles,
                 totalTokensEstimate = reservedTokens + history.sumOf(::estimateTurnTokens) +
                     knowledge.sumOf { estimateTokens(it.content) },
                 provenance = provenance,
@@ -296,11 +318,8 @@ class PromptAssembler(
         }
     }
 
-    private fun renderInstructions(set: InstructionSet): String {
-        return set.sources.joinToString("\n\n") { source ->
-            "# Instructions from ${source.filename}\n\n${source.content}"
-        }
-    }
+    private fun renderInstructionSource(source: InstructionSource): String =
+        "# Instructions from ${source.filename}\n\n${source.content}"
 
     private fun fitHistory(history: List<Turn>, tokenBudget: Int): List<Turn> {
         val result = ArrayDeque<Turn>()
