@@ -3,7 +3,7 @@ package fi.italeino.aidos.engine.desktop.install
 import fi.italeino.aidos.engine.desktop.tray.TrayActions
 
 /**
- * `--install-service <engine|tray> [--system --run-as NAME]` and `--uninstall-service <engine|tray> [--system]`
+ * `--install-service <engine|agent|tray> [--system --run-as NAME]` and `--uninstall-service <engine|agent|tray> [--system]`
  * (RFC-0115, D56). Per-user is the default; `--system` registers a machine-wide service that runs as the named
  * account (never root or SYSTEM). The tray is a per-user service by nature: it needs the user's desktop.
  */
@@ -28,8 +28,9 @@ object InstallCli {
     }
 
     fun specFor(name: String?, args: List<String>): ServiceSpec {
-        val system = args.contains("--system")
-        val runAs = args.getOrNull(args.indexOf("--run-as") + 1)?.takeIf { args.contains("--run-as") }
+        val own = args.takeWhile { it != "--exec" }
+        val system = own.contains("--system")
+        val runAs = own.getOrNull(own.indexOf("--run-as") + 1)?.takeIf { own.contains("--run-as") }
         return when (name) {
             "engine" -> ServiceSpec(
                 "engine", "Aidos Engine", TrayActions.selfCommand(listOf("--daemon")),
@@ -39,7 +40,15 @@ object InstallCli {
                 require(!system) { "the tray needs your desktop, so it can only be installed for the signed-in user" }
                 ServiceSpec("tray", "Aidos tray icon", TrayActions.selfCommand(listOf("--tray")), InstallScope.USER)
             }
-            else -> throw IllegalArgumentException("usage: --install-service <engine|tray> [--system --run-as NAME] | --uninstall-service <engine|tray> [--system --run-as NAME]")
+            "agent" -> {
+                // The Agent daemon is a separate program (dev.aidos.daemon); everything after --exec is its command line.
+                val at = args.indexOf("--exec")
+                // Removing needs only the name; the command is irrelevant to the remove commands.
+                if (args.contains("--uninstall-service") && at < 0) return ServiceSpec("agent", "Aidos Agent daemon", listOf("aidos-daemon"), if (system) InstallScope.SYSTEM else InstallScope.USER, runAs)
+                require(at >= 0 && at + 1 < args.size) { "the agent service needs its command: --install-service agent [--system --run-as NAME] --exec <command and arguments>" }
+                ServiceSpec("agent", "Aidos Agent daemon", args.drop(at + 1), if (system) InstallScope.SYSTEM else InstallScope.USER, runAs)
+            }
+            else -> throw IllegalArgumentException("usage: --install-service <engine|agent|tray> [--system --run-as NAME] | --uninstall-service <engine|agent|tray> [--system --run-as NAME]")
         }
     }
 }

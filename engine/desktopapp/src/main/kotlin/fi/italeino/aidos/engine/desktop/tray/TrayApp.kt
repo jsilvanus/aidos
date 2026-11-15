@@ -36,9 +36,7 @@ import javax.swing.SwingUtilities
 class TrayApp(
     private val actions: TrayActions = TrayActions(),
     private val pollMillis: Long = 2000,
-    private val control: suspend () -> ApprovalsControl? = {
-        EngineAttach.runningEngine(selfPid = -1)?.let { HttpApprovalsControl(it.baseUrl, it.token) }
-    },
+    private val control: suspend () -> ApprovalsControl? = TrayControls()::current,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val watcher = ApprovalWatcher(control)
@@ -141,3 +139,31 @@ class TrayApp(
 
 /** Entry used by `main --tray`. */
 fun runTray(): Int = TrayApp().run()
+
+/**
+ * The tray's sources, found fresh on each poll: the Engine if `engine.json` names a live one, the Agent daemon if
+ * its socket answers (the working client is kept until it stops answering). Null when neither is running.
+ */
+class TrayControls(
+    private val engine: () -> fi.italeino.aidos.engine.desktop.RunningEngine? = { EngineAttach.runningEngine(selfPid = -1) },
+    private val probeAgent: () -> dev.aidos.api.RuntimeClient? = {
+        val socket = dev.aidos.api.socket.SocketPaths.defaultSocketPath()
+        fi.italeino.aidos.engine.desktop.AgentRuntimeAttach.probeDaemon(socket, dev.aidos.api.socket.SocketPaths.defaultTokenPath(socket))
+    },
+) {
+    private var agent: AgentApprovalsControl? = null
+
+    suspend fun current(): ApprovalsControl? {
+        val sources = mutableListOf<ApprovalsControl>()
+        engine()?.let { sources += HttpApprovalsControl(it.baseUrl, it.token) }
+        val a = agent ?: probeAgent()?.let { AgentApprovalsControl(it) }.also { agent = it }
+        if (a != null) sources += FailureDropping(a) { agent = null }
+        return if (sources.isEmpty()) null else CompositeApprovals(sources)
+    }
+
+    /** Forgets the cached daemon client when it errors, so the next poll probes again. */
+    private class FailureDropping(private val inner: ApprovalsControl, private val onFail: () -> Unit) : ApprovalsControl {
+        override suspend fun pending() = try { inner.pending() } catch (e: Exception) { onFail(); throw e }
+        override suspend fun decide(id: String, allow: Boolean) = inner.decide(id, allow)
+    }
+}

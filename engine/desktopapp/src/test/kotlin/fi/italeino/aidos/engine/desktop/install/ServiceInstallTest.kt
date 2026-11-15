@@ -96,4 +96,12 @@ class ServiceInstallTest {
         assertEquals(2, InstallCli.run(listOf("--install-service", "engine", "--system"), out::add), "system needs --run-as")
         assertEquals(3, InstallCli.run(listOf("--install-service", "engine", "--system", "--run-as", "juha"), out::add, ServiceInstaller(run = { 0 }, isElevated = { false }), OsFamily.LINUX))
     }
+
+    @Test
+    fun `the agent daemon service takes its own command line`() {
+        val spec = InstallCli.specFor("agent", listOf("--install-service", "agent", "--exec", "java", "-cp", "d.jar", "dev.aidos.daemon.MainKt", "--system"))
+        assertEquals(listOf("java", "-cp", "d.jar", "dev.aidos.daemon.MainKt", "--system"), spec.command, "flags after --exec belong to the daemon")
+        assertEquals(InstallScope.USER, spec.scope)
+        assertFailsWith<IllegalArgumentException> { InstallCli.specFor("agent", listOf("--install-service", "agent")) }
+    }
 }

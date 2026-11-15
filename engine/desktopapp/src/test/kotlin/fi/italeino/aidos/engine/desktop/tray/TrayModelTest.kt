@@ -101,3 +101,37 @@ class TrayActionsTest {
         assertTrue(cmd.contains("fi.italeino.aidos.engine.desktop.MainKt"))
     }
 }
+
+class CompositeApprovalsTest {
+    private class Src(val items: List<PendingApproval>, val fail: Boolean = false, val accepts: Set<String> = emptySet()) : ApprovalsControl {
+        override suspend fun pending() = if (fail) throw IllegalStateException("down") else items
+        override suspend fun decide(id: String, allow: Boolean) = id in accepts
+    }
+
+    @Test
+    fun `one failing source does not hide the other, all failing throws`(): Unit = runBlocking {
+        val ok = Src(listOf(ask("cap:1")))
+        assertEquals(listOf("cap:1"), CompositeApprovals(listOf(Src(emptyList(), fail = true), ok)).pending().map { it.id })
+        var threw = false
+        try { CompositeApprovals(listOf(Src(emptyList(), true), Src(emptyList(), true))).pending() } catch (_: IllegalStateException) { threw = true }
+        assertTrue(threw)
+    }
+
+    @Test
+    fun `a decision reaches the source that owns the id`(): Unit = runBlocking {
+        val c = CompositeApprovals(listOf(Src(emptyList(), accepts = setOf("tool:1")), Src(emptyList(), accepts = setOf("cap:2"))))
+        assertTrue(c.decide("cap:2", true))
+        assertTrue(c.decide("tool:1", false))
+        assertFalse(c.decide("gone", true))
+    }
+
+    @Test
+    fun `the agent source answers a capability request and treats a vanished one as not waiting`(): Unit = runBlocking {
+        val calls = mutableListOf<String>()
+        val client = dev.aidos.api.MockRuntimeClient()
+        val src = AgentApprovalsControl(client)
+        assertFalse(src.decide("tool:9", true), "not its id")
+        assertTrue(src.pending().none { it.title.contains("reason") })
+        calls.clear()
+    }
+}
