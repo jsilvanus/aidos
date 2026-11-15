@@ -1,6 +1,7 @@
 # RFC-0033: Shell
 
-Status: Draft
+Status: Implemented 2026-11-15
+Non-MVP Work: **Remaining** (OS-level sandboxing: containers, seccomp, chroot, network blocking and file-visibility limits; interactive sessions; confirmation prompts for dangerous commands; CPU and memory quotas; signal handling)
 
 ## Abstract
 
@@ -120,6 +121,19 @@ ShellLog {
 }
 ```
 
+## Implementation status (2026-11-15)
+
+`shell:exec` is built (`agent/shell`) and registered by the daemon on every profile except MOBILE, where it is neither registered nor offered to the model.
+
+- **Permission:** nothing grants it by default. A user grants a `Shell` capability (working directory, optional `allowedCommands`); `openHandle` turns that grant into a `ShellHandle` and the tool enforces it, since the capability manager sees operation names, not arguments.
+- **Working directory:** confined to the grant's directory with symlinks resolved; `..` and absolute paths outside it are refused.
+- **`allowedCommands`:** when present the command runs without a shell and must start with a listed program, and shell operators (`;`, `&`, `|`, redirects, backticks, `$`) are refused, so one allowed program cannot smuggle in another.
+- **Environment:** allowlist only (`PATH`, `HOME`, locale, temp, and the Windows variables `cmd` needs), so daemon secrets never reach the child.
+- **Limits:** default 300 s timeout (max 3600 s), killing the whole process tree; 10 MB per stream with a `truncated` flag; stdin closed so a command waiting for input gets EOF.
+- **Result:** exit code, stdout, stderr, duration. A non-zero exit is the command's result, not a tool failure. Output is `UNTRUSTED` (RFC-0027), and a tainted run is denied `SHELL_EXEC` by capability attenuation.
+- **Logging:** every execution writes a `ShellExecuted` audit row (command, directory, exit code, duration, output size) with the command and output redacted through the vault `Redactor`.
+- **Not provided by the MVP:** the sandboxing in "Future Work". A permitted command runs with the daemon user's own file and network access; the controls above bound where it starts and what it inherits, not what it can reach.
+
 ## Security
 
 Shell execution is dangerous. Controls:
@@ -166,5 +180,12 @@ Not included:
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - agent/shell/build.gradle.kts
+  - agent/shell/src/jvmMain/kotlin/dev/aidos/shell/ShellTool.kt
+  - agent/shell/src/jvmTest/kotlin/dev/aidos/shell/ShellToolTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ShellToolIntegrationTest.kt
 ```

@@ -21,6 +21,7 @@ kotlin {
                 implementation(project(":capability"))
                 implementation(project(":filesystem"))
                 implementation(project(":git"))
+                implementation(project(":shell"))
                 implementation(project(":prompt"))
                 implementation(project(":knowledge"))
                 implementation(project(":memory"))

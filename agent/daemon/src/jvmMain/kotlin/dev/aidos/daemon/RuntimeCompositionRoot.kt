@@ -30,6 +30,8 @@ import dev.aidos.executor.WorkerSpawner
 import dev.aidos.filesystem.FilesystemTool
 import dev.aidos.filesystem.PathTrustPolicy
 import dev.aidos.git.GitTool
+import dev.aidos.shell.ShellTool
+import kotlinx.serialization.json.put as putJson
 import dev.aidos.identity.UuidV7Generator
 import dev.aidos.kernel.CapabilityConstraints
 import dev.aidos.kernel.CapabilityScope
@@ -491,6 +493,35 @@ class RuntimeCompositionRoot(
         broker.register(GitTool(File(rootPath), credentials = vault?.let { v ->
             VaultGitCredentialSource(v) { host -> auditSecretUse(audit, projectId.value, "RUNTIME", "git:$host", "git:$host", nowIso, idGen) }
         }))
+        // RFC-0033: shell exists only where the platform has one. On MOBILE it is never registered, so the
+        // model is never told it exists. Using it still needs an explicit Shell capability grant.
+        if (platformProfile != PlatformProfile.MOBILE) {
+            broker.register(
+                ShellTool(
+                    File(rootPath),
+                    redact = { redactor.redact(it, RedactionBoundary.LOG) },
+                    onExecuted = { log ->
+                        audit.write(
+                            id = idGen(),
+                            projectId = projectId.value,
+                            kind = "ShellExecuted",
+                            actorKind = "SESSION",
+                            actorId = sessionId,
+                            subjectRef = "shell:exec",
+                            detailJson = kotlinx.serialization.json.buildJsonObject {
+                                putJson("command", log.command)
+                                putJson("working_directory", log.workingDirectory)
+                                log.exitCode?.let { putJson("exit_code", it) }
+                                putJson("duration_ms", log.durationMs)
+                                putJson("output_size_bytes", log.outputSizeBytes)
+                                putJson("timed_out", log.timedOut)
+                            }.toString(),
+                            nowIso = nowIso(),
+                        )
+                    },
+                ),
+            )
+        }
         // RFC-0021 / RFC-0023: every remote model invocation routes through EffectBroker.
         broker.register(RemoteModelEgressTool())
         val memoryStore = SessionMemoryStore(

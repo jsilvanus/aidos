@@ -204,6 +204,17 @@ sealed interface ResourceHandle {
 
 data class BasicResourceHandle(override val capabilityId: CapabilityId) : ResourceHandle
 
+/**
+ * What a `Shell` capability lets its holder run (RFC-0033): the working directory (relative to the
+ * project root) every command is confined to, and, when [allowedCommands] is non-null, the only
+ * programs that may be started.
+ */
+data class ShellHandle(
+    override val capabilityId: CapabilityId,
+    val workingDirectory: String,
+    val allowedCommands: List<String>?,
+) : ResourceHandle
+
 interface DirHandle : ResourceHandle {
     suspend fun read(relative: RelPath): Result<ByteArray>
     suspend fun write(relative: RelPath, content: ByteArray): Result<Unit>

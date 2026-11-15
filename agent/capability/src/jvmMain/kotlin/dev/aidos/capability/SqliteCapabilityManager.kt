@@ -290,6 +290,9 @@ class SqliteCapabilityManager(
                 SqliteDirHandle(capabilityId, scope.rootRelativePath, this)
             )
         }
+        if (scope is CapabilityScope.Shell) {
+            return Result.success(dev.aidos.kernel.ShellHandle(capabilityId, scope.workingDirectory, scope.allowedCommands))
+        }
         return Result.success(dev.aidos.kernel.BasicResourceHandle(capabilityId))
     }
 

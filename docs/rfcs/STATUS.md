@@ -37,6 +37,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0030 | IMPLEMENTED | `ToolBroker` capability check + valid-`projectId` audit (including `openHandle` failures) + preview; `JsonSchemaValidator` MVP (string-first type check, 64-bit integer bounds, regex patterns, constraints) built and tested |
 | 0031 | IMPLEMENTED | stdio/HTTP clients, lazy lifecycle, adoption, fencing, revoked-grant-safe `MCP_SERVER` capability issuance on activation (scoped stdio), and `McpServerRegistry` user-scope write path wired into `RuntimeCompositionRoot` (`agent/daemon`) and `McpCli` (`aidos mcp add/remove/list` in `agent/cli`); Android Binder transport tracked under RFC-0107 |
 | 0032 | IMPLEMENTED | JGit `GitTool` (`status`/`diff`/`add`/`commit`/`branch`/`log`/`checkout`/`switch`/`fetch`/`merge_ff`/`push`), `CapabilityScope.Git` per-op enforcement, `TreelessWorker` CAS + `refs/aidos/workers/*` pruning on session archive |
+| 0033 | IMPLEMENTED | `ShellTool` (`shell:exec`) in `agent/shell`: capability-scoped working directory (symlink-safe), `allowedCommands` without a shell, scrubbed environment, timeout with process-tree kill, 10 MB output cap, redacted output and `ShellExecuted` audit rows, `UNTRUSTED` results; registered by the daemon except on MOBILE; no OS-level sandbox (Non-MVP) |
 | 0034 | IMPLEMENTED | `RelPath` + symlink-safe delete/containment + read/write/list/search + non-mutating previews (`write`/`delete`/`move`/`mkdir`), `.git/` protection, atomic temp-file writes in `SqliteDirHandle`, and same-path `move` no-op safety built and tested |
 | 0035 | IMPLEMENTED | MVP built, wired into the daemon and the CLI, tested; requirement-by-requirement map in [RFC-0035 requirement map](#rfc-0035-requirement-map) below. Android Keystore (`agent/vault/src/androidMain`) exists as code (`AndroidKeystoreVault`) with `android()` target disabled in `agent/vault/build.gradle.kts` |
 | 0036 | IMPLEMENTED | MVP built, wired into the daemon and tested; requirement-by-requirement map in [RFC-0036 requirement map](#rfc-0036-requirement-map) below |
@@ -74,7 +75,6 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | RFC | Status | Note |
 |---|---|---|
 | 0022 Inference Backend Architecture | Implemented | Decisions D36-D44 settled; llama.cpp, ONNX (decisions, STT, vision) backends built and tested. |
-| 0033 Shell | Draft | No code; post-MVP. |
 | 0051 Desktop | Draft | Partial: Compose Desktop app (Engine host + Universal Adaptive UI) exists; IDE/Obsidian view modes, keyboard layer and remote-runtime connection not built (core views superseded by 0106). |
 | 0051 LAN Engine Sharing | Draft | Partial: desktop HTTPS LAN listener, per-device grants with per-app model/agent/locality approvals, code and manual pairing, pinned TLS identity built and tested; Android listener, UI screens, SDK pairing helper, mDNS discovery not built. |
 | 0060 Plugin SDK | Draft | Unscheduled (with 0043); MCP is the extension mechanism for now. |
