@@ -709,45 +709,45 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 **Forecloses:** Siloing desktop and mobile codebases into separate UI features; leaking private life context over network messaging channels; native inference crashes bringing down the UI or Git repositories.  
 **RFCs:** 0027, 0042, 0047, 0050, 0051, 0106, 0110, 0111, 0112; D42, D49.
 
-## D55. Desktop services: the UI, the Engine and the Agent runtime are three parties · `SETTLED`
+## D55. Desktop services: the UI, the Engine and the Agent runtime are three parties · `ACCEPTED`
 
-**Decision (settled by the owner 2026-11-15: "3 parts").** The desktop app is a UI. The Engine and the Agent runtime are separate background services (they already are two Gradle builds, and the daemon already calls the Engine over HTTP). **Proposed:** three parties. **Alternative:** one merged service, which needs merging two builds and the native model runtime for no functional gain.
+**Decision (accepted by the owner 2026-11-15: "3 parts").** The desktop app is a UI. The Engine and the Agent runtime are separate background services (they already are two Gradle builds, and the daemon already calls the Engine over HTTP). **Proposed:** three parties. **Alternative:** one merged service, which needs merging two builds and the native model runtime for no functional gain.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D56. Desktop services: per-user by default, system service when installed as administrator (proposed, amended)
+## D56. Desktop services: per-user by default, system service when installed as administrator · `ACCEPTED`
 
 **Decision.** Both modes are supported. By default the services start at login for the current user (Windows Scheduled Task, macOS launchd agent, Linux `systemd --user`) with no administrator rights. When the installer is run as administrator, the user can instead install them as system services (Windows service, launchd daemon, system `systemd` unit) so they run from boot. A system service still runs **as a named user account**, never as SYSTEM or root, because the data (`~/.aidos`) and the vault are per user; before that user logs in there is no OS keystore session, so a system install requires the vault's passphrase mode (or a later unlock) and the services start with the vault locked until then. Owner direction 2026-11-15: "per-user by default, system service when installed as admin".
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D57. Desktop services: Windows transport and token protection (proposed)
+## D57. Desktop services: Windows transport and token protection · `ACCEPTED`
 
-**Decision.** The Agent runtime keeps its Unix domain socket (Java supports it on Windows 10+) and the token file gets an owner-only ACL, as an error if it cannot be set (today `0600` is a silent no-op on Windows). **Proposed:** socket plus ACL. **Fallback:** loopback TCP with the token in an owner-only ACL file.
+**Decision.** The Agent runtime keeps its Unix domain socket (Java supports it on Windows 10+) and the token file gets an owner-only ACL, as an error if it cannot be set (today `0600` is a silent no-op on Windows). **Accepted (owner 2026-11-15):** socket plus ACL. **Fallback:** loopback TCP with the token in an owner-only ACL file.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D58. Desktop services: the Engine management API is loopback-only `/v1/admin/` · `SETTLED`
+## D58. Desktop services: the Engine management API is loopback-only `/v1/admin/` · `ACCEPTED`
 
 **Decision (accepted by the owner 2026-11-15, may be revisited).** The app controls an Engine service through `/v1/admin/` routes on the Engine's loopback listener, with the existing `engine.json` token. They are never installed on the LAN listener and never reachable through the AIDIN remote ingress. **Proposed:** loopback routes. **Alternatives:** a second control socket; or reuse the Agent wire protocol, which would mix two services' concerns.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D59. Desktop services: closing the app leaves services running, with a tray icon · `SETTLED`
+## D59. Desktop services: closing the app leaves services running, with a tray icon · `ACCEPTED`
 
 **Decision (settled by the owner 2026-11-15).** Closing the window leaves installed services running. Because the app is no longer what keeps them alive, a **system tray icon** is required: a small always-running tray process with a context menu (open the UI; start, stop and restart each service; close the daemon; quit the tray) and **quick approvals**: a toast when something needs the user, and a click on the tray icon opens a small approval popup with Approve and Deny. The tray is a separate lightweight process from the window, so the heavy UI can close while the tray stays.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D60. Desktop services: first release order (proposed)
+## D60. Desktop services: first release order · `ACCEPTED`
 
-**Decision.** Ship Agent-runtime attach first (small, and it removes the two-writers-on-one-SQLite-set hazard on its own), then the Engine service. **Proposed:** both stages, Agent attach first. **Alternatives:** Agent attach only; Engine service only.
+**Decision.** Ship Agent-runtime attach first (small, and it removes the two-writers-on-one-SQLite-set hazard on its own), then the Engine service. **Accepted (owner 2026-11-15):** both stages, Agent attach first. **Alternatives:** Agent attach only; Engine service only.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
-## D61. Desktop services: UI models move to `EngineControl` pane by pane (proposed)
+## D61. Desktop services: UI models move to `EngineControl` pane by pane · `ACCEPTED`
 
-**Decision.** The desktop models stop calling `DesktopEngineHost` directly and go through an `EngineControl` interface with in-process and HTTP implementations. **Proposed:** pane by pane, with a mix supported during the transition so the in-process path keeps working. **Alternative:** all panes in one change.
+**Decision.** The desktop models stop calling `DesktopEngineHost` directly and go through an `EngineControl` interface with in-process and HTTP implementations. **Accepted (owner 2026-11-15, "small steps"):** pane by pane, with a mix supported during the transition so the in-process path keeps working. **Alternative:** all panes in one change.
 
 **RFCs:** 0115 (draft), 0103, 0107, 0108.
 
@@ -776,4 +776,4 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 | 2026-11-10 | D53 proposed: remote routes; a tunnel is a transport, not a placement; layer split LAN only; Engine-managed SSH tunnels. |
 | 2026-11-14 | D49 amended: Single APK with multi-process native isolation (`:main` and `:native_inference`) for crash resilience and Android system assistant integration. |
 | 2026-11-14 | D54 settled: Universal UI parity across Desktop and Android (OTG/DeX responsive switching) and Blinded Egress Bridge for messaging across zero-egress Life and Code projects (RFC-0112). |
-| 2026-11-15 | D55 and D58 settled, D59 settled with a tray-icon requirement, D56 amended to support per-user and system services; D57, D60, D61 still open (RFC-0115). Earlier: D55-D61 proposed (tentative numbers): desktop background services and the app as a UI over them (RFC-0115): three parties, per-user services, Windows socket plus ACL, loopback admin API, leave services running, Agent attach first, pane-by-pane `EngineControl`. |
+| 2026-11-15 | D55 to D61 all accepted by the owner (RFC-0115); implementation starts with Agent-runtime attach. Before that: D55 and D58 settled, D59 settled with a tray-icon requirement, D56 amended to support per-user and system services; D57, D60, D61 still open (RFC-0115). Earlier: D55-D61 proposed (tentative numbers): desktop background services and the app as a UI over them (RFC-0115): three parties, per-user services, Windows socket plus ACL, loopback admin API, leave services running, Agent attach first, pane-by-pane `EngineControl`. |

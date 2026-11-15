@@ -1,8 +1,8 @@
 # RFC-0115: Desktop Background Services and the App as a UI over Them
 
-Status: Draft (planning, 2026-11-15). Nothing here is built. D55 (three parties), D58 (loopback admin API) and D59 (keep running, tray icon) are settled; D56 is amended (per-user by default, system service when installed as administrator); D57, D60 and D61 are open (`docs/decisions.md`).
+Status: Accepted for implementation (2026-11-15), in progress: stage 1 (Agent-runtime attach) first, in small steps. D55 to D61 are all accepted by the owner (2026-11-15; `docs/decisions.md`). D56 supports both per-user and system installs; D59 requires the tray icon.
 
-Decisions: D55 (settled), D56 (amended), D57 (open), D58 (settled), D59 (settled), D60 (open), D61 (open).
+Decisions: D55 to D61, all accepted.
 
 Related: RFC-0002 (runtime), RFC-0051 (LAN sharing), RFC-0055 (runtime socket and lock), RFC-0103 (Aidos Engine), RFC-0107/0108 (remote agent hosting, remote routes), RFC-0033 (Shell), RFC-0035 (secrets), `docs/TCR_UI_DEVELOPMENT_MANUAL.md`.
 
@@ -115,7 +115,7 @@ Closing the window leaves the services running, so something must still show tha
 - Integration: spawn the headless Engine and daemon, attach, exercise each pane's operations, stop and restart a service under a live app, version mismatch.
 - Security: admin routes absent on the LAN listener and the remote ingress; token ACL on Windows; an attached app opens no project database (assert by lock files and file handles).
 
-## Decisions needed before implementation (Proposed: D55 to D61)
+## Decisions (all accepted 2026-11-15)
 
 **D55 (was D1, settled: three parties).** (a) UI, Engine service and Agent service as three parties (recommended; matches how the code is already split and how the daemon already reaches the Engine). (b) One combined service: needs merging two Gradle builds and the native runtime into the daemon for no functional gain.
 
@@ -130,6 +130,10 @@ Closing the window leaves the services running, so something must still show tha
 **D60 (was D6). Scope of the first release.** (a) Both stages in the order above, Agent attach first (recommended). (b) Agent attach only, leave the Engine in the app until later. (c) Engine only. Recommendation includes shipping phase 2 on its own, since it removes the two-writer risk even without the Engine work.
 
 **D61 (was D7). Refactor depth for the UI models.** (a) All panes onto `EngineControl` in one change, mechanical but wide (about a dozen models). (b) Pane by pane, with the app supporting a mix during the transition (recommended: smaller reviews, the in-process path keeps working throughout).
+
+## Platform notes
+
+The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and macOS as well as Windows; the agent and engine suites already run on `ubuntu-latest`. Risks to carry: the Compose window and tray have only been exercised on Windows; the Java tray needs the AppIndicator extension on GNOME and a status-notifier host on some desktops; on Linux the vault uses libsecret when present and the passphrase mode otherwise.
 
 ## Implementation Files
 
