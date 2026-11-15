@@ -28,6 +28,7 @@ import dev.aidos.intent.SnapshotReconcileResult
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.ui.frontdoors.gates.ApprovalGateIntent
 import dev.aidos.ui.frontdoors.gates.ApprovalGatePresenter
+import dev.aidos.ui.frontdoors.gates.toUiModel
 import dev.aidos.ui.frontdoors.gates.BlindedEgressRequestUiModel
 import dev.aidos.ui.frontdoors.gates.SplitVerificationUiModel
 import dev.aidos.ui.frontdoors.inbox.ActionInboxIntent
@@ -85,6 +86,35 @@ class PhaseThreeTest {
 
         assertEquals("req-999", approvedRequestId)
         assertEquals(1, networkPacketsSent)
+        assertEquals(0, presenter.state.value.pendingEgressRequests.size)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun testGateCardFollowsTheRuntimesParkedMessagesAndDecidesThroughTheRun() = runTest {
+        val decided = mutableListOf<String>()
+        val presenter = ApprovalGatePresenter(
+            scope = this,
+            ioDispatcher = Dispatchers.Unconfined,
+            onEgressApproved = { runId -> decided += "approve:$runId" },
+            onEgressDenied = { runId, reason -> decided += "deny:$runId:$reason" },
+        )
+        val parked = dev.aidos.api.ParkedEgressRequest(
+            runId = "run-1", projectId = "life", channel = "sms", recipient = "Alice", payload = "Dinner at 8:30.",
+        )
+        presenter.syncEgressRequests(listOf(parked.toUiModel()))
+        val card = presenter.state.value.pendingEgressRequests.single()
+        assertEquals("run-1", card.requestId, "the card's id is the parked Run, so Approve resumes exactly that Run")
+        assertEquals("Dinner at 8:30.", card.payloadPreview)
+        assertEquals(parked.payloadFingerprint, card.cryptographicFingerprint)
+        assertEquals(64, card.cryptographicFingerprint.length)
+
+        presenter.send(ApprovalGateIntent.DenyEgress("run-1", "not now"))
+        advanceUntilIdle()
+        assertEquals(listOf("deny:run-1:not now"), decided)
+
+        // The runtime no longer lists it (decided elsewhere): the card goes away.
+        presenter.syncEgressRequests(emptyList())
         assertEquals(0, presenter.state.value.pendingEgressRequests.size)
     }
 

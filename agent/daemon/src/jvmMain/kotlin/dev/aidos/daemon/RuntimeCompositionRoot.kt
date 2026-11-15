@@ -22,6 +22,17 @@ import dev.aidos.executor.GuardianApprovalVerifier
 import dev.aidos.executor.LlmGuardianApprovalVerifier
 import dev.aidos.executor.RecalledMemoryItem
 import dev.aidos.executor.RemoteModelEgressTool
+import dev.aidos.bridge.BlindedQueryDispatcher
+import dev.aidos.bridge.BlindedQueryTool
+import dev.aidos.bridge.BridgeRuntime
+import dev.aidos.bridge.BridgeScopeLookup
+import dev.aidos.bridge.IntentGraphLifeProjectStore
+import dev.aidos.bridge.MessageSendTool
+import dev.aidos.bridge.OutboundMessageRequest
+import dev.aidos.bridge.OutboundMessageTransport
+import dev.aidos.bridge.ProjectAuditBridgeLogger
+import dev.aidos.bridge.ProjectIngressTaskHandler
+import dev.aidos.bridge.RegisteredProjectDrivers
 import dev.aidos.executor.RunCreator
 import dev.aidos.executor.SqlBudgetLedger
 import dev.aidos.executor.SqliteExecutor
@@ -159,6 +170,22 @@ class RuntimeCompositionRoot(
     val platform: PlatformAdapter = DesktopPlatformAdapter(),
     /** RFC-0045: live degradation-ladder monitor & `degradation_events` recorder. */
     val degradationMonitor: DaemonDegradationMonitor = DaemonDegradationMonitor(userDriver = userDriver),
+    /**
+     * RFC-0113: the messenger adapter that puts an approved message on the wire. `null` (nothing
+     * installed) means `message:send` can never deliver anything, which is the safe default.
+     */
+    messageTransport: OutboundMessageTransport? = null,
+    /** RFC-0113: state databases of every project this daemon has opened, for blinded queries across projects. */
+    val bridgeDrivers: RegisteredProjectDrivers = RegisteredProjectDrivers(),
+    /** RFC-0113: the Blinded Egress Bridge shared by every project's `message:send` and `bridge:*` tools. */
+    val bridge: BridgeRuntime = BridgeRuntime(
+        dispatcher = BlindedQueryDispatcher(
+            stateStore = IntentGraphLifeProjectStore(bridgeDrivers),
+            ingressHandler = ProjectIngressTaskHandler(bridgeDrivers),
+            auditLogger = ProjectAuditBridgeLogger(bridgeDrivers, deviceId = "runtime"),
+        ),
+        transport = messageTransport,
+    ),
 ) {
     private val knowledgeRoots = java.util.concurrent.ConcurrentHashMap<String, String>()
     /**
@@ -323,6 +350,10 @@ class RuntimeCompositionRoot(
             ?: return CapabilityApprovalResolution.NotFound(runId)
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso)
         val networkAvailable = runNetworkAvailable(projectDriver, runId)
+        if (!approved) {
+            // RFC-0113 §4.3 step 4: a refusal leaves no grant; zero bytes leave the device.
+            parkedMessageForRun(projectDriver, runId)?.let { bridge.recordHumanRejection(it, denialReason ?: "Rejected by user") }
+        }
 
         return buildExecutor(
             projectDriver = projectDriver,
@@ -336,6 +367,9 @@ class RuntimeCompositionRoot(
             nowIso = nowIso,
             runId = runId,
         ).resolveToolCallApproval(runId, approved, denialReason, approvalChannel, approvalPhrase) { detailJson ->
+                // RFC-0113 §4.3 step 4: only here, on a person's approval, does the single-use
+                // declassification grant for this exact message come into being.
+                parkedMessageFor(projectDriver, projectId, detailJson)?.let { bridge.recordHumanApproval(it) }
                 val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
                 val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
                     ?: return@resolveToolCallApproval
@@ -417,6 +451,71 @@ class RuntimeCompositionRoot(
             nowIso = nowIso,
             runId = runId,
         ).resolveUserPrompt(runId, answer, denialReason)
+    }
+
+    /**
+     * RFC-0113: gives this project's sessions the Blinded Egress Bridge tools. `bridge:*` lets a
+     * messaging session ask a private project typed yes/no questions; `message:send` is the egress
+     * gate (a private project's message is held for a person's approval). Both stay inert until a
+     * `BLINDED_QUERY` / `MESSAGE_SEND` capability names what they may do (see [CapabilityScope.Bridge]).
+     */
+    private fun registerBridgeTools(
+        broker: ToolBroker,
+        capabilityManager: SqliteCapabilityManager,
+        projectDriver: SqlDriver,
+        projectId: ProjectId,
+        sessionId: String,
+        egressPolicy: EgressPolicy,
+    ) {
+        if (projectId.value.isBlank()) return
+        bridgeDrivers.register(projectId.value, projectDriver)
+        bridge.policies.register(projectId.value, egressPolicy)
+        val scopes = BridgeScopeLookup { capabilityId ->
+            capabilityManager.loadForSubject(sessionId)
+                .firstOrNull { it.id == capabilityId }?.scope as? CapabilityScope.Bridge
+        }
+        broker.register(BlindedQueryTool(bridge, scopes, actorId = sessionId))
+        broker.register(MessageSendTool(bridge, scopes, projectId.value, projectType = { projectTypeOf(projectDriver, projectId.value) }))
+    }
+
+    private fun projectTypeOf(driver: SqlDriver, projectId: String): String =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_type FROM projects WHERE id = ?",
+            mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, projectId) }.value ?: "generic"
+
+    /**
+     * RFC-0113 §4.3 steps 3-5: the parked `message:send` call a person is deciding on, rebuilt from the
+     * durable `tool_calls` row the parked continuation points at. `null` when the continuation is not
+     * a message send. Reading the arguments from the database (not from anything the model hands
+     * back) is what makes the grant bind to what the person actually saw.
+     */
+    private fun parkedMessageFor(driver: SqlDriver, projectId: String, operationDetailJson: String): OutboundMessageRequest? {
+        val detail = runCatching { Json.parseToJsonElement(operationDetailJson).jsonObject }.getOrNull() ?: return null
+        if (detail["toolName"]?.jsonPrimitive?.content != MessageSendTool.SEND) return null
+        val callId = detail["callId"]?.jsonPrimitive?.content ?: return null
+        val argumentsJson = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT arguments_json FROM tool_calls WHERE call_id = ?",
+            mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, callId) }.value ?: return null
+        val arguments = runCatching { Json.parseToJsonElement(argumentsJson).jsonObject }.getOrNull() ?: return null
+        return runCatching { bridge.requestFor(projectId, projectTypeOf(driver, projectId), arguments) }.getOrNull()
+    }
+
+    /** The message a Run is parked on right now, for the Human Egress Gate Card (RFC-0113 §4.3 step 3). */
+    fun parkedMessageForRun(projectDriver: SqlDriver, runId: RunId): OutboundMessageRequest? {
+        val (_, projectId, _) = runOwnership(projectDriver, runId) ?: return null
+        val detail = projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT operation_detail_json FROM continuations WHERE run_id = ? AND suspended_operation = 'TOOL_CALL'",
+            mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, runId.value) }.value ?: return null
+        return parkedMessageFor(projectDriver, projectId, detail)?.copy(runId = runId.value)
     }
 
     private fun runOwnership(driver: SqlDriver, runId: RunId): Triple<String, String, String>? =
@@ -590,6 +689,7 @@ class RuntimeCompositionRoot(
         // routing.remote_egress (SECURITY); resolving the policy against the project scope here
         // makes that attempt provably not apply.
         val egressPolicy = resolveEgressPolicy(userDriver, projectSettings)
+        registerBridgeTools(broker, capabilityManager, projectDriver, projectId, sessionId, egressPolicy)
         if (egressPolicy == EgressPolicy.ALLOW && remoteAdapters.isNotEmpty() &&
             !capabilityManager.hasSubjectCapabilityHistory(sessionId, SubjectKind.SESSION, Permission.NETWORK_EGRESS)
         ) {

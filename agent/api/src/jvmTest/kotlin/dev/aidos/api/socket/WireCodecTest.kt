@@ -102,6 +102,23 @@ class WireCodecTest {
     }
 
     @Test
+    fun `ParkedEgressRequest list round-trips`() {
+        val list = listOf(
+            dev.aidos.api.ParkedEgressRequest("run-1", "life", "sms", "Alice", "Dinner at 8:30.", reason = "reply"),
+            dev.aidos.api.ParkedEgressRequest("run-2", "life", "matrix", "@b:matrix.org", "ok"),
+        )
+        assertEquals(list, Wire.decodeParkedEgressList(Wire.encodeParkedEgressList(list)))
+    }
+
+    @Test
+    fun `payload fingerprint is SHA-256`() {
+        val text = "I can't make it at 7, but 8:30 works. \u00e4\u00f6"
+        val expected = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(expected, dev.aidos.api.PayloadFingerprint.sha256Hex(text))
+    }
+
+    @Test
     fun `EventFilter round-trips including sinceSequence`() {
         val filter = EventFilter(listOf("p1"), listOf("s1"), listOf(RuntimeEventType.RUN_STARTED), sinceSequence = 42L)
         assertEquals(filter, Wire.decodeEventFilter(Wire.encodeEventFilter(filter)))

@@ -5,6 +5,7 @@ import dev.aidos.api.CreateProjectRequest
 import dev.aidos.api.CreateSessionRequest
 import dev.aidos.api.EventFilter
 import dev.aidos.api.GrantCapabilityRequest
+import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
 import dev.aidos.api.ProjectLocation
 import dev.aidos.api.ProjectResult
@@ -286,6 +287,31 @@ object Wire {
 
     fun decodePendingCapabilityList(json: JsonArray): List<PendingCapabilityRequest> =
         json.map { decodePendingCapabilityRequest(it.jsonObject) }
+
+    fun encodeParkedEgressList(list: List<ParkedEgressRequest>): JsonArray = buildJsonArray {
+        list.forEach {
+            add(buildJsonObject {
+                put("runId", it.runId)
+                put("projectId", it.projectId)
+                put("channel", it.channel)
+                put("recipient", it.recipient)
+                put("payload", it.payload)
+                it.reason?.let { reason -> put("reason", reason) }
+            })
+        }
+    }
+
+    fun decodeParkedEgressList(json: JsonArray): List<ParkedEgressRequest> = json.map {
+        val o = it.jsonObject
+        ParkedEgressRequest(
+            runId = o["runId"]!!.jsonPrimitive.content,
+            projectId = o["projectId"]!!.jsonPrimitive.content,
+            channel = o["channel"]!!.jsonPrimitive.content,
+            recipient = o["recipient"]!!.jsonPrimitive.content,
+            payload = o["payload"]!!.jsonPrimitive.content,
+            reason = o["reason"]?.jsonPrimitive?.content,
+        )
+    }
 
     // ── Events ─────────────────────────────────────────────────────────────
 

@@ -142,6 +142,9 @@ object RuntimeClientFactory {
             val reconciler = GitRunReconciler(nowIso = nowIso, deviceId = deviceIdentity.deviceId.value)
             onProjectCreate = { projectPath -> ensureAidosGitignore(projectPath) }
             onProjectOpen = { projectId, driver ->
+                // RFC-0113: a project must be reachable for blinded queries as soon as it is open,
+                // not only once one of its own Runs has been driven.
+                compositionRoot.bridgeDrivers.register(projectId, driver)
                 reconciler.reconcileOnOpen(driver, ProjectId(projectId))
             }
             onSessionArchive = { sessionId, _, projectPath ->
