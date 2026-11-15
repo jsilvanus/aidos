@@ -405,6 +405,12 @@ class AgentLoopTaskRunner(
     private val recallSessionMemory: ((sessionId: String, projectId: String) -> List<RecalledMemoryItem>)? = null,
     /** RFC-0026: refreshes FACT TTLs when recalled into a Run's context. */
     private val onMemoryRecalled: ((entryIds: List<String>) -> Unit)? = null,
+    /**
+     * RFC-0015 / RFC-0025: retrieval-backed context from the project knowledge index. Everything it
+     * returns is third-party material to the prompt assembler. Failure or absence never fails a Run:
+     * a Run with no index simply has no retrieved context. Defaults to none.
+     */
+    private val knowledgeProvider: dev.aidos.kernel.KnowledgeContextProvider? = null,
 ) : TaskRunner {
 
     /** Undoes [LargeOutputStore.externalize] for a snapshot read back from `attempts`. */
@@ -518,11 +524,20 @@ class AgentLoopTaskRunner(
                 trustLevel = item.trustLevel,
             )
         }
+        val retrievedKnowledge = knowledgeProvider?.let { provider ->
+            runCatching {
+                provider.query(
+                    run.projectId,
+                    dev.aidos.kernel.KnowledgeQuery(userMessage = run.userMessageSummary),
+                    tokenBudget = 2_000,
+                )
+            }.getOrDefault(emptyList())
+        }.orEmpty()
         val assemblyReq = AssemblyRequest(
             model = adapter,
             userMessage = run.userMessageSummary,
             tools = availableTools,
-            knowledgeContext = memoryContextItems,
+            knowledgeContext = memoryContextItems + retrievedKnowledge,
             conversationHistory = history,
             instructionSet = instructionSet,
         )

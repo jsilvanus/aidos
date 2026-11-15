@@ -1059,4 +1059,61 @@ class AgentLoopTaskRunnerTest {
         ) { bindString(0, runId.value) }.value
         assertEquals("UNTRUSTED", persistedTaint)
     }
+
+    @Test
+    fun `retrieved knowledge reaches the prompt as sandboxed context and a failing provider never fails the Run (RFC-0015)`() = runBlocking {
+        for (failing in listOf(false, true)) {
+            val driver = openDriver()
+            val (_, _, runId) = createRun(driver)
+            val log = mutableListOf<ModelRequest>()
+            val localAdapter = fakeModel(listOf(endTurnResponse("done")), requestLog = log)
+            val provider = object : dev.aidos.kernel.KnowledgeContextProvider {
+                override suspend fun query(
+                    projectId: dev.aidos.kernel.ProjectId,
+                    query: dev.aidos.kernel.KnowledgeQuery,
+                    tokenBudget: Int,
+                    excludeNodeIds: List<dev.aidos.kernel.ContentNodeId>,
+                ): List<dev.aidos.kernel.ContextItem> {
+                    if (failing) throw IllegalStateException("index unavailable")
+                    return listOf(
+                        dev.aidos.kernel.ContextItem(
+                            contentNodeId = null,
+                            kind = dev.aidos.kernel.ContextItemKind.CODE_SNIPPET,
+                            content = "Foo.kt:1-3 RETRIEVED_MARKER",
+                            relevanceScore = 0.9f,
+                            tokenCount = 8,
+                            trustLevel = TrustLevel.PROJECT,
+                        )
+                    )
+                }
+                override suspend fun indexStatus(projectId: dev.aidos.kernel.ProjectId) =
+                    dev.aidos.kernel.IndexStatus(0, 0, null, true)
+            }
+            val runner = AgentLoopTaskRunner(
+                driver = driver,
+                audit = AuditLog(driver, "dev-1"),
+                idGen = { nextId() },
+                nowIso = { nowIso },
+                router = object : InferenceRouter {
+                    override suspend fun select(kind: ModelKind, context: RoutingContext): RoutingDecision =
+                        RoutingDecision.Local(localAdapter)
+                },
+                assembler = PromptAssembler(),
+                broker = noOpBroker(),
+                knowledgeProvider = provider,
+            )
+            SqliteExecutor(
+                driver = driver,
+                audit = AuditLog(driver, "dev-1"),
+                events = EventStore(driver),
+                idGen = { nextId() },
+                nowIso = { nowIso },
+                taskRunner = runner,
+            ).drive(runId)
+            assertEquals(1, log.size, "run must still reach the model (failing=$failing)")
+            val text = log.single().messages.joinToString("\n") { it.toString() }
+            assertEquals(!failing, text.contains("RETRIEVED_MARKER"))
+            if (!failing) assertTrue(text.contains("<context"), "retrieved text must be sandboxed in <context>")
+        }
+    }
 }

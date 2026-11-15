@@ -160,6 +160,19 @@ class RuntimeCompositionRoot(
     /** RFC-0045: live degradation-ladder monitor & `degradation_events` recorder. */
     val degradationMonitor: DaemonDegradationMonitor = DaemonDegradationMonitor(userDriver = userDriver),
 ) {
+    private val knowledgeRoots = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /**
+     * RFC-0015: daemon-wide knowledge index service. Project roots register as Runs start; each
+     * project gets one background indexing job (resource-budgeted, cancellable) and its Runs get
+     * retrieval context through [dev.aidos.kernel.KnowledgeContextProvider].
+     */
+    val knowledgeService: dev.aidos.knowledge.ProjectKnowledgeService = dev.aidos.knowledge.ProjectKnowledgeService(
+        rootFor = { pid -> knowledgeRoots[pid] },
+        modelRuntime = modelRuntime,
+        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+        maxConcurrentIndexing = if (platform.profile == dev.aidos.kernel.PlatformProfile.MOBILE) 1 else 2,
+    )
+
     /** RFC-0031: user-scope write path for `mcp_servers` when [userDriver] is present. */
     val mcpServerRegistry: McpServerRegistry? = userDriver?.let(::McpServerRegistry)
 
@@ -654,6 +667,9 @@ class RuntimeCompositionRoot(
             )
         val budgetLedger = SqlBudgetLedger(projectDriver, idGen, nowIso)
         val contentNodeStore = SqliteContentNodeStore(projectDriver)
+        // RFC-0015: register the root and make sure this project has its background indexing job.
+        knowledgeRoots[projectId.value] = rootPath
+        knowledgeService.ensureIndexing(projectId.value)
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
@@ -690,6 +706,7 @@ class RuntimeCompositionRoot(
             },
             taintInputScreener = resolvedScreener,
             guardianVerifier = resolvedGuardianVerifier,
+            knowledgeProvider = knowledgeService,
             resolveTaintApprovalPolicyForRun = { activeRunId ->
                 resolveTaintApprovalPolicy(
                     userDriver = userDriver,

@@ -22,6 +22,7 @@ kotlin {
                 implementation(project(":filesystem"))
                 implementation(project(":git"))
                 implementation(project(":prompt"))
+                implementation(project(":knowledge"))
                 implementation(project(":memory"))
                 implementation(project(":routing"))
                 implementation(project(":http"))

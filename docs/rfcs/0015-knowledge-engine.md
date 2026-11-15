@@ -1,7 +1,7 @@
 # RFC-0015: Knowledge Engine
 
-Status: Accepted 2026-08-04
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-04). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (uncommitted-content indexing, structural graph and symbol-level identity, multi-repo and cross-project search, ranking-weight tuning, on-device (Android instrumented) validation)
 ## Abstract
 
 The Knowledge Engine gives a session semantic access to a project's code and history: *what in
@@ -422,3 +422,23 @@ turn the ranking weights from inherited constants into a decision.
 **Capability gaps are upstream work.** Aidos's contribution here is the adapter and the resource
 discipline. A knowledge feature the library does not have is a `gitsema-kotlin` change, not an
 Aidos one — which is the point of consuming a library rather than building an engine (D29).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/ProjectKnowledgeService.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/GitsemaKnowledgeIndex.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/KnowledgeIndex.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/KnowledgeIndexFactory.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/LocalOnlyEmbeddingProvider.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/ModelAdapterEmbeddingProvider.kt
+  - agent/knowledge/src/jvmMain/kotlin/dev/aidos/knowledge/IndexingJob.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Knowledge.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/knowledge/src/jvmTest/kotlin/dev/aidos/knowledge/ProjectKnowledgeServiceTest.kt
+  - agent/knowledge/src/jvmTest/kotlin/dev/aidos/knowledge/KnowledgeIndexTest.kt
+  - agent/knowledge/src/jvmTest/kotlin/dev/aidos/knowledge/KnowledgeServiceIntegrationTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
+```
