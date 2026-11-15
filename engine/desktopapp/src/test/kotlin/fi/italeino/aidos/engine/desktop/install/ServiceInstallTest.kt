@@ -123,4 +123,30 @@ class ServiceInstallTest {
         assertEquals(listOf("java", "-cp", "d.jar", "dev.aidos.daemon.MainKt"), sys.command)
         assertTrue(InstallCli.specFor("agent", listOf("--install-service", "agent", "--exec", "java")).env.isEmpty())
     }
+
+    @Test
+    fun `a dry run describes the install and runs nothing`() {
+        val out = mutableListOf<String>()
+        val ran = mutableListOf<List<String>>()
+        val code = InstallCli.run(
+            listOf("--install-service", "engine", "--dry-run"), out::add,
+            ServiceInstaller(run = { ran += it; 0 }, isElevated = { true }), OsFamily.LINUX,
+        )
+        assertEquals(0, code)
+        assertTrue(ran.isEmpty(), "a dry run applies nothing")
+        val text = out.joinToString("\n")
+        assertTrue(text.contains("Would install engine (user)") && text.contains("ExecStart=") && text.contains("run   systemctl --user enable --now aidos-engine.service"), text)
+        val gone = mutableListOf<String>()
+        InstallCli.run(listOf("--uninstall-service", "engine", "--dry-run"), gone::add, ServiceInstaller(run = { ran += it; 0 }), OsFamily.WINDOWS)
+        assertTrue(gone.joinToString("\n").contains("Would remove engine") && gone.joinToString("\n").contains("schtasks /Delete"))
+        assertTrue(ran.isEmpty())
+    }
+
+    @Test
+    fun `the tray check reports without starting anything`() {
+        val lines = mutableListOf<String>()
+        val code = fi.italeino.aidos.engine.desktop.tray.TrayCheck.run(lines::add)
+        assertTrue(code == 0 || code == 2)
+        assertTrue(lines.any { it.contains("system tray:") } && lines.any { it.contains("Engine service:") })
+    }
 }

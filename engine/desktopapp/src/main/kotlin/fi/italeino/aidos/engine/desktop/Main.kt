@@ -22,6 +22,10 @@ import java.io.File
 
 /** Entry point of the Windows desktop application and daemon for Aidos Engine (RFC-0103). */
 fun main(args: Array<String>) {
+    if (args.contains("--tray-check")) {
+        // RFC-0115: what a real-desktop test needs to know before trying the tray.
+        System.exit(fi.italeino.aidos.engine.desktop.tray.TrayCheck.run())
+    }
     if (args.contains("--install-service") || args.contains("--uninstall-service")) {
         System.exit(fi.italeino.aidos.engine.desktop.install.InstallCli.run(args.toList()))
     }

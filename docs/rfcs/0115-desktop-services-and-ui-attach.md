@@ -156,7 +156,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
   Tested with a fake live server.
 - **Cross-process end to end, done:** `HeadlessEngineAttachTest` starts a real headless Engine as its own JVM, attaches the window's controls (status, apps, vault, agents, LAN) through `engine.json` and the admin API, checks the window would not start a second Engine, and has the tray's stop make the process exit.
 - **Agent daemon vault mode, done:** `DaemonVaultGate` (`AIDOS_VAULT_MODE=passphrase`, set by `--install-service agent --system`): the daemon starts locked and carries on without a vault, and `vault.status` / `vault.unlock` / `vault.lock` on the daemon socket (`SocketRuntimeClient.vaultStatus/vaultUnlock/vaultLock`) open it with the passphrase and register its secrets with the log redactor. The Engine and the daemon share one vault, so the tray's `Unlock vault…` unlocks both with one passphrase. Also fixed: the tray and the window now connect to the daemon as interactive, because the daemon refuses capability approvals and grants from a connection that claims no TTY, which would have made every tray Approve fail.
-- **Next:** feeding adopted MCP tools into the Engine's agent loop, and trying the tray and installers on a real Windows task / Linux unit / macOS agent (needs a real desktop).
+- **Ready for a real-desktop test:** `--tray-check` (read-only report of tray support, services, vault lock and waiting approvals), `--dry-run` on every install and uninstall (prints the files and commands, applies nothing), and [desktop-services-e2e.md](../desktop-services-e2e.md), the step-by-step checklist. The run itself needs a real desktop and, for machine-wide installs, a second account.
+- **Next:** feeding adopted MCP tools into the Engine's agent loop, and running that checklist (it needs a real desktop).
 
 ## Implementation Files
 
@@ -237,4 +238,6 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/McpManager.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopMcpModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/McpManagerTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayCheck.kt
+  - docs/desktop-services-e2e.md
 ```

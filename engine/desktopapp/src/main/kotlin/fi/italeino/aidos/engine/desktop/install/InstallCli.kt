@@ -19,6 +19,11 @@ object InstallCli {
             out(e.message ?: "invalid arguments"); return 2
         }
         val plan = ServiceDefinitions.plan(spec, os)
+        if (args.contains("--dry-run")) {
+            // Shows exactly what would be written and run, and changes nothing: for checking a machine before the real install.
+            out(describe(spec, plan, uninstall))
+            return 0
+        }
         val result = if (uninstall) installer.uninstall(plan) else installer.install(plan)
         return when (result) {
             is ServiceInstaller.Result.Installed -> { out(if (uninstall) "Removed ${spec.name}." else "Installed ${spec.name}; it starts ${if (spec.scope == InstallScope.USER) "when you sign in" else "with the machine"}."); 0 }
@@ -26,6 +31,14 @@ object InstallCli {
             is ServiceInstaller.Result.Failed -> { out("Failed: ${result.command.joinToString(" ")} exited ${result.exitCode}"); 1 }
         }
     }
+
+    /** The plan in words: files with their content, then each command, as it would be applied. */
+    fun describe(spec: ServiceSpec, plan: ServicePlan, uninstall: Boolean): String = buildString {
+        appendLine("${if (uninstall) "Would remove" else "Would install"} ${spec.name} (${spec.scope.name.lowercase()}${spec.runAsUser?.let { ", as $it" } ?: ""})" + if (plan.needsElevation) " - needs an administrator or root shell" else "")
+        if (!uninstall) plan.files.forEach { f -> appendLine("write ${f.path}:"); f.content.lines().forEach { appendLine("    $it") } }
+        (if (uninstall) plan.uninstall else plan.install).forEach { appendLine("run   " + it.joinToString(" ")) }
+        if (uninstall) plan.removeFiles.forEach { appendLine("delete $it") }
+    }.trimEnd()
 
     fun specFor(name: String?, args: List<String>): ServiceSpec {
         val own = args.takeWhile { it != "--exec" }
