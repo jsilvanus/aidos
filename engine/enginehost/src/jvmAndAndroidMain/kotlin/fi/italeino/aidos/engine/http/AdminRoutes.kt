@@ -140,3 +140,24 @@ internal fun Route.adminVaultRoutes(control: fi.italeino.aidos.engine.control.Va
     }
     post("/v1/admin/vault/lock") { adminGuard(call, adminSubjects) { control.lock(); call.respond(HttpStatusCode.NoContent) } }
 }
+
+/** `/v1/admin/models`: installed models, Hub search, one-click installs and delete (RFC-0115). Loopback and admin only. */
+internal fun Route.adminModelsRoutes(control: fi.italeino.aidos.engine.control.ModelsControl, adminSubjects: Set<String>) {
+    suspend fun admin(call: ApplicationCall, block: suspend () -> Unit) = adminGuard(call, adminSubjects, block)
+
+    get("/v1/admin/models") { admin(call) { call.respond(control.installed()) } }
+    post("/v1/admin/models/search") {
+        admin(call) {
+            val r = call.receive<fi.italeino.aidos.engine.control.ModelSearchRequest>()
+            call.respond(control.searchRemote(r.query, r.kind, r.minContext, r.filters))
+        }
+    }
+    post("/v1/admin/models/install") {
+        admin(call) { control.startInstall(call.receive<fi.italeino.aidos.engine.control.ModelInstallRequest>().suggestionId); call.respond(HttpStatusCode.Accepted) }
+    }
+    get("/v1/admin/models/installs") { admin(call) { call.respond(control.installs()) } }
+    // Model ids can contain slashes (org/name), so the id is the whole remaining path.
+    delete("/v1/admin/models/{id...}") {
+        admin(call) { control.delete(call.parameters.getAll("id").orEmpty().joinToString("/")); call.respond(HttpStatusCode.NoContent) }
+    }
+}

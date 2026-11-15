@@ -140,6 +140,9 @@ class DesktopEngineHost(
      */
     private val engineLocality: (() -> Locality)? = null,
 ) {
+    /** Models control over this host. One instance, because it owns the installs that are running. */
+    val modelsControl: LocalModelsControl by lazy { LocalModelsControl(this) }
+
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
     val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -368,6 +371,7 @@ class DesktopEngineHost(
                 appsControl = LocalAppsControl(this),
                 statusControl = LocalStatusControl(this),
                 vaultControl = vaultGate,
+                modelsControl = modelsControl,
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),

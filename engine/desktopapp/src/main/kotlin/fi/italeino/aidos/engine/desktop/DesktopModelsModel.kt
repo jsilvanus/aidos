@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -47,6 +48,8 @@ class DesktopModelsModel(
     private val host: DesktopEngineHost,
     private val prefs: DesktopPreferences,
     private val scope: CoroutineScope,
+    private val control: () -> fi.italeino.aidos.engine.control.ModelsControl = { host.modelsControl },
+    private val installPollMillis: Long = 1_000,
 ) {
     private val raw = MutableStateFlow(RawModelsState())
     private val installedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -85,16 +88,28 @@ class DesktopModelsModel(
 
     init {
         refresh()
+        // Installs belong to the Engine (they carry on in a background service), so their progress is read back, not kept here.
+        scope.launch {
+            var previous = emptySet<String>()
+            while (isActive) {
+                val now = runCatching { control().installs() }.getOrNull()
+                if (now != null) {
+                    installs.value = now.associate { it.modelId to InstallProgress(it.percent, it.error, it.active) }
+                    val running = now.filter { it.active }.map { it.modelId }.toSet()
+                    if ((previous - running).any { id -> now.none { it.modelId == id && !it.active } }) refresh() // finished without an error
+                    previous = running
+                }
+                delay(installPollMillis)
+            }
+        }
     }
 
     fun refresh() {
         scope.launch {
             raw.value = raw.value.copy(isLoading = true)
             try {
-                val installed = withContext(Dispatchers.IO) {
-                    host.modelBrowser.browse(onlyInstalled = true).getOrThrow()
-                }
-                raw.value = raw.value.copy(localModels = installed.map { it.toUiModel() }.distinctBy { it.id })
+                val installed = control().installed()
+                raw.value = raw.value.copy(localModels = installed.map { it.toUi() }.distinctBy { it.id })
                 installedIds.value = installed.map { it.id }.toSet()
             } catch (e: CancellationException) {
                 throw e
@@ -112,14 +127,12 @@ class DesktopModelsModel(
             if (query.isNotEmpty()) delay(500)
             raw.value = raw.value.copy(isSearching = true)
             try {
-                val results = withContext(Dispatchers.IO) {
-                    host.modelBrowser.searchRemote(
-                        query.ifBlank { null }, kind, minContext,
-                        accept = { filters.accepts(it.toUiModel()) },
-                    ).getOrThrow()
-                }
+                val results = control().searchRemote(
+                    query.ifBlank { null }, kind?.name, minContext,
+                    fi.italeino.aidos.engine.control.ModelSearchFiltersInfo(filters.minSizeMb, filters.maxSizeMb, filters.fitsDeviceOnly, filters.runnableOnly),
+                )
                 // The lists are keyed by id; a duplicate key is an IllegalArgumentException in Compose.
-                raw.value = raw.value.copy(cookbookModels = results.map { it.toUiModel() }.distinctBy { it.id })
+                raw.value = raw.value.copy(cookbookModels = results.map { it.toUi() }.distinctBy { it.id })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -136,33 +149,14 @@ class DesktopModelsModel(
 
     /** One-click install of a suggested artifact through the Engine's shared installer. */
     fun installSuggestion(id: String) {
-        val model = SuggestedModels.all.firstOrNull { it.id == id } ?: return
         if (installs.value[id]?.active == true) return
         scope.launch {
             setInstall(id, InstallProgress())
-            val destination = File(host.artifactDir, SuggestedModels.artifactName(model))
-            val result = DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).install(
-                ModelDownloadRequest(
-                    modelId = model.id,
-                    artifactName = SuggestedModels.artifactName(model),
-                    downloadUrl = model.downloadUrl,
-                    destination = destination.absolutePath,
-                    kind = ModelKind.LLM,
-                    format = model.format,
-                    backend = model.backend,
-                    quantization = model.format.uppercase(),
-                )
-            ) { event ->
-                if (event is InstallerEvent.DownloadProgress) {
-                    val total = event.totalBytes ?: model.approxSizeBytes
-                    val percent = if (total > 0) ((event.bytesDownloaded * 100) / total).toInt().coerceIn(0, 100) else 0
-                    setInstall(id, InstallProgress(percent))
-                }
-            }
-            result.onSuccess {
-                setInstall(id, null)
-                refresh()
-            }.onFailure { e ->
+            try {
+                control().startInstall(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 setInstall(id, InstallProgress(error = "Install failed: ${e.message ?: "unknown error"}", active = false))
             }
         }
@@ -174,12 +168,7 @@ class DesktopModelsModel(
     fun deleteModel(modelId: String) {
         scope.launch {
             try {
-                host.modelRuntime?.let { runtime ->
-                    if (modelId in runtime.loaded()) runtime.unload(modelId)
-                }
-                withContext(Dispatchers.IO) {
-                    DefaultModelInstallerWorkflow(host.downloadManager, host.catalogManager).uninstall(modelId).getOrThrow()
-                }
+                control().delete(modelId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -226,3 +215,14 @@ internal fun CookbookVerdict.toUiVerdict(): ModelFitVerdict = when (this) {
     CookbookVerdict.EXCEEDS_CONTEXT -> ModelFitVerdict.EXCEEDS_CONTEXT
     CookbookVerdict.WILL_NOT_FIT -> ModelFitVerdict.WILL_NOT_FIT
 }
+
+private fun fi.italeino.aidos.engine.control.ModelInfo.toUi() = CookbookModel(
+    id = id,
+    name = name,
+    kind = kind,
+    quantization = quantization,
+    sizeBytes = sizeBytes,
+    contextLength = contextLength,
+    fitVerdict = runCatching { ModelFitVerdict.valueOf(fitVerdict) }.getOrDefault(ModelFitVerdict.WILL_NOT_FIT),
+    isRunnable = isRunnable,
+)
