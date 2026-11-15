@@ -1,7 +1,11 @@
 package fi.italeino.aidos.engine.desktop
 
 import fi.italeino.aidos.engine.control.HttpLanControl
+import fi.italeino.aidos.engine.control.ApprovalsControl
+import fi.italeino.aidos.engine.control.HttpApprovalsControl
+import fi.italeino.aidos.engine.control.HttpPeersControl
 import fi.italeino.aidos.engine.control.HttpTunnelsControl
+import fi.italeino.aidos.engine.control.PeersControl
 import fi.italeino.aidos.engine.control.LanControl
 import fi.italeino.aidos.engine.control.TunnelsControl
 import kotlinx.serialization.json.Json
@@ -40,4 +44,10 @@ object EngineAttach {
 
     fun tunnelsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): TunnelsControl =
         running?.let { HttpTunnelsControl(it.baseUrl, it.token) } ?: LocalTunnelsControl(host)
+
+    fun peersControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): PeersControl =
+        running?.let { HttpPeersControl(it.baseUrl, it.token) } ?: LocalPeersControl(host)
+
+    fun approvalsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ApprovalsControl =
+        running?.let { HttpApprovalsControl(it.baseUrl, it.token) } ?: LocalApprovalsControl(host)
 }

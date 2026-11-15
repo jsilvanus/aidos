@@ -90,3 +90,18 @@ internal fun Route.adminTunnelsRoutes(control: fi.italeino.aidos.engine.control.
     post("/v1/admin/tunnels/{id}/rotate-key") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ControlValue(control.rotateKey(id(call)))) } }
     delete("/v1/admin/tunnels/{id}") { admin(call) { control.delete(id(call)); call.respond(HttpStatusCode.NoContent) } }
 }
+
+/** `/v1/admin/peers`: paired AIDIN peers and what the user lets each do (RFC-0107, RFC-0108, RFC-0115). Loopback and admin only. */
+internal fun Route.adminPeersRoutes(control: fi.italeino.aidos.engine.control.PeersControl, adminSubjects: Set<String>) {
+    suspend fun admin(call: ApplicationCall, block: suspend () -> Unit) = adminGuard(call, adminSubjects, block)
+    fun id(call: ApplicationCall) = call.parameters["id"].orEmpty()
+    val no = HttpStatusCode.NoContent
+
+    get("/v1/admin/peers") { admin(call) { call.respond(control.status()) } }
+    put("/v1/admin/peers/{id}/hosts-agent-loops") { admin(call) { control.setHostsAgentLoops(id(call), call.receive<fi.italeino.aidos.engine.control.PeerFlagRequest>().enabled); call.respond(no) } }
+    put("/v1/admin/peers/{id}/preferred") { admin(call) { control.setPreferred(id(call), call.receive<fi.italeino.aidos.engine.control.PeerFlagRequest>().enabled); call.respond(no) } }
+    put("/v1/admin/peers/{id}/remote-access") { admin(call) { control.setRemoteAccess(id(call), call.receive<fi.italeino.aidos.engine.control.PeerFlagRequest>().enabled); call.respond(no) } }
+    post("/v1/admin/peers/{id}/hints") { admin(call) { val r = call.receive<fi.italeino.aidos.engine.control.PeerHintRequest>(); control.addHint(id(call), r.host, r.port); call.respond(no) } }
+    post("/v1/admin/peers/{id}/hints/remove") { admin(call) { control.removeHint(id(call), call.receive<fi.italeino.aidos.engine.control.PeerHintRemoveRequest>().hint); call.respond(no) } }
+    put("/v1/admin/peers/{id}/tool-allowlist") { admin(call) { val r = call.receive<fi.italeino.aidos.engine.control.PeerToolAllowlistRequest>(); control.setToolAllowlist(id(call), r.app, r.tools); call.respond(no) } }
+}

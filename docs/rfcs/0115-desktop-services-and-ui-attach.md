@@ -145,7 +145,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Agent daemon in the tray and installers, done:** the tray polls the Engine and the Agent daemon (capability requests, ids `cap:`) through one composite feed; one source failing does not hide the other. `--install-service agent --exec <command>` installs the daemon the same way as the Engine.
 - **Run in background, done:** a Background tab (aidos-tcr `BackgroundPane`, `DesktopBackgroundModel`) with one switch that registers or removes the per-user Engine service and tray icon through the installer, showing each service's state and any failure. Machine-wide installs stay on the command line.
 - **Tunnels group, done:** `TunnelsControl` with `LocalTunnelsControl` and `HttpTunnelsControl`, `/v1/admin/tunnels` (list, create, probe, confirm, start, stop, rotate-key, delete; loopback and admin only), the Tunnels presenter knows only the interface and `EngineAttach.tunnelsControl` picks the implementation. The same create-probe-confirm-start walk is tested in-process and through the admin API.
-- **Next:** the remaining `EngineControl` groups pane by pane (peers and remote access, apps and models, status), vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
+- **Peers and remote access group, done:** `PeersControl` (status, hosting switch, preferred hosts, remote access, hints, tool allowlists) with Local and Http implementations and `/v1/admin/peers`; tool approvals are answered through the approvals feed (`tool:<id>`). The Peers presenter knows only the two interfaces and runs its actions one at a time. The switches and a tool prompt are tested in-process and through the admin API against a real paired node.
+- **Next:** the remaining `EngineControl` groups (apps and models, status), vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -188,4 +189,8 @@ files:
   - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpTunnelsControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalTunnelsControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsModel.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/PeersControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpPeersControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalPeersControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModel.kt
 ```

@@ -1,135 +1,95 @@
 package fi.italeino.aidos.engine.desktop
 
-import dev.aidos.aidin.LinkRoute
-import dev.aidos.aidin.NodeId
 import dev.aidos.tcr.engine.PeerRouteUi
 import dev.aidos.tcr.engine.RemotePeerUi
 import dev.aidos.tcr.engine.RemoteSharingUiState
 import dev.aidos.tcr.engine.ToolAllowlistUi
 import dev.aidos.tcr.engine.ToolApprovalUi
-import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.control.ApprovalsControl
+import fi.italeino.aidos.engine.control.PeersControl
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
- * Presenter for the Peers tab (RFC-0107 remote agent hosting, RFC-0108 remote routes). Reads the AIDIN
- * node, [DesktopRemoteAgent] and [dev.aidos.aidin.RemoteRouting] and turns them into what the pane shows; every
- * action is one call on those, followed by a refresh. Nothing here decides anything: the switches are the
- * user's, and what they mean is enforced in the node and the agent runtime.
+ * Presenter for the Peers tab (RFC-0107 remote agent hosting, RFC-0108 remote routes). It knows only
+ * [PeersControl] and [ApprovalsControl] (RFC-0115, D61): the same pane works over the in-process Engine or a
+ * background Engine service. It polls the status on a short interval (peers connect and links change on network
+ * events; the screen is only drawn while open); every action is one control call followed by a refresh.
+ * Nothing here decides anything: the switches are the user's, and what they mean is enforced in the node and
+ * the agent runtime.
  */
 class DesktopRemotePeersModel(
-    private val host: DesktopEngineHost,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
+    private val pollMillis: Long = 700,
+    private val peers: () -> PeersControl,
+    private val approvals: () -> ApprovalsControl,
 ) {
-    private val error = MutableStateFlow<String?>(null)
-    private val tick = MutableStateFlow(0)
+    private val _state = MutableStateFlow(RemoteSharingUiState())
+    val state: StateFlow<RemoteSharingUiState> = _state.asStateFlow()
+    private var error: String? = null
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val pendingApprovals = host.remoteAgentFlow.flatMapLatest { it?.approvals?.pending ?: flowOf(emptyList()) }
+    /** Actions run one at a time, in the order the user made them: they all edit the same peer configuration. */
+    private val actions = Mutex()
 
-    val state: StateFlow<RemoteSharingUiState> = combine(
-        host.aidin,
-        host.remoteAuditLines,
-        pendingApprovals,
-        tick,
-        error,
-    ) { node, audit, pending, _, err ->
-        val agent = host.remoteAgent
-        val routing = host.remoteRouting
-        if (node == null || agent == null || routing == null) {
-            RemoteSharingUiState(aidinRunning = false, auditLines = audit, error = err)
-        } else {
-            val preferred = agent.peerCandidates()
-            val labels = node.peers.value.associate { it.nodeId.value to (it.label ?: it.nodeId.value.take(8)) }
-            RemoteSharingUiState(
-                aidinRunning = true,
-                peers = node.peers.value.filter { node.pairScopes(it.nodeId) != null }.map { p ->
+    init {
+        scope.launch {
+            while (isActive) {
+                render()
+                delay(pollMillis)
+            }
+        }
+    }
+
+    private suspend fun render() {
+        try {
+            val s = peers().status()
+            _state.value = RemoteSharingUiState(
+                aidinRunning = s.aidinRunning,
+                peers = s.peers.map { p ->
                     RemotePeerUi(
-                        id = p.nodeId.value,
-                        label = p.label ?: p.nodeId.value.take(8),
-                        connected = p.connected,
-                        route = node.routeOf(p.nodeId)?.let(::routeUi),
-                        hostsAgentLoops = agent.isHostingFor(p.nodeId),
-                        preferredRank = preferred.indexOf(p.nodeId).takeIf { it >= 0 }?.plus(1),
-                        remoteAccessAllowed = routing.isRemoteAccessAllowed(p.nodeId),
-                        hints = routing.hintsFor(p.nodeId).map { "${it.host}:${it.port}" },
-                        toolAllowlists = agent.allowlistsFor(p.nodeId).map { (app, tools) -> ToolAllowlistUi(app, tools) }.sortedBy { it.app },
+                        id = p.id, label = p.label, connected = p.connected,
+                        route = p.route?.let { runCatching { PeerRouteUi.valueOf(it) }.getOrNull() },
+                        hostsAgentLoops = p.hostsAgentLoops, preferredRank = p.preferredRank,
+                        remoteAccessAllowed = p.remoteAccessAllowed, hints = p.hints,
+                        toolAllowlists = p.toolAllowlists.map { ToolAllowlistUi(it.app, it.tools) },
                     )
                 },
-                pendingApprovals = pending.map {
-                    ToolApprovalUi(it.id, labels[it.peer.value] ?: it.peer.value.take(8), it.app, it.tool)
-                },
-                auditLines = audit,
-                knownApps = runBlocking { host.approvalStore.listAllApprovals() }
-                    .filter { it.status == AppApprovalStatus.APPROVED }.map { it.packageName }.sorted(),
-                error = err,
+                pendingApprovals = s.pendingApprovals.map { ToolApprovalUi(it.id, it.peerLabel, it.app, it.tool) },
+                auditLines = s.auditLines,
+                knownApps = s.knownApps,
+                error = error,
             )
-        }
-    }.stateIn(scope, SharingStarted.Eagerly, RemoteSharingUiState())
-
-    private fun routeUi(r: LinkRoute) = when (r) {
-        LinkRoute.LAN -> PeerRouteUi.LAN
-        LinkRoute.DIRECT -> PeerRouteUi.DIRECT
-        LinkRoute.SSH_TUNNEL -> PeerRouteUi.SSH_TUNNEL
-    }
-
-    fun refresh() = tick.update { it + 1 }
-
-    private fun peer(id: String): NodeId? = runCatching { NodeId(id) }.getOrNull()
-
-    private fun guarded(block: () -> Unit) {
-        try {
-            block()
-            error.value = null
         } catch (e: Exception) {
-            error.value = e.message ?: e::class.simpleName
+            _state.value = _state.value.copy(error = error ?: e.message ?: e::class.simpleName)
         }
-        refresh()
     }
 
-    fun setHostsAgentLoops(peerId: String, enabled: Boolean) = guarded {
-        val p = peer(peerId) ?: return@guarded
-        check(host.remoteAgent?.setHostingFor(p, enabled) == true) { "That device is not paired with this Engine." }
+    fun refresh() { scope.launch { render() } }
+
+    private fun act(block: suspend () -> Unit) {
+        scope.launch {
+            actions.withLock { error = try {
+                block()
+                null
+            } catch (e: Exception) {
+                e.message ?: e::class.simpleName
+            } }
+            render()
+        }
     }
 
-    fun setPreferred(peerId: String, preferred: Boolean) = guarded {
-        val agent = host.remoteAgent ?: return@guarded
-        val p = peer(peerId) ?: return@guarded
-        val now = agent.peerCandidates()
-        agent.setPeerCandidates(if (preferred) (now - p) + p else now - p)
-    }
-
-    fun setRemoteAccess(peerId: String, allowed: Boolean) = guarded {
-        val p = peer(peerId) ?: return@guarded
-        host.remoteRouting?.setRemoteAccess(p, allowed)
-    }
-
-    fun addHint(peerId: String, hostName: String, port: Int) = guarded {
-        val p = peer(peerId) ?: return@guarded
-        host.remoteRouting?.addHint(p, hostName, port)
-    }
-
-    fun removeHint(peerId: String, hint: String) = guarded {
-        val p = peer(peerId) ?: return@guarded
-        val i = hint.lastIndexOf(':')
-        if (i > 0) host.remoteRouting?.removeHint(p, hint.substring(0, i), hint.substring(i + 1).toInt())
-    }
-
-    fun setToolAllowlist(peerId: String, app: String, tools: List<String>) = guarded {
-        val p = peer(peerId) ?: return@guarded
-        host.remoteAgent?.allowTools(p, app, tools.toSet())
-    }
-
-    fun decideToolApproval(approvalId: String, allow: Boolean) = guarded {
-        host.remoteAgent?.approvals?.decide(approvalId, allow)
-    }
+    fun setHostsAgentLoops(peerId: String, enabled: Boolean) = act { peers().setHostsAgentLoops(peerId, enabled) }
+    fun setPreferred(peerId: String, preferred: Boolean) = act { peers().setPreferred(peerId, preferred) }
+    fun setRemoteAccess(peerId: String, allowed: Boolean) = act { peers().setRemoteAccess(peerId, allowed) }
+    fun addHint(peerId: String, hostName: String, port: Int) = act { peers().addHint(peerId, hostName, port) }
+    fun removeHint(peerId: String, hint: String) = act { peers().removeHint(peerId, hint) }
+    fun setToolAllowlist(peerId: String, app: String, tools: List<String>) = act { peers().setToolAllowlist(peerId, app, tools) }
+    fun decideToolApproval(approvalId: String, allow: Boolean) = act { approvals().decide("tool:$approvalId", allow) }
 }

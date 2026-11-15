@@ -33,7 +33,7 @@ class DesktopRemotePeersModelTest {
         modelsDir = root.resolve("models").apply { mkdirs() },
         stateDir = root,
         serverPort = { 0 },
-        discoveryFile = null,
+        discoveryFile = root.resolve("engine.json"),
         groupSharing = { true },
         aidinFactory = { s ->
             AidinNode(FileNodeKeyStore(dir.resolve("node-key")).loadOrCreate(), FileAidinStateStore(dir.resolve("state.json")), s, "test",
@@ -58,7 +58,7 @@ class DesktopRemotePeersModelTest {
         throw AssertionError("timed out waiting for: $what")
     }
 
-    private fun pairedModel(): Pair<DesktopRemotePeersModel, dev.aidos.aidin.NodeId> {
+    private fun pairedModel(http: Boolean = false): Pair<DesktopRemotePeersModel, dev.aidos.aidin.NodeId> {
         runBlocking { host.start() }
         val node = assertNotNull(host.aidin.value, "aidin failed: ${host.aidinError.value}")
         val invite = node.createInvite(listOf("127.0.0.1"))
@@ -69,12 +69,16 @@ class DesktopRemotePeersModelTest {
         eventually("paired and linked") {
             node.pairingViews.value.single().status == PairingStatus.DONE && node.peers.value.any { it.connected }
         }
-        return DesktopRemotePeersModel(host, scope) to other.nodeId
+        if (http) {
+            val running = assertNotNull(EngineAttach.runningEngine(root.resolve("engine.json"), selfPid = -1), "engine.json not written")
+            return DesktopRemotePeersModel(scope, pollMillis = 50, peers = { EngineAttach.peersControl(host, running) }, approvals = { EngineAttach.approvalsControl(host, running) }) to other.nodeId
+        }
+        return DesktopRemotePeersModel(scope, pollMillis = 50, peers = { LocalPeersControl(host) }, approvals = { LocalApprovalsControl(host) }) to other.nodeId
     }
 
     @Test
     fun `with group sharing off the tab says there are no peers`() {
-        val model = DesktopRemotePeersModel(host, scope)
+        val model = DesktopRemotePeersModel(scope, pollMillis = 50, peers = { LocalPeersControl(host) }, approvals = { LocalApprovalsControl(host) })
         assertFalse(model.state.value.aidinRunning)
         assertTrue(model.state.value.peers.isEmpty())
     }
@@ -98,7 +102,7 @@ class DesktopRemotePeersModelTest {
         model.addHint(peerId.value, "100.64.0.7", 47100)
         model.setToolAllowlist(peerId.value, "dictator", listOf("search", "read_note"))
 
-        eventually("actions reflected") { model.state.value.peers.singleOrNull { it.id == peerId.value }?.let { it.hostsAgentLoops && it.remoteAccessAllowed && it.hints.isNotEmpty() && it.toolAllowlists.isNotEmpty() } == true }
+        eventually("actions reflected") { model.state.value.peers.singleOrNull { it.id == peerId.value }?.let { it.hostsAgentLoops && it.preferredRank != null && it.remoteAccessAllowed && it.hints.isNotEmpty() && it.toolAllowlists.isNotEmpty() } == true }
         peer = model.state.value.peers.single { it.id == peerId.value }
         assertTrue(peer.hostsAgentLoops)
         assertTrue(host.aidin.value!!.pairScopes(peerId)!!.contains(Scope.AGENT))
@@ -131,5 +135,26 @@ class DesktopRemotePeersModelTest {
         model.decideToolApproval(prompt.id, true)
         assertTrue(answer.await())
         eventually("prompt cleared") { model.state.value.pendingApprovals.isEmpty() }
+    }
+
+    @Test
+    fun `the same switches and the tool prompt work through the loopback admin API`(): Unit = runBlocking {
+        val (model, peerId) = pairedModel(http = true)
+        eventually("peer listed") { model.state.value.peers.any { it.id == peerId.value } }
+        model.setHostsAgentLoops(peerId.value, true)
+        model.setRemoteAccess(peerId.value, true)
+        model.addHint(peerId.value, "100.64.0.7", 47100)
+        model.setToolAllowlist(peerId.value, "dictator", listOf("search"))
+        eventually("reflected over HTTP") { model.state.value.peers.singleOrNull()?.let { it.hostsAgentLoops && it.remoteAccessAllowed && it.hints.isNotEmpty() && it.toolAllowlists.isNotEmpty() } == true }
+        assertTrue(host.aidin.value!!.pairScopes(peerId)!!.contains(Scope.AGENT), "the switch reached the real node")
+
+        model.setHostsAgentLoops("not-a-peer", true)
+        eventually("the Engine's refusal reaches the pane") { model.state.value.error != null }
+
+        val agent = assertNotNull(host.remoteAgent)
+        val answer = CoroutineScope(Dispatchers.Default).async { agent.approvals.request(peerId, "dictator", "write_note") }
+        eventually("prompt shown") { model.state.value.pendingApprovals.isNotEmpty() }
+        model.decideToolApproval(model.state.value.pendingApprovals.single().id, false)
+        assertFalse(answer.await())
     }
 }
