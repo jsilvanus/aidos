@@ -331,7 +331,7 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 ```yaml
 post_mvp:
   - id: "0113.1"
-    title: "Messenger channel adapters"
+    title: "Messenger channel adapters (Amp, RFC-0116, is the first)"
     status: todo
     phase: P1
   - id: "0113.2"

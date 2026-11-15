@@ -1,6 +1,6 @@
 # RFC-0120: Agent Runtime API (`/v1/agent`)
 
-Status: Draft (2026-11-15, written from `docs/agent-runtime-api.md`, D48 to D52 and the code). Implemented on the desktop host; the Android host does not serve it yet.
+Status: Draft (2026-11-15, written from `docs/agent-runtime-api.md`, D48 to D52 and the code). Implemented on the desktop host; the Android host does not serve it yet. Frozen as agent API v1 on 2026-11-15 (owner), additive changes only (D63).
 
 Related: D48 (proposed), D49 (per-app agent grant), D52 (placement and tool relay), RFC-0027 (taint), RFC-0030/0031 (tools, MCP), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0115 (Engine-side tools), RFC-0103/0121 (Engine API and SDK).
 
@@ -68,8 +68,8 @@ Built on the desktop host with route tests, the run reaper, the tool-approval qu
 
 ## Open Questions
 
-- Does `/v1/agent` get its own `apiVersion` and a frozen contract like API v1? Today it is "additive to Engine API v1" and is excluded from the freeze.
-- D48 is still `PROPOSED` although built and used; it should be settled.
+- ~~Freeze.~~ Decided by the owner 2026-11-15: the documented core is frozen as agent API v1 under D63. The worker, guardian and routing-config fields on the wire (`role`, `parentSessionId`, `workerBrief`, `taintApprovalPolicy`, `enforcedLocality` and the `AgentRunSummaryDto` extras) are experimental and outside the freeze.
+- D48 is now settled.
 
 ## Implementation Files
 
@@ -90,6 +90,7 @@ files:
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapter.kt
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/ToolApprovalQueue.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentRoutesTest.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentContractFreezeTest.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentRuntimeConfigTest.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/EngineToolsTest.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/PeerRunReaperTest.kt
@@ -111,8 +112,11 @@ post_mvp:
     phase: P1
   - id: "0120.2"
     title: "Freeze the agent API as its own contract with a tripwire test"
-    status: todo
+    status: done
     phase: P1
+    files:
+      - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentContractFreezeTest.kt
+      - sdk/CONTRACT.md
   - id: "0120.3"
     title: "Streaming of agent output"
     status: todo

@@ -46,6 +46,10 @@ A question to an agent about something a sender already shared ("why are you lat
 
 Every inbound message from another party is `UNTRUSTED` (RFC-0027). `AmpAgentRunner` (`agent/amp`) applies that level monotonically to peer turns, so a run that has read a peer message cannot take an UNSAFE, egress or out-of-project effect without per-call approval. A peer can never directly write persistent memory: a message that says "remember that X" does not write the entity graph or intent graph; those writes need deterministic schema extraction or an explicit confirmation in an Aidos UI (RFC-0026). Aidos-side results of the policy evaluator carry no taint; the message text does.
 
+### Sending on the person's behalf
+
+A message the agent sends is an egress, not an ordinary tool effect. It goes through the RFC-0113 `message:send` tool, which needs a `MESSAGE_SEND` capability naming the channel. Amp is the first implementation of the `OutboundMessageTransport` seam in `agent/bridge`. If the project is air-gapped (`personal`, or `routing.remote_egress` of `never` or `ask`), the run parks on the Human Egress Gate: the person sees the recipient and the exact text and approves a single-use grant for that payload; otherwise the RFC-0042 egress rules apply, and work projects default to ask (RFC-0114). A run that has read untrusted peer text is stopped by the taint rule (RFC-0027) before the tool runs. Replies that only answer a follow-up from information already shared use the progressive-disclosure evaluator above, which yields a decided, synthetic answer and no new disclosure. Questions an Amp agent asks about a Life project (for example availability) use the blinded typed queries of RFC-0113 and never read Life state.
+
 ### Human-only compartment
 
 For a `HUMAN_ONLY` message the content key is wrapped only for the person's human devices; the agent leaf receives a sealed placeholder. Consequences that Aidos relies on: the text cannot be embedded, cannot enter the Knowledge Engine (RFC-0015), the prompt (RFC-0025) or memory (RFC-0026), and cannot be sent by a remote model (RFC-0023). If the agent needs to act on a human-only message, the person must say so in their own words.
@@ -94,9 +98,9 @@ See the checklist below. Order of value: persistent memory bridge (needs RFC-002
 
 ## Open Questions
 
-- Should the agent endpoint's `delegationScope` be an RFC-0018 capability the Engine issues, or a separate Amp record that the Engine only checks? Leaning to a capability so revocation is one mechanism.
+- ~~Delegation scope.~~ Settled by the owner 2026-11-15: the agent endpoint's `delegationScope` is an RFC-0018 capability the Engine issues, so there is one place to revoke and one audit trail. Amp's signed registry record names the capability; it does not carry authority of its own.
 - Which Amp tools are safe to expose over MCP to a non-Aidos agent? The roadmap defers the external MCP disclosure policy (`answer_from_context`, `request_progressive_disclosure`) for review.
-- Does a message the agent sends on the person's behalf count as an egress that needs the RFC-0042 preview, or as a tool effect (RFC-0030)?
+- ~~Message-send egress.~~ Resolved with RFC-0113 (see "Sending on the person's behalf"): it is an egress, gated per project type.
 
 ## Implementation Files
 
@@ -137,11 +141,11 @@ post_mvp:
     status: todo
     phase: P2
   - id: "0116.5"
-    title: "Agent endpoint delegation scope issued as an RFC-0018 capability, revocable from the Engine"
+    title: "Issue the agent endpoint delegation scope as an RFC-0018 capability (decided) and bind Amp's registry record to it"
     status: todo
     phase: P2
   - id: "0116.6"
-    title: "Message-send egress preview and RFC-0113 gate for zero-egress Life projects"
+    title: "Implement OutboundMessageTransport for Amp so message:send uses the RFC-0113 gate and MESSAGE_SEND grants"
     status: todo
     phase: P2
   - id: "0116.7"

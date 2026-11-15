@@ -37,7 +37,7 @@ The handshake service is bound with action `fi.italeino.aidos.engine.HANDSHAKE`,
 
 ### Foreground service
 
-The service is declared with a foreground-service type. D49 records an open item: `FOREGROUND_SERVICE_TYPE_DATA_SYNC` times out on recent Android versions, so the type, or a different keep-alive design, must be verified against the target API level before shipping. The design never promises indefinite background execution; scheduled work runs through WorkManager and only prepares.
+The Engine host service is declared with foreground-service type `specialUse` (decided by the owner 2026-11-15, D49): it has no timeout, but needs the special-use subtype property in the manifest and a Play Console declaration if distributed through Google Play. Model downloads use `dataSync` or user-initiated data-transfer jobs, and the microphone type is added while STT is active. `dataSync` for the host itself is rejected: recent Android versions time it out and block starting it from a boot receiver. The design never promises indefinite background execution beyond what the device test (`docs/android-fgs-device-test.md`) confirms; scheduled work runs through WorkManager and only prepares.
 
 ### Storage and secrets
 
@@ -63,7 +63,7 @@ Built and read, not run on a device: the handshake service and approval flow, en
 
 ## Open Questions
 
-- Which foreground-service type, or which keep-alive design, for the target API level?
+- Does `specialUse` survive OEM battery management over hours with the screen off? Decided type, unverified: see the device test plan.
 - Do process-death and interrupted-agent-job recovery tests pass on a device?
 - Phone as a helper in an inference group needs the llama.cpp RPC binaries packaged as `jniLibs` (Android blocks execution from app data); tracked under RFC-0105.
 
@@ -121,7 +121,7 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 ```yaml
 post_mvp:
   - id: "0118.1"
-    title: "Choose and verify the foreground-service type for the target API level"
+    title: "Run the foreground-service device test (specialUse chosen) and record the results"
     status: todo
     phase: P1
   - id: "0118.2"
