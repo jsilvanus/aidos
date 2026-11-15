@@ -45,6 +45,10 @@ dependencies {
     implementation(project(":tunnel-manager"))
     implementation(project(":ssh-tunnel"))
     implementation(project(":vault"))
+    // RFC-0115: the Tools pane runs on the real MCP broker (registration, catalog, adoption).
+    implementation(project(":mcp-broker"))
+    implementation(project(":mcp-core"))
+    implementation(project(":mcp-policy"))
     // RFC-0115: SocketRuntimeClient, to attach to a running Agent daemon.
     implementation(project(":cli"))
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
