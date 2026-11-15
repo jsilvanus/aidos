@@ -1,6 +1,6 @@
 # RFC-0043: Plugin Packaging and Sandbox
 
-Status: Accepted 2026-08-04
+Status: Accepted 2026-08-04, unscheduled (decided 2026-11-15): no plugin host is planned. MCP (RFC-0031) is the extension mechanism for now; this design is kept so nothing built meanwhile forecloses it.
 
 ## Abstract
 

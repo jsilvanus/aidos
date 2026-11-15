@@ -1,6 +1,7 @@
 # RFC-0051: LAN Engine Sharing and External Device Pairing
 
-**Status:** Proposed  
+**Status:** Draft (partially implemented 2026-11-15: desktop listener). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
+Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, desktop/Android UI screens for adding devices, SDK client pairing helper, mDNS discovery, QR rendering)
 **Authors:** Aidos contributors  
 **Date:** 2026-08-18
 
@@ -373,6 +374,14 @@ Manual QR codes containing bearer credentials are sensitive and should not be un
 - Add stronger public-key pinning/trust management if required.
 - Add richer device permissions and management.
 
+## Implementation status (2026-11-15, desktop)
+
+- `EngineHttpServer.startLan` adds an opt-in **HTTPS-only** listener (Netty, since CIO cannot serve TLS). Off by default; loopback is unchanged. It authenticates per-device credentials only; Binder and loopback tokens are refused there.
+- Per-device grants (`ExternalDeviceGrants`): random credential stored hashed, label, mandatory expiry, revocation, separate from Binder tokens.
+- Every LAN request still passes the per-app checks, keyed by the device's `ext:<id>` subject in the Connected Apps approval store: model-use approval (revoking stops it at the next request), the separate agent grant for `/v1/agent` (off for a new device), and the per-app locality limit. Model administration (`open`/`close`/`delete`) and the AIDIN peer endpoints are not served on the LAN.
+- Code pairing: single-use, short-lived eight-digit code exchanged at `POST /lan/v1/pair`, attempt- and rate-limited; a code is never a bearer credential. Manual pairing returns URL, fingerprint and credential.
+- TLS identity: self-signed, generated once and persisted (`LanTlsIdentity`); clients pin its SHA-256 fingerprint. Open question 1 is settled as pinning, not a local CA.
+
 ## Decision
 
 LAN inference is an **explicitly enabled, per-device paired capability**, not simply an HTTP server bound to `0.0.0.0`.
@@ -395,5 +404,15 @@ The Aidos SDK is recommended for automated pairing, but **the LAN protocol does 
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/lan/ExternalDeviceGrants.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/lan/LanSslConfig.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/lan/LanTlsIdentity.kt
+  - engine/enginehost/build.gradle.kts
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharing.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanSharingTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanTlsEndToEndTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingTest.kt
 ```

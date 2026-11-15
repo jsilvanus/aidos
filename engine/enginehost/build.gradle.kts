@@ -51,6 +51,12 @@ kotlin {
 
         androidMain.get().dependsOn(jvmAndAndroidMain)
         jvmMain.get().dependsOn(jvmAndAndroidMain)
+        jvmMain.dependencies {
+            // RFC-0051: self-signed TLS identity for the LAN listener (JVM hosts; Android supplies its own KeyStore).
+            implementation("io.ktor:ktor-network-tls-certificates:3.5.2")
+            // CIO cannot serve HTTPS, so the TLS-only LAN listener runs on Netty.
+            api("io.ktor:ktor-server-netty:3.5.2")
+        }
 
         val jvmTest by getting {
             dependencies {

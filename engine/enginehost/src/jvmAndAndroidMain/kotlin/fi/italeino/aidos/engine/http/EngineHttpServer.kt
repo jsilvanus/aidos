@@ -38,6 +38,9 @@ import fi.italeino.aidos.engine.inference.placementOf
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import fi.italeino.aidos.engine.lan.ExternalDeviceGrants
+import fi.italeino.aidos.engine.lan.LanSslConfig
+import fi.italeino.aidos.engine.lan.PairingCodes
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.cio.*
@@ -53,6 +56,10 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
@@ -144,8 +151,17 @@ class EngineHttpServer(
     private val isPeerDraining: () -> Boolean = { false },
     /** Router for virtual model IDs (`aidos:chat`) and locality-filtered peer/group fallback. */
     val virtualModelRouter: VirtualModelRouter = VirtualModelRouter(modelRuntime, aidinNode, virtualModels),
+    /**
+     * RFC-0051: per-device credentials for the LAN listener. The LAN listener authenticates only
+     * these (never a Binder or loopback token) and each request still passes [isSubjectApproved],
+     * [subjectLocality] and the host's agent grant, all keyed by the device's `ext:` subject.
+     */
+    private val externalDevices: ExternalDeviceGrants? = null,
+    /** RFC-0051 Mode A: exchange of a short-lived code for a credential, offered on the LAN listener only. */
+    private val pairingCodes: PairingCodes? = null,
 ) {
     private var server: EmbeddedServer<*, *>? = null
+    private var lanServer: EmbeddedServer<*, *>? = null
 
     init {
         aidinNode()?.let(::attachAidinNode)
@@ -175,7 +191,48 @@ class EngineHttpServer(
         }.start(wait = false)
     }
 
+    /**
+     * RFC-0051: opt-in LAN listener. HTTPS only, there is no cleartext LAN port; [ssl] carries the
+     * Engine's persistent TLS identity. Serves inference (and the host's extra routes), not model
+     * lifecycle administration or the AIDIN peer endpoints. Needs [externalDevices]. [engine] must support
+     * TLS (CIO does not); JVM hosts pass Netty.
+     */
+    fun startLan(
+        ssl: LanSslConfig,
+        engine: ApplicationEngineFactory<*, *>,
+        port: Int = 0,
+        host: String = "0.0.0.0",
+    ) {
+        requireNotNull(externalDevices) { "LAN sharing needs external device grants" }
+        if (lanServer != null) return
+        ensureAidinAttached()
+        lanServer = embeddedServer(
+            engine,
+            configure = {
+                sslConnector(
+                    keyStore = ssl.keyStore,
+                    keyAlias = ssl.alias,
+                    keyStorePassword = { ssl.keyStorePassword.toCharArray() },
+                    privateKeyPassword = { ssl.privateKeyPassword.toCharArray() },
+                ) {
+                    this.port = port
+                    this.host = host
+                }
+            },
+        ) {
+            installInto(this, lan = true)
+        }.start(wait = false)
+    }
+
+    suspend fun getBoundLanPort(): Int? = lanServer?.engine?.resolvedConnectors()?.firstOrNull()?.port
+
+    fun stopLan() {
+        lanServer?.stop(1000, 2000)
+        lanServer = null
+    }
+
     fun stop() {
+        stopLan()
         server?.stop(1000, 2000)
         server = null
     }
@@ -198,11 +255,11 @@ class EngineHttpServer(
     suspend fun deleteModel(modelId: String): Result<Unit> =
         inferenceManager.deleteModel(modelId)
 
-    internal fun installInto(application: Application) {
+    internal fun installInto(application: Application, lan: Boolean = false) {
         with(application) {
             setupContentNegotiation()
-            setupAuthentication()
-            setupRouting()
+            setupAuthentication(lan)
+            setupRouting(lan)
         }
     }
 
@@ -212,10 +269,18 @@ class EngineHttpServer(
         }
     }
 
-    private fun Application.setupAuthentication() {
+    private fun Application.setupAuthentication(lan: Boolean) {
         install(Authentication) {
             bearer("bearerAuth") {
                 authenticate { tokenCredential ->
+                    if (lan) {
+                        // RFC-0051: LAN requests authenticate with a per-device credential only, then
+                        // face the same per-app approval (model use) as any other subject.
+                        val grant = externalDevices?.authenticate(tokenCredential.token) ?: return@authenticate null
+                        if (isSubjectApproved?.invoke(grant.subject) != true) return@authenticate null
+                        reportClientVersions(grant.subject)
+                        return@authenticate UserIdPrincipal(grant.subject)
+                    }
                     val info = tokenManager.authenticate(tokenCredential.token)
                     when {
                         info == null -> null
@@ -239,14 +304,20 @@ class EngineHttpServer(
         if (sdk != null || api != null) callback(subject, sdk, api)
     }
 
-    private fun Application.setupRouting() {
+    private fun Application.setupRouting(lan: Boolean = false) {
         routing {
             get("/health") { call.respond(mapOf("status" to "ok")) }
+            if (lan) {
+                // RFC-0051 Mode A: a code is exchanged for a credential, once, without a bearer.
+                post("/lan/v1/pair") { handleLanPair(call) }
+            }
             authenticate("bearerAuth") {
                 get("/v1/models") { handleModels(call) }
-                post("/v1/models/{modelId}/open") { handleModelOpen(call) }
-                post("/v1/models/{modelId}/close") { handleModelClose(call) }
-                delete("/v1/models/{modelId}") { handleModelDelete(call) }
+                if (!lan) {
+                    post("/v1/models/{modelId}/open") { handleModelOpen(call) }
+                    post("/v1/models/{modelId}/close") { handleModelClose(call) }
+                    delete("/v1/models/{modelId}") { handleModelDelete(call) }
+                }
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
@@ -255,16 +326,42 @@ class EngineHttpServer(
                 post("/v1/systemone") { handleDecisions(call) }
                 post("/v1/decisions") { handleDecisions(call) }
 
-                // RFC-0105 Phase 2 peer delegation endpoints (/aidin/v1/*)
-                post("/aidin/v1/route") { handleAidinHttpRoute(call) }
-                post("/aidin/v1/chat/completions") { handleAidinHttpDelegation(call, "/aidin/v1/chat/completions") }
-                post("/aidin/v1/embeddings") { handleAidinHttpDelegation(call, "/aidin/v1/embeddings") }
-                post("/aidin/v1/audio/transcriptions") { handleAidinHttpDelegation(call, "/aidin/v1/audio/transcriptions") }
-                post("/aidin/v1/systemone") { handleAidinHttpDelegation(call, "/aidin/v1/systemone") }
+                // RFC-0105 Phase 2 peer delegation endpoints (/aidin/v1/*); peers use their own link, never the LAN door.
+                if (!lan) {
+                    post("/aidin/v1/route") { handleAidinHttpRoute(call) }
+                    post("/aidin/v1/chat/completions") { handleAidinHttpDelegation(call, "/aidin/v1/chat/completions") }
+                    post("/aidin/v1/embeddings") { handleAidinHttpDelegation(call, "/aidin/v1/embeddings") }
+                    post("/aidin/v1/audio/transcriptions") { handleAidinHttpDelegation(call, "/aidin/v1/audio/transcriptions") }
+                    post("/aidin/v1/systemone") { handleAidinHttpDelegation(call, "/aidin/v1/systemone") }
+                }
 
                 extraRoutes?.invoke(this)
             }
         }
+    }
+
+    /** `POST /lan/v1/pair {"code":"12345678"}` -> `{"credential","expiresAt","subject"}`; 401 for any bad code. */
+    private suspend fun handleLanPair(call: ApplicationCall) {
+        val codes = pairingCodes
+        val text = receiveBoundedBodyText(call) ?: return
+        val code = runCatching {
+            wireJson.parseToJsonElement(text).jsonObject["code"]?.jsonPrimitive?.content
+        }.getOrNull()
+        val issued = if (codes == null || code == null) null else codes.redeem(code)
+        if (issued == null) {
+            call.respond(
+                HttpStatusCode.Unauthorized,
+                ErrorResponse(ErrorDetail("pairing failed", "authentication_error", code = "pairing_failed")),
+            )
+            return
+        }
+        call.respond(
+            buildJsonObject {
+                put("credential", issued.credential)
+                put("expiresAt", issued.grant.expiresAt)
+                put("subject", issued.grant.subject)
+            },
+        )
     }
 
     /**

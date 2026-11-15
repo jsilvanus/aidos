@@ -183,6 +183,9 @@ class DesktopEngineHost(
 
     val approvalStore: AppApprovalStore = FileAppApprovalStore(File(stateDir, "approvals.json"))
 
+    /** RFC-0051: opt-in LAN sharing (off by default); devices are approved through [approvalStore]. */
+    val lanSharing: DesktopLanSharing = DesktopLanSharing(stateDir, approvalStore)
+
     val licenseAcceptanceStore: LicenseAcceptanceStore = FileLicenseAcceptanceStore(File(stateDir, "licenses.json"))
 
     @Volatile
@@ -323,6 +326,8 @@ class DesktopEngineHost(
                 },
                 onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) },
                 aidinNode = { _aidin.value },
+                externalDevices = lanSharing.devices,
+                pairingCodes = lanSharing.pairing,
             )
             server.start()
             val port = server.getBoundPort() ?: run {
@@ -339,6 +344,7 @@ class DesktopEngineHost(
             _state.value = EngineState.READY
 
             writeDiscoveryFile(port, localTokenInfo.token)
+            runCatching { lanSharing.start(server) }.onFailure { _lastError.value = "LAN sharing: ${it.message}" }
             if (groupSharing()) startAidin(scope)
         } catch (e: Exception) {
             _lastError.value = e.message ?: e::class.simpleName

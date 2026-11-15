@@ -46,7 +46,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0040 | IMPLEMENTED | 3-DB paths, WAL pragmas, `PRAGMA synchronous=NORMAL`, `auto_vacuum=INCREMENTAL` (via `VACUUM` on bootstrap), `wal_autocheckpoint=1000`; `MigrationRunner` v1; forward migrations foundation built and tested |
 | 0041 | IMPLEMENTED | MVP built (full export, manifest, encryption, signing, verified import, migration, conflict policies, CLI) and tested; requirement map in [RFC-0041 requirement map](#rfc-0041-requirement-map) below |
 | 0042 | IMPLEMENTED | `EgressSecurityPolicy` (with obfuscated IPv4/IPv6 detection) + streaming-bounded `DefaultEgressClient` (`maxResponseBytes` enforcement) wired in daemon with `egress_records` persistence and configurable `EgressProviderTransports`; `AnthropicAdapter` & OpenAI-compatible transports tested |
-| 0043 | NOT_APPLICABLE | no plugin host in v1, matches RFC MVP; only enum value + unread installed_plugins table |
+| 0043 | UNSCHEDULED | decision only; no plugin host is planned, MCP (RFC-0031) is the extension mechanism; only enum value + unread installed_plugins table |
 | 0044 | IMPLEMENTED | `TriggerCalculator`, `ScheduledJobManager`, `NotificationManager` wired with `NotificationBudget` + coalescing + redaction (`evaluateForProject`), `RuntimeServiceHost.startScheduleLoop`, and `ScheduledJobWorker` (`WorkManager`) wired in `AidosService` |
 | 0045 | IMPLEMENTED | `DegradationLadder`, `ModelAdmissionPolicy` wired into `PolicyInferenceRouter`, `SqliteResourceBudgetStore` (`resource_budgets`), and `DaemonDegradationMonitor` (`degradation_events`) wired into `RuntimeCompositionRoot` & `SqliteRunExecutor` |
 | 0046 | IMPLEMENTED | ActorRef/ActorKind, AuditLog actor+device, DeviceIdentity store+tests, reserved signature column; PLUGIN unused as expected |
@@ -76,8 +76,8 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0022 Inference Backend Architecture | Implemented | Decisions D36-D44 settled; llama.cpp, ONNX (decisions, STT, vision) backends built and tested. |
 | 0033 Shell | Draft | No code; post-MVP. |
 | 0051 Desktop | Draft | Partial: Compose Desktop app (Engine host + Universal Adaptive UI) exists; IDE/Obsidian view modes, keyboard layer and remote-runtime connection not built (core views superseded by 0106). |
-| 0051 LAN Engine Sharing | Proposed | No LAN/HTTPS sharing code; only AIDIN peer links (RFC-0105). |
-| 0060 Plugin SDK | Draft | Not scheduled for v1. |
+| 0051 LAN Engine Sharing | Draft | Partial: desktop HTTPS LAN listener, per-device grants with per-app model/agent/locality approvals, code and manual pairing, pinned TLS identity built and tested; Android listener, UI screens, SDK pairing helper, mDNS discovery not built. |
+| 0060 Plugin SDK | Draft | Unscheduled (with 0043); MCP is the extension mechanism for now. |
 | 0106 Desktop Generative UI | Draft | Partial: spatial canvas, semantic zoom and view modes built in `agent/ui-common` (TCR is the separate `aidos-tcr` repo); caret companion, compartments, analytics/API synthesis not built. |
 | 0107 Remote Agent Hosting | Draft | Partial: routed model adapter and agent runtime built; peer agent endpoints, `agent` scope, MCP tool relay, tool-host taint/approval, two-device run not built. |
 | 0108 AIDIN Remote Routes | Draft | Phases 1–4 standalone libraries built and JVM unit-tested (`agent:routes`, `agent:wire-aidin`, `agent:policy`, `agent:ssh-tunnel`, `agent:tunnel-manager` KMP JVM target with `SecretsVault` & pinned host keys); Android Keystore vault (`agent/vault` `androidMain`) written with direct AES-256-GCM Keystore encryption (`android()` target disabled in `agent/vault/build.gradle.kts`). Still not wired into Engine/AIDIN runtime, UI (`TunnelKeyPage`), or RFC-0107 Phase 5. |
