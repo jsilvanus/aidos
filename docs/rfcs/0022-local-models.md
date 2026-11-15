@@ -425,4 +425,10 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/cookbook/src/jvmTest/kotlin/dev/aidos/cookbook/CookbookEngineTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModel.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferences.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailContent.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/UiModels.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsStore.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailScreen.kt
 ```

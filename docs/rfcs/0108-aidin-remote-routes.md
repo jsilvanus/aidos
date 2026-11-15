@@ -301,7 +301,8 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - **Hints and redial.** `RemoteRouting` stores `direct` hints per peer (validated, persisted) and redials, using `RouteDialer`, only peers that are allowed, have hints and are not connected. The dialled node must be the expected peer, so a hint cannot make a stranger trusted.
 - **Desktop.** `DesktopEngineHost.remoteRouting` is created with the AIDIN node (hints and switch persisted in `remote-routing.json`, decisions in `remote-routing-audit.log`).
 - **Phase 5.** `PeerRunReaper` lets a hosted peer run continue for 5 minutes after its origin drops, resumable by `seq`, then cancels it; a returning peer resets the clock.
-- **Not integrated:** the `tunnel-manager` is not wired into the desktop Engine (tunnel key page, `SSH_TUNNEL_KEY` vault kinds, setup-key installer, RFC-0042 egress grant); UI for hints and the switch on desktop and Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
+- **UI (2026-11-15):** the desktop *Peers* tab shows each peer's link route (LAN, Direct, SSH tunnel), the "Allow remote access" switch, the address hints with add and remove, and a recent-activity list from the audit.
+- **Not integrated:** the `tunnel-manager` is not wired into the desktop Engine (tunnel key page, `SSH_TUNNEL_KEY` vault kinds, setup-key installer, RFC-0042 egress grant); the same screens on Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
 
 ## Implementation Files
 
@@ -334,4 +335,6 @@ files:
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/PeerRunReaper.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/PeerRunReaperTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModel.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModelTest.kt
 ```

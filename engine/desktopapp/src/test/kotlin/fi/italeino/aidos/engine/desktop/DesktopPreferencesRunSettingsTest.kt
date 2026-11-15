@@ -34,3 +34,14 @@ class DesktopPreferencesRunSettingsTest {
         assertEquals(ModelRunSettings.THREADS_RANGE.last, prefs.runSettingsFor("m").threads)
     }
 }
+
+class DesktopRunSettingsMmapTest {
+    @kotlin.test.Test
+    fun mmapSettingSurvivesStorageAndReachesTheRuntimeSettings() {
+        val off = dev.aidos.modelruntime.ModelRunSettings(useMmap = false)
+        val stored = StoredRunSettings.of(off)
+        kotlin.test.assertEquals(false, stored.toSettings().useMmap)
+        // Default (null) stays default: mmap on where the platform supports it.
+        kotlin.test.assertEquals(null, StoredRunSettings.of(dev.aidos.modelruntime.ModelRunSettings.DEFAULT).toSettings().useMmap)
+    }
+}

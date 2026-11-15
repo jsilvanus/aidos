@@ -217,6 +217,14 @@ internal suspend fun dispatch(
             requireArgs(args, 2, "grant <sessionId> <permission> [scope]")
             println(cli.grantCapability(args[0], args[1], args.getOrNull(2)))
         }
+        "grants" -> {
+            requireArgs(args, 1, "grants <sessionId>")
+            cli.listGrants(args[0]).forEach(::println)
+        }
+        "revoke-grant" -> {
+            requireArgs(args, 1, "revoke-grant <capabilityId>")
+            cli.revokeGrant(args[0])
+        }
         "list-pending" -> cli.listPendingCapabilities().forEach(::println)
         "approve" -> {
             requireArgs(args, 1, "approve <requestId>")
@@ -274,7 +282,9 @@ internal fun helpText(): String =
           list-sessions <projectId>
           send <sessionId> <message>
           watch-events [--since SEQUENCE]
-          grant <sessionId> <permission> [scope]
+          grant <sessionId> <permission> [scope]     shell: grant <sessionId> SHELL_EXEC "shell:<dir>[|cmd1,cmd2]"
+          grants <sessionId>
+          revoke-grant <capabilityId>
           list-pending
           approve <requestId>
           approve-run <runId>

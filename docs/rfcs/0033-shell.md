@@ -134,6 +134,10 @@ ShellLog {
 - **Logging:** every execution writes a `ShellExecuted` audit row (command, directory, exit code, duration, output size) with the command and output redacted through the vault `Redactor`.
 - **Not provided by the MVP:** the sandboxing in "Future Work". A permitted command runs with the daemon user's own file and network access; the controls above bound where it starts and what it inherits, not what it can reach.
 
+### Granting it (2026-11-15)
+
+A grant made through the runtime API (the CLI's `grant`) is now a real capability when the host supplies a capability manager (the daemon does): `aidos-cli grant <sessionId> SHELL_EXEC "shell:<dir>[|cmd1,cmd2]"` writes a `Shell` scope to the project's `capabilities` table, `grants <sessionId>` lists the active ones with their directory and commands, and `revoke-grant <capabilityId>` revokes. Before this the API only kept an in-memory placeholder, so no one could grant shell at all. There is no graphical grant screen yet: the desktop Engine app's runtime client is not database-backed.
+
 ## Security
 
 Shell execution is dangerous. Controls:
@@ -188,4 +192,9 @@ files:
   - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ShellToolIntegrationTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ShellGrantApiTest.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/AidosCli.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/Main.kt
 ```

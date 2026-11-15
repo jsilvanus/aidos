@@ -60,12 +60,13 @@ data class StoredRunSettings(
     val temperature: Float? = null,
     val topP: Float? = null,
     val topK: Int? = null,
+    val useMmap: Boolean? = null,
 ) {
-    fun toSettings() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+    fun toSettings() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK, useMmap)
 
     companion object {
         fun of(s: ModelRunSettings) =
-            StoredRunSettings(s.contextLength, s.threads, s.batchSize, s.gpuLayers, s.temperature, s.topP, s.topK)
+            StoredRunSettings(s.contextLength, s.threads, s.batchSize, s.gpuLayers, s.temperature, s.topP, s.topK, s.useMmap)
     }
 }
 

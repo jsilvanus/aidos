@@ -78,7 +78,7 @@ fun ModelDetailScreen(
     LaunchedEffect(modelId) {
         SettingsStore.getRunSettings(context, modelId).let { saved ->
             viewModel.setRunSettingsState(
-                RunSettingsUi(saved.contextLength, saved.threads, saved.batchSize, saved.gpuLayers, saved.temperature, saved.topP, saved.topK)
+                RunSettingsUi(saved.contextLength, saved.threads, saved.batchSize, saved.gpuLayers, saved.temperature, saved.topP, saved.topK, saved.useMmap)
             )
         }
     }
@@ -188,7 +188,7 @@ fun ModelDetailScreen(
                     SettingsStore.setRunSettings(
                         context, modelId,
                         dev.aidos.modelruntime.ModelRunSettings(
-                            ui.contextLength, ui.threads, ui.batchSize, ui.gpuLayers, ui.temperature, ui.topP, ui.topK,
+                            ui.contextLength, ui.threads, ui.batchSize, ui.gpuLayers, ui.temperature, ui.topP, ui.topK, ui.useMmap,
                         ),
                     )
                     viewModel.setRunSettingsState(ui)

@@ -169,6 +169,8 @@ data class RunSettingsUi(
     val temperature: Float? = null,
     val topP: Float? = null,
     val topK: Int? = null,
+    /** RFC-0022: null = memory-map the weights where the platform can (the default); false reads them fully into RAM. */
+    val useMmap: Boolean? = null,
 ) {
     val isDefault: Boolean get() = this == RunSettingsUi()
 }

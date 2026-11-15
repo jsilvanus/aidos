@@ -564,6 +564,13 @@ private fun RunSettingsSection(
         NumberField("CPU threads", settings.threads, "4") { onChange(settings.copy(threads = it)) }
         NumberField("Batch size", settings.batchSize, "512") { onChange(settings.copy(batchSize = it)) }
         NumberField("GPU layers", settings.gpuLayers, "0") { onChange(settings.copy(gpuLayers = it)) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Memory-map weights", fontSize = 12.sp)
+                Text("On: the file is paged in as needed, so a reload after eviction is fast and shares memory with the OS cache. Off: read it all into RAM.", fontSize = 11.sp, color = muted)
+            }
+            Switch(checked = settings.useMmap != false, onCheckedChange = { onChange(settings.copy(useMmap = if (it) null else false)) })
+        }
         if (generates) {
             DecimalField("Temperature", settings.temperature, "0.7") { onChange(settings.copy(temperature = it)) }
             DecimalField("Top-p", settings.topP, "0.95") { onChange(settings.copy(topP = it)) }

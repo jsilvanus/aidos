@@ -147,6 +147,17 @@ class RealRuntimeClient : RuntimeClient {
     /** Optional hook run when a project is opened (e.g. RFC-0053 repo fingerprint check). */
     var onProjectOpen: (suspend (projectId: String, driver: SqlDriver) -> Unit)? = null
 
+    /**
+     * Builds the real capability manager for a project's database. Set by hosts that have one (the daemon).
+     * With it, a `SHELL_EXEC` grant, list and revoke are written to and read from the project's own
+     * `capabilities` table (RFC-0033, RFC-0018), which is what the tools check; without it every grant
+     * stays the in-memory placeholder it was.
+     */
+    var capabilityManagerFor: ((SqlDriver) -> dev.aidos.kernel.CapabilityManager)? = null
+
+    /** Capabilities written through [capabilityManagerFor] in this process: id -> project, so revoke finds the right database. */
+    private val _realCapabilityProjects = mutableMapOf<String, String>()
+
     /** Optional hook run when a session is archived (e.g. RFC-0032/0053 worker-ref pruning). */
     var onSessionArchive: (suspend (sessionId: String, projectId: String, projectPath: String?) -> Unit)? = null
 
@@ -225,6 +236,54 @@ class RealRuntimeClient : RuntimeClient {
         nowIso = { Clock.System.now().toString() },
         cycleDetector = intentCycleDetector(driver),
     )
+
+    /**
+     * `scope` for a shell grant is `shell:<working directory relative to the project>` optionally followed by
+     * `|cmd1,cmd2` to allow only those programs (no shell is used then). Null when this host cannot persist
+     * capabilities or the session is unknown, so the caller falls back to the placeholder behaviour.
+     */
+    private suspend fun realShellGrant(request: GrantCapabilityRequest): CapabilityResult? {
+        val factory = capabilityManagerFor ?: return null
+        val session = _sessions[request.sessionId] ?: return null
+        val driver = _openProjectDrivers[session.projectId] ?: return null
+        val spec = request.scope?.removePrefix("shell:")?.takeIf { request.scope.startsWith("shell:") } ?: "."
+        val dir = spec.substringBefore('|').ifBlank { "." }
+        val commands = if ('|' in spec) spec.substringAfter('|').split(',').map { it.trim() }.filter { it.isNotEmpty() } else null
+        val result = factory(driver).grant(
+            subjectId = request.sessionId,
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = dev.aidos.kernel.Permission.SHELL_EXEC,
+            scope = dev.aidos.kernel.CapabilityScope.Shell(ProjectId(session.projectId), dir, commands),
+            constraints = dev.aidos.kernel.CapabilityConstraints(),
+            expiresAt = request.expiresAt,
+            grantedBy = dev.aidos.kernel.UserId("user"),
+        )
+        return result.fold(
+            onSuccess = {
+                _realCapabilityProjects[it.id.value] = session.projectId
+                CapabilityResult.Success(it.id.value)
+            },
+            onFailure = { CapabilityResult.Error("capability.grant_failed", it.message ?: "grant refused") },
+        )
+    }
+
+    private suspend fun realCapabilitiesFor(sessionId: String): List<CapabilitySummary> {
+        val factory = capabilityManagerFor ?: return emptyList()
+        val session = _sessions[sessionId] ?: return emptyList()
+        val driver = _openProjectDrivers[session.projectId] ?: return emptyList()
+        val now = Clock.System.now()
+        return factory(driver).loadForSubject(sessionId)
+            .filter { it.revokedAt == null && (it.expiresAt == null || it.expiresAt!! > now) }
+            .map { cap ->
+                _realCapabilityProjects[cap.id.value] = session.projectId
+                val scope = when (val sc = cap.scope) {
+                    is dev.aidos.kernel.CapabilityScope.Shell ->
+                        "shell:${sc.workingDirectory}" + (sc.allowedCommands?.let { "|" + it.joinToString(",") } ?: "")
+                    else -> null
+                }
+                CapabilitySummary(cap.id.value, cap.permission.name, scope, cap.expiresAt)
+            }
+    }
 
     /** Opens (or reuses an already-open) driver for a project's own state.db. */
     private fun ensureProjectDriverOpen(id: String, path: String): SqlDriver? {
@@ -746,15 +805,24 @@ class RealRuntimeClient : RuntimeClient {
 
     override val capabilities: CapabilityCommands = object : CapabilityCommands {
         override suspend fun grant(request: GrantCapabilityRequest): CapabilityResult {
+            if (request.permission == "SHELL_EXEC") realShellGrant(request)?.let { return it }
             val id = nextId()
             _capabilities[id] = CapabilitySummary(id, request.permission, request.scope, request.expiresAt)
             return CapabilityResult.Success(id)
         }
 
-        override suspend fun revoke(capabilityId: String) { _capabilities.remove(capabilityId) }
+        override suspend fun revoke(capabilityId: String) {
+            val projectId = _realCapabilityProjects.remove(capabilityId)
+            val driver = projectId?.let { _openProjectDrivers[it] }
+            val factory = capabilityManagerFor
+            if (driver != null && factory != null) {
+                factory(driver).revoke(dev.aidos.kernel.CapabilityId(capabilityId), revokedBy = "user")
+            }
+            _capabilities.remove(capabilityId)
+        }
 
         override suspend fun list(sessionId: String): List<CapabilitySummary> =
-            _capabilities.values.toList()
+            realCapabilitiesFor(sessionId) + _capabilities.values.toList()
 
         override suspend fun listPending(): List<PendingCapabilityRequest> =
             _pendingCapabilities.toList()

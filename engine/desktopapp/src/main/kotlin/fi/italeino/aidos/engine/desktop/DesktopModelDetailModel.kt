@@ -567,9 +567,9 @@ class DesktopModelDetailModel(
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
-    private fun ModelRunSettings.toUi() = RunSettingsUi(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+    private fun ModelRunSettings.toUi() = RunSettingsUi(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK, useMmap)
 
-    private fun RunSettingsUi.toRuntime() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK)
+    private fun RunSettingsUi.toRuntime() = ModelRunSettings(contextLength, threads, batchSize, gpuLayers, temperature, topP, topK, useMmap)
 
     private companion object {
         /** Same budget as Android's ModelLoader default. */

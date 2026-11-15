@@ -47,7 +47,8 @@ Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0
 - **Tool-host enforcement** (`OriginToolHost`, at the origin only): a per-peer, per-app allowlist (default none) decides which tools the host is even told about, and a call to anything else is refused; once any tool result has entered a remote run it is tainted locally (peer-reported taint is ignored) and a tool the app did not declare `readOnly` then needs approval, refused by default; the origin's per-app agent grant still gates `/v1/agent` itself; every decision is audited (run, peer, app, tool, outcome, never content).
 - **Routing** (`RoutedAgentRuntime`): ordered `[peer..., local]`; a peer is a candidate only when the turn's locality allows the cluster and the peer is connected and trusted; an unreachable peer falls back to the next candidate (never wider); a run stays on the host that started it.
 - **Failure.** A dropped link surfaces as 503 on the next call and the app can resume with `GET` by `seq` if the host is still up. Whether a host continues or cancels when the origin disappears is still open (RFC-0108 Phase 5 proposes continue-then-cancel).
-- **Not built:** the approval surface (an effectful call on a tainted remote run is refused, there is no prompt to approve it), UI for the allowlist and peer list, the Android host's Binder MCP broker (phase 2), and a two-device run.
+- **UI (2026-11-15):** the desktop *Peers* tab (`RemotePeersPane` in aidos-tcr, presenter `DesktopRemotePeersModel`) has the hosting switch, preferred-peer order, per-app tool allowlists and the approval prompt (`ToolApprovalQueue`: answered per call, no answer is a refusal).
+- **Not built:** Android screens, the Android host's Binder MCP broker (phase 2), and a two-device run.
 
 ## Implementation Files
 
@@ -70,4 +71,8 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemoteAgent.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemoteAgentTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModel.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/ToolApprovalQueue.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/ToolApprovalQueueTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModelTest.kt
 ```

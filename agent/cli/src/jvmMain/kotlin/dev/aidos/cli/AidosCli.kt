@@ -105,6 +105,12 @@ class AidosCli(private val client: RuntimeClient) {
         }
     }
 
+    /** Active grants for a session: `id<TAB>permission<TAB>scope<TAB>expires` (RFC-0033 shell grants show their directory and commands). */
+    suspend fun listGrants(sessionId: String): List<String> =
+        client.capabilities.list(sessionId).map { "${it.id}	${it.permission}	${it.scope ?: "-"}	${it.expiresAt ?: "never"}" }
+
+    suspend fun revokeGrant(capabilityId: String) = client.capabilities.revoke(capabilityId)
+
     /**
      * Approves a pending capability request (user-interactive approval flow).
      */

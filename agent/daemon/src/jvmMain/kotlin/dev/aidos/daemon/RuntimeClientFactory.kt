@@ -86,6 +86,8 @@ object RuntimeClientFactory {
         )
 
         return RealRuntimeClient().apply {
+            // RFC-0018 / RFC-0033: grants made through the API (the CLI's `grant`) land in the project's capabilities table.
+            capabilityManagerFor = { d -> dev.aidos.capability.SqliteCapabilityManager(d, dev.aidos.identity.UuidV7Generator(), nowIso) }
             userDriver = userDb.driver
             this.deviceIdentity = deviceIdentity
             this.runtimeProfile = platform.profile

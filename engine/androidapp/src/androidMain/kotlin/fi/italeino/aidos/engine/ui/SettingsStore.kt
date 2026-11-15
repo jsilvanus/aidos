@@ -339,6 +339,7 @@ object SettingsStore {
             ModelRunSettings(
                 int("contextLength"), int("threads"), int("batchSize"), int("gpuLayers"),
                 float("temperature"), float("topP"), int("topK"),
+                if (o.has("useMmap")) o.getBoolean("useMmap") else null,
             ).coerced()
         } catch (_: Exception) {
             ModelRunSettings.DEFAULT
@@ -360,6 +361,7 @@ object SettingsStore {
         s.temperature?.let { o.put("temperature", it.toDouble()) }
         s.topP?.let { o.put("topP", it.toDouble()) }
         s.topK?.let { o.put("topK", it) }
+        s.useMmap?.let { o.put("useMmap", it) }
         prefs.edit().putString(runSettingsKey(modelId), o.toString()).apply()
     }
 
