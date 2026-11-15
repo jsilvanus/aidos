@@ -177,6 +177,12 @@ interface CapabilityCommands {
     suspend fun approve(requestId: String): CapabilityResult
     suspend fun deny(requestId: String, reason: String)
     suspend fun approveEffect(runId: String, taskId: String): CapabilityResult
+    suspend fun approveEffect(
+        runId: String,
+        taskId: String,
+        approvalChannel: String,
+        approvalPhrase: String? = null,
+    ): CapabilityResult = approveEffect(runId, taskId)
     suspend fun denyEffect(runId: String, taskId: String, reason: String)
 
     /**
@@ -504,7 +510,22 @@ data class RuntimeVersion(
     val version: String,
     val apiVersion: Int,
     val profile: String,
+    val minApiVersion: Int = 1,
 )
+
+/**
+ * Backend service for structured Git diff, hunk staging/reverting, and commit (RFC-0052).
+ *
+ * Wired by `agent/git` (`JGitDiffService`) and injected into [RealRuntimeClient].
+ */
+interface DiffService {
+    suspend fun changes(projectPath: String, range: DiffRange): DiffSummary
+    suspend fun hunks(projectPath: String, range: DiffRange, path: String): Result<FileDiff>
+    suspend fun unified(projectPath: String, range: DiffRange, path: String): Result<String>
+    suspend fun stage(projectPath: String, hunks: List<HunkId>): Result<Unit>
+    suspend fun revert(projectPath: String, hunks: List<HunkId>): Result<Unit>
+    suspend fun commit(projectPath: String, message: String): CommitResult
+}
 
 // ─── Knowledge Service ────────────────────────────────────────────────────────
 

@@ -57,8 +57,14 @@ import fi.italeino.aidos.engine.handshake.handshakeCapabilities
 import fi.italeino.aidos.sdk.client.AidosEngineClient
 import fi.italeino.aidos.sdk.client.AidosEngineClientFactory
 import kotlinx.coroutines.CompletableDeferred
+import dev.aidos.aidin.AIDIN_PROTOCOL_VERSION
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.AndroidAidin
+import dev.aidos.aidin.ContributionPolicy
+import dev.aidos.aidin.GroupId
+import dev.aidos.aidin.Heartbeat
+import dev.aidos.aidin.SplitHosting
+import dev.aidos.aidin.SplitPlanOutcome
 import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.agent.createEngineAgentRuntime
@@ -100,6 +106,10 @@ class EngineService : LifecycleService() {
         private val _aidinError = MutableStateFlow<String?>(null)
         /** Why device groups did not start; the Engine itself still runs. */
         val aidinError: StateFlow<String?> = _aidinError.asStateFlow()
+
+        private val _split = MutableStateFlow<SplitHosting?>(null)
+        /** Distributed split-model hosting controller (RFC-0105 phase 3). */
+        val split: StateFlow<SplitHosting?> = _split.asStateFlow()
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -349,7 +359,12 @@ class EngineService : LifecycleService() {
         if (_aidin.value != null) return
         _aidinError.value = null
         try {
-            val node = AndroidAidin.create(this, serviceScope, engineVersion = "android")
+            val node = AndroidAidin.create(
+                context = this,
+                scope = serviceScope,
+                engineVersion = "android",
+                heartbeatContent = { splitHeartbeat() },
+            )
             try {
                 if (::httpServer.isInitialized) httpServer.attachAidinNode(node)
                 // A fixed port lets paired peers find this phone after a restart; fall back if taken.
@@ -359,6 +374,13 @@ class EngineService : LifecycleService() {
                     node.start(port = 0)
                 }
                 _aidin.value = node
+                _split.value = SplitHosting(
+                    node = node,
+                    scope = serviceScope,
+                    binDir = java.io.File(applicationInfo.nativeLibraryDir),
+                    stateDir = java.io.File(filesDir, "aidin"),
+                    policy = ::splitPolicy,
+                )
             } catch (e: Exception) {
                 runCatching { node.stop() }
                 throw e
@@ -371,8 +393,58 @@ class EngineService : LifecycleService() {
 
     @Synchronized
     private fun stopAidin() {
+        _split.value?.let { runCatching { it.close() } }
+        _split.value = null
         _aidin.value?.let { runCatching { it.stop() } }
         _aidin.value = null
+    }
+
+    private fun splitPolicy(): ContributionPolicy {
+        val ramBytes = (Runtime.getRuntime().maxMemory().coerceAtLeast(256L * 1024 * 1024)) / 2
+        return ContributionPolicy(ramBudgetBytes = ramBytes)
+    }
+
+    private fun splitHeartbeat(): Heartbeat {
+        val base = Heartbeat(AIDIN_PROTOCOL_VERSION, "android")
+        return _split.value?.heartbeat(base) ?: base
+    }
+
+    fun splittableModels(): List<String> {
+        val modelsDir = java.io.File(filesDir, "models")
+        val installed = runCatching {
+            kotlinx.coroutines.runBlocking { catalogManager?.listInstalled()?.getOrNull().orEmpty() }
+        }.getOrDefault(emptyList())
+        val result = mutableSetOf<String>()
+        for (entry in installed) {
+            if (entry.path.endsWith(".gguf", ignoreCase = true) && java.io.File(entry.path).isFile) {
+                result += entry.modelId
+            }
+        }
+        modelsDir.listFiles { f -> f.isFile && f.extension.equals("gguf", ignoreCase = true) }
+            ?.forEach { file -> result += file.nameWithoutExtension }
+        return result.sorted()
+    }
+
+    fun startSplitModel(group: GroupId, modelId: String): String {
+        val hosting = _split.value ?: return "Turn on sharing first."
+        val modelsDir = java.io.File(filesDir, "models")
+        val installed = runCatching {
+            kotlinx.coroutines.runBlocking { catalogManager?.listInstalled()?.getOrNull().orEmpty() }
+        }.getOrDefault(emptyList())
+        val entry = installed.firstOrNull { it.modelId == modelId }
+        val file = entry?.path?.let { java.io.File(it) }?.takeIf { it.isFile }
+            ?: java.io.File(modelsDir, "$modelId.gguf").takeIf { it.isFile }
+            ?: return "$modelId is not installed as a GGUF model."
+        val digest = entry?.digest?.trim()?.takeIf { it.isNotEmpty() } ?: file.name
+        val outcome = hosting.start(
+            group = group,
+            modelId = modelId,
+            modelDigest = digest,
+            modelFile = file,
+            blockCount = 32,
+            contextLength = 4096,
+        )
+        return hosting.status.value ?: (outcome as? SplitPlanOutcome.Refused)?.reason.orEmpty()
     }
 
     /** Turn device groups on or off while the Engine runs; at start the saved setting decides. */

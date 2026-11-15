@@ -29,6 +29,8 @@ interface EffectApprovalGateway {
         runId: String,
         approved: Boolean,
         denialReason: String?,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
     ): EffectResolution
 
     /**

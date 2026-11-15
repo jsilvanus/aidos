@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -40,6 +41,12 @@ fun AssistantSheetOverlay(
     onProposeTask: (String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    preferredBackend: SttBackend = SttBackend.AUTO,
+    activeBackend: SttBackend? = null,
+    errorMessage: String? = null,
+    onSelectBackend: (SttBackend) -> Unit = {},
+    onToggleListening: () -> Unit = {},
+    onTranscriptEdit: (String) -> Unit = {},
 ) {
     AnimatedVisibility(
         visible = isOpen,
@@ -81,9 +88,59 @@ fun AssistantSheetOverlay(
                         )
                     }
 
-                    TravelingVoiceCaret(
-                        isRecording = isListening,
-                        ghostText = streamedGhostText,
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SttBackend.entries.forEach { backend ->
+                            val selected = preferredBackend == backend
+                            ActionButtonAtom(
+                                text = if (selected) "✓ ${backend.label}" else backend.label,
+                                onClick = { onSelectBackend(backend) },
+                                kind = if (selected) ActionButtonKind.PRIMARY else ActionButtonKind.TACTILE_MICRO,
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TravelingVoiceCaret(
+                            isRecording = isListening,
+                            ghostText = streamedGhostText,
+                        )
+                        ActionButtonAtom(
+                            text = if (isListening) "Stop Mic" else "Start Mic",
+                            onClick = onToggleListening,
+                            kind = ActionButtonKind.PRIMARY,
+                        )
+                    }
+
+                    if (activeBackend != null) {
+                        Text(
+                            text = "STT: ${activeBackend.label}",
+                            style = AidosTypography.baseTypography.labelSmall,
+                            color = ColorTokens.StatusStale,
+                        )
+                    }
+
+                    if (!errorMessage.isNullOrBlank()) {
+                        Text(
+                            text = errorMessage,
+                            style = AidosTypography.baseTypography.labelSmall,
+                            color = ColorTokens.PillOrchestratorRed,
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = streamedGhostText,
+                        onValueChange = onTranscriptEdit,
+                        label = { Text("Editable transcript (RFC-0050)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 4,
                     )
 
                     if (streamedGhostText.isNotBlank()) {

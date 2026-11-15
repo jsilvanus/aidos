@@ -29,6 +29,9 @@ import dev.aidos.api.CreateIntentNodeRequest
 import dev.aidos.api.RuntimeClient
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.assistant.AssistantSheetOverlay
+import dev.aidos.ui.assistant.SttBackend
+import dev.aidos.ui.assistant.VoiceCaptureController
+import dev.aidos.ui.assistant.VoiceCaptureState
 import dev.aidos.ui.dex.DexStatePreserver
 import dev.aidos.ui.frontdoors.gates.ApprovalGatePresenter
 import dev.aidos.ui.frontdoors.gates.ApprovalGatesScreen
@@ -108,6 +111,7 @@ fun AidosUniversalApp(
     initialAssistantOpen: Boolean = false,
     nativeProcessHealth: StateFlow<NativeProcessHealth>? = null,
     approvalGatePresenter: ApprovalGatePresenter? = null,
+    voiceCaptureController: VoiceCaptureController? = null,
     onPinProjectLauncher: ((projectId: String, projectName: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -234,10 +238,37 @@ fun AidosUniversalApp(
         overlayContent = {
             MultiAgentPillOverlay(pills = pills)
             CommandPaletteModal(presenter = commandPalettePresenter)
+            val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
+            val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
             AssistantSheetOverlay(
                 isOpen = isAssistantOpen,
-                isListening = isAssistantOpen,
-                streamedGhostText = assistantGhostText,
+                isListening = voiceState.isListening,
+                streamedGhostText = effectiveTranscript,
+                preferredBackend = voiceState.preferredBackend,
+                activeBackend = voiceState.activeBackend,
+                errorMessage = voiceState.errorMessage,
+                onSelectBackend = { backend: SttBackend ->
+                    voiceCaptureController?.selectBackend(backend)
+                },
+                onToggleListening = {
+                    val ctrl = voiceCaptureController
+                    if (ctrl != null) {
+                        coroutineScope.launch {
+                            if (voiceState.isListening) {
+                                val text = ctrl.stopListening()
+                                if (!text.isNullOrBlank()) {
+                                    assistantGhostText = text
+                                }
+                            } else {
+                                ctrl.startListening()
+                            }
+                        }
+                    }
+                },
+                onTranscriptEdit = { edited ->
+                    assistantGhostText = edited
+                    voiceCaptureController?.updateTranscript(edited)
+                },
                 onProposeTask = { text ->
                     coroutineScope.launch {
                         runtimeClient.intents.createNode(
@@ -248,9 +279,15 @@ fun AidosUniversalApp(
                             )
                         )
                         inboxPresenter.loadData()
+                        voiceCaptureController?.cancel()
+                        isAssistantOpen = false
+                        assistantGhostText = ""
                     }
                 },
-                onDismiss = { isAssistantOpen = false },
+                onDismiss = {
+                    voiceCaptureController?.cancel()
+                    isAssistantOpen = false
+                },
             )
         },
         modifier = modifier.fillMaxSize(),

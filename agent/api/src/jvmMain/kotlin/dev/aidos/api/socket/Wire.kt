@@ -406,6 +406,7 @@ object Wire {
     fun encodeRuntimeVersion(version: RuntimeVersion): JsonObject = buildJsonObject {
         put("version", version.version)
         put("apiVersion", version.apiVersion)
+        put("minApiVersion", version.minApiVersion)
         put("profile", version.profile)
     }
 
@@ -413,6 +414,7 @@ object Wire {
         version = json["version"]!!.jsonPrimitive.content,
         apiVersion = json["apiVersion"]!!.jsonPrimitive.int,
         profile = json["profile"]!!.jsonPrimitive.content,
+        minApiVersion = json["minApiVersion"]?.jsonPrimitive?.int ?: 1,
     )
 
     fun encodeAvailabilityReport(report: dev.aidos.kernel.AvailabilityReport): JsonObject = buildJsonObject {

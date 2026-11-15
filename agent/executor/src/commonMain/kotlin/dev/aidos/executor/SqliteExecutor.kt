@@ -788,6 +788,22 @@ class SqliteExecutor(
         }
     }
 
+    private fun recordApprovalChannel(
+        taskId: TaskId,
+        approvalChannel: String,
+        approvalPhrase: String?,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE tasks SET approval_channel = ?, approval_phrase = ? WHERE id = ?",
+            parameters = 3,
+        ) {
+            bindString(0, approvalChannel)
+            bindString(1, approvalPhrase)
+            bindString(2, taskId.value)
+        }
+    }
+
     private fun updateTaskState(taskId: TaskId, state: TaskState) {
         val isTerminal = state.isTerminal
         RowVersionCas.withRetry {
@@ -995,7 +1011,7 @@ class SqliteExecutor(
         driver.executeQuery(
             identifier = null,
             sql = "SELECT t.id, t.run_id, t.session_id, r.project_id, t.ordinal, t.kind, t.description, " +
-                "t.tool_name, t.state, t.retry_policy_json FROM tasks t JOIN runs r ON r.id = t.run_id " +
+                "t.tool_name, t.state, t.retry_policy_json, t.approval_channel, t.approval_phrase FROM tasks t JOIN runs r ON r.id = t.run_id " +
                 "WHERE t.run_id = ? AND t.state = 'PENDING' ORDER BY t.ordinal",
             mapper = { cursor ->
                 while (cursor.next().value) {
@@ -1016,8 +1032,8 @@ class SqliteExecutor(
                             endedAt = null,
                             awaitingRunId = null,
                             retryPolicy = parseRetryPolicy(cursor.getString(9)),
-                            approvalChannel = null,
-                            approvalPhrase = null,
+                            approvalChannel = cursor.getString(10),
+                            approvalPhrase = cursor.getString(11),
                         )
                     )
                 }
@@ -1402,6 +1418,8 @@ class SqliteExecutor(
         runId: RunId,
         approved: Boolean,
         denialReason: String? = null,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
     ): CapabilityApprovalResolution {
         val continuation = loadContinuation(runId) ?: return CapabilityApprovalResolution.NotFound(runId)
         if (continuation.suspendedOperation != "CAPABILITY_APPROVAL") {
@@ -1438,6 +1456,7 @@ class SqliteExecutor(
                 bindString(0, withResolution(continuation.operationDetailJson, "approved"))
                 bindString(1, runId.value)
             }
+            recordApprovalChannel(continuation.taskId, approvalChannel, approvalPhrase)
             updateTaskState(continuation.taskId, TaskState.PENDING)
         }
         updateRunState(runId, RunState.RUNNING)
@@ -1467,6 +1486,8 @@ class SqliteExecutor(
         runId: RunId,
         approved: Boolean,
         denialReason: String? = null,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
         onApprove: suspend (operationDetailJson: String) -> Unit = {},
     ): CapabilityApprovalResolution {
         val continuation = loadContinuation(runId) ?: return CapabilityApprovalResolution.NotFound(runId)
@@ -1511,12 +1532,14 @@ class SqliteExecutor(
                     bindString(0, withResolution(continuation.operationDetailJson, "approved"))
                     bindString(1, runId.value)
                 }
+                recordApprovalChannel(continuation.taskId, approvalChannel, approvalPhrase)
                 updateTaskState(continuation.taskId, TaskState.PENDING)
             }
         } else {
             onApprove(continuation.operationDetailJson)
             inTransaction {
                 deleteContinuation(runId)
+                recordApprovalChannel(continuation.taskId, approvalChannel, approvalPhrase)
                 updateTaskState(continuation.taskId, TaskState.PENDING)
             }
         }

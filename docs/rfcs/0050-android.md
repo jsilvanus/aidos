@@ -1,6 +1,7 @@
 # RFC-0050: Android
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15
+Non-MVP Work: **Remaining** (Camera/OCR, wearable companion, paired execution delegation)
 
 ## Abstract
 
@@ -412,3 +413,27 @@ None outstanding. Grouping the inbox *by project* — as opposed to truncating i
 is settled — is deferred to M28, when there is a real device with real projects on it. Any
 threshold chosen now would be a guess; the rule to implement against is flat until it stops
 fitting, then grouped by project.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/androidMain/AndroidManifest.xml
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/service/AidosService.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ui/Screens.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/work/DeterministicPrepWorker.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/diff/DiffUiState.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/editor/EditorPresenter.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/voice/LocalSpeechTypes.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/voice/HybridSttRouter.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/voice/AndroidDeviceSttEngine.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/voice/AidosEngineSttClient.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/VoiceCaptureController.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/ui/editor/EditorPresenterTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
+```

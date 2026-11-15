@@ -43,6 +43,10 @@ import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.api.UserMessage
 import dev.aidos.api.socket.Methods
 import dev.aidos.api.socket.Wire
+import dev.aidos.api.socket.WireExtended
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import dev.aidos.intent.EffectiveDispatchPolicy
 import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentEdgeKind
@@ -63,7 +67,6 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -106,6 +109,7 @@ class SocketRuntimeClient(
     private val tokenPath: Path,
     /** RFC-0055: only a CLI attached to a TTY may claim this — a script or CI run may not. */
     private val interactive: Boolean = System.console() != null,
+    private val minApiVersion: Int = Methods.CURRENT_API_VERSION,
 ) : RuntimeClient {
 
     private fun connect(): SocketChannel {
@@ -130,7 +134,14 @@ class SocketRuntimeClient(
         val channel = connect()
         val reader = BufferedReader(InputStreamReader(Channels.newInputStream(channel), StandardCharsets.UTF_8))
         val output = Channels.newOutputStream(channel)
-        writeLine(output, buildJsonObject { put("token", token()); put("interactive", interactive) })
+        writeLine(
+            output,
+            buildJsonObject {
+                put("token", token())
+                put("interactive", interactive)
+                put("minApiVersion", minApiVersion)
+            }
+        )
         val ackLine = reader.readLine()
             ?: throw SocketConnectionException("daemon closed the connection during handshake")
         val ack = runCatching { Json.parseToJsonElement(ackLine).jsonObject }
@@ -138,6 +149,11 @@ class SocketRuntimeClient(
         if (ack["ok"]?.jsonPrimitive?.boolean != true) {
             channel.close()
             throw SocketConnectionException("handshake rejected by daemon: $ackLine")
+        }
+        val serverApi = ack["apiVersion"]?.jsonPrimitive?.content?.toIntOrNull()
+        if (serverApi != null && serverApi < minApiVersion) {
+            channel.close()
+            throw SocketConnectionException("api.version_incompatible: server API $serverApi < required $minApiVersion")
         }
         return Triple(channel, reader, output)
     }
@@ -168,22 +184,23 @@ class SocketRuntimeClient(
         output.flush()
     }
 
-    private fun notWired(method: String): Nothing = throw UnsupportedOperationException(
-        "$method is not yet wired over socket transport (M10 scope — see PIPELINE.md's M10 note)"
-    )
-
     override val projects = object : ProjectCommands {
         override suspend fun create(request: CreateProjectRequest): ProjectResult = withContext(Dispatchers.IO) {
             Wire.decodeProjectResult(call(Methods.PROJECTS_CREATE, Wire.encodeCreateProjectRequest(request)).jsonObject)
         }
-        override suspend fun open(projectId: String): ProjectResult = notWired("projects.open")
+        override suspend fun open(projectId: String): ProjectResult = withContext(Dispatchers.IO) {
+            Wire.decodeProjectResult(call(Methods.PROJECTS_OPEN, buildJsonObject { put("projectId", projectId) }).jsonObject)
+        }
         override suspend fun close(projectId: String): Unit = withContext(Dispatchers.IO) {
             call(Methods.PROJECTS_CLOSE, buildJsonObject { put("projectId", projectId) }).let { }
         }
         override suspend fun list(): List<ProjectSummary> = withContext(Dispatchers.IO) {
             Wire.decodeProjectSummaryList(call(Methods.PROJECTS_LIST, JsonObject(emptyMap())).jsonArray)
         }
-        override suspend fun get(projectId: String): ProjectDetail? = notWired("projects.get")
+        override suspend fun get(projectId: String): ProjectDetail? = withContext(Dispatchers.IO) {
+            val res = call(Methods.PROJECTS_GET, buildJsonObject { put("projectId", projectId) })
+            if (res is JsonNull) null else WireExtended.decodeProjectDetail(res.jsonObject)
+        }
         override suspend fun delete(projectId: String, confirm: Boolean): Unit = withContext(Dispatchers.IO) {
             call(
                 Methods.PROJECTS_DELETE,
@@ -206,23 +223,38 @@ class SocketRuntimeClient(
             }
             Wire.decodeRunResult(call(Methods.SESSIONS_SEND, params).jsonObject)
         }
-        override suspend fun cancel(sessionId: String, runId: String): Unit = notWired("sessions.cancel")
+        override suspend fun cancel(sessionId: String, runId: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.SESSIONS_CANCEL, buildJsonObject { put("sessionId", sessionId); put("runId", runId) }).let { }
+        }
         override suspend fun list(projectId: String): List<SessionSummary> = withContext(Dispatchers.IO) {
             Wire.decodeSessionSummaryList(
                 call(Methods.SESSIONS_LIST, buildJsonObject { put("projectId", projectId) }).jsonArray
             )
         }
-        override suspend fun get(sessionId: String): SessionDetail? = notWired("sessions.get")
-        override suspend fun archive(sessionId: String): Unit = notWired("sessions.archive")
-        override suspend fun delete(sessionId: String): Unit = notWired("sessions.delete")
+        override suspend fun get(sessionId: String): SessionDetail? = withContext(Dispatchers.IO) {
+            val res = call(Methods.SESSIONS_GET, buildJsonObject { put("sessionId", sessionId) })
+            if (res is JsonNull) null else WireExtended.decodeSessionDetail(res.jsonObject)
+        }
+        override suspend fun archive(sessionId: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.SESSIONS_ARCHIVE, buildJsonObject { put("sessionId", sessionId) }).let { }
+        }
+        override suspend fun delete(sessionId: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.SESSIONS_DELETE, buildJsonObject { put("sessionId", sessionId) }).let { }
+        }
     }
 
     override val capabilities = object : CapabilityCommands {
         override suspend fun grant(request: GrantCapabilityRequest): CapabilityResult = withContext(Dispatchers.IO) {
             Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_GRANT, Wire.encodeGrantCapabilityRequest(request)).jsonObject)
         }
-        override suspend fun revoke(capabilityId: String): Unit = notWired("capabilities.revoke")
-        override suspend fun list(sessionId: String): List<CapabilitySummary> = notWired("capabilities.list")
+        override suspend fun revoke(capabilityId: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.CAPABILITIES_REVOKE, buildJsonObject { put("capabilityId", capabilityId) }).let { }
+        }
+        override suspend fun list(sessionId: String): List<CapabilitySummary> = withContext(Dispatchers.IO) {
+            WireExtended.decodeCapabilitySummaryList(
+                call(Methods.CAPABILITIES_LIST, buildJsonObject { put("sessionId", sessionId) }).jsonArray
+            )
+        }
         override suspend fun listPending(): List<PendingCapabilityRequest> = withContext(Dispatchers.IO) {
             Wire.decodePendingCapabilityList(call(Methods.CAPABILITIES_LIST_PENDING, JsonObject(emptyMap())).jsonArray)
         }
@@ -230,9 +262,23 @@ class SocketRuntimeClient(
             val params = buildJsonObject { put("requestId", requestId) }
             Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_APPROVE, params).jsonObject)
         }
-        override suspend fun deny(requestId: String, reason: String): Unit = notWired("capabilities.deny")
-        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult = withContext(Dispatchers.IO) {
-            val params = buildJsonObject { put("runId", runId); put("taskId", taskId) }
+        override suspend fun deny(requestId: String, reason: String): Unit = withContext(Dispatchers.IO) {
+            call(Methods.CAPABILITIES_DENY, buildJsonObject { put("requestId", requestId); put("reason", reason) }).let { }
+        }
+        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult =
+            approveEffect(runId, taskId, approvalChannel = "tap", approvalPhrase = null)
+        override suspend fun approveEffect(
+            runId: String,
+            taskId: String,
+            approvalChannel: String,
+            approvalPhrase: String?,
+        ): CapabilityResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("runId", runId)
+                put("taskId", taskId)
+                put("approvalChannel", approvalChannel)
+                approvalPhrase?.let { put("approvalPhrase", it) }
+            }
             Wire.decodeCapabilityResult(call(Methods.CAPABILITIES_APPROVE_EFFECT, params).jsonObject)
         }
         override suspend fun denyEffect(runId: String, taskId: String, reason: String): Unit = withContext(Dispatchers.IO) {
@@ -246,23 +292,104 @@ class SocketRuntimeClient(
     }
 
     override val knowledge = object : KnowledgeQueries {
-        override suspend fun search(projectId: String, query: KnowledgeQuery): KnowledgeResult = notWired("knowledge.search")
-        override suspend fun indexStatus(projectId: String): IndexStatus = notWired("knowledge.indexStatus")
+        override suspend fun search(projectId: String, query: KnowledgeQuery): KnowledgeResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("query", WireExtended.encodeKnowledgeQuery(query))
+            }
+            WireExtended.decodeKnowledgeResult(call(Methods.KNOWLEDGE_SEARCH, params).jsonObject)
+        }
+        override suspend fun indexStatus(projectId: String): IndexStatus = withContext(Dispatchers.IO) {
+            WireExtended.decodeIndexStatus(
+                call(Methods.KNOWLEDGE_INDEX_STATUS, buildJsonObject { put("projectId", projectId) }).jsonObject
+            )
+        }
     }
 
     override val diff = object : DiffQueries {
-        override suspend fun changes(projectId: String, range: DiffRange): DiffSummary = notWired("diff.changes")
-        override suspend fun hunks(projectId: String, range: DiffRange, path: String): Result<FileDiff> = notWired("diff.hunks")
-        override suspend fun unified(projectId: String, range: DiffRange, path: String): Result<String> = notWired("diff.unified")
-        override suspend fun stage(projectId: String, hunks: List<HunkId>): Result<Unit> = notWired("diff.stage")
-        override suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit> = notWired("diff.revert")
-        override suspend fun commit(projectId: String, message: String): CommitResult = notWired("diff.commit")
+        override suspend fun changes(projectId: String, range: DiffRange): DiffSummary = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("range", WireExtended.encodeDiffRange(range))
+            }
+            WireExtended.decodeDiffSummary(call(Methods.DIFF_CHANGES, params).jsonObject)
+        }
+        override suspend fun hunks(projectId: String, range: DiffRange, path: String): Result<FileDiff> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("range", WireExtended.encodeDiffRange(range))
+                put("path", path)
+            }
+            val res = call(Methods.DIFF_HUNKS, params).jsonObject
+            if (res["ok"]?.jsonPrimitive?.boolean == true) {
+                Result.success(WireExtended.decodeFileDiff(res["diff"]!!.jsonObject))
+            } else {
+                Result.failure(IllegalStateException(res["error"]?.jsonPrimitive?.content ?: "diff.hunks failed"))
+            }
+        }
+        override suspend fun unified(projectId: String, range: DiffRange, path: String): Result<String> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("range", WireExtended.encodeDiffRange(range))
+                put("path", path)
+            }
+            val res = call(Methods.DIFF_UNIFIED, params).jsonObject
+            if (res["ok"]?.jsonPrimitive?.boolean == true) {
+                Result.success(res["text"]!!.jsonPrimitive.content)
+            } else {
+                Result.failure(IllegalStateException(res["error"]?.jsonPrimitive?.content ?: "diff.unified failed"))
+            }
+        }
+        override suspend fun stage(projectId: String, hunks: List<HunkId>): Result<Unit> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("hunks", WireExtended.encodeHunkIds(hunks))
+            }
+            val res = call(Methods.DIFF_STAGE, params).jsonObject
+            if (res["ok"]?.jsonPrimitive?.boolean == true) {
+                Result.success(Unit)
+            } else {
+                Result.failure(IllegalStateException(res["error"]?.jsonPrimitive?.content ?: "diff.stage failed"))
+            }
+        }
+        override suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("hunks", WireExtended.encodeHunkIds(hunks))
+            }
+            val res = call(Methods.DIFF_REVERT, params).jsonObject
+            if (res["ok"]?.jsonPrimitive?.boolean == true) {
+                Result.success(Unit)
+            } else {
+                Result.failure(IllegalStateException(res["error"]?.jsonPrimitive?.content ?: "diff.revert failed"))
+            }
+        }
+        override suspend fun commit(projectId: String, message: String): CommitResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("message", message)
+            }
+            WireExtended.decodeCommitResult(call(Methods.DIFF_COMMIT, params).jsonObject)
+        }
     }
 
     override val artifacts = object : ArtifactQueries {
-        override suspend fun list(projectId: String, filter: ArtifactFilter): List<ArtifactSummary> = notWired("artifacts.list")
-        override suspend fun get(artifactId: String): ArtifactDetail? = notWired("artifacts.get")
-        override suspend fun getAuditTrail(artifactId: String): List<AuditEntry> = notWired("artifacts.getAuditTrail")
+        override suspend fun list(projectId: String, filter: ArtifactFilter): List<ArtifactSummary> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("filter", WireExtended.encodeArtifactFilter(filter))
+            }
+            call(Methods.ARTIFACTS_LIST, params).jsonArray.map { WireExtended.decodeArtifactSummary(it.jsonObject) }
+        }
+        override suspend fun get(artifactId: String): ArtifactDetail? = withContext(Dispatchers.IO) {
+            val res = call(Methods.ARTIFACTS_GET, buildJsonObject { put("artifactId", artifactId) })
+            if (res is JsonNull) null else WireExtended.decodeArtifactDetail(res.jsonObject)
+        }
+        override suspend fun getAuditTrail(artifactId: String): List<AuditEntry> = withContext(Dispatchers.IO) {
+            WireExtended.decodeAuditEntryList(
+                call(Methods.ARTIFACTS_AUDIT_TRAIL, buildJsonObject { put("artifactId", artifactId) }).jsonArray
+            )
+        }
     }
 
     override val events = object : EventSubscriptions {
@@ -316,20 +443,36 @@ class SocketRuntimeClient(
     }
 
     override val intents = object : IntentCommands {
-        override suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord =
-            notWired("intents.createNode")
+        override suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord = withContext(Dispatchers.IO) {
+            WireExtended.decodeSerializable(
+                call(Methods.INTENTS_CREATE_NODE, WireExtended.encodeCreateIntentNodeRequest(request))
+            )
+        }
 
-        override suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord =
-            notWired("intents.updateNode")
+        override suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord = withContext(Dispatchers.IO) {
+            WireExtended.decodeSerializable(
+                call(Methods.INTENTS_UPDATE_NODE, WireExtended.encodeUpdateIntentNodeRequest(request))
+            )
+        }
 
-        override suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord =
-            notWired("intents.archiveNode")
+        override suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { put("projectId", projectId); put("nodeId", nodeId) }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_ARCHIVE_NODE, params))
+        }
 
         override suspend fun getNodeStatus(
             projectId: String,
             nodeId: String,
             projectDefaultPolicy: EffectiveDispatchPolicy,
-        ): IntentNodeStatusView? = notWired("intents.getNodeStatus")
+        ): IntentNodeStatusView? = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("nodeId", nodeId)
+                put("projectDefaultPolicy", projectDefaultPolicy.name)
+            }
+            val res = call(Methods.INTENTS_GET_NODE_STATUS, params)
+            if (res is JsonNull) null else WireExtended.decodeSerializable(res)
+        }
 
         override suspend fun listNodes(
             projectId: String,
@@ -337,12 +480,27 @@ class SocketRuntimeClient(
             actorKind: IntentActorKind?,
             parentId: String?,
             filterByParent: Boolean,
-        ): List<IntentNodeRecord> = notWired("intents.listNodes")
+        ): List<IntentNodeRecord> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("includeArchived", includeArchived)
+                actorKind?.let { put("actorKind", it.name) }
+                parentId?.let { put("parentId", it) }
+                put("filterByParent", filterByParent)
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_LIST_NODES, params))
+        }
 
         override suspend fun listActionableForHuman(
             projectId: String,
             projectDefaultPolicy: EffectiveDispatchPolicy,
-        ): List<IntentNodeStatusView> = notWired("intents.listActionableForHuman")
+        ): List<IntentNodeStatusView> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("projectDefaultPolicy", projectDefaultPolicy.name)
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_LIST_ACTIONABLE, params))
+        }
 
         override suspend fun listReadyForAgent(
             projectId: String,
@@ -350,41 +508,88 @@ class SocketRuntimeClient(
             locality: IntentMinLocality,
             projectDefaultPolicy: EffectiveDispatchPolicy,
             onlyAutoDispatch: Boolean,
-        ): List<IntentNodeStatusView> = notWired("intents.listReadyForAgent")
+        ): List<IntentNodeStatusView> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("profile", profile.name)
+                put("locality", locality.name)
+                put("projectDefaultPolicy", projectDefaultPolicy.name)
+                put("onlyAutoDispatch", onlyAutoDispatch)
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_LIST_READY, params))
+        }
 
         override suspend fun completeHumanNode(
             projectId: String,
             nodeId: String,
             userId: String,
             note: String?,
-        ): IntentNodeRecord = notWired("intents.completeHumanNode")
+        ): IntentNodeRecord = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("nodeId", nodeId)
+                put("userId", userId)
+                note?.let { put("note", it) }
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_COMPLETE_HUMAN_NODE, params))
+        }
 
         override suspend fun addEdge(
             projectId: String,
             fromNodeId: String,
             toNodeId: String,
             edgeKind: IntentEdgeKind,
-        ): IntentEdgeRecord = notWired("intents.addEdge")
+        ): IntentEdgeRecord = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("fromNodeId", fromNodeId)
+                put("toNodeId", toNodeId)
+                put("edgeKind", edgeKind.name)
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_ADD_EDGE, params))
+        }
 
         override suspend fun removeEdge(
             projectId: String,
             fromNodeId: String,
             toNodeId: String,
             edgeKind: IntentEdgeKind,
-        ): Boolean = notWired("intents.removeEdge")
+        ): Boolean = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("fromNodeId", fromNodeId)
+                put("toNodeId", toNodeId)
+                put("edgeKind", edgeKind.name)
+            }
+            call(Methods.INTENTS_REMOVE_EDGE, params).jsonPrimitive.boolean
+        }
 
         override suspend fun listEdges(
             projectId: String,
             fromNodeId: String?,
             toNodeId: String?,
             edgeKind: IntentEdgeKind?,
-        ): List<IntentEdgeRecord> = notWired("intents.listEdges")
+        ): List<IntentEdgeRecord> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                fromNodeId?.let { put("fromNodeId", it) }
+                toNodeId?.let { put("toNodeId", it) }
+                edgeKind?.let { put("edgeKind", it.name) }
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_LIST_EDGES, params))
+        }
 
-        override suspend fun propose(request: CreateIntentProposalRequest): String =
-            notWired("intents.propose")
+        override suspend fun propose(request: CreateIntentProposalRequest): String = withContext(Dispatchers.IO) {
+            call(Methods.INTENTS_PROPOSE, WireExtended.encodeCreateIntentProposalRequest(request)).jsonPrimitive.content
+        }
 
-        override suspend fun listProposals(projectId: String, state: String?): List<IntentProposal> =
-            notWired("intents.listProposals")
+        override suspend fun listProposals(projectId: String, state: String?): List<IntentProposal> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                state?.let { put("state", it) }
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_LIST_PROPOSALS, params))
+        }
 
         override suspend fun resolveProposal(
             projectId: String,
@@ -392,7 +597,16 @@ class SocketRuntimeClient(
             decision: ProposalResolutionDecision,
             resolvedByUserId: String,
             editedOperations: List<IntentOperation>?,
-        ): IntentProposal = notWired("intents.resolveProposal")
+        ): IntentProposal = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("proposalId", proposalId)
+                put("decision", decision.name)
+                put("resolvedByUserId", resolvedByUserId)
+                editedOperations?.let { put("editedOperations", WireExtended.encodeSerializable(it)) }
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_RESOLVE_PROPOSAL, params))
+        }
 
         override suspend fun confirmImplementation(
             projectId: String,
@@ -400,15 +614,31 @@ class SocketRuntimeClient(
             confirmedByKind: String,
             confirmedById: String,
             criterionIds: List<String>?,
-        ) = notWired("intents.confirmImplementation")
+        ) = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("nodeId", nodeId)
+                put("confirmedByKind", confirmedByKind)
+                put("confirmedById", confirmedById)
+                criterionIds?.let { ids -> put("criterionIds", buildJsonArray { ids.forEach { add(it) } }) }
+            }
+            call(Methods.INTENTS_CONFIRM_IMPLEMENTATION, params).let { }
+        }
 
-        override suspend fun exportSnapshotJson(projectId: String): String =
-            notWired("intents.exportSnapshotJson")
+        override suspend fun exportSnapshotJson(projectId: String): String = withContext(Dispatchers.IO) {
+            call(Methods.INTENTS_EXPORT_SNAPSHOT, buildJsonObject { put("projectId", projectId) }).jsonPrimitive.content
+        }
 
         override suspend fun importAndReconcileSnapshot(
             projectId: String,
             snapshotJson: String,
-        ): SnapshotReconcileResult = notWired("intents.importAndReconcileSnapshot")
+        ): SnapshotReconcileResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("snapshotJson", snapshotJson)
+            }
+            WireExtended.decodeSerializable(call(Methods.INTENTS_IMPORT_SNAPSHOT, params))
+        }
     }
 
     override val runtime = object : RuntimeInfo {

@@ -1,6 +1,7 @@
 # RFC-0057: Glanceable and Hands-Free Operation
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15
+Non-MVP Work: **Remaining** (Freeform Q&A, earcons, multi-run session summary)
 
 ## Abstract
 
@@ -497,3 +498,25 @@ None. The four this RFC opened on 2026-08-03 — per-Run or per-session summarie
 in-flight summary may show change totals, whether voice approvals need their own audit marker,
 and whether tier 2 should be gated on device motion — were all settled the same day and folded
 into the design above.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/runsummary/RunSummaryComputer.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/voice/LocalSpeechTypes.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/voice/HybridSttRouter.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/voice/GlanceVoicePresenter.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/voice/AndroidDeviceSttEngine.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/voice/AidosEngineSttClient.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/voice/AndroidDeviceTtsEngine.kt
+  - agent/voice/src/commonMain/kotlin/dev/aidos/voice/SpokenSummaryGenerator.kt
+  - agent/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceApprovalHandler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteEffectApprovalGateway.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/runsummary/RunSummaryComputerTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/GlanceVoicePresenterTest.kt
+  - agent/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceApprovalTest.kt
+```

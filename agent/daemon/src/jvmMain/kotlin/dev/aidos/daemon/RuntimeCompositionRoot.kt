@@ -231,6 +231,8 @@ class RuntimeCompositionRoot(
         denialReason: String? = null,
         idGen: () -> String,
         nowIso: () -> String,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
     ): CapabilityApprovalResolution {
         val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
@@ -265,7 +267,7 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             runId = runId,
-        ).resolveCapabilityApproval(runId, approved, denialReason).also {
+        ).resolveCapabilityApproval(runId, approved, denialReason, approvalChannel, approvalPhrase).also {
             expireTaskStateIfTerminal(projectDriver, runId, nowIso())
         }
     }
@@ -295,6 +297,8 @@ class RuntimeCompositionRoot(
         denialReason: String? = null,
         idGen: () -> String,
         nowIso: () -> String,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
     ): CapabilityApprovalResolution {
         val (sessionId, projectId, deviceId) = runOwnership(projectDriver, runId)
             ?: return CapabilityApprovalResolution.NotFound(runId)
@@ -314,7 +318,7 @@ class RuntimeCompositionRoot(
             idGen = idGen,
             nowIso = nowIso,
             runId = runId,
-        ).resolveToolCallApproval(runId, approved, denialReason) { detailJson ->
+        ).resolveToolCallApproval(runId, approved, denialReason, approvalChannel, approvalPhrase) { detailJson ->
                 val originalCapId = Json.parseToJsonElement(detailJson).jsonObject["capabilityId"]!!.jsonPrimitive.content
                 val original = capabilityManager.loadForSubject(sessionId).find { it.id.value == originalCapId }
                     ?: return@resolveToolCallApproval
@@ -348,10 +352,12 @@ class RuntimeCompositionRoot(
         denialReason: String? = null,
         idGen: () -> String,
         nowIso: () -> String,
+        approvalChannel: String = "tap",
+        approvalPhrase: String? = null,
     ): CapabilityApprovalResolution {
-        val first = resolveApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        val first = resolveApproval(projectDriver, runId, approved, denialReason, idGen, nowIso, approvalChannel, approvalPhrase)
         if (first !is CapabilityApprovalResolution.WrongKind) return first
-        val second = resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso)
+        val second = resolveToolCallApproval(projectDriver, runId, approved, denialReason, idGen, nowIso, approvalChannel, approvalPhrase)
         // `deny-run` (approved = false) also reaches USER_PROMPT this way: "decline to answer" is
         // exactly resolveUserPrompt's answer = null path. `approve-run` cannot land here for a
         // parked question, though -- there is no yes/no to approve, only an answer to give, which

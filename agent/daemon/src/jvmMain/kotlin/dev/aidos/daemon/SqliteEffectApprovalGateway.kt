@@ -27,6 +27,8 @@ class SqliteEffectApprovalGateway(
         runId: String,
         approved: Boolean,
         denialReason: String?,
+        approvalChannel: String,
+        approvalPhrase: String?,
     ): EffectResolution {
         val resolution = compositionRoot.resolveAnyApproval(
             projectDriver = projectDriver,
@@ -35,6 +37,8 @@ class SqliteEffectApprovalGateway(
             denialReason = denialReason,
             idGen = idGen,
             nowIso = nowIso,
+            approvalChannel = approvalChannel,
+            approvalPhrase = approvalPhrase,
         )
         return when (resolution) {
             is CapabilityApprovalResolution.Resumed -> EffectResolution.Resumed

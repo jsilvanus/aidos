@@ -1,10 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Core permissions for Git repository access and offline operation -->
+    <!-- Core permissions for Git remotes, voice capture, and offline operation (RFC-0050) -->
+    <!-- Storage permissions are deliberately omitted: projects live in app-private storage. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Package visibility for local device STT (SpeechRecognizer) and TTS (TextToSpeech) on API 30+ -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
     
     <!-- Required for foreground service (M27: RuntimeServiceHost, RFC-0050) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

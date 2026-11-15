@@ -8,18 +8,30 @@ package dev.aidos.api.socket
  * silent method-not-found at runtime.
  */
 object Methods {
+    const val CURRENT_API_VERSION = 1
+    const val MIN_SUPPORTED_API_VERSION = 1
+
     const val PROJECTS_CREATE = "projects.create"
+    const val PROJECTS_OPEN = "projects.open"
     const val PROJECTS_LIST = "projects.list"
+    const val PROJECTS_GET = "projects.get"
     const val PROJECTS_CLOSE = "projects.close"
     const val PROJECTS_DELETE = "projects.delete"
 
     const val SESSIONS_CREATE = "sessions.create"
     const val SESSIONS_LIST = "sessions.list"
+    const val SESSIONS_GET = "sessions.get"
     const val SESSIONS_SEND = "sessions.send"
+    const val SESSIONS_CANCEL = "sessions.cancel"
+    const val SESSIONS_ARCHIVE = "sessions.archive"
+    const val SESSIONS_DELETE = "sessions.delete"
 
     const val CAPABILITIES_GRANT = "capabilities.grant"
+    const val CAPABILITIES_REVOKE = "capabilities.revoke"
+    const val CAPABILITIES_LIST = "capabilities.list"
     const val CAPABILITIES_LIST_PENDING = "capabilities.listPending"
     const val CAPABILITIES_APPROVE = "capabilities.approve"
+    const val CAPABILITIES_DENY = "capabilities.deny"
 
     /** RFC-0008 step 8d: resolves a Run parked on `RoutingDecision.RemotePendingApproval`. */
     const val CAPABILITIES_APPROVE_EFFECT = "capabilities.approveEffect"
@@ -27,6 +39,38 @@ object Methods {
 
     /** RFC-0008 step 8d: answers a Run parked on `USER_PROMPT` (the model's `ask_user` call). */
     const val CAPABILITIES_ANSWER_PROMPT = "capabilities.answerPrompt"
+
+    const val KNOWLEDGE_SEARCH = "knowledge.search"
+    const val KNOWLEDGE_INDEX_STATUS = "knowledge.indexStatus"
+
+    const val DIFF_CHANGES = "diff.changes"
+    const val DIFF_HUNKS = "diff.hunks"
+    const val DIFF_UNIFIED = "diff.unified"
+    const val DIFF_STAGE = "diff.stage"
+    const val DIFF_REVERT = "diff.revert"
+    const val DIFF_COMMIT = "diff.commit"
+
+    const val ARTIFACTS_LIST = "artifacts.list"
+    const val ARTIFACTS_GET = "artifacts.get"
+    const val ARTIFACTS_AUDIT_TRAIL = "artifacts.getAuditTrail"
+
+    const val INTENTS_CREATE_NODE = "intents.createNode"
+    const val INTENTS_UPDATE_NODE = "intents.updateNode"
+    const val INTENTS_ARCHIVE_NODE = "intents.archiveNode"
+    const val INTENTS_GET_NODE_STATUS = "intents.getNodeStatus"
+    const val INTENTS_LIST_NODES = "intents.listNodes"
+    const val INTENTS_LIST_ACTIONABLE = "intents.listActionableForHuman"
+    const val INTENTS_LIST_READY = "intents.listReadyForAgent"
+    const val INTENTS_COMPLETE_HUMAN_NODE = "intents.completeHumanNode"
+    const val INTENTS_ADD_EDGE = "intents.addEdge"
+    const val INTENTS_REMOVE_EDGE = "intents.removeEdge"
+    const val INTENTS_LIST_EDGES = "intents.listEdges"
+    const val INTENTS_PROPOSE = "intents.propose"
+    const val INTENTS_LIST_PROPOSALS = "intents.listProposals"
+    const val INTENTS_RESOLVE_PROPOSAL = "intents.resolveProposal"
+    const val INTENTS_CONFIRM_IMPLEMENTATION = "intents.confirmImplementation"
+    const val INTENTS_EXPORT_SNAPSHOT = "intents.exportSnapshotJson"
+    const val INTENTS_IMPORT_SNAPSHOT = "intents.importAndReconcileSnapshot"
 
     const val EVENTS_SUBSCRIBE = "events.subscribe"
 
@@ -37,8 +81,8 @@ object Methods {
 
     /** Methods that require the connection to be [dev.aidos.api.socket.Hello.interactive] (RFC-0055). */
     val REQUIRES_INTERACTIVE = setOf(
-        CAPABILITIES_GRANT, CAPABILITIES_APPROVE, CAPABILITIES_APPROVE_EFFECT, CAPABILITIES_DENY_EFFECT,
-        CAPABILITIES_ANSWER_PROMPT,
+        CAPABILITIES_GRANT, CAPABILITIES_REVOKE, CAPABILITIES_APPROVE, CAPABILITIES_DENY,
+        CAPABILITIES_APPROVE_EFFECT, CAPABILITIES_DENY_EFFECT, CAPABILITIES_ANSWER_PROMPT,
     )
 }
 
@@ -49,4 +93,8 @@ object Methods {
  * client is attached to a TTY a human can see — commands that grant or approve authority refuse
  * otherwise, so a script or a spawned child cannot approve on the user's behalf.
  */
-data class Hello(val token: String, val interactive: Boolean)
+data class Hello(
+    val token: String,
+    val interactive: Boolean,
+    val minApiVersion: Int = Methods.CURRENT_API_VERSION,
+)

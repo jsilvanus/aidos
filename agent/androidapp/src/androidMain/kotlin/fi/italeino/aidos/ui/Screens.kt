@@ -43,6 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.aidos.androidapp.approval.ApprovalCard as ApprovalDetails
 import dev.aidos.androidapp.ui.diff.CommitPresenter
+import dev.aidos.androidapp.ui.diff.DiffUiState
+import dev.aidos.androidapp.ui.editor.EditorPresenter
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import dev.aidos.androidapp.ui.projects.AgentModelLocality
 import dev.aidos.androidapp.ui.projects.AgentTaintPolicy
 import dev.aidos.androidapp.ui.projects.ModelRoutingConfigState
@@ -588,21 +592,100 @@ fun ApprovalCard(
 
 @Composable
 fun CommitReviewScreen(
-    @Suppress("UNUSED_PARAMETER") commitPresenter: CommitPresenter,
+    commitPresenter: CommitPresenter,
     onCommit: (String) -> Unit,
 ) {
+    val diffState by commitPresenter.state.collectAsState()
+    val draft by commitPresenter.draft.collectAsState()
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Commit review", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("Review changes and commit from this screen.")
-            Button(onClick = { onCommit("Commit from Android UI") }) {
-                Text("Commit")
+
+            when (val st = diffState) {
+                is DiffUiState.Loading -> {
+                    CircularProgressIndicator()
+                }
+                is DiffUiState.Error -> {
+                    Text(st.message, color = MaterialTheme.colorScheme.error)
+                    Button(onClick = { commitPresenter.load(st.projectId) }) {
+                        Text("Retry")
+                    }
+                }
+                is DiffUiState.Committing -> {
+                    CircularProgressIndicator()
+                    Text("Committing changes...")
+                }
+                is DiffUiState.Committed -> {
+                    Text("Committed ${st.commitSha.take(8)}", fontWeight = FontWeight.Medium)
+                }
+                is DiffUiState.Changes -> {
+                    Text(
+                        "${st.workingTree.filesChanged} files (+${st.workingTree.linesAdded} / -${st.workingTree.linesRemoved})",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    st.workingTree.files.forEach { file ->
+                        val isSelected = st.selectedFile?.path == file.path
+                        OutlinedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { commitPresenter.selectFile(file.path) },
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    file.path,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                )
+                                Text(
+                                    "${file.kind.name} (+${file.linesAdded}/-${file.linesRemoved})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+
+                    st.selectedFileHunks?.forEach { hunk ->
+                        val staged = hunk.id in st.stagedHunkIds
+                        OutlinedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { commitPresenter.toggleHunk(hunk.id) },
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "Hunk #${hunk.id.index + 1} (${if (staged) "Staged" else "Unstaged"})",
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                hunk.lines.take(8).forEach { line ->
+                                    Text(line.text, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = draft.message,
+                        onValueChange = { commitPresenter.updateDraft(it) },
+                        label = { Text("Commit message") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Button(
+                        enabled = draft.isValid,
+                        onClick = {
+                            onCommit(draft.message)
+                        },
+                    ) {
+                        Text("Commit (${st.stagedHunkIds.size} hunks)")
+                    }
+                }
             }
         }
     }
@@ -612,7 +695,20 @@ fun CommitReviewScreen(
 fun EditorScreen(
     filePath: String,
     onSave: (String) -> Unit,
+    editorPresenter: EditorPresenter? = null,
 ) {
+    val scope = rememberCoroutineScope()
+    val presenterState = editorPresenter?.state?.collectAsState()?.value
+    var fallbackText by remember(filePath) { mutableStateOf("") }
+
+    LaunchedEffect(filePath, editorPresenter) {
+        editorPresenter?.open(filePath)
+    }
+
+    val currentText = presenterState?.content ?: fallbackText
+    val errorText = presenterState?.errorMessage
+    val isDirty = presenterState?.isDirty ?: fallbackText.isNotEmpty()
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
@@ -622,9 +718,48 @@ fun EditorScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Editor", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(filePath)
-            Button(onClick = { onSave("Saved from Android UI editor") }) {
-                Text("Save")
+            Text(presenterState?.relativePath?.ifBlank { filePath } ?: filePath, style = MaterialTheme.typography.bodySmall)
+
+            if (!errorText.isNullOrBlank()) {
+                Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+
+            OutlinedTextField(
+                value = currentText,
+                onValueChange = { updated ->
+                    if (editorPresenter != null) {
+                        editorPresenter.updateContent(updated)
+                    } else {
+                        fallbackText = updated
+                    }
+                },
+                label = { Text("File contents") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = errorText == null && isDirty,
+                    onClick = {
+                        if (editorPresenter != null) {
+                            scope.launch {
+                                val res = editorPresenter.save()
+                                if (res.isSuccess) {
+                                    onSave(editorPresenter.state.value.content)
+                                }
+                            }
+                        } else {
+                            onSave(currentText)
+                        }
+                    },
+                ) {
+                    Text(if (presenterState?.isSaving == true) "Saving..." else "Save")
+                }
+                if (presenterState?.savedSuccessfully == true) {
+                    Text("Saved", modifier = Modifier.align(Alignment.CenterVertically))
+                }
             }
         }
     }

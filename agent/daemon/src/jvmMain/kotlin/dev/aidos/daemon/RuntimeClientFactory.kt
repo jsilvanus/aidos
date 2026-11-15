@@ -114,6 +114,7 @@ object RuntimeClientFactory {
             // same ANTHROPIC_API_KEY) resolves a parked Run as drove it, so the adapter named at
             // park time is the one `approve-run`/`deny-run` actually resumes with.
             effectApprovalGateway = SqliteEffectApprovalGateway(compositionRoot, nowIso = nowIso)
+            diffService = dev.aidos.git.JGitDiffService()
             projectLifecycle = object : ProjectLifecyclePort {
                 override suspend fun archiveProject(projectDriver: SqlDriver, projectId: String): Result<Unit> =
                     ProjectLifecycle(projectDriver, nowIso).archiveProject(ProjectId(projectId))

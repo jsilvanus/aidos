@@ -15,11 +15,16 @@ import java.io.File
 object AndroidAidin {
     const val DEFAULT_PORT = 47100
 
-    fun create(context: Context, scope: CoroutineScope, engineVersion: String): AidinNode {
+    fun create(
+        context: Context,
+        scope: CoroutineScope,
+        engineVersion: String,
+        heartbeatContent: () -> Heartbeat = { Heartbeat(AIDIN_PROTOCOL_VERSION, engineVersion) },
+    ): AidinNode {
         val dir = File(context.filesDir, "aidin").apply { mkdirs() }
         val key = FileNodeKeyStore(File(dir, "node-key")).loadOrCreate()
         val store = FileAidinStateStore(File(dir, "aidin-state.json"))
         val discovery = runCatching { NsdDiscovery(context.applicationContext) }.getOrNull()
-        return AidinNode(key, store, scope, engineVersion, discovery)
+        return AidinNode(key, store, scope, engineVersion, discovery, heartbeatContent = heartbeatContent)
     }
 }

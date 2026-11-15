@@ -182,8 +182,22 @@ class MockRuntimeClient : RuntimeClient {
             _pendingCapabilities.removeAll { it.requestId == requestId }
         }
 
+        var lastApprovalChannel: String? = null
+        var lastApprovalPhrase: String? = null
+
         override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult =
-            CapabilityResult.Success(nextId())
+            approveEffect(runId, taskId, approvalChannel = "tap", approvalPhrase = null)
+
+        override suspend fun approveEffect(
+            runId: String,
+            taskId: String,
+            approvalChannel: String,
+            approvalPhrase: String?,
+        ): CapabilityResult {
+            lastApprovalChannel = approvalChannel
+            lastApprovalPhrase = approvalPhrase
+            return CapabilityResult.Success(nextId())
+        }
 
         override suspend fun denyEffect(runId: String, taskId: String, reason: String) {}
 

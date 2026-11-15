@@ -1,6 +1,7 @@
 # RFC-0052: Runtime API
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15
+Non-MVP Work: **Remaining** (Remote home-server access, GraphQL/gRPC transport, frontend capability grants, session recording, multi-runtime spanning)
 
 ## Abstract
 
@@ -741,3 +742,22 @@ Frontend capability grants: the user can restrict what a frontend can do (e.g., 
 Session recording: a frontend can request that a session's entire Run be recorded as a replayable artifact.
 
 Multiple runtime instances: a single frontend that spans multiple runtime instances (e.g., work laptop + home laptop with separate runtimes but shared project manifests via Git sync).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/MockRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/EffectApprovalGateway.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Wire.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/WireExtended.kt
+  - agent/git/src/jvmMain/kotlin/dev/aidos/git/JGitDiffService.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SocketRuntimeClient.kt
+  - agent/git/src/jvmTest/kotlin/dev/aidos/git/JGitDiffServiceTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SocketRuntimeApiRoundTripTest.kt
+```

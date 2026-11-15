@@ -133,11 +133,13 @@ class RealRuntimeClient : RuntimeClient {
      */
     var effectApprovalGateway: EffectApprovalGateway? = null
 
-    /**
-     * Optional project lifecycle port (RFC-0002, RFC-0010) for archiving (`CLOSED`) and
+    /** Optional project lifecycle port (RFC-0002, RFC-0010) for archiving (`CLOSED`) and
      * FK-ordered project deletion. Unset preserves the pre-wiring in-memory/unregister behavior.
      */
     var projectLifecycle: ProjectLifecyclePort? = null
+
+    /** Optional structured Git diff/commit service (RFC-0052). */
+    var diffService: DiffService? = null
 
     /** Optional hook run after a project is created (e.g. RFC-0054 `.gitignore` entry for `.aidos/`). */
     var onProjectCreate: ((projectPath: String) -> Unit)? = null
@@ -770,14 +772,31 @@ class RealRuntimeClient : RuntimeClient {
             _pendingCapabilities.removeAll { it.requestId == requestId }
         }
 
-        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult {
+        override suspend fun approveEffect(runId: String, taskId: String): CapabilityResult =
+            approveEffect(runId, taskId, approvalChannel = "tap", approvalPhrase = null)
+
+        override suspend fun approveEffect(
+            runId: String,
+            taskId: String,
+            approvalChannel: String,
+            approvalPhrase: String?,
+        ): CapabilityResult {
             val projectId = _runProjectIds[runId]
                 ?: return CapabilityResult.Error("run.not_found", "Run $runId not found")
             val driver = _openProjectDrivers[projectId]
                 ?: return CapabilityResult.Error("run.project_not_open", "Project for run $runId is not open")
             val gateway = effectApprovalGateway
                 ?: return CapabilityResult.Error("run.approval_not_wired", "No effect approval gateway is wired")
-            return when (gateway.resolve(driver, runId, approved = true, denialReason = null)) {
+            return when (
+                gateway.resolve(
+                    projectDriver = driver,
+                    runId = runId,
+                    approved = true,
+                    denialReason = null,
+                    approvalChannel = approvalChannel,
+                    approvalPhrase = approvalPhrase,
+                )
+            ) {
                 is EffectResolution.Resumed -> CapabilityResult.Success(runId)
                 is EffectResolution.Denied ->
                     CapabilityResult.Error("run.already_denied", "Run $runId was already denied")
@@ -826,23 +845,46 @@ class RealRuntimeClient : RuntimeClient {
     }
 
     override val diff: DiffQueries = object : DiffQueries {
-        override suspend fun changes(projectId: String, range: DiffRange): DiffSummary =
-            DiffSummary(range, emptyList(), 0, 0, 0)
+        override suspend fun changes(projectId: String, range: DiffRange): DiffSummary {
+            val path = resolveProjectPath(projectId)
+            val svc = diffService
+            if (path != null && svc != null) return svc.changes(path, range)
+            return DiffSummary(range, emptyList(), 0, 0, 0)
+        }
 
-        override suspend fun hunks(projectId: String, range: DiffRange, path: String): Result<FileDiff> =
-            Result.failure(UnsupportedOperationException("RealRuntimeClient: hunks not implemented"))
+        override suspend fun hunks(projectId: String, range: DiffRange, path: String): Result<FileDiff> {
+            val projectPath = resolveProjectPath(projectId)
+            val svc = diffService
+            if (projectPath != null && svc != null) return svc.hunks(projectPath, range, path)
+            return Result.failure(UnsupportedOperationException("RealRuntimeClient: diffService not wired for $projectId"))
+        }
 
-        override suspend fun unified(projectId: String, range: DiffRange, path: String): Result<String> =
-            Result.success("")
+        override suspend fun unified(projectId: String, range: DiffRange, path: String): Result<String> {
+            val projectPath = resolveProjectPath(projectId)
+            val svc = diffService
+            if (projectPath != null && svc != null) return svc.unified(projectPath, range, path)
+            return Result.success("")
+        }
 
-        override suspend fun stage(projectId: String, hunks: List<HunkId>): Result<Unit> =
-            Result.success(Unit)
+        override suspend fun stage(projectId: String, hunks: List<HunkId>): Result<Unit> {
+            val projectPath = resolveProjectPath(projectId)
+            val svc = diffService
+            if (projectPath != null && svc != null) return svc.stage(projectPath, hunks)
+            return Result.success(Unit)
+        }
 
-        override suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit> =
-            Result.success(Unit)
+        override suspend fun revert(projectId: String, hunks: List<HunkId>): Result<Unit> {
+            val projectPath = resolveProjectPath(projectId)
+            val svc = diffService
+            if (projectPath != null && svc != null) return svc.revert(projectPath, hunks)
+            return Result.success(Unit)
+        }
 
         override suspend fun commit(projectId: String, message: String): CommitResult {
             if (message.isBlank()) return CommitResult.Error("commit.empty_message", "Commit message must not be empty")
+            val projectPath = resolveProjectPath(projectId)
+            val svc = diffService
+            if (projectPath != null && svc != null) return svc.commit(projectPath, message)
             return CommitResult.Success(commitHash = "aidos-${message.take(8).replace(" ", "-")}", shortMessage = message.lines().first().take(72))
         }
     }

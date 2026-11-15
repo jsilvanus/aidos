@@ -1,7 +1,7 @@
 # RFC-0104: Inference Locality — Where a Request's Data May Go
 
-Status: Accepted (settled as D47; the part described under "Implementation status" is built). Proposed 2026-10-25; layering, default and peer mapping settled by the owner 2026-10-26 (D47).
-The Engine-side mechanism and SDK option below are implemented.
+Status: Implemented 2026-11-15
+Non-MVP Work: **None**
 
 ## Abstract
 
@@ -136,3 +136,18 @@ behaviour, tests (including the real SDK against the real host). **Not done:** p
 and its Connected Apps toggle, the Engine-wide setting and its UI, an audit record of refusals,
 and everything that produces non-`local` placements (remote providers, delegation, layer split —
 they must classify themselves per this RFC when built).
+
+## Implementation Files
+
+```yaml
+files:
+  - engine/aidin/src/androidMain/kotlin/dev/aidos/aidin/AndroidAidin.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/SplitHosting.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsScreen.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopGroups.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsPane.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitHostingTest.kt
+```

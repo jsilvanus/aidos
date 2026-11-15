@@ -4,6 +4,14 @@ import dev.aidos.api.RuntimeClient
 import dev.aidos.api.socket.Methods
 import dev.aidos.api.socket.SocketPaths
 import dev.aidos.api.socket.Wire
+import dev.aidos.api.socket.WireExtended
+import dev.aidos.intent.EffectiveDispatchPolicy
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentEdgeKind
+import dev.aidos.intent.IntentMinLocality
+import dev.aidos.intent.IntentOperation
+import dev.aidos.intent.ProposalResolutionDecision
+import dev.aidos.kernel.PlatformProfile
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,11 +23,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -178,20 +192,44 @@ class RuntimeSocketServer(
         val hello = runCatching { Json.parseToJsonElement(helloLine).jsonObject }.getOrNull()
         val presentedToken = hello?.get("token")?.jsonPrimitive?.content
         val interactive = hello?.get("interactive")?.jsonPrimitive?.boolean ?: false
+        val clientMinApi = hello?.get("minApiVersion")?.jsonPrimitive?.intOrNull ?: 1
 
         if (presentedToken != connectionToken) {
             writeLine(output, buildJsonObject { put("ok", false); put("error", "unauthorized") })
             return null
         }
-        writeLine(output, buildJsonObject { put("ok", true) })
+        if (clientMinApi > Methods.CURRENT_API_VERSION) {
+            writeLine(
+                output,
+                buildJsonObject {
+                    put("ok", false)
+                    put("error", "api.version_incompatible")
+                    put("message", "Client requires API >= $clientMinApi, runtime supports ${Methods.CURRENT_API_VERSION}")
+                }
+            )
+            return null
+        }
+        writeLine(
+            output,
+            buildJsonObject {
+                put("ok", true)
+                put("apiVersion", Methods.CURRENT_API_VERSION)
+                put("minApiVersion", Methods.MIN_SUPPORTED_API_VERSION)
+            }
+        )
         return interactive
     }
 
     private suspend fun dispatch(method: String, params: JsonObject): JsonElement = when (method) {
         Methods.PROJECTS_CREATE ->
             Wire.encodeProjectResult(client.projects.create(Wire.decodeCreateProjectRequest(params)))
+        Methods.PROJECTS_OPEN ->
+            Wire.encodeProjectResult(client.projects.open(params["projectId"]!!.jsonPrimitive.content))
         Methods.PROJECTS_LIST ->
             Wire.encodeProjectSummaryList(client.projects.list())
+        Methods.PROJECTS_GET ->
+            client.projects.get(params["projectId"]!!.jsonPrimitive.content)
+                ?.let(WireExtended::encodeProjectDetail) ?: JsonNull
         Methods.PROJECTS_CLOSE -> {
             client.projects.close(params["projectId"]!!.jsonPrimitive.content)
             JsonObject(emptyMap())
@@ -207,22 +245,57 @@ class RuntimeSocketServer(
             Wire.encodeSessionResult(client.sessions.create(Wire.decodeCreateSessionRequest(params)))
         Methods.SESSIONS_LIST ->
             Wire.encodeSessionSummaryList(client.sessions.list(params["projectId"]!!.jsonPrimitive.content))
+        Methods.SESSIONS_GET ->
+            client.sessions.get(params["sessionId"]!!.jsonPrimitive.content)
+                ?.let(WireExtended::encodeSessionDetail) ?: JsonNull
         Methods.SESSIONS_SEND -> Wire.encodeRunResult(
             client.sessions.send(
                 params["sessionId"]!!.jsonPrimitive.content,
                 Wire.decodeUserMessage(params["message"]!!.jsonObject),
             )
         )
+        Methods.SESSIONS_CANCEL -> {
+            client.sessions.cancel(
+                params["sessionId"]!!.jsonPrimitive.content,
+                params["runId"]!!.jsonPrimitive.content,
+            )
+            JsonObject(emptyMap())
+        }
+        Methods.SESSIONS_ARCHIVE -> {
+            client.sessions.archive(params["sessionId"]!!.jsonPrimitive.content)
+            JsonObject(emptyMap())
+        }
+        Methods.SESSIONS_DELETE -> {
+            client.sessions.delete(params["sessionId"]!!.jsonPrimitive.content)
+            JsonObject(emptyMap())
+        }
         Methods.CAPABILITIES_GRANT ->
             Wire.encodeCapabilityResult(client.capabilities.grant(Wire.decodeGrantCapabilityRequest(params)))
+        Methods.CAPABILITIES_REVOKE -> {
+            client.capabilities.revoke(params["capabilityId"]!!.jsonPrimitive.content)
+            JsonObject(emptyMap())
+        }
+        Methods.CAPABILITIES_LIST ->
+            WireExtended.encodeCapabilitySummaryList(
+                client.capabilities.list(params["sessionId"]!!.jsonPrimitive.content)
+            )
         Methods.CAPABILITIES_LIST_PENDING ->
             Wire.encodePendingCapabilityList(client.capabilities.listPending())
         Methods.CAPABILITIES_APPROVE ->
             Wire.encodeCapabilityResult(client.capabilities.approve(params["requestId"]!!.jsonPrimitive.content))
+        Methods.CAPABILITIES_DENY -> {
+            client.capabilities.deny(
+                params["requestId"]!!.jsonPrimitive.content,
+                params["reason"]?.jsonPrimitive?.content ?: "",
+            )
+            JsonObject(emptyMap())
+        }
         Methods.CAPABILITIES_APPROVE_EFFECT -> Wire.encodeCapabilityResult(
             client.capabilities.approveEffect(
-                params["runId"]!!.jsonPrimitive.content,
-                params["taskId"]?.jsonPrimitive?.content ?: "",
+                runId = params["runId"]!!.jsonPrimitive.content,
+                taskId = params["taskId"]?.jsonPrimitive?.content ?: "",
+                approvalChannel = params["approvalChannel"]?.jsonPrimitive?.contentOrNull ?: "tap",
+                approvalPhrase = params["approvalPhrase"]?.jsonPrimitive?.contentOrNull,
             )
         )
         Methods.CAPABILITIES_DENY_EFFECT -> {
@@ -239,6 +312,195 @@ class RuntimeSocketServer(
                 params["answer"]!!.jsonPrimitive.content,
             )
         )
+        Methods.KNOWLEDGE_SEARCH -> WireExtended.encodeKnowledgeResult(
+            client.knowledge.search(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeKnowledgeQuery(params["query"]!!.jsonObject),
+            )
+        )
+        Methods.KNOWLEDGE_INDEX_STATUS -> WireExtended.encodeIndexStatus(
+            client.knowledge.indexStatus(params["projectId"]!!.jsonPrimitive.content)
+        )
+        Methods.DIFF_CHANGES -> WireExtended.encodeDiffSummary(
+            client.diff.changes(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeDiffRange(params["range"]!!.jsonObject),
+            )
+        )
+        Methods.DIFF_HUNKS -> {
+            val res = client.diff.hunks(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeDiffRange(params["range"]!!.jsonObject),
+                params["path"]!!.jsonPrimitive.content,
+            )
+            res.fold(
+                onSuccess = { buildJsonObject { put("ok", true); put("diff", WireExtended.encodeFileDiff(it)) } },
+                onFailure = { buildJsonObject { put("ok", false); put("error", it.message ?: "diff.hunks failed") } },
+            )
+        }
+        Methods.DIFF_UNIFIED -> {
+            val res = client.diff.unified(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeDiffRange(params["range"]!!.jsonObject),
+                params["path"]!!.jsonPrimitive.content,
+            )
+            res.fold(
+                onSuccess = { buildJsonObject { put("ok", true); put("text", it) } },
+                onFailure = { buildJsonObject { put("ok", false); put("error", it.message ?: "diff.unified failed") } },
+            )
+        }
+        Methods.DIFF_STAGE -> {
+            val res = client.diff.stage(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeHunkIds(params["hunks"]!!.jsonArray),
+            )
+            res.fold(
+                onSuccess = { buildJsonObject { put("ok", true) } },
+                onFailure = { buildJsonObject { put("ok", false); put("error", it.message ?: "diff.stage failed") } },
+            )
+        }
+        Methods.DIFF_REVERT -> {
+            val res = client.diff.revert(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeHunkIds(params["hunks"]!!.jsonArray),
+            )
+            res.fold(
+                onSuccess = { buildJsonObject { put("ok", true) } },
+                onFailure = { buildJsonObject { put("ok", false); put("error", it.message ?: "diff.revert failed") } },
+            )
+        }
+        Methods.DIFF_COMMIT -> WireExtended.encodeCommitResult(
+            client.diff.commit(
+                params["projectId"]!!.jsonPrimitive.content,
+                params["message"]!!.jsonPrimitive.content,
+            )
+        )
+        Methods.ARTIFACTS_LIST -> buildJsonArray {
+            client.artifacts.list(
+                params["projectId"]!!.jsonPrimitive.content,
+                WireExtended.decodeArtifactFilter(params["filter"]!!.jsonObject),
+            ).forEach { add(WireExtended.encodeArtifactSummary(it)) }
+        }
+        Methods.ARTIFACTS_GET -> client.artifacts.get(params["artifactId"]!!.jsonPrimitive.content)
+            ?.let(WireExtended::encodeArtifactDetail) ?: JsonNull
+        Methods.ARTIFACTS_AUDIT_TRAIL -> WireExtended.encodeAuditEntryList(
+            client.artifacts.getAuditTrail(params["artifactId"]!!.jsonPrimitive.content)
+        )
+        Methods.INTENTS_CREATE_NODE -> WireExtended.encodeSerializable(
+            client.intents.createNode(WireExtended.decodeCreateIntentNodeRequest(params))
+        )
+        Methods.INTENTS_UPDATE_NODE -> WireExtended.encodeSerializable(
+            client.intents.updateNode(WireExtended.decodeUpdateIntentNodeRequest(params))
+        )
+        Methods.INTENTS_ARCHIVE_NODE -> WireExtended.encodeSerializable(
+            client.intents.archiveNode(
+                params["projectId"]!!.jsonPrimitive.content,
+                params["nodeId"]!!.jsonPrimitive.content,
+            )
+        )
+        Methods.INTENTS_GET_NODE_STATUS -> client.intents.getNodeStatus(
+            params["projectId"]!!.jsonPrimitive.content,
+            params["nodeId"]!!.jsonPrimitive.content,
+            params["projectDefaultPolicy"]?.jsonPrimitive?.contentOrNull?.let(EffectiveDispatchPolicy::valueOf)
+                ?: EffectiveDispatchPolicy.MANUAL_START,
+        )?.let { WireExtended.encodeSerializable(it) } ?: JsonNull
+        Methods.INTENTS_LIST_NODES -> WireExtended.encodeSerializable(
+            client.intents.listNodes(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                includeArchived = params["includeArchived"]?.jsonPrimitive?.booleanOrNull ?: false,
+                actorKind = params["actorKind"]?.jsonPrimitive?.contentOrNull?.let(IntentActorKind::valueOf),
+                parentId = params["parentId"]?.jsonPrimitive?.contentOrNull,
+                filterByParent = params["filterByParent"]?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+        )
+        Methods.INTENTS_LIST_ACTIONABLE -> WireExtended.encodeSerializable(
+            client.intents.listActionableForHuman(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                projectDefaultPolicy = params["projectDefaultPolicy"]?.jsonPrimitive?.contentOrNull?.let(EffectiveDispatchPolicy::valueOf)
+                    ?: EffectiveDispatchPolicy.MANUAL_START,
+            )
+        )
+        Methods.INTENTS_LIST_READY -> WireExtended.encodeSerializable(
+            client.intents.listReadyForAgent(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                profile = params["profile"]?.jsonPrimitive?.contentOrNull?.let(PlatformProfile::valueOf) ?: PlatformProfile.DESKTOP,
+                locality = params["locality"]?.jsonPrimitive?.contentOrNull?.let(IntentMinLocality::valueOf) ?: IntentMinLocality.ANY,
+                projectDefaultPolicy = params["projectDefaultPolicy"]?.jsonPrimitive?.contentOrNull?.let(EffectiveDispatchPolicy::valueOf)
+                    ?: EffectiveDispatchPolicy.MANUAL_START,
+                onlyAutoDispatch = params["onlyAutoDispatch"]?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+        )
+        Methods.INTENTS_COMPLETE_HUMAN_NODE -> WireExtended.encodeSerializable(
+            client.intents.completeHumanNode(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                nodeId = params["nodeId"]!!.jsonPrimitive.content,
+                userId = params["userId"]?.jsonPrimitive?.contentOrNull ?: "local-user",
+                note = params["note"]?.jsonPrimitive?.contentOrNull,
+            )
+        )
+        Methods.INTENTS_ADD_EDGE -> WireExtended.encodeSerializable(
+            client.intents.addEdge(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                fromNodeId = params["fromNodeId"]!!.jsonPrimitive.content,
+                toNodeId = params["toNodeId"]!!.jsonPrimitive.content,
+                edgeKind = IntentEdgeKind.valueOf(params["edgeKind"]!!.jsonPrimitive.content),
+            )
+        )
+        Methods.INTENTS_REMOVE_EDGE -> JsonPrimitive(
+            client.intents.removeEdge(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                fromNodeId = params["fromNodeId"]!!.jsonPrimitive.content,
+                toNodeId = params["toNodeId"]!!.jsonPrimitive.content,
+                edgeKind = IntentEdgeKind.valueOf(params["edgeKind"]!!.jsonPrimitive.content),
+            )
+        )
+        Methods.INTENTS_LIST_EDGES -> WireExtended.encodeSerializable(
+            client.intents.listEdges(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                fromNodeId = params["fromNodeId"]?.jsonPrimitive?.contentOrNull,
+                toNodeId = params["toNodeId"]?.jsonPrimitive?.contentOrNull,
+                edgeKind = params["edgeKind"]?.jsonPrimitive?.contentOrNull?.let(IntentEdgeKind::valueOf),
+            )
+        )
+        Methods.INTENTS_PROPOSE -> JsonPrimitive(
+            client.intents.propose(WireExtended.decodeCreateIntentProposalRequest(params))
+        )
+        Methods.INTENTS_LIST_PROPOSALS -> WireExtended.encodeSerializable(
+            client.intents.listProposals(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                state = params["state"]?.jsonPrimitive?.contentOrNull,
+            )
+        )
+        Methods.INTENTS_RESOLVE_PROPOSAL -> WireExtended.encodeSerializable(
+            client.intents.resolveProposal(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                proposalId = params["proposalId"]!!.jsonPrimitive.content,
+                decision = ProposalResolutionDecision.valueOf(params["decision"]!!.jsonPrimitive.content),
+                resolvedByUserId = params["resolvedByUserId"]?.jsonPrimitive?.contentOrNull ?: "local-user",
+                editedOperations = params["editedOperations"]?.let {
+                    WireExtended.decodeSerializable<List<IntentOperation>>(it)
+                },
+            )
+        )
+        Methods.INTENTS_CONFIRM_IMPLEMENTATION -> {
+            client.intents.confirmImplementation(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                nodeId = params["nodeId"]!!.jsonPrimitive.content,
+                confirmedByKind = params["confirmedByKind"]?.jsonPrimitive?.contentOrNull ?: "USER",
+                confirmedById = params["confirmedById"]?.jsonPrimitive?.contentOrNull ?: "local-user",
+                criterionIds = params["criterionIds"]?.jsonArray?.map { it.jsonPrimitive.content },
+            )
+            JsonObject(emptyMap())
+        }
+        Methods.INTENTS_EXPORT_SNAPSHOT -> JsonPrimitive(
+            client.intents.exportSnapshotJson(params["projectId"]!!.jsonPrimitive.content)
+        )
+        Methods.INTENTS_IMPORT_SNAPSHOT -> WireExtended.encodeSerializable(
+            client.intents.importAndReconcileSnapshot(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                snapshotJson = params["snapshotJson"]!!.jsonPrimitive.content,
+            )
+        )
         Methods.RUNTIME_PING ->
             JsonPrimitive(client.runtime.ping())
         Methods.RUNTIME_VERSION ->
@@ -247,7 +509,7 @@ class RuntimeSocketServer(
             JsonPrimitive(client.runtime.profile().name)
         Methods.RUNTIME_AVAILABILITY ->
             Wire.encodeAvailabilityReport(client.runtime.availability(params["projectId"]!!.jsonPrimitive.content))
-        else -> throw UnsupportedOperationException("method not wired over socket transport (M10 scope): $method")
+        else -> throw UnsupportedOperationException("method not wired over socket transport: $method")
     }
 
     private suspend fun streamEvents(params: JsonObject, output: OutputStream) {

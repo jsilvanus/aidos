@@ -38,6 +38,7 @@ fun GroupsScreen() {
     val engineState by EngineService.state.collectAsState()
     val node by EngineService.aidin.collectAsState()
     val error by EngineService.aidinError.collectAsState()
+    val split by EngineService.split.collectAsState()
     var enabled by remember { mutableStateOf(SettingsStore.isGroupSharingEnabled(context)) }
     var invite by remember { mutableStateOf("") }
     val pending by PendingInvite.value.collectAsState()
@@ -59,6 +60,11 @@ fun GroupsScreen() {
         node = node,
         error = error,
         scope = scope,
+        split = split,
+        splitModels = remember(split) { EngineService.instance?.splittableModels().orEmpty() },
+        onStartSplit = { group, model ->
+            EngineService.instance?.startSplitModel(group, model) ?: "Engine is not running."
+        },
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         initialInvite = invite,
     )
