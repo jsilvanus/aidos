@@ -141,7 +141,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Phase 2, first step done:** `AgentRuntimeAttach` in the desktop app attaches to a running Agent daemon through `SocketRuntimeClient` and falls back to the in-process runtime; when a daemon answers the in-process runtime (and so any project database in the app) is never created. The Shell tab uses it and says which runtime it is on. Not yet: the other panes, reconnect while the app is open, an integration test that spawns a real daemon.
 - **Phase 3, first group done:** `LanControl` (the LAN sharing group of `EngineControl`) with `LocalLanControl` (in-process) and `HttpLanControl` (loopback admin API); `/v1/admin/lan` served on the loopback listener only, to the Engine's own local client only (an approved app's token and a wrong token are refused; absent on the LAN listener); the LAN pane's presenter knows only `LanControl`, and `EngineAttach` picks the HTTP implementation when another live Engine process owns `engine.json`. Tested end to end through the real desktop host.
 - **Approvals feed and tray, first cut done:** `ApprovalsControl` (pending items: apps asking to use the Engine, effectful tool calls on tainted remote runs; ids `app:`/`tool:`), `/v1/admin/approvals` and `POST /v1/admin/shutdown` (headless Engine only), both loopback and admin only. The tray (`--tray`, `tray/` package) polls the feed, toasts each new item once with who is asking and never content, opens an Approve/Deny popup on click, and has Open, Start, Stop and Restart Engine; the watcher and actions are unit tested, the AWT shell is not (needs a desktop).
-- **Next:** the Agent daemon's own pending-approvals feed and start/stop in the tray, the remaining `EngineControl` groups pane by pane (peers and remote access, tunnels, apps and models, status), the headless launcher packaging, run-on-login settings and the per-user and system installers.
+- **Installers, first cut done:** `--install-service <engine|tray>` and `--uninstall-service` (`install/` package). Per user: systemd `--user` unit, launchd LaunchAgent, Scheduled Task at logon. Machine-wide (`--system --run-as NAME`): systemd system unit with `User=`, LaunchDaemon with `UserName`, Scheduled Task at startup as the named user (schtasks asks for the password); root and SYSTEM are refused, a non-elevated shell gets a hint and nothing is written, a failed install removes its files. The tray is per-user only. Generated definitions and the installer are unit tested for all three OS families; applying them to a real service manager is not yet exercised.
+- **Next:** the Agent daemon as an installable service and its own approvals feed in the tray, the remaining `EngineControl` groups pane by pane (peers and remote access, tunnels, apps and models, status), a run-in-background setting in the app, vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -173,4 +174,8 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayActions.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayApp.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayModelTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/install/ServiceDefinitions.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/install/ServiceInstaller.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/install/InstallCli.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/install/ServiceInstallTest.kt
 ```
