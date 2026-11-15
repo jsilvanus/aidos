@@ -153,7 +153,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Agents group, done:** `AgentsControl` (overview of stats and runs, routing, run launch config, supervisory cancel) in `agenthost` with Local and Http implementations and `/v1/admin/agents` (mounted through a new `adminExtraRoutes` hook, so enginehost does not depend on agenthost); the Agents presenter was moved onto it and pushes the user's routing choices to the Engine. Tested in-process and through the admin API with a real run on the echo fixture.
 - **Every pane that has a real Engine behind it is now attached** (Status, Models, model detail, Agents, Apps, Sharing, Peers, Tunnels, Background). The Tools pane shows sample data and uses no host, so there is nothing to attach until it is wired to a real MCP broker.
 - **Cross-process end to end, done:** `HeadlessEngineAttachTest` starts a real headless Engine as its own JVM, attaches the window's controls (status, apps, vault, agents, LAN) through `engine.json` and the admin API, checks the window would not start a second Engine, and has the tray's stop make the process exit.
-- **Next:** trying the tray and installers on a real Windows task / Linux unit / macOS agent, and the Agent daemon's own vault mode.
+- **Agent daemon vault mode, done:** `DaemonVaultGate` (`AIDOS_VAULT_MODE=passphrase`, set by `--install-service agent --system`): the daemon starts locked and carries on without a vault, and `vault.status` / `vault.unlock` / `vault.lock` on the daemon socket (`SocketRuntimeClient.vaultStatus/vaultUnlock/vaultLock`) open it with the passphrase and register its secrets with the log redactor. The Engine and the daemon share one vault, so the tray's `Unlock vault…` unlocks both with one passphrase. Also fixed: the tray and the window now connect to the daemon as interactive, because the daemon refuses capability approvals and grants from a connection that claims no TTY, which would have made every tray Approve fail.
+- **Next:** the Tools pane on a real MCP broker, and trying the tray and installers on a real Windows task / Linux unit / macOS agent.
 
 ## Implementation Files
 
@@ -229,4 +230,6 @@ files:
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentsControl.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AgentsControlTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/HeadlessEngineAttachTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/DaemonVaultGate.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonVaultGateTest.kt
 ```

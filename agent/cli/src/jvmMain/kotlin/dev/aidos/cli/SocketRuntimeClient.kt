@@ -179,6 +179,18 @@ class SocketRuntimeClient(
         }
     }
 
+    /** RFC-0115: the daemon's vault. Returns (mode, locked); `mode` is `os` or `passphrase`. */
+    fun vaultStatus(): Pair<String, Boolean> = vaultState(call(Methods.VAULT_STATUS, JsonObject(emptyMap())))
+
+    /** Unlocks a passphrase vault. A wrong passphrase raises [SocketConnectionException] with the daemon's message. */
+    fun vaultUnlock(passphrase: CharArray): Pair<String, Boolean> =
+        vaultState(call(Methods.VAULT_UNLOCK, buildJsonObject { put("passphrase", String(passphrase)) })).also { passphrase.fill('\u0000') }
+
+    fun vaultLock(): Pair<String, Boolean> = vaultState(call(Methods.VAULT_LOCK, JsonObject(emptyMap())))
+
+    private fun vaultState(e: JsonElement): Pair<String, Boolean> =
+        e.jsonObject.let { it["mode"]!!.jsonPrimitive.content to it["locked"]!!.jsonPrimitive.boolean }
+
     private fun writeLine(output: OutputStream, json: JsonObject) {
         output.write((json.toString() + "\n").toByteArray(StandardCharsets.UTF_8))
         output.flush()

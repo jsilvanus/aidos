@@ -115,4 +115,12 @@ class ServiceInstallTest {
         assertTrue(InstallCli.specFor("engine", listOf("--install-service", "engine")).env.isEmpty())
         assertFailsWith<IllegalArgumentException> { user.copy(env = mapOf("bad name" to "x")) }
     }
+
+    @Test
+    fun `a machine-wide Agent daemon also starts locked with a passphrase vault`() {
+        val sys = InstallCli.specFor("agent", listOf("--install-service", "agent", "--system", "--run-as", "juha", "--exec", "java", "-cp", "d.jar", "dev.aidos.daemon.MainKt"))
+        assertEquals(mapOf("AIDOS_VAULT_MODE" to "passphrase"), sys.env)
+        assertEquals(listOf("java", "-cp", "d.jar", "dev.aidos.daemon.MainKt"), sys.command)
+        assertTrue(InstallCli.specFor("agent", listOf("--install-service", "agent", "--exec", "java")).env.isEmpty())
+    }
 }

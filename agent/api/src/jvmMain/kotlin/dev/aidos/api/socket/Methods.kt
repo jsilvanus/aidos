@@ -79,6 +79,15 @@ object Methods {
     const val RUNTIME_PROFILE = "runtime.profile"
     const val RUNTIME_AVAILABILITY = "runtime.availability"
 
+    /**
+     * RFC-0115 / D56: the daemon's vault lock state. A machine-wide daemon starts with a passphrase vault locked; these let
+     * the owner (a tray icon, the CLI) unlock it. Not in [REQUIRES_INTERACTIVE]: the connection token is already
+     * owner-only, and a tray is not a TTY.
+     */
+    const val VAULT_STATUS = "vault.status"
+    const val VAULT_UNLOCK = "vault.unlock"
+    const val VAULT_LOCK = "vault.lock"
+
     /** Methods that require the connection to be [dev.aidos.api.socket.Hello.interactive] (RFC-0055). */
     val REQUIRES_INTERACTIVE = setOf(
         CAPABILITIES_GRANT, CAPABILITIES_REVOKE, CAPABILITIES_APPROVE, CAPABILITIES_DENY,

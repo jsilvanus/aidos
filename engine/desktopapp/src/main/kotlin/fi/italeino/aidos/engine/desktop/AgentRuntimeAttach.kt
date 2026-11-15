@@ -44,7 +44,9 @@ object AgentRuntimeAttach {
     /** A client for the daemon at [socketPath] if it answers a cheap request within a few seconds, else null. */
     fun probeDaemon(socketPath: Path, tokenPath: Path): RuntimeClient? {
         if (!Files.exists(socketPath) || !Files.isRegularFile(tokenPath)) return null
-        val client = SocketRuntimeClient(socketPath, tokenPath)
+        // Interactive: this is a window a person is using, so an approval or a grant it sends is that person's click (RFC-0055
+        // keeps scripts out, not a GUI). Without this the daemon refuses capability approvals from a process with no TTY.
+        val client = SocketRuntimeClient(socketPath, tokenPath, interactive = true)
         return try {
             runBlocking { withTimeout(3_000) { client.projects.list() } }
             client

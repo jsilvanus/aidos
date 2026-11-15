@@ -71,6 +71,8 @@ class RuntimeSocketServer(
     private val client: RuntimeClient,
     private val socketPath: Path = SocketPaths.defaultSocketPath(),
     private val tokenPath: Path = SocketPaths.defaultTokenPath(socketPath),
+    /** RFC-0115: answers `vault.*`; null means this daemon exposes no vault control (the methods are not wired). */
+    private val vaultGate: DaemonVaultGate? = null,
 ) {
     /** Minted fresh per server instance; also written to [tokenPath] (0600) by [start]. */
     val connectionToken: String = mintToken()
@@ -226,7 +228,20 @@ class RuntimeSocketServer(
         return interactive
     }
 
+    private fun vaultState(g: DaemonVaultGate): JsonElement = buildJsonObject { put("mode", g.mode()); put("locked", g.locked()) }
+
     private suspend fun dispatch(method: String, params: JsonObject): JsonElement = when (method) {
+        Methods.VAULT_STATUS -> vaultState(vaultGate ?: throw UnsupportedOperationException(method))
+        Methods.VAULT_UNLOCK -> {
+            val g = vaultGate ?: throw UnsupportedOperationException(method)
+            g.unlock((params["passphrase"]?.jsonPrimitive?.content ?: "").toCharArray())
+            vaultState(g)
+        }
+        Methods.VAULT_LOCK -> {
+            val g = vaultGate ?: throw UnsupportedOperationException(method)
+            g.lock()
+            vaultState(g)
+        }
         Methods.PROJECTS_CREATE ->
             Wire.encodeProjectResult(client.projects.create(Wire.decodeCreateProjectRequest(params)))
         Methods.PROJECTS_OPEN ->

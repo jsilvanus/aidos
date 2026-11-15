@@ -36,14 +36,16 @@ object AidosDaemon {
         println("Aidos daemon starting (RFC-0052, RFC-0055)")
 
         // Create runtime client
-        val client = RuntimeClientFactory.createRuntimeClient()
+        val vaultGate = DaemonVaultGate.fromEnvironment()
+        val client = RuntimeClientFactory.createRuntimeClient(vaultGate = vaultGate)
+        if (vaultGate.locked()) println("! Vault is locked (passphrase mode): unlock it from the tray icon.")
         println("✓ Runtime initialized")
 
         // Create socket server
         val server = if (socketPath != null) {
-            RuntimeSocketServer(client, Path.of(socketPath))
+            RuntimeSocketServer(client, Path.of(socketPath), vaultGate = vaultGate)
         } else {
-            RuntimeSocketServer(client)
+            RuntimeSocketServer(client, vaultGate = vaultGate)
         }
 
         // Start the socket server

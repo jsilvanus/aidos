@@ -45,18 +45,20 @@ object RuntimeClientFactory {
         home: String = System.getProperty("user.home"),
         installCrashHandler: Boolean = true,
         platform: PlatformAdapter = DesktopPlatformAdapter(home = home),
+        /** RFC-0115 / D56: in passphrase mode the vault starts locked; the daemon keeps the gate to unlock it later. */
+        vaultGate: DaemonVaultGate = DaemonVaultGate(passphraseMode = false, home = home),
     ): RuntimeClient {
         val nowIso = { Clock.System.now().toString() }
         val userDb = AidosStorage.openUser(DesktopPaths.userDb(home), RUNTIME_VERSION, nowIso)
         // RFC-0035: the vault is opened once per daemon. A vault that cannot be opened (e.g. the
         // keystore refuses) is reported and the daemon carries on without it, falling back to
         // environment variables, rather than refusing to start.
-        val opened = runCatching { DesktopVault.open(home) }
-            .onFailure { DaemonLog.err("aidos: secrets vault unavailable: ${it.message}") }
-            .getOrNull()
+        val opened = vaultGate.openInitial()
         opened?.weakProtectionNotice?.let { DaemonLog.err("aidos: secrets vault: $it") }
         val daemonRedactor = Redactor().also { r -> opened?.vault?.registerAllWith(r) }
-        opened?.vault?.let { DaemonLog.redactor = daemonRedactor }
+        vaultGate.bind(daemonRedactor)
+        // The redactor is the one logging uses; in passphrase mode it starts empty and fills when the vault is unlocked.
+        if (opened != null || vaultGate.passphraseMode) DaemonLog.redactor = daemonRedactor
         val structuredLogger = StructuredLogger(
             redactor = daemonRedactor,
             platformProfile = platform.profile,

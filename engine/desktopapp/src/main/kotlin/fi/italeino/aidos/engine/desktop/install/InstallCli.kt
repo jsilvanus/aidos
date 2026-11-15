@@ -48,7 +48,10 @@ object InstallCli {
                 // Removing needs only the name; the command is irrelevant to the remove commands.
                 if (args.contains("--uninstall-service") && at < 0) return ServiceSpec("agent", "Aidos Agent daemon", listOf("aidos-daemon"), if (system) InstallScope.SYSTEM else InstallScope.USER, runAs)
                 require(at >= 0 && at + 1 < args.size) { "the agent service needs its command: --install-service agent [--system --run-as NAME] --exec <command and arguments>" }
-                ServiceSpec("agent", "Aidos Agent daemon", args.drop(at + 1), if (system) InstallScope.SYSTEM else InstallScope.USER, runAs)
+                ServiceSpec(
+                    "agent", "Aidos Agent daemon", args.drop(at + 1), if (system) InstallScope.SYSTEM else InstallScope.USER, runAs,
+                    env = if (system) mapOf("AIDOS_VAULT_MODE" to "passphrase") else emptyMap(),
+                )
             }
             else -> throw IllegalArgumentException("usage: --install-service <engine|agent|tray> [--system --run-as NAME] | --uninstall-service <engine|agent|tray> [--system --run-as NAME]")
         }

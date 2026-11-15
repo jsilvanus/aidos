@@ -42,26 +42,46 @@ class TrayActions(
 
     fun openWindow() = launch(emptyList())
 
-    /** True when the Engine's vault is waiting for its passphrase (a machine-wide service starts locked, D56). */
+    /** True when the Engine's or the Agent daemon's vault is waiting for its passphrase (a machine-wide service starts locked, D56). */
     fun vaultLocked(): Boolean {
-        val e = running() ?: return false
-        return runCatching { kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).status().locked } }.getOrDefault(false)
+        val engine = running()?.let { e -> runCatching { kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).status().locked } }.getOrDefault(false) } ?: false
+        val agent = agentClient()?.let { c -> runCatching { c.vaultStatus().second }.getOrDefault(false) } ?: false
+        return engine || agent
     }
 
-    /** Unlocks the running Engine's vault. Returns null on success, else the reason to show the user. */
+    /**
+     * Unlocks the vault of whichever of the Engine and the Agent daemon is running (they share one vault, so one
+     * passphrase). Returns null on success, else the reason to show the user. A service whose vault uses the OS
+     * keystore has nothing to unlock and is not a problem.
+     */
     fun unlockVault(passphrase: CharArray): String? {
-        val e = running() ?: return "The Engine is not running."
-        return try {
-            kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).unlock(passphrase) }
-            null
-        } catch (ex: fi.italeino.aidos.engine.control.EngineControlException) {
-            ex.message ?: "The Engine refused."
-        } catch (ex: Exception) {
-            "Could not reach the Engine."
+        val engine = running()
+        val agent = agentClient()
+        if (engine == null && agent == null) { passphrase.fill('\u0000'); return "Neither the Engine nor the Agent daemon is running." }
+        val problems = mutableListOf<String>()
+        fun note(who: String, message: String?) { if (message != null && !message.contains("nothing to unlock")) problems += "$who: $message" }
+        try {
+            engine?.let { e ->
+                try {
+                    kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).unlock(passphrase.copyOf()) }
+                } catch (ex: fi.italeino.aidos.engine.control.EngineControlException) { note("Engine", ex.message ?: "refused") }
+                catch (ex: Exception) { note("Engine", "could not be reached") }
+            }
+            agent?.let { c ->
+                try { c.vaultUnlock(passphrase.copyOf()) }
+                catch (ex: Exception) { note("Agent daemon", ex.message?.substringAfter(": ") ?: "refused") }
+            }
         } finally {
             passphrase.fill('\u0000')
         }
+        return problems.takeIf { it.isNotEmpty() }?.joinToString("; ")
     }
+
+    private fun agentClient(): dev.aidos.cli.SocketRuntimeClient? = runCatching {
+        val socket = dev.aidos.api.socket.SocketPaths.defaultSocketPath()
+        val token = dev.aidos.api.socket.SocketPaths.defaultTokenPath(socket)
+        if (java.nio.file.Files.exists(socket) && java.nio.file.Files.isRegularFile(token)) dev.aidos.cli.SocketRuntimeClient(socket, token, interactive = true) else null
+    }.getOrNull()
 
     companion object {
         /** The command that starts this application again: the running JVM, its class path, and the main class. */
