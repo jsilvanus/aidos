@@ -125,6 +125,18 @@ class AidinNode(
         },
     )
     private var server: PeerLinkServer? = null
+    private var remoteIngress: PeerLinkServer? = null
+
+    /**
+     * RFC-0108: whether the user switched "Allow remote access" on for a peer. Off for everyone by
+     * default: a link that did not arrive over the LAN is refused at once unless this says yes.
+     */
+    @Volatile
+    var remoteAccessAllowed: (NodeId) -> Boolean = { false }
+
+    /** RFC-0108 audit hook: a link over a non-LAN [LinkRoute] was admitted (true) or refused (false). */
+    @Volatile
+    var onRemoteLinkDecision: (peer: NodeId, route: LinkRoute, admitted: Boolean) -> Unit = { _, _, _ -> }
     private var ticker: Job? = null
 
     init {
@@ -149,7 +161,37 @@ class AidinNode(
         }
     }
 
+    /**
+     * RFC-0108: a second, loopback-only listener whose connections are by definition delivered by a
+     * tunnel (an `ssh-reverse` forward points at it). Connections here are classified [LinkRoute.SSH_TUNNEL]
+     * and need the per-peer remote-access switch, which a loopback connection on the main port does not.
+     * Returns the bound port.
+     */
+    fun startRemoteIngress(port: Int = 0): Int {
+        check(remoteIngress == null) { "remote ingress already started" }
+        val s = endpoint.listen("127.0.0.1", port) { link ->
+            link.viaRemoteIngress = true
+            onLink(link)
+        }
+        remoteIngress = s
+        return s.port
+    }
+
+    /** Closes the link to [nodeId] if it arrived over a non-LAN route (the user turned remote access off). */
+    fun dropRemoteLink(nodeId: NodeId) {
+        val link = links[nodeId] ?: return
+        if (link.route != LinkRoute.LAN) {
+            links.remove(nodeId, link)
+            link.close()
+        }
+    }
+
+    /** How the link to [nodeId] arrived, or null when there is no active link. */
+    fun routeOf(nodeId: NodeId): LinkRoute? = links[nodeId]?.route
+
     fun stop() {
+        remoteIngress?.close()
+        remoteIngress = null
         ticker?.cancel()
         ticker = null
         helperSupervisor?.close()
@@ -297,6 +339,10 @@ class AidinNode(
     fun authorize(nodeId: NodeId, scope: Scope): TrustDecision {
         val link = links[nodeId] ?: return TrustDecision.Denied(listOf("not connected"))
         if (link.isPairing) return TrustDecision.Denied(listOf("pairing link"))
+        // RFC-0108: layer split and helper roles are never offered over a remote route (WAN latency makes them unusable).
+        if ((scope == Scope.HELP || scope == Scope.ANCHOR) && link.route != LinkRoute.LAN) {
+            return TrustDecision.Denied(listOf("split roles are not carried over a ${link.route} route"))
+        }
         val creds = knownPeers[nodeId] ?: link.peer
         return synchronized(lock) { trust.authorize(creds, scope, clock()) }
     }
@@ -326,6 +372,8 @@ class AidinNode(
      * (either the same group, or the origin's own pair records).
      */
     fun isSplitRouteTrustedByOrigin(anchorNodeId: NodeId, helperNodeIds: Collection<NodeId>): Boolean {
+        // RFC-0108: a split plan only runs over LAN links.
+        if ((helperNodeIds + anchorNodeId).any { it != nodeId && links[it]?.route?.let { r -> r != LinkRoute.LAN } == true }) return false
         val anchorDecision = authorizeKnownPeer(anchorNodeId, Scope.SERVE)
         if (anchorDecision !is TrustDecision.Allowed) return false
         if (helperNodeIds.isEmpty()) return true
@@ -559,10 +607,28 @@ class AidinNode(
         }
     }
 
+    /** RFC-0108: loopback, site-local, link-local and unique-local addresses are the LAN; the tunnel ingress and anything routable are not. */
+    private fun classify(link: PeerLink): LinkRoute {
+        if (link.viaRemoteIngress) return LinkRoute.SSH_TUNNEL
+        val a = link.remoteAddress ?: return LinkRoute.LAN
+        val uniqueLocal = a.address.size == 16 && (a.address[0].toInt() and 0xfe) == 0xfc
+        return if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress || uniqueLocal) LinkRoute.LAN else LinkRoute.DIRECT
+    }
+
     private fun onLink(link: PeerLink) {
         if (link.isPairing) {
             startPairingSession(link, initiatedHere = false, kind = PairingKind.PAIR, groupId = null, roles = emptySet())
             return
+        }
+        // RFC-0108: classify how this link arrived; anything but the LAN needs the per-peer switch.
+        link.route = classify(link)
+        if (link.route != LinkRoute.LAN) {
+            val admitted = remoteAccessAllowed(link.nodeId)
+            runCatching { onRemoteLinkDecision(link.nodeId, link.route, admitted) }
+            if (!admitted) {
+                link.close()
+                return
+            }
         }
         knownPeers[link.nodeId] = link.peer
         links.put(link.nodeId, link)?.takeIf { it !== link }?.close()

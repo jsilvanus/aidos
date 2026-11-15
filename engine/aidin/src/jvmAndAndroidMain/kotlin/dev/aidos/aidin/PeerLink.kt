@@ -36,6 +36,18 @@ class PeerLink internal constructor(
 ) : Closeable {
     val nodeId: NodeId get() = peer.nodeId
     val isPairing: Boolean get() = pairingSecret != null
+
+    /** The other end's address as the socket sees it (a tunnel's end shows as loopback; see [viaRemoteIngress]). */
+    val remoteAddress: java.net.InetAddress? get() = socket.inetAddress
+
+    /** Set by the node when the link arrived on the remote-ingress listener (RFC-0108), i.e. delivered by a tunnel. */
+    @Volatile
+    internal var viaRemoteIngress: Boolean = false
+
+    /** Set by the node when the link is admitted (RFC-0108). */
+    @Volatile
+    var route: LinkRoute = LinkRoute.LAN
+        internal set
     private val writeLock = Any()
 
     fun send(message: LinkMessage) = synchronized(writeLock) { writeFrame(output, message) }

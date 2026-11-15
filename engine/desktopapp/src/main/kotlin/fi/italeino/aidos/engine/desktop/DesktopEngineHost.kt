@@ -20,6 +20,8 @@ import dev.aidos.aidin.ContributionPolicy
 import dev.aidos.aidin.DesktopAidin
 import dev.aidos.aidin.GroupId
 import dev.aidos.aidin.Heartbeat
+import dev.aidos.aidin.RemoteRouting
+import dev.aidos.aidin.RemoteRoutingAudit
 import dev.aidos.aidin.SplitHosting
 import dev.aidos.aidin.SplitPlanOutcome
 import dev.aidos.modelruntime.GgufLoader
@@ -41,6 +43,7 @@ import dev.aidos.models.ModelBrowser
 import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.agent.AgentRuntime
+import fi.italeino.aidos.engine.agent.PeerRunReaper
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
 import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
@@ -67,6 +70,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -218,6 +224,11 @@ class DesktopEngineHost(
     /** RFC-0107 switches (hosting for a peer, preferred peers, per-app tool allowlists); null until the host has started. */
     @Volatile
     var remoteAgent: DesktopRemoteAgent? = null
+        private set
+
+    /** RFC-0108 hints and per-peer remote-access switch; null while group sharing (AIDIN) is off. */
+    @Volatile
+    var remoteRouting: RemoteRouting? = null
         private set
     val agentRuntime: AgentRuntime? get() = _agentRuntime
 
@@ -386,6 +397,21 @@ class DesktopEngineHost(
                 node.start(port = 0)
             }
             _aidin.value = node
+            // RFC-0108: remote routes (off per peer until the user allows them) and their redial loop.
+            val routing = RemoteRouting(node, scope, File(stateDir, "remote-routing.json"), audit = { a -> appendRoutingAudit(a) })
+            routing.start()
+            remoteRouting = routing
+            // RFC-0108 phase 5: a hosted run outlives a dropped origin for a bounded window, then is cancelled.
+            _agentRuntime?.let { rt ->
+                val reaper = PeerRunReaper(rt, window = PEER_RUN_GRACE)
+                scope.launch {
+                    while (isActive) {
+                        val connected = node.peers.value.filter { it.connected }.map { it.nodeId.value }.toSet()
+                        reaper.check(connected, System.currentTimeMillis())
+                        delay(10_000)
+                    }
+                }
+            }
             _split.value = SplitHosting(node, scope, llamaRpcDir, File(stateDir, "aidin"), ::splitPolicy)
         } catch (e: Exception) {
             runCatching { node.stop() }
@@ -400,7 +426,20 @@ class DesktopEngineHost(
         if (!enabled) stopAidin()
     }
 
+    private fun appendRoutingAudit(a: RemoteRoutingAudit) {
+        runCatching {
+            val what = when (a) {
+                is RemoteRoutingAudit.SwitchChanged -> "switch peer=${a.event.peerId} allowed=${a.event.allowed}"
+                is RemoteRoutingAudit.LinkDecision -> "link peer=${a.peer.value} route=${a.route} admitted=${a.admitted}"
+                is RemoteRoutingAudit.Dialed -> "dialed peer=${a.peer.value} route=${a.route::class.simpleName} rttMs=${a.rttMillis}"
+            }
+            stateDir.mkdirs()
+            File(stateDir, "remote-routing-audit.log").appendText("${java.time.Instant.now()} $what\n")
+        }
+    }
+
     private fun stopAidin() {
+        remoteRouting = null
         _split.value?.let { runCatching { it.close() } }
         _split.value = null
         _aidin.value?.let { runCatching { it.stop() } }
@@ -586,6 +625,9 @@ class DesktopEngineHost(
     }
 
     companion object {
+        /** RFC-0108 phase 5: how long a hosted peer run outlives its dropped origin before it is cancelled. */
+        val PEER_RUN_GRACE = kotlin.time.Duration.parse("5m")
+
         const val LOCALHOST_SUBJECT = "desktop.localhost"
     }
 

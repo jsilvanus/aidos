@@ -35,6 +35,9 @@ kotlin {
             dependencies {
                 // Desktop mDNS/DNS-SD (RFC-0105 "Discovery"); Android uses the platform NsdManager.
                 implementation("org.jmdns:jmdns:3.6.4")
+                // RFC-0108: route hints, dialer and remote-access policy (kernel-free libraries from ../agent).
+                api(project(":routes"))
+                api(project(":policy"))
             }
         }
         androidMain.get().dependsOn(jvmAndAndroidMain)

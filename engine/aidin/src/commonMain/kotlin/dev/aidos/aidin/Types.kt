@@ -84,3 +84,9 @@ object Base32 {
 
 /** RFC-0107: delegated endpoints under this prefix additionally require [Scope.AGENT]. */
 const val AGENT_ENDPOINT_PREFIX = "/aidin/v1/agent/"
+
+/**
+ * RFC-0108: how a peer link reached this node. Only [LAN] links may carry layer split or helper
+ * roles; the others are refused unless the user switched remote access on for that peer.
+ */
+enum class LinkRoute { LAN, DIRECT, SSH_TUNNEL }

@@ -1,6 +1,6 @@
 # RFC-0108: AIDIN Remote Routes (reaching a peer from outside the LAN)
 
-Status: Draft (proposed with D53, 2026-11-10). Phases 1–4 standalone libraries built and JVM unit-tested; Engine/AIDIN/UI runtime integration and Phase 5 remain deferred.
+Status: Draft (proposed with D53, 2026-11-10). Partially implemented (2026-11-15): the standalone libraries (phases 1 to 4) are now integrated into the AIDIN node and the desktop Engine (route classes, per-peer remote-access switch enforced at the listener, hint dialing, split refusal, audit, phase 5 continue-then-cancel). Wiring the SSH tunnel manager into the desktop Engine (key page, vault kinds, egress grant), Android integration and UI remain.
 
 Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0051 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
 
@@ -292,6 +292,17 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - `agent/tunnel-manager`: Engine adapter (JVM/Android via vault and ssh-tunnel)
 - `agent/androidapp`: Android app shell ready for tunnel manager integration
 
+## Integration status (2026-11-15, AIDIN node and desktop Engine)
+
+- **Link route classes.** `AidinNode` classifies every non-pairing link as `LinkRoute.LAN` (loopback, site-local, link-local, unique-local), `DIRECT` (any other address) or `SSH_TUNNEL` (arrived on the remote-ingress listener).
+- **The tunnel's door.** A tunnel cannot be told from a local connection by address, since a forwarded connection shows as loopback. `AidinNode.startRemoteIngress()` therefore opens a second, loopback-only listener, and the `ssh-reverse` forward points at that port instead of the main one. This deviates from "the tunnel connects to the existing port", and it is what makes the per-peer switch enforceable.
+- **Remote-access switch, enforced at the listener.** `AidinNode.remoteAccessAllowed` defaults to refusing every peer; a non-LAN link for a peer that is not allowed is closed at once. Each decision, admitted or refused, goes to `onRemoteLinkDecision`. `RemoteRouting.setRemoteAccess` drives it from the `RemoteAccessPolicy`, audits the change, and closes a live remote link when switched off.
+- **Split refusal.** `authorize` denies `Scope.HELP` and `Scope.ANCHOR` on any non-LAN link, and `isSplitRouteTrustedByOrigin` is false when any participant is reached over one. Delegation and the RFC-0107 agent endpoints still travel.
+- **Hints and redial.** `RemoteRouting` stores `direct` hints per peer (validated, persisted) and redials, using `RouteDialer`, only peers that are allowed, have hints and are not connected. The dialled node must be the expected peer, so a hint cannot make a stranger trusted.
+- **Desktop.** `DesktopEngineHost.remoteRouting` is created with the AIDIN node (hints and switch persisted in `remote-routing.json`, decisions in `remote-routing-audit.log`).
+- **Phase 5.** `PeerRunReaper` lets a hosted peer run continue for 5 minutes after its origin drops, resumable by `seq`, then cancels it; a returning peer resets the clock.
+- **Not integrated:** the `tunnel-manager` is not wired into the desktop Engine (tunnel key page, `SSH_TUNNEL_KEY` vault kinds, setup-key installer, RFC-0042 egress grant); UI for hints and the switch on desktop and Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
+
 ## Implementation Files
 
 ```yaml
@@ -314,4 +325,13 @@ files:
   - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/Transport.kt
   - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/Spec.kt
   - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/AuthorizedKeys.kt
+  - engine/aidin/src/jvmMain/kotlin/dev/aidos/aidin/RemoteRouting.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/AidinNode.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/PeerLink.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/Types.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/RemoteRouteAdmissionTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/RemoteRoutingTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/PeerRunReaper.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/PeerRunReaperTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
 ```
