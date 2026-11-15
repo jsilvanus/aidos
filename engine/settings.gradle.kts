@@ -48,6 +48,15 @@ project(":client").projectDir = file("../sdk/client")
 include(":amp")
 project(":amp").projectDir = file("../agent/amp")
 
+// The desktop app embeds the agent UI/runtime client (DesktopApp: RealRuntimeClient, AidosUniversalApp),
+// so the agent modules it needs are included by path like :amp and kernel.
+for (m in listOf("ui-common", "api", "intent", "settings", "broker", "storage", "identity", "capability", "lock")) {
+    if (findProject(":$m") == null) {
+        include(":$m")
+        project(":$m").projectDir = file("../agent/$m")
+    }
+}
+
 val aidosTcrCandidates = listOf(
     file("../aidos-tcr"),
     file("../../aidos-tcr"),
