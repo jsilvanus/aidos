@@ -214,6 +214,11 @@ class DesktopEngineHost(
     private var httpServer: EngineHttpServer? = null
     private var agentScope: CoroutineScope? = null
     private var _agentRuntime: AgentRuntime? = null
+
+    /** RFC-0107 switches (hosting for a peer, preferred peers, per-app tool allowlists); null until the host has started. */
+    @Volatile
+    var remoteAgent: DesktopRemoteAgent? = null
+        private set
     val agentRuntime: AgentRuntime? get() = _agentRuntime
 
     suspend fun start() = lifecycle.withLock {
@@ -296,6 +301,10 @@ class DesktopEngineHost(
                 )
             }
             _agentRuntime = agent
+            // RFC-0107: the peers this Engine prefers for agent turns (local is always the last resort), and the
+            // handler that lets a peer with the explicit `agent` scope run a loop here.
+            val remoteAgent = DesktopRemoteAgent(stateDir, aidin = { _aidin.value }, scope = scope)
+            this.remoteAgent = remoteAgent
             server = EngineHttpServer(
                 tokens,
                 runtime,
@@ -314,7 +323,7 @@ class DesktopEngineHost(
                 },
                 extraRoutes = {
                     agentRoutes(
-                        agent,
+                        remoteAgent.routed(agent),
                         localityFor = { subject, requested -> server.effectiveLocality(subject, requested) },
                         // D49: running an agent is a separate grant from inference. The Engine's own token and the
                         // desktop's own localhost client are the user's; every other app needs the per-app grant.
@@ -328,6 +337,7 @@ class DesktopEngineHost(
                 aidinNode = { _aidin.value },
                 externalDevices = lanSharing.devices,
                 pairingCodes = lanSharing.pairing,
+                peerAgentEndpoints = remoteAgent.peerEndpoints(agent),
             )
             server.start()
             val port = server.getBoundPort() ?: run {

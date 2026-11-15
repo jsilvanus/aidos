@@ -256,6 +256,22 @@ class AidinNode(
         dropUntrustedLinks()
     }
 
+    /**
+     * Replaces what this node grants a paired peer (RFC-0105 pair record scopes). The way to turn
+     * [Scope.AGENT] on or off for one peer; a link that is no longer trusted for anything is dropped.
+     */
+    fun setPairScopes(nodeId: NodeId, scopes: Set<Scope>): Boolean {
+        var found = false
+        synchronized(lock) {
+            update(state.copy(pairs = state.pairs.map { if (it.nodeId == nodeId) { found = true; it.copy(scopes = scopes) } else it }))
+        }
+        if (found) dropUntrustedLinks()
+        return found
+    }
+
+    /** The scopes this node grants the paired peer, or null when [nodeId] is not paired with this node. */
+    fun pairScopes(nodeId: NodeId): Set<Scope>? = synchronized(lock) { state.pairs.firstOrNull { it.nodeId == nodeId }?.scopes }
+
     fun removePair(nodeId: NodeId) {
         synchronized(lock) { update(state.copy(pairs = state.pairs.filterNot { it.nodeId == nodeId })) }
         dropUntrustedLinks()
@@ -612,6 +628,19 @@ class AidinNode(
                             requestId = request.requestId,
                             status = 403,
                             bodyJson = """{"error":{"message":"Caller ${link.nodeId} is not authorized for scope delegate","type":"permission_error","code":"unauthorized_peer"}}""",
+                        )
+                    )
+                }
+                return@launch
+            }
+            // RFC-0107: the agent endpoints need their own, explicitly granted scope on top of delegate.
+            if (request.endpoint.startsWith(AGENT_ENDPOINT_PREFIX) && !authorize(link.nodeId, Scope.AGENT).isAllowed) {
+                runCatching {
+                    link.send(
+                        LinkMessage.DelegateResponse(
+                            requestId = request.requestId,
+                            status = 403,
+                            bodyJson = """{"error":{"message":"Caller ${link.nodeId} is not authorized for scope agent","type":"permission_error","code":"agent_scope_not_granted"}}""",
                         )
                     )
                 }

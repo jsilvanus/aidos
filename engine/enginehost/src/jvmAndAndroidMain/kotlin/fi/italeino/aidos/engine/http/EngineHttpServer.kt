@@ -38,6 +38,7 @@ import fi.italeino.aidos.engine.inference.placementOf
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import dev.aidos.aidin.AGENT_ENDPOINT_PREFIX
 import fi.italeino.aidos.engine.lan.ExternalDeviceGrants
 import fi.italeino.aidos.engine.lan.LanSslConfig
 import fi.italeino.aidos.engine.lan.PairingCodes
@@ -159,6 +160,11 @@ class EngineHttpServer(
     private val externalDevices: ExternalDeviceGrants? = null,
     /** RFC-0051 Mode A: exchange of a short-lived code for a credential, offered on the LAN listener only. */
     private val pairingCodes: PairingCodes? = null,
+    /**
+     * RFC-0107: handler for the `/aidin/v1/agent/` endpoints over the peer link. The node has already required the
+     * peer's `agent` scope; null means this Engine hosts no agent loops for peers (404).
+     */
+    private val peerAgentEndpoints: (suspend (fromPeer: NodeId, request: LinkMessage.DelegateRequest) -> LinkMessage.DelegateResponse)? = null,
 ) {
     private var server: EmbeddedServer<*, *>? = null
     private var lanServer: EmbeddedServer<*, *>? = null
@@ -1620,7 +1626,7 @@ class EngineHttpServer(
     }
 
     private suspend fun handleLinkDelegation(
-        @Suppress("UNUSED_PARAMETER") fromPeer: NodeId,
+        fromPeer: NodeId,
         request: LinkMessage.DelegateRequest,
         emitStream: suspend (LinkMessage.DelegateStreamEvent) -> Unit,
     ): LinkMessage.DelegateResponse {
@@ -1632,6 +1638,15 @@ class EngineHttpServer(
                     ErrorResponse(ErrorDetail("Delegation hop limit (1) exceeded", "locality_violation", code = "hop_limit_exceeded"))
                 ),
             )
+        }
+
+        if (request.endpoint.startsWith(AGENT_ENDPOINT_PREFIX)) {
+            return peerAgentEndpoints?.invoke(fromPeer, request)
+                ?: LinkMessage.DelegateResponse(
+                    requestId = request.requestId,
+                    status = 404,
+                    bodyJson = wireJson.encodeToString(ErrorResponse(ErrorDetail("This Engine hosts no agent loops for peers", "invalid_request_error", code = "agent_hosting_unavailable"))),
+                )
         }
 
         if (request.endpoint == "/aidin/v1/route") {

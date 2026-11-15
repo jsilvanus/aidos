@@ -29,10 +29,17 @@ enum class Scope(val wire: String) {
     /** The peer may be a helper (hold layers) for a split model I anchor. */
     HELP("help"),
     /** The peer may be the anchor of a split model I take part in or use. */
-    ANCHOR("anchor");
+    ANCHOR("anchor"),
+    /**
+     * RFC-0107: the peer may run an agent loop on my behalf-of-it (I host the loop, it owns the
+     * tools). Deliberately NOT part of [ALL]: pairing and group enrolment never grant it by
+     * default; it is switched on explicitly per peer.
+     */
+    AGENT("agent");
 
     companion object {
-        val ALL: Set<Scope> = entries.toSet()
+        /** What pairing and enrolment grant by default: everything except [AGENT]. */
+        val ALL: Set<Scope> = entries.toSet() - AGENT
         fun fromWire(value: String): Scope? = entries.firstOrNull { it.wire == value }
     }
 }
@@ -74,3 +81,6 @@ object Base32 {
         return out.toString()
     }
 }
+
+/** RFC-0107: delegated endpoints under this prefix additionally require [Scope.AGENT]. */
+const val AGENT_ENDPOINT_PREFIX = "/aidin/v1/agent/"

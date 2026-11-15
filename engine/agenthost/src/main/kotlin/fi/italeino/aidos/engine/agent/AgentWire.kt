@@ -10,6 +10,11 @@ data class ClientToolSpec(
     val name: String,
     val description: String = "",
     val inputSchema: JsonObject = JsonObject(emptyMap()),
+    /**
+     * RFC-0107: the app declares the tool only observes. On a remote (peer-hosted) run that has
+     * already received tool results, only read-only tools run without the user's approval.
+     */
+    val readOnly: Boolean = false,
 )
 
 @Serializable

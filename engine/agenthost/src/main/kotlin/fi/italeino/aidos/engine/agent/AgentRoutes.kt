@@ -41,7 +41,7 @@ private const val MAX_WAIT_MS = 30_000L
  * only tools a run can use are the ones the calling app hands it.
  */
 fun Route.agentRoutes(
-    runtime: AgentRuntime,
+    runtime: AgentRunApi,
     subjectOf: (ApplicationCall) -> String = { it.principal<UserIdPrincipal>()?.name ?: "anonymous" },
     /** Applies the host's locality layering (app and Engine limits); the default is the caller's own limit, else local only. */
     localityFor: suspend (subject: String?, requested: Locality?) -> Locality = { _, requested -> requested ?: Locality.LOCAL_ONLY },

@@ -1,6 +1,6 @@
 # RFC-0107: Remote Agent Hosting over AIDIN
 
-Status: Draft (proposed with D52, 2026-11-10). Partially implemented (audited 2026-11-15): phase 1 (model on a peer, loop local) and the phase 2 agent runtime exist; peer agent endpoints, the `agent` scope, the MCP tool relay and tool-host taint/approval (phase 3) and a real two-device run (phase 4) are not built.
+Status: Draft (proposed with D52, 2026-11-10). Partially implemented (2026-11-15): phases 1 and 3 are built and tested over a real AIDIN peer link between two nodes on loopback; the Android Binder MCP broker (phase 2) and a run on two real devices (phase 4) are not.
 
 Related: RFC-0105 (inference groups), RFC-0104 (locality), RFC-0027 (trust and taint), RFC-0031 (MCP), D48, D49, D51, D52. Study: `plans/cross-device-agent-routing.md` in the project files.
 
@@ -36,8 +36,18 @@ Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0
 ## Phases
 1. Agent adapter through the virtual router (model on a peer, loop local). **Built on the desktop host** (`RoutedModelAdapter`, unit-tested with fakes); a two-Engine run over loopback is not done yet.
 2. Android host runs the agent runtime and Binder MCP broker. **Runtime built** (`createEngineAgentRuntime`, shared with desktop; compiles and starts on an emulator, not yet exercised with a model); Binder MCP broker not built.
-3. Peer agent endpoints, scope `agent`, MCP tool relay, tool-host taint and approval.
-4. Real two-device run (owner's devices).
+3. Peer agent endpoints, scope `agent`, MCP tool relay, tool-host taint and approval. **Built** (see Implementation status).
+4. Real two-device run (owner's devices). Not done; covered so far by a two-node loopback test.
+
+## Implementation status (2026-11-15)
+
+- **Scope `agent`** (`dev.aidos.aidin.Scope.AGENT`) is never part of the default pairing or group set (`Scope.ALL` excludes it), so pairing alone grants nothing. It is granted per peer with `AidinNode.setPairScopes` (desktop: `DesktopRemoteAgent.setHostingFor`). The node refuses any `/aidin/v1/agent/` request from a peer without it (403 `agent_scope_not_granted`), on top of `delegate`.
+- **Peer endpoints** (`AgentPeerEndpoints`): `turns`, `runs/get` (resume by `seq`, long poll), `runs/results`, `runs/cancel`, all over the existing delegated-request frame. A run is owned by (peer node, calling app). The host's model calls are held to `local_only`, so it never delegates onward.
+- **Tool relay.** Tools never run on the host. The agent protocol already has the client execute tools (a run stops with pending calls and the caller submits results), so a remote run reuses it: the host's loop stops with a pending call, the origin hands it to the calling app, and the result goes back the same way. No separate relay stream was needed for app tools; the Binder MCP broker for other installed apps is phase 2.
+- **Tool-host enforcement** (`OriginToolHost`, at the origin only): a per-peer, per-app allowlist (default none) decides which tools the host is even told about, and a call to anything else is refused; once any tool result has entered a remote run it is tainted locally (peer-reported taint is ignored) and a tool the app did not declare `readOnly` then needs approval, refused by default; the origin's per-app agent grant still gates `/v1/agent` itself; every decision is audited (run, peer, app, tool, outcome, never content).
+- **Routing** (`RoutedAgentRuntime`): ordered `[peer..., local]`; a peer is a candidate only when the turn's locality allows the cluster and the peer is connected and trusted; an unreachable peer falls back to the next candidate (never wider); a run stays on the host that started it.
+- **Failure.** A dropped link surfaces as 503 on the next call and the app can resume with `GET` by `seq` if the host is still up. Whether a host continues or cancels when the origin disappears is still open (RFC-0108 Phase 5 proposes continue-then-cancel).
+- **Not built:** the approval surface (an effectful call on a tainted remote run is refused, there is no prompt to approve it), UI for the allowlist and peer list, the Android host's Binder MCP broker (phase 2), and a two-device run.
 
 ## Implementation Files
 
@@ -46,5 +56,18 @@ files:
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapter.kt
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/EngineAgentRuntime.kt
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentRoutes.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentRunApi.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentPeerEndpoints.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RemoteAgentClient.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RoutedAgentRuntime.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentWire.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentRuntime.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapterTest.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/RemoteAgentHostingTest.kt
+  - engine/aidin/src/commonMain/kotlin/dev/aidos/aidin/Types.kt
+  - engine/aidin/src/jvmAndAndroidMain/kotlin/dev/aidos/aidin/AidinNode.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemoteAgent.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemoteAgentTest.kt
 ```

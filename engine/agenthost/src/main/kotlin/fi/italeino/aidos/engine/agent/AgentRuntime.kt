@@ -58,7 +58,7 @@ class AgentRuntime(
     val maxRetained: Int = 64,
     private val now: () -> Long = System::currentTimeMillis,
     private val adapterWithPlacement: ((AgentTurnRequest, (Placement) -> Unit) -> ModelAdapter)? = null,
-) {
+) : AgentRunApi {
     private class Run(
         val id: String,
         val owner: String,
@@ -99,9 +99,9 @@ class AgentRuntime(
     private val _events = MutableSharedFlow<Pair<String, AgentEvent>>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /** Owner-tagged state changes; [eventsFor] is the per-app view. Lossy by design: reconcile with [get]. */
-    val events: SharedFlow<Pair<String, AgentEvent>> = _events.asSharedFlow()
+    override val events: SharedFlow<Pair<String, AgentEvent>> = _events.asSharedFlow()
 
-    fun info() = AgentInfo(maxConcurrentRuns = maxConcurrentRuns, maxSteps = defaultMaxSteps, toolWaitSeconds = toolWait.inWholeSeconds)
+    override fun info() = AgentInfo(maxConcurrentRuns = maxConcurrentRuns, maxSteps = defaultMaxSteps, toolWaitSeconds = toolWait.inWholeSeconds)
 
     fun currentRoutingConfig(): AgentRoutingConfigDto = _routingConfig.value
 
@@ -161,7 +161,7 @@ class AgentRuntime(
         else -> "MANUAL"
     }
 
-    suspend fun start(owner: String, request: AgentTurnRequest): AgentTurnResponse {
+    override suspend fun start(owner: String, request: AgentTurnRequest): AgentTurnResponse {
         if (request.message.isBlank()) throw AgentRequestException("invalid_request", "message must not be empty")
         val names = request.tools.map { it.name }
         if (names.any { it.isBlank() } || names.toSet().size != names.size) {
@@ -244,7 +244,7 @@ class AgentRuntime(
         return if (request.async) run.state.value else awaitStop(run, since = 0)
     }
 
-    suspend fun submit(owner: String, runId: String, results: List<ClientToolResult>, async: Boolean = false): AgentTurnResponse {
+    override suspend fun submit(owner: String, runId: String, results: List<ClientToolResult>, async: Boolean): AgentTurnResponse {
         val run = owned(owner, runId)
         val before = run.state.value
         if (before.isTerminal) throw AgentRequestException("run_finished", "run already ${before.status}", 409)
@@ -260,7 +260,7 @@ class AgentRuntime(
      * The run's snapshot. With [waitFor] set, blocks until its seq passes [since] (or it is
      * terminal, or the wait elapses), then returns the current snapshot either way.
      */
-    suspend fun get(owner: String, runId: String, since: Int? = null, waitFor: Duration = Duration.ZERO): AgentTurnResponse {
+    override suspend fun get(owner: String, runId: String, since: Int?, waitFor: Duration): AgentTurnResponse {
         val run = owned(owner, runId)
         if (since != null && waitFor > Duration.ZERO) {
             withTimeoutOrNull(waitFor) { run.state.first { it.seq > since || it.isTerminal } }
@@ -268,7 +268,7 @@ class AgentRuntime(
         return run.state.value
     }
 
-    fun list(owner: String): List<AgentTurnResponse> =
+    override fun list(owner: String): List<AgentTurnResponse> =
         runs.values.filter { it.owner == owner }.map { it.state.value }.sortedBy { it.runId }
 
     /** Supervisory query: list all runs across all owners with metadata (RFC-0104 placement, egress). */
@@ -347,7 +347,7 @@ class AgentRuntime(
     }
 
     /** Cooperative: the status becomes `cancelled` when the request is made; a model call in flight may still finish. */
-    fun cancel(owner: String, runId: String): Boolean {
+    override fun cancel(owner: String, runId: String): Boolean {
         val run = runs[runId]?.takeIf { it.owner == owner } ?: return false
         if (!run.state.value.isTerminal) {
             run.job.cancel()
