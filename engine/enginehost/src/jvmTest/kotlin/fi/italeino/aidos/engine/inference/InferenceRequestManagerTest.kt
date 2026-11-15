@@ -254,6 +254,34 @@ class InferenceRequestManagerTest {
         assertEquals(0, metrics.runningRequests)
     }
 
+    @Test
+    fun execute_runsInParallelOnlyWhileMemoryHeadroomPermits_rfc0103() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var headroom = false
+        val manager = InferenceRequestManager(
+            FakeRuntime(BlockingAdapter(gate)),
+            maxConcurrentRequests = 1,
+            maxParallelRequests = 2,
+            parallelHeadroom = { headroom },
+        )
+        coroutineScope {
+            val first = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            delay(50)
+            val second = async { manager.execute("test-model") { it.invoke(dummyRequest()).getOrThrow() } }
+            delay(100)
+            // No headroom: the second request waits in the queue (not rejected).
+            assertEquals(1, manager.snapshotMetrics().runningRequests)
+            assertEquals(1, manager.snapshotMetrics().queueDepth)
+            headroom = true
+            delay(100)
+            // Headroom appeared: it was admitted to run alongside the first.
+            assertEquals(2, manager.snapshotMetrics().runningRequests)
+            gate.complete(Unit)
+            assertTrue(first.await().isSuccess)
+            assertTrue(second.await().isSuccess)
+        }
+    }
+
     private fun dummyRequest() = ModelRequest(
         messages = emptyList(),
         tools = emptyList(),

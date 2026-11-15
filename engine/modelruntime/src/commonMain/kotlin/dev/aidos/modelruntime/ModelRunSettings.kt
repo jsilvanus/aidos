@@ -15,6 +15,8 @@ data class ModelRunSettings(
     val temperature: Float? = null,
     val topP: Float? = null,
     val topK: Int? = null,
+    /** RFC-0022: `null` = engine default (memory-map weights where the platform supports it); `false` forces a full read. */
+    val useMmap: Boolean? = null,
 ) {
     /** Values clamped into what llama.cpp accepts, so a stored or typed-in value can never break a load. */
     fun coerced(): ModelRunSettings = ModelRunSettings(
@@ -25,6 +27,7 @@ data class ModelRunSettings(
         temperature = temperature?.coerceIn(TEMPERATURE_RANGE),
         topP = topP?.coerceIn(TOP_P_RANGE),
         topK = topK?.coerceIn(TOP_K_RANGE),
+        useMmap = useMmap,
     )
 
     /** True when nothing is overridden. */

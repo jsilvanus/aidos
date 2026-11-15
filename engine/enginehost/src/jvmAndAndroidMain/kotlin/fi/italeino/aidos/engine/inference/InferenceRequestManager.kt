@@ -50,8 +50,16 @@ class InferenceRequestManager(
     private val maxConcurrentRequests: Int = 1,
     private val maxQueuedRequests: Int = Int.MAX_VALUE,  // RFC-0103: unlimited queue, reject never for queue depth
     private val licenseStore: LicenseAcceptanceStore? = null,
+    /**
+     * RFC-0103 item 4: requests beyond [maxConcurrentRequests] (up to [maxParallelRequests]) run in
+     * parallel only while this returns true -- i.e. the resident working set leaves memory headroom.
+     * Otherwise they wait in the serialized queue; they are never rejected for it. Defaults to no
+     * headroom, which is the plain serialized behaviour.
+     */
+    private val maxParallelRequests: Int = maxConcurrentRequests,
+    private val parallelHeadroom: () -> Boolean = { false },
 ) {
-    private val capacity = Semaphore(maxConcurrentRequests)
+    private val capacity = Semaphore(maxOf(maxConcurrentRequests, maxParallelRequests))
     private val stateMutex = Mutex()
     private val modelLocks = mutableMapOf<String, Mutex>()
     private val activeByModel = mutableMapOf<String, Int>()
@@ -310,6 +318,8 @@ class InferenceRequestManager(
         if (admitted.isFailure) return admitted
         return try {
             updateState(InferenceRequestState.QUEUED)
+            // Serialized unless the working set has headroom for another concurrent request.
+            while (!withBookkeepingLock { runningRequests < maxConcurrentRequests || parallelHeadroom() }) delay(PARALLEL_POLL_MILLIS)
             capacity.acquire()
             // Once the permit is held, this must not be cancelled: the catch below would
             // then undo the queue slot but never release the permit.
@@ -382,6 +392,10 @@ class InferenceRequestManager(
     // cancelled. Mutex.lock is cancellable, so under contention a plain withLock would throw
     // there and skip the counter update -- leaving runningRequests > 0 and making
     // shutdownAndDrain time out. NonCancellable guarantees the release always happens.
+    private companion object {
+        const val PARALLEL_POLL_MILLIS = 10L
+    }
+
     private suspend fun <T> withBookkeepingLock(action: () -> T): T =
         withContext(NonCancellable) { stateMutex.withLock(action = action) }
 

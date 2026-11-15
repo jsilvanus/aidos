@@ -269,6 +269,13 @@ class EngineService : LifecycleService() {
                     // Per-model run settings the user saved on the model card (RFC-0103).
                     runSettings = RunSettingsSource { id -> SettingsStore.getRunSettings(this@EngineService, id) },
                     isModelActive = { id -> runBlocking { inferenceManager.isModelActive(id) } },
+                    // RFC-0022: memory-based admission -- resident models stay within ~60% of device RAM.
+                    residentBudgetBytes = (android.app.ActivityManager.MemoryInfo().also {
+                        (getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(it)
+                    }.totalMem * 0.6).toLong(),
+                    residentEstimate = { d, s ->
+                        if (d == null) 0L else dev.aidos.cookbook.CookbookEngine().residentEstimate(d, s.contextLength ?: d.contextWindow)
+                    },
                 )
                 inferenceManager = InferenceRequestManager(
                     modelRuntime = runtime,

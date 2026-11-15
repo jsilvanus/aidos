@@ -1,7 +1,7 @@
 # RFC-0103: Aidos Engine — Shared Local Inference Service
 
-Status: Accepted 2026-08-14
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-14). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (vision/multimodal endpoints, cross-signature client trust, remote/LAN exposure, persisted per-app usage history, remote-provider execution; broader Android instrumented tests not yet run on a device)
 ## Abstract
 
 This RFC splits local model inference out of the Aidos Android app into a standalone app, **Aidos
@@ -750,3 +750,14 @@ and screens designed above, nothing built or wired).
   the license-acceptance and vault records this RFC's MVP gives it.
 - Aidos Agent's model-selection screen (RFC-0050 amendment): Aidos Engine as default, directly-
   configured remote providers as an explicit secondary path.
+
+## Implementation Files
+
+```yaml
+files:
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/inference/InferenceRequestManager.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/inference/InferenceRequestManagerTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
+```

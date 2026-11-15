@@ -26,6 +26,14 @@ class GlobalModelRuntime(
     private val isModelActive: (String) -> Boolean = { false },
     private val memoryAdmissionCheck: (suspend (modelId: String, descriptor: ModelDescriptor?) -> Result<Unit>)? = null,
     private val idleTimeoutMillis: Long = 5 * 60 * 1000, // 5 minutes default (RFC-0020)
+    /**
+     * RFC-0022: memory-based admission. When both are set, loading evicts least-recently-used idle
+     * models until the new model's estimated resident bytes (weights + KV cache at its settings)
+     * fit under [residentBudgetBytes]; a model that cannot be made to fit is refused rather than
+     * left to take the process down. [maxResidentModels] still applies as an upper bound.
+     */
+    private val residentBudgetBytes: Long? = null,
+    private val residentEstimate: ((descriptor: ModelDescriptor?, settings: ModelRunSettings) -> Long)? = null,
 ) : ModelRuntime {
 
     private val admissionQueue = Mutex()
@@ -37,6 +45,7 @@ class GlobalModelRuntime(
         val loadedAtMillis: Long,
         val settings: ModelRunSettings,
         val lastAccessedAtMillis: Long = loadedAtMillis,
+        val residentBytes: Long = 0L,
     )
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
@@ -174,11 +183,32 @@ class GlobalModelRuntime(
 
             // Settings are read once, here, so what the card shows as "loaded with" is what the backend got.
             val settings = runSettings.settingsFor(modelId).coerced()
+
+            // RFC-0022 memory admission: evict LRU idle models until the newcomer's resident estimate fits.
+            val estimate = if (residentBudgetBytes != null && residentEstimate != null) residentEstimate.invoke(descriptor, settings) else 0L
+            if (residentBudgetBytes != null && residentEstimate != null) {
+                if (estimate > residentBudgetBytes) {
+                    return@withLock Result.failure(
+                        IllegalStateException("INSUFFICIENT_MEMORY: $modelId needs ~$estimate bytes resident, budget is $residentBudgetBytes")
+                    )
+                }
+                while (loadedModels.values.sumOf { it.residentBytes } + estimate > residentBudgetBytes) {
+                    val inactiveSorted = loadedModels.entries
+                        .sortedBy { it.value.lastAccessedAtMillis }
+                        .filter { !isModelActive(it.key) }
+                    val victim = inactiveSorted.firstOrNull { it.key !in warmPinnedModels } ?: inactiveSorted.firstOrNull()
+                        ?: return@withLock Result.failure(
+                            IllegalStateException("ENGINE_BUSY: Cannot free enough memory for $modelId; active requests in progress")
+                        )
+                    loadedModels = loadedModels - victim.key
+                    backend.unload(victim.key)
+                }
+            }
             val adapter = backend.load(modelId, artifactPath, settings).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
             val now = nowMillis()
-            loadedModels = loadedModels + (modelId to LoadedModel(adapter, now, settings, now))
+            loadedModels = loadedModels + (modelId to LoadedModel(adapter, now, settings, now, estimate))
             Result.success(adapter)
         }
     }

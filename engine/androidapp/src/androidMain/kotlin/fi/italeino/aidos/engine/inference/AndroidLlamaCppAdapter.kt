@@ -52,6 +52,7 @@ class AndroidLlamaCppAdapter(
             .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
+        if (settings.useMmap == false) parameters = parameters.disableMmap()
         if (embeddingMode) parameters = parameters.enableEmbedding()
         model = LlamaModel(parameters)
     }

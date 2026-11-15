@@ -370,4 +370,41 @@ class GlobalModelRuntimeTest {
         assertEquals(listOf("m1"), unloaded)
         assertEquals(listOf("m2"), runtime.loaded())
     }
+
+    @Test
+    fun `memory admission evicts least-recently-used idle models until the newcomer fits`() = runTest {
+        val backend = fakeBackend(listOf(descriptor("a"), descriptor("b"), descriptor("c")))
+        var now = 0L
+        val runtime = GlobalModelRuntime(
+            backend,
+            nowMillis = { now },
+            residentBudgetBytes = 10_000L,
+            residentEstimate = { _, _ -> 4_000L },
+        )
+        now = 1; runtime.load("a").getOrThrow()
+        now = 2; runtime.load("b").getOrThrow()
+        now = 3; runtime.load("c").getOrThrow() // 12_000 > 10_000, so "a" (LRU) goes
+        assertEquals(setOf("b", "c"), runtime.loaded().toSet())
+    }
+
+    @Test
+    fun `memory admission refuses a model that can never fit and never evicts active ones`() = runTest {
+        val backend = fakeBackend(listOf(descriptor("a"), descriptor("big")))
+        val runtime = GlobalModelRuntime(
+            backend,
+            isModelActive = { it == "a" },
+            residentBudgetBytes = 10_000L,
+            residentEstimate = { d, _ -> if (d?.id == "big") 20_000L else 6_000L },
+        )
+        runtime.load("a").getOrThrow()
+        val tooBig = runtime.load("big")
+        assertTrue(tooBig.exceptionOrNull()!!.message!!.startsWith("INSUFFICIENT_MEMORY"))
+        assertEquals(listOf("a"), runtime.loaded())
+    }
+
+    @Test
+    fun `mmap defaults to on and can be switched off`() {
+        assertEquals(null, ModelRunSettings.DEFAULT.useMmap)
+        assertEquals(false, ModelRunSettings(useMmap = false).coerced().useMmap)
+    }
 }

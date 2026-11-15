@@ -96,6 +96,12 @@ data class ModelRequirements(
 
     /** Quantization type (e.g., "Q4_K_M", "fp16"). */
     val quantizationType: String,
+
+    /**
+     * KV-cache bytes per context token for *this* model (RFC-0022). Derived from the model's own
+     * architecture when the catalog supplies it; the calibrated constant only when it does not.
+     */
+    val kvBytesPerToken: Long = CookbookEngine.DEFAULT_KV_BYTES_PER_TOKEN,
 )
 
 /**
@@ -140,7 +146,7 @@ class CookbookEngine {
      * The KV cache grows linearly with context window and can exceed weights themselves
      * at longer contexts. This is the part that catches naive implementations.
      *
-     * [KV_CACHE_BYTES_PER_TOKEN] and [OVERHEAD_FRACTION] are calibrated against RFC-0022's own
+     * [DEFAULT_KV_BYTES_PER_TOKEN] and [OVERHEAD_FRACTION] are calibrated against RFC-0022's own
      * worked example (Qwen2.5 3B Q4_K_M, 2.0GB weights): 4k context -> 2.4GB resident (runs
      * well), 16k -> 3.3GB, 32k -> 4.6GB (will not fit on a device with 3.9GB available). RFC-0022
      * does not mandate exact constants beyond that table, so these reproduce it directly rather
@@ -157,7 +163,7 @@ class CookbookEngine {
         contextWindow: Int,
     ): Long {
         val weightsInRam = requirements.weightsBytesOnDisk
-        val kvCacheBytes = contextWindow.toLong() * KV_CACHE_BYTES_PER_TOKEN
+        val kvCacheBytes = contextWindow.toLong() * requirements.kvBytesPerToken
         val overheadBytes = (weightsInRam * OVERHEAD_FRACTION).toLong()
 
         return weightsInRam + kvCacheBytes + overheadBytes
@@ -183,6 +189,7 @@ class CookbookEngine {
             contextWindow = contextWindow,
             parameterCount = estimateParams(model),
             quantizationType = "unknown",
+            kvBytesPerToken = kvBytesPerToken(model),
         )
 
         val resident = computeResidentMemory(requirements, device, contextWindow)
@@ -196,7 +203,7 @@ class CookbookEngine {
         if (resident > device.availableRamBytes) {
             // Does it fit at a shorter context?
             val contextThatFits = (device.availableRamBytes - sizeBytes - (sizeBytes * OVERHEAD_FRACTION))
-                .toLong() / KV_CACHE_BYTES_PER_TOKEN
+                .toLong() / requirements.kvBytesPerToken
             return if (contextThatFits > 256) {
                 CookbookVerdict.EXCEEDS_CONTEXT
             } else {
@@ -268,7 +275,7 @@ class CookbookEngine {
         val availableForCache = device.availableRamBytes - sizeBytes - overhead
         if (availableForCache <= 0) return null
         
-        val maxTokens = (availableForCache / KV_CACHE_BYTES_PER_TOKEN).toInt()
+        val maxTokens = (availableForCache / kvBytesPerToken(model)).toInt()
         return maxTokens.coerceAtMost(maxLimit).coerceAtLeast(0)
     }
 
@@ -282,11 +289,45 @@ class CookbookEngine {
         return (model.sizeBytes ?: 1_000_000_000) / 1_500
     }
 
-    private companion object {
-        /** Bytes of KV cache per context token — see [computeResidentMemory] for calibration. */
-        const val KV_CACHE_BYTES_PER_TOKEN = 76_800L
+    /**
+     * Resident bytes the runtime should reserve for [model] at [contextWindow] (weights + this
+     * model's own KV cache + overhead): the admission figure for `GlobalModelRuntime` (RFC-0022).
+     * A model with unknown size reserves nothing, so it never blocks admission on a guess.
+     */
+    fun residentEstimate(model: ModelDescriptor, contextWindow: Int): Long {
+        val weights = model.sizeBytes ?: return 0L
+        return weights + contextWindow.toLong() * kvBytesPerToken(model) + (weights * OVERHEAD_FRACTION).toLong()
+    }
+
+    /**
+     * RFC-0022: KV cache per token is `2 (K and V) x layers x kv-heads x head-dim x bytes-per-element`,
+     * which differs by an order of magnitude between architectures (grouped-query attention).
+     * Read from the catalog metadata (`n_layer`, `n_head_kv`, `head_dim` or `n_embd`+`n_head`,
+     * optional `kv_type_bytes`, default f16 = 2); falls back to the calibrated constant when the
+     * model does not declare them.
+     */
+    fun kvBytesPerToken(model: ModelDescriptor): Long {
+        val m = model.metadata
+        val layers = m["n_layer"]?.toLongOrNull()
+        val kvHeads = m["n_head_kv"]?.toLongOrNull() ?: m["n_head"]?.toLongOrNull()
+        val headDim = m["head_dim"]?.toLongOrNull()
+            ?: run {
+                val embd = m["n_embd"]?.toLongOrNull()
+                val heads = m["n_head"]?.toLongOrNull()
+                if (embd != null && heads != null && heads > 0) embd / heads else null
+            }
+        val elementBytes = m["kv_type_bytes"]?.toLongOrNull() ?: 2L
+        if (layers == null || kvHeads == null || headDim == null || layers <= 0 || kvHeads <= 0 || headDim <= 0) {
+            return DEFAULT_KV_BYTES_PER_TOKEN
+        }
+        return 2L * layers * kvHeads * headDim * elementBytes
+    }
+
+    companion object {
+        /** Calibrated fallback when a model declares no architecture — see [computeResidentMemory]. */
+        const val DEFAULT_KV_BYTES_PER_TOKEN = 76_800L
 
         /** Runtime overhead (model structure, state, buffers) as a fraction of weights. */
-        const val OVERHEAD_FRACTION = 0.05
+        private const val OVERHEAD_FRACTION = 0.05
     }
 }

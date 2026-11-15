@@ -245,13 +245,24 @@ class DesktopEngineHost(
                     catalogManager = catalogManager,
                 ),
                 runSettings = runSettings,
+                // RFC-0022: memory-based admission -- keep resident models within ~80% of physical RAM.
+                residentBudgetBytes = (DesktopDevice.totalMemoryBytes() * 0.8).toLong(),
+                residentEstimate = { d, s ->
+                    if (d == null) 0L else dev.aidos.cookbook.CookbookEngine().residentEstimate(d, s.contextLength ?: d.contextWindow)
+                },
             )
             val desiredPort = serverPort()
             // The agent runtime (/v1/agent) is served from this same process and calls the models
             // through the same InferenceRequestManager as the HTTP API, so admission, model loading
             // and the locality limits (RFC-0104) stay on one path.
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            val manager = InferenceRequestManager(runtime, licenseStore = licenseAcceptanceStore)
+            val manager = InferenceRequestManager(
+                runtime,
+                licenseStore = licenseAcceptanceStore,
+                // RFC-0103: parallel across models while at least 30% of RAM is free; serialized otherwise.
+                maxParallelRequests = 2,
+                parallelHeadroom = { DesktopDevice.profile().let { it.availableRamBytes > it.totalRamBytes * 0.3 } },
+            )
             lateinit var server: EngineHttpServer
             val initialPrefs = runCatching {
                 val prefsFile = File(stateDir, "preferences.json")

@@ -4,6 +4,7 @@ import dev.aidos.kernel.ModelKind
 import dev.aidos.kernel.ModelDescriptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class CookbookEngineTest {
 
@@ -198,5 +199,38 @@ class CookbookEngineTest {
     fun neededRamGrowsWithContext() {
         val d = device(6_000_000_000)
         assertEquals(true, engine.ramFit(twoGbModel, d, 16384).neededBytes > engine.ramFit(twoGbModel, d, 2048).neededBytes)
+    }
+
+    @Test
+    fun `kv cache per token comes from the model architecture and differs between models`() {
+        val engine = CookbookEngine()
+        fun model(meta: Map<String, String>) = dev.aidos.kernel.ModelDescriptor(
+            id = "m", name = "m", kind = dev.aidos.kernel.ModelKind.LLM, providerId = "local", isLocal = true,
+            contextWindow = 4096, sizeBytes = 2_000_000_000L, digest = null, metadata = meta,
+        )
+        // 2 x 36 layers x 2 kv heads x 128 head-dim x 2 bytes (grouped-query attention)
+        val gqa = model(mapOf("n_layer" to "36", "n_head_kv" to "2", "head_dim" to "128"))
+        assertEquals(2L * 36 * 2 * 128 * 2, engine.kvBytesPerToken(gqa))
+        // Full multi-head attention: same layers, 16 kv heads - 8x the cache per token.
+        val mha = model(mapOf("n_layer" to "36", "n_head_kv" to "16", "n_embd" to "2048", "n_head" to "16"))
+        assertEquals(2L * 36 * 16 * 128 * 2, engine.kvBytesPerToken(mha))
+        // Undeclared architecture falls back to the calibrated constant.
+        assertEquals(CookbookEngine.DEFAULT_KV_BYTES_PER_TOKEN, engine.kvBytesPerToken(model(emptyMap())))
+    }
+
+    @Test
+    fun `a gqa model fits a longer context than the constant would allow`() {
+        val engine = CookbookEngine()
+        val device = DeviceProfile(
+            totalRamBytes = 8_000_000_000L, availableRamBytes = 4_000_000_000L, storageFreeBytes = 50_000_000_000L,
+            cpuCoreCount = 8, hasAccelerator = false,
+        )
+        fun model(meta: Map<String, String>) = dev.aidos.kernel.ModelDescriptor(
+            id = "m", name = "m", kind = dev.aidos.kernel.ModelKind.LLM, providerId = "local", isLocal = true,
+            contextWindow = 4096, sizeBytes = 2_000_000_000L, digest = null, metadata = meta,
+        )
+        val declared = engine.findMaxFittingContext(model(mapOf("n_layer" to "36", "n_head_kv" to "2", "head_dim" to "128")), device, maxLimit = 1_000_000)
+        val undeclared = engine.findMaxFittingContext(model(emptyMap()), device, maxLimit = 1_000_000)
+        assertTrue(declared!! > undeclared!!)
     }
 }

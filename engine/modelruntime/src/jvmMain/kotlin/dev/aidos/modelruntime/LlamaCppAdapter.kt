@@ -63,6 +63,7 @@ class LlamaCppAdapter(
             .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
+            .let { if (settings.useMmap == false) it.disableMmap() else it }
             .let { if (embeddingMode) it.enableEmbedding() else it }
 
         return try {
