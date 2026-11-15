@@ -157,7 +157,7 @@ class RuntimeSocketServer(
 
             while (true) {
                 val line = reader.readLine() ?: break
-                val request = runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull() ?: break
+                val request = parseBounded(line) ?: break
                 val id = request["id"]?.jsonPrimitive?.content ?: ""
                 val method = request["method"]?.jsonPrimitive?.content ?: ""
                 val params = request["params"]?.jsonObject ?: JsonObject(emptyMap())
@@ -186,10 +186,16 @@ class RuntimeSocketServer(
         }
     }
 
+    /** RFC-0039: external input is size- and depth-checked before it is parsed; null means reject. */
+    private fun parseBounded(line: String): JsonObject? = runCatching {
+        dev.aidos.storage.VersionedJson.validateLimits(line)
+        Json.parseToJsonElement(line).jsonObject
+    }.getOrNull()
+
     /** Returns the connection's `user_interactive` flag on success, null if the handshake failed. */
     private fun handshake(reader: BufferedReader, output: OutputStream): Boolean? {
         val helloLine = reader.readLine() ?: return null
-        val hello = runCatching { Json.parseToJsonElement(helloLine).jsonObject }.getOrNull()
+        val hello = parseBounded(helloLine)
         val presentedToken = hello?.get("token")?.jsonPrimitive?.content
         val interactive = hello?.get("interactive")?.jsonPrimitive?.boolean ?: false
         val clientMinApi = hello?.get("minApiVersion")?.jsonPrimitive?.intOrNull ?: 1

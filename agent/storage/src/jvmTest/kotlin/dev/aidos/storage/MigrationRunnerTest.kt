@@ -133,4 +133,42 @@ class MigrationRunnerTest {
             driver.close()
         }
     }
+
+    @Test
+    fun `older database is migrated forward in a transaction and recorded in migration_history`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        MigrationRunner.open(driver, DatabaseKind.PROJECT, schema, "test-1.0", now)
+        // Simulate a database stamped one version behind the runtime.
+        driver.execute(null, "UPDATE schema_versions SET version = 0 WHERE id = 1", 0)
+        driver.execute(null, "DELETE FROM migration_history", 0)
+
+        val result = MigrationRunner.open(
+            driver, DatabaseKind.PROJECT, schema, "test-2.0", now,
+            migrations = listOf(SchemaMigration(1, listOf("CREATE TABLE migrated_probe (id INTEGER PRIMARY KEY)"))),
+        )
+        assertEquals(1, assertIs<OpenResult.Ready>(result).version)
+        val history = driver.executeQuery(null, "SELECT version, runtime_version FROM migration_history", { c ->
+            QueryResult.Value(if (c.next().value) c.getLong(0) to c.getString(1) else null)
+        }, 0).value
+        assertEquals(1L to "test-2.0", history)
+    }
+
+    @Test
+    fun `fresh bootstrap writes a migration_history row`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        MigrationRunner.open(driver, DatabaseKind.PROJECT, schema, "test-1.0", now)
+        val n = driver.executeQuery(null, "SELECT COUNT(*) FROM migration_history", { c ->
+            QueryResult.Value(if (c.next().value) c.getLong(0) else 0L)
+        }, 0).value
+        assertEquals(1L, n)
+    }
+
+    @Test
+    fun `historical v1 schema fixture opens as current without migration`() {
+        val fixture = java.io.File("../../tests/fixtures/schemas/v1.sql").takeIf { it.exists() }
+            ?: java.io.File("tests/fixtures/schemas/v1.sql")
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val result = MigrationRunner.open(driver, DatabaseKind.PROJECT, fixture.readText(), "fixture", now)
+        assertEquals(1, assertIs<OpenResult.Ready>(result).version)
+    }
 }
