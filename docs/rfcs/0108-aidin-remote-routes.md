@@ -295,5 +295,23 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - agent/routes/src/commonMain/kotlin/dev/aidos/routes/Route.kt
+  - agent/routes/src/commonMain/kotlin/dev/aidos/routes/RouteDialer.kt
+  - agent/routes/src/jvmTest/kotlin/dev/aidos/routes/RouteDialerTest.kt
+  - agent/wire-aidin/src/commonMain/kotlin/dev/aidos/wire/RouteHintCodec.kt
+  - agent/wire-aidin/src/jvmTest/kotlin/dev/aidos/wire/RouteHintCodecTest.kt
+  - agent/policy/src/commonMain/kotlin/dev/aidos/policy/RemoteAccessPolicy.kt
+  - agent/policy/src/commonMain/kotlin/dev/aidos/policy/RoutePlannerPolicy.kt
+  - agent/policy/src/jvmTest/kotlin/dev/aidos/policy/PolicyTest.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/TunnelManager.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/ManagedTunnel.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/HostKeyPinning.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/VaultKeyProvider.kt
+  - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/Storage.kt
+  - agent/tunnel-manager/src/jvmTest/kotlin/dev/aidos/tunnel/TunnelManagerTest.kt
+  - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/SshTunnel.kt
+  - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/Transport.kt
+  - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/Spec.kt
+  - agent/ssh-tunnel/src/commonMain/kotlin/fi/italeino/sshtunnel/AuthorizedKeys.kt
 ```
