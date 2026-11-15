@@ -110,7 +110,13 @@ sqldelight {
 android {
     namespace = "fi.italeino.aidos"
     compileSdk = 35
-    
+
+    // lintVital (run by assembleRelease) builds a lint model that cannot resolve the aidos-tcr
+    // included build ("Could not find jar for project :aidos-tcr"). It is not needed to produce the APK.
+    lint {
+        checkReleaseBuilds = false
+    }
+
     defaultConfig {
         applicationId = "fi.italeino.aidos"
         minSdk = 26

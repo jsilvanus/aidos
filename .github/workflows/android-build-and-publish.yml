@@ -19,7 +19,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      # agent/settings.gradle.kts builds aidos-tcr from a sibling checkout when one exists (:ui-common
+      # depends on it); without it Gradle falls back to published coordinates that CI cannot read (401).
+      - name: Check out aidos-tcr
+        uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
+
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -52,8 +60,9 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gradle :androidapp:assembleRelease --no-daemon -i
+          gradle :androidapp:assembleRelease --no-daemon
       
       - name: Find and inspect APK
         id: find-apk
@@ -125,7 +134,8 @@ jobs:
       
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        # Only when the APK was found; with an empty path the action itself fails and hides the real error.
+        if: success() && steps.find-apk.outputs.apk-path != ''
         with:
           name: aidos-android-release-apk
           path: ${{ steps.find-apk.outputs.apk-path }}
