@@ -140,7 +140,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Phase 1, done (2026-11-15):** owner-only token files (`OwnerOnlyFiles`: POSIX `rw-------`, an owner-only ACL on Windows, failure is an error and the file is removed; used for the runtime token and `engine.json`); the daemon finds the Engine through `engine.json` (`EngineDiscovery`, environment variables still win, a dead pid is ignored).
 - **Phase 2, first step done:** `AgentRuntimeAttach` in the desktop app attaches to a running Agent daemon through `SocketRuntimeClient` and falls back to the in-process runtime; when a daemon answers the in-process runtime (and so any project database in the app) is never created. The Shell tab uses it and says which runtime it is on. Not yet: the other panes, reconnect while the app is open, an integration test that spawns a real daemon.
 - **Phase 3, first group done:** `LanControl` (the LAN sharing group of `EngineControl`) with `LocalLanControl` (in-process) and `HttpLanControl` (loopback admin API); `/v1/admin/lan` served on the loopback listener only, to the Engine's own local client only (an approved app's token and a wrong token are refused; absent on the LAN listener); the LAN pane's presenter knows only `LanControl`, and `EngineAttach` picks the HTTP implementation when another live Engine process owns `engine.json`. Tested end to end through the real desktop host.
-- **Next:** the remaining `EngineControl` groups pane by pane (peers and remote access, tunnels, apps and approvals, models, status), then the pending-approvals feed, the tray, the headless Engine launcher and the installers.
+- **Approvals feed and tray, first cut done:** `ApprovalsControl` (pending items: apps asking to use the Engine, effectful tool calls on tainted remote runs; ids `app:`/`tool:`), `/v1/admin/approvals` and `POST /v1/admin/shutdown` (headless Engine only), both loopback and admin only. The tray (`--tray`, `tray/` package) polls the feed, toasts each new item once with who is asking and never content, opens an Approve/Deny popup on click, and has Open, Start, Stop and Restart Engine; the watcher and actions are unit tested, the AWT shell is not (needs a desktop).
+- **Next:** the Agent daemon's own pending-approvals feed and start/stop in the tray, the remaining `EngineControl` groups pane by pane (peers and remote access, tunnels, apps and models, status), the headless launcher packaging, run-on-login settings and the per-user and system installers.
 
 ## Implementation Files
 
@@ -164,4 +165,12 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineAttach.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanEndToEndTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/ApprovalsControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpApprovalsControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalApprovalsControl.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/ApprovalsFeedTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayModel.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayActions.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayApp.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayModelTest.kt
 ```

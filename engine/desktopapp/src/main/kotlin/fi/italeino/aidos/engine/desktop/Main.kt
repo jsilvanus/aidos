@@ -22,6 +22,10 @@ import java.io.File
 
 /** Entry point of the Windows desktop application and daemon for Aidos Engine (RFC-0103). */
 fun main(args: Array<String>) {
+    if (args.contains("--tray")) {
+        // RFC-0115: the notification-area icon is its own small process; it never hosts an Engine.
+        System.exit(fi.italeino.aidos.engine.desktop.tray.runTray())
+    }
     DesktopPaths.ensureCreated()
     val prefs = DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json"))
     val isHeadless = args.any { it == "--daemon" || it == "--headless" || it == "-d" }
