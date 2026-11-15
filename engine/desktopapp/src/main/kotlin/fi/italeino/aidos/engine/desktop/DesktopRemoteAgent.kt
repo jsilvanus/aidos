@@ -11,6 +11,7 @@ import fi.italeino.aidos.engine.agent.OriginToolAudit
 import fi.italeino.aidos.engine.agent.OriginToolHost
 import fi.italeino.aidos.engine.agent.RemoteAgentClient
 import fi.italeino.aidos.engine.agent.RoutedAgentRuntime
+import fi.italeino.aidos.engine.agent.ToolApprovalQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
@@ -34,10 +35,20 @@ class DesktopRemoteAgent(
     private val stateDir: File,
     private val aidin: () -> AidinNode?,
     private val scope: CoroutineScope,
-    /** Defaults to an append-only `remote-agent-audit.jsonl` beside the config: run, peer, app, tool and outcome, never content. */
-    private val audit: (OriginToolAudit) -> Unit = { a -> appendAudit(stateDir, a) },
-    private val approve: suspend (peer: NodeId, app: String, tool: String) -> Boolean = { _, _, _ -> false },
+    /** Also told of each tool decision (for a live activity list); the append-only file is always written. */
+    private val onAuditLine: (String) -> Unit = {},
+    /**
+     * Decides an effectful tool call on a tainted remote run (RFC-0107). Defaults to the on-screen prompt in
+     * [approvals]: the user answers, and no answer within a minute is a refusal.
+     */
+    val approvals: ToolApprovalQueue = ToolApprovalQueue(),
 ) {
+    private val audit: (OriginToolAudit) -> Unit = { a ->
+        appendAudit(stateDir, a)
+        onAuditLine("tool ${a.outcome}: ${a.tool} for ${a.app} from ${a.peer.value.take(8)}")
+    }
+    private val approve: suspend (peer: NodeId, app: String, tool: String) -> Boolean = { p, app, tool -> approvals.request(p, app, tool) }
+
     @Serializable
     private data class Config(
         val peers: List<String> = emptyList(),
@@ -95,6 +106,10 @@ class DesktopRemoteAgent(
     }
 
     fun allowedTools(peer: NodeId, app: String): Set<String> = config.toolAllowlist["${peer.value}|$app"]?.toSet().orEmpty()
+
+    /** Every (app, tools) allowlist set for [peer], for display. */
+    fun allowlistsFor(peer: NodeId): Map<String, List<String>> =
+        config.toolAllowlist.filterKeys { it.startsWith("${peer.value}|") }.mapKeys { it.key.substringAfter('|') }
 
     /** The runtime the `/v1/agent` routes should use: the local loop, with the configured peers ahead of it. */
     fun routed(local: AgentRuntime): AgentRunApi = RoutedAgentRuntime(

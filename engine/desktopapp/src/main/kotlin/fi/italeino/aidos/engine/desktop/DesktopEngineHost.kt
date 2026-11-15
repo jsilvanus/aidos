@@ -222,9 +222,11 @@ class DesktopEngineHost(
     private var _agentRuntime: AgentRuntime? = null
 
     /** RFC-0107 switches (hosting for a peer, preferred peers, per-app tool allowlists); null until the host has started. */
-    @Volatile
-    var remoteAgent: DesktopRemoteAgent? = null
-        private set
+    private val _remoteAgent = MutableStateFlow<DesktopRemoteAgent?>(null)
+    val remoteAgentFlow: StateFlow<DesktopRemoteAgent?> = _remoteAgent.asStateFlow()
+    var remoteAgent: DesktopRemoteAgent?
+        get() = _remoteAgent.value
+        private set(value) { _remoteAgent.value = value }
 
     /** RFC-0108 hints and per-peer remote-access switch; null while group sharing (AIDIN) is off. */
     @Volatile
@@ -314,7 +316,7 @@ class DesktopEngineHost(
             _agentRuntime = agent
             // RFC-0107: the peers this Engine prefers for agent turns (local is always the last resort), and the
             // handler that lets a peer with the explicit `agent` scope run a loop here.
-            val remoteAgent = DesktopRemoteAgent(stateDir, aidin = { _aidin.value }, scope = scope)
+            val remoteAgent = DesktopRemoteAgent(stateDir, aidin = { _aidin.value }, scope = scope, onAuditLine = ::addAuditLine)
             this.remoteAgent = remoteAgent
             server = EngineHttpServer(
                 tokens,
@@ -426,6 +428,15 @@ class DesktopEngineHost(
         if (!enabled) stopAidin()
     }
 
+    private val _remoteAuditLines = MutableStateFlow<List<String>>(emptyList())
+
+    /** The latest remote-access and remote-agent decisions, newest last, for the Peers tab. */
+    val remoteAuditLines: StateFlow<List<String>> = _remoteAuditLines.asStateFlow()
+
+    private fun addAuditLine(line: String) {
+        _remoteAuditLines.value = (_remoteAuditLines.value + "${java.time.LocalTime.now().withNano(0)} $line").takeLast(50)
+    }
+
     private fun appendRoutingAudit(a: RemoteRoutingAudit) {
         runCatching {
             val what = when (a) {
@@ -433,6 +444,7 @@ class DesktopEngineHost(
                 is RemoteRoutingAudit.LinkDecision -> "link peer=${a.peer.value} route=${a.route} admitted=${a.admitted}"
                 is RemoteRoutingAudit.Dialed -> "dialed peer=${a.peer.value} route=${a.route::class.simpleName} rttMs=${a.rttMillis}"
             }
+            addAuditLine(what)
             stateDir.mkdirs()
             File(stateDir, "remote-routing-audit.log").appendText("${java.time.Instant.now()} $what\n")
         }

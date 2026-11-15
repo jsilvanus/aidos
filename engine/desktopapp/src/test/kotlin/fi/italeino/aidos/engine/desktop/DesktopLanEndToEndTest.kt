@@ -1,7 +1,7 @@
 package fi.italeino.aidos.engine.desktop
 
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
-import fi.italeino.aidos.engine.ui.LanPairingUi
+import dev.aidos.tcr.engine.LanPairingUi
 import fi.italeino.aidos.sdk.client.LanPairing
 import fi.italeino.aidos.sdk.client.LanPairingUri
 import kotlinx.coroutines.runBlocking

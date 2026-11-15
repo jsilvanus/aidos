@@ -16,7 +16,8 @@ plugins {
  * transport and no Binder, so app approvals are exercised through a simulated handshake.
  */
 kotlin {
-    jvmToolchain(17)
+    // 21, not 17: the shared UI (aidos-tcr) is compiled for Java 21, so the app and its tests must run on 21+.
+    jvmToolchain(21)
 }
 
 dependencies {
@@ -55,7 +56,7 @@ compose.desktop {
         // Compose's run/package tasks default to JAVA_HOME's JDK, not the toolchain; launch with
         // the toolchain's JDK so the app runs on the version it was compiled for.
         javaHome = javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(17))
+            languageVersion.set(JavaLanguageVersion.of(21))
         }.get().metadata.installationPath.asFile.absolutePath
         nativeDistributions {
             targetFormats(TargetFormat.Msi)

@@ -1,8 +1,8 @@
 package fi.italeino.aidos.engine.desktop
 
-import fi.italeino.aidos.engine.ui.LanDeviceUi
-import fi.italeino.aidos.engine.ui.LanPairingUi
-import fi.italeino.aidos.engine.ui.LanSharingUiState
+import dev.aidos.tcr.engine.LanDeviceUi
+import dev.aidos.tcr.engine.LanPairingUi
+import dev.aidos.tcr.engine.LanSharingUiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

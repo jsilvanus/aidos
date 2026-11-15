@@ -26,6 +26,9 @@ import dev.aidos.api.RealRuntimeClient
 import dev.aidos.api.RuntimeClient
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.AidosUniversalApp
+import dev.aidos.tcr.engine.LanSharingPane
+import dev.aidos.tcr.engine.RemotePeersActions
+import dev.aidos.tcr.engine.RemotePeersPane
 import fi.italeino.aidos.engine.ui.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -37,6 +40,7 @@ enum class DesktopRightPaneTab {
     AGENTS,
     TOOLS,
     SHARING,
+    PEERS,
 }
 
 enum class DesktopViewMode {
@@ -58,6 +62,7 @@ class DesktopModels(
     val agents = DesktopAgentsModel(host, scope, prefs)
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(host)
+    val peers = DesktopRemotePeersModel(host, scope)
 
     init {
         scope.launch {
@@ -256,6 +261,14 @@ fun EngineHostView(
                     onClick = { onSelectRightPaneTab(DesktopRightPaneTab.SHARING) },
                     text = { Text("Sharing") }
                 )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.PEERS,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.PEERS) },
+                    text = {
+                        val waiting = models.peers.state.collectAsState().value.pendingApprovals.size
+                        Text(if (waiting > 0) "Peers ($waiting)" else "Peers")
+                    }
+                )
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -302,7 +315,23 @@ fun EngineHostView(
                             onAddManually = models.lan::addManually,
                             onRevoke = models.lan::revoke,
                             onDismissPairing = models.lan::dismissPairing,
+                            qrCode = { link -> QrCode(link) },
                         )
+                    }
+                    DesktopRightPaneTab.PEERS -> {
+                        val peersState by models.peers.state.collectAsState()
+                        val actions = remember(models) {
+                            RemotePeersActions(
+                                onSetHostsAgentLoops = models.peers::setHostsAgentLoops,
+                                onSetPreferred = models.peers::setPreferred,
+                                onSetRemoteAccess = models.peers::setRemoteAccess,
+                                onAddHint = models.peers::addHint,
+                                onRemoveHint = models.peers::removeHint,
+                                onSetToolAllowlist = models.peers::setToolAllowlist,
+                                onDecideToolApproval = models.peers::decideToolApproval,
+                            )
+                        }
+                        RemotePeersPane(state = peersState, actions = actions)
                     }
                     DesktopRightPaneTab.TOOLS -> {
                         McpServersPane(
