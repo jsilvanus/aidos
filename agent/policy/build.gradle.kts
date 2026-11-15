@@ -5,6 +5,9 @@ plugins {
 // RFC-0108 Phase 2: Route policy and per-peer remote-access control.
 // Kernel-free, reusable for any peer/policy system.
 kotlin {
+    // 17, not the agent default 21: the Engine's :aidin (Android-capable, JDK 17) depends on this module, and a
+    // class file built for 21 cannot be loaded by its tests when Gradle itself runs on 21 (as in CI).
+    jvmToolchain(17)
     jvm()
 
     sourceSets {

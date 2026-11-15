@@ -17,6 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # agent/settings.gradle.kts builds aidos-tcr from a sibling checkout when one exists (:ui-common depends on
+      # it); without it Gradle falls back to the published coordinates, which CI cannot read.
+      - uses: actions/checkout@v4
+        with:
+          repository: jsilvanus/aidos-tcr
+          path: aidos-tcr
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

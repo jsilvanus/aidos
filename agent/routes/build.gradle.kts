@@ -5,6 +5,9 @@ plugins {
 // RFC-0108 Phase 1: Route model and dialer fallback logic.
 // Kernel-free, reusable for any discovery/dialing system.
 kotlin {
+    // 17, not the agent default 21: the Engine's :aidin (Android-capable, JDK 17) depends on this module, and a
+    // class file built for 21 cannot be loaded by its tests when Gradle itself runs on 21 (as in CI).
+    jvmToolchain(17)
     jvm()
 
     sourceSets {
