@@ -184,6 +184,37 @@ class CapabilityTest {
     }
 
     @Test
+    fun `revoking one grant does not revoke an unrelated grant in the same project`(): Unit = runBlocking {
+        val driver = openProjectDriver()
+        val mgr = manager(driver)
+        val projectId = "01234567-89ab-7def-8abc-000000000098"
+        seedProject(driver, projectId)
+        seedEpoch(driver, projectId)
+
+        suspend fun grant(subject: String) = mgr.grant(
+            subjectId = subject,
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = Permission.FS_READ,
+            scope = CapabilityScope.Filesystem(ProjectId(projectId), "/"),
+            constraints = CapabilityConstraints(),
+            expiresAt = null,
+            grantedBy = UserId("user-1"),
+        ).getOrThrow()
+
+        val doomed = grant("session-a")
+        val bystander = grant("session-b")
+
+        mgr.revoke(doomed.id, "user-1")
+
+        assertIs<CapabilityCheckResult.Denied>(mgr.validate("session-a", doomed.id, noOp, TrustLevel.TRUSTED))
+        // The epoch advanced so caches re-read, but the unrelated grant is still valid.
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-b", bystander.id, noOp, TrustLevel.TRUSTED))
+        // A grant made after the revocation works too.
+        val later = grant("session-c")
+        assertEquals(CapabilityCheckResult.Allowed, mgr.validate("session-c", later.id, noOp, TrustLevel.TRUSTED))
+    }
+
+    @Test
     fun `validate denies a grant issued with requiresApprovalPerUse, unconditionally`(): Unit = runBlocking {
         val driver = openProjectDriver()
         val mgr = manager(driver)

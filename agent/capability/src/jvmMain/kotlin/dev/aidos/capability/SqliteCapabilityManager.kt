@@ -397,6 +397,18 @@ class SqliteCapabilityManager(
                 ) { bindString(0, capabilityId.value) }
 
                 revokeTree(capabilityId, revokedBy, now)
+
+                // The epoch advancing is the signal for caches and open handles to re-read (RFC-0003); it must not
+                // itself revoke anything. Without this, every grant issued before the bump failed
+                // `revocation_epoch < current epoch` in validate(), so revoking one grant silently revoked every
+                // other grant in the project. Grants that survive are re-stamped to the new epoch.
+                projectDriver.execute(
+                    identifier = null,
+                    sql = "UPDATE capabilities SET revocation_epoch = " +
+                        "(SELECT epoch FROM project_revocation_epoch e WHERE e.project_id = capabilities.project_id) " +
+                        "WHERE revoked_at IS NULL AND project_id = (SELECT project_id FROM capabilities WHERE id = ?)",
+                    parameters = 1,
+                ) { bindString(0, capabilityId.value) }
             }
         }
     }

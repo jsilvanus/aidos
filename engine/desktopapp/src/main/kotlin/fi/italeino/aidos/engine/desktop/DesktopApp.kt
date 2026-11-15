@@ -29,6 +29,7 @@ import dev.aidos.ui.AidosUniversalApp
 import dev.aidos.tcr.engine.LanSharingPane
 import dev.aidos.tcr.engine.RemotePeersActions
 import dev.aidos.tcr.engine.RemotePeersPane
+import dev.aidos.tcr.engine.ShellGrantsPane
 import fi.italeino.aidos.engine.ui.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -41,6 +42,7 @@ enum class DesktopRightPaneTab {
     TOOLS,
     SHARING,
     PEERS,
+    SHELL,
 }
 
 enum class DesktopViewMode {
@@ -63,6 +65,7 @@ class DesktopModels(
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(host)
     val peers = DesktopRemotePeersModel(host, scope)
+    val shell = DesktopShellGrantsModel(scope) { DesktopRuntimeClient.create() }
 
     init {
         scope.launch {
@@ -269,6 +272,11 @@ fun EngineHostView(
                         Text(if (waiting > 0) "Peers ($waiting)" else "Peers")
                     }
                 )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.SHELL,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.SHELL); models.shell.refresh() },
+                    text = { Text("Shell") }
+                )
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -332,6 +340,16 @@ fun EngineHostView(
                             )
                         }
                         RemotePeersPane(state = peersState, actions = actions)
+                    }
+                    DesktopRightPaneTab.SHELL -> {
+                        val shellState by models.shell.state.collectAsState()
+                        ShellGrantsPane(
+                            state = shellState,
+                            onSelectProject = models.shell::selectProject,
+                            onSelectSession = models.shell::selectSession,
+                            onGrant = models.shell::grant,
+                            onRevoke = models.shell::revoke,
+                        )
                     }
                     DesktopRightPaneTab.TOOLS -> {
                         McpServersPane(

@@ -36,6 +36,12 @@ dependencies {
     implementation(project(":cookbook"))
     implementation(project(":aidin"))
     implementation(project(":ui-common"))
+    // The Shell grants tab talks to a database-backed runtime client of its own (see DesktopRuntimeClient).
+    implementation(project(":storage"))
+    implementation(project(":capability"))
+    implementation(project(":identity"))
+    implementation(project(":kernel"))
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
 
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
