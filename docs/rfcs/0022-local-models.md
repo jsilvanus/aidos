@@ -431,6 +431,54 @@ files:
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/UiModels.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsStore.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppInferenceBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxVisionBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/InferenceTester.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/loading/ModelLoader.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/suggestions/SuggestionPreferences.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/DeviceProfileProvider.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelConfigScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/TestChatScreen.kt
+  - engine/androidapp/src/androidUnitTest/kotlin/fi/italeino/aidos/engine/ui/PackageValidationTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferencesRunSettingsTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/LoadedModelTest.kt
+  - engine/downloads/src/androidMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/commonMain/kotlin/dev/aidos/downloads/DownloadManager.kt
+  - engine/downloads/src/jvmMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/DownloadManagerTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/Quantization.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/license/InMemoryLicenseAcceptanceStore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/license/LicenseAcceptanceStore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/suggestions/SuggestedModels.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelSelfTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerEmbeddingsTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerIntegrityTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSystemOneTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/license/LicenseAcceptanceStoreTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/suggestions/SuggestedModelsTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelLoadingStateTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSearchFiltersTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSelfTestTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsPanes.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/HuggingFaceClient.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/ModelArtifact.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/ModelPackage.kt
+  - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/HuggingFaceClientTest.kt
+  - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/ModelArtifactTest.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackend.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GgufRot13FixtureTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelRunSettingsTest.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/DatabaseModelCatalogManager.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/ModelBrowser.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/ModelCatalog.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/PackageInstall.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/DatabaseModelCatalogManagerTest.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/ModelBrowserTest.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/PackageInstallPlanTest.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/PackageInstallTest.kt
 ```
 
 ## Post-MVP Work

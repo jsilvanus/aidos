@@ -594,7 +594,10 @@ post_mvp:
     status: todo
   - id: "0010.3"
     title: "workspaces"
-    status: todo
+    status: partial
+    done_when: "Projects carry a workspace_id and workspace rows are ensured; no workspace behaviour beyond that"
+    files:
+      - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
   - id: "0010.4"
     title: "collaborative projects"
     status: todo

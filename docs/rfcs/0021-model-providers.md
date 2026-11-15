@@ -283,6 +283,22 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/EgressProviderTransportsTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
   - schema/project.sql
+  - engine/providers/src/main/kotlin/dev/aidos/providers/OpenAiCompatibleModelAdapter.kt
+  - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderBackend.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/AmpModels.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/HttpTransport.kt
+  - agent/amp/src/jvmTest/kotlin/dev/aidos/amp/AmpAgentRunnerTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ProviderDetailScreen.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerTest.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/CatalogInferenceBackend.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/GbnfGrammarCompiler.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/ToolCallParser.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GbnfGrammarAndParsingTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GgufRot13FixtureTest.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/ModelBrowser.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/ModelBrowserTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Inference.kt
+  - sdk/adapters/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/adapters/EngineModelAdapter.kt
 ```
 
 ## Post-MVP Work
@@ -293,7 +309,11 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 post_mvp:
   - id: "0021.1"
     title: "additional remote adapters"
-    status: todo
+    status: partial
+    done_when: "OpenAI-compatible adapter exists in the engine provider backend beside the Anthropic adapter"
+    files:
+      - engine/providers/src/main/kotlin/dev/aidos/providers/OpenAiCompatibleModelAdapter.kt
+      - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderBackend.kt
   - id: "0021.2"
     title: "streaming"
     status: todo

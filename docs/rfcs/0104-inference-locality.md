@@ -150,4 +150,13 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopGroups.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsPane.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitHostingTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/ManagedModelAdapter.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferencesRoutingTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/handshake/EngineCapabilities.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/handshake/SdkHostContractTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LocalityEnforcementTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsPane.kt
+  - sdk/client/src/androidMain/kotlin/fi/italeino/aidos/sdk/client/AndroidEngineClient.kt
+  - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClientTest.kt
 ```

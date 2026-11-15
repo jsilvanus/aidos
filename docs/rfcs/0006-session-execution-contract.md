@@ -393,11 +393,18 @@ post_mvp:
     status: todo
   - id: "0006.2"
     title: "full continuation resumption for all async operation types"
-    status: todo
+    status: partial
+    done_when: "Parent Runs resume after awaited children; not all async operation types"
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
   - id: "0006.3"
     title: "compensation protocols"
     status: todo
   - id: "0006.4"
     title: "configurable priority interrupt policies"
-    status: todo
+    status: partial
+    done_when: "PRIORITY_INTERRUPT cancels Runs and clears the queue; the interrupt policy is hard-coded, not configurable"
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+      - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
 ```

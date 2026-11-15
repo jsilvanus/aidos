@@ -627,6 +627,39 @@ files:
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
+  - agent/voice/src/commonMain/kotlin/dev/aidos/voice/SpokenSummaryGenerator.kt
+  - agent/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceApprovalHandler.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperSttModel.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerTranscriptionTest.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/SttTypes.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WavDecoder.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperFeatures.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperTokenizer.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/OrtWhisperGraphs.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/SttPackages.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/WhisperPackage.kt
+  - engine/stt/src/jvmMain/kotlin/dev/aidos/stt/OnnxSttBackend.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/SttPackagesTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WavDecoderTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/Wavs.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperFeaturesTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperRealModelTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperSttModelTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperTokenizerTest.kt
+  - engine/vision/src/androidMain/kotlin/dev/aidos/vision/AndroidImageDecoder.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/ByteLevelBpeTokenizer.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/ImagePreprocessor.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/OrtVisionRunner.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionModelAdapter.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionPackage.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionPackages.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionRunner.kt
+  - engine/vision/src/jvmMain/kotlin/dev/aidos/vision/JvmImageDecoder.kt
+  - engine/vision/src/jvmMain/kotlin/dev/aidos/vision/OnnxVisionBackend.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/ByteLevelBpeTokenizerTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/ImagePreprocessorTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/LoadedSmolVlmTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/VisionPackageTest.kt
 ```
 
 ## Post-MVP Work
@@ -640,7 +673,11 @@ post_mvp:
     status: todo
   - id: "0020.2"
     title: "cost optimization"
-    status: todo
+    status: partial
+    done_when: "Router picks the cheapest eligible adapter by cost metadata; the daemon does not yet route model calls through it"
+    files:
+      - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+      - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/PolicyInferenceRouterTest.kt
   - id: "0020.3"
     title: "speculative decoding"
     status: todo
@@ -652,7 +689,12 @@ post_mvp:
     status: todo
   - id: "0020.6"
     title: "voice-first"
-    status: todo
+    status: partial
+    done_when: "Voice approval and spoken summaries plus an on-device Whisper STT model exist; voice is not the primary interface"
+    files:
+      - agent/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceApprovalHandler.kt
+      - agent/voice/src/commonMain/kotlin/dev/aidos/voice/SpokenSummaryGenerator.kt
+      - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperSttModel.kt
   - id: "0020.7"
     title: "streaming"
     status: todo

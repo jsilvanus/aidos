@@ -760,6 +760,15 @@ files:
   - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SocketRuntimeClient.kt
   - agent/git/src/jvmTest/kotlin/dev/aidos/git/JGitDiffServiceTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SocketRuntimeApiRoundTripTest.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/eventstream/EventStreamUiState.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/runs/RunListUiState.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/SocketPaths.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentRuntimeClientTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/MockRuntimeClientTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientSessionTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/socket/WireCodecTest.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/CliFrontendTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonTest.kt
 ```
 
 ## Post-MVP Work

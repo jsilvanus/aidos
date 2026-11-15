@@ -245,6 +245,7 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerTest.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
 ```
 
 ## Post-MVP Work
@@ -255,7 +256,10 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 post_mvp:
   - id: "0028.1"
     title: "cost-aware routing"
-    status: todo
+    status: partial
+    files:
+      - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+    done_when: "Among remote candidates the router picks the lowest estimated cost; budget-aware routing is not evidenced."
   - id: "0028.2"
     title: "learned step-cost estimation"
     status: todo

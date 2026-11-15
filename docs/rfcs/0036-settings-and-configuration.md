@@ -230,6 +230,10 @@ files:
   - agent/settings/src/jvmTest/kotlin/dev/aidos/settings/SettingsTest.kt
   - schema/project.sql
   - schema/user.sql
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ui/Screens.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/navigation/NavHost.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsScreen.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsContent.kt
 ```
 
 ## Post-MVP Work
@@ -249,5 +253,9 @@ post_mvp:
     status: todo
   - id: "0036.4"
     title: "settings UI"
-    status: todo
+    status: partial
+    files:
+      - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ui/Screens.kt
+      - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/navigation/NavHost.kt
+    done_when: "The Android app has global and project settings screens; no desktop settings UI exists."
 ```

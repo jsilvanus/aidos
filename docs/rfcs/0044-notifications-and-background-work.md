@@ -287,6 +287,10 @@ files:
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/RuntimeClientWorkDispatcherTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/SqliteScheduledJobManagerTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/TriggerCalculatorTest.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/CronCalculator.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/service/ForegroundServiceExecutionWindow.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/service/ForegroundServiceExecutionWindowTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/notification/AppNotificationManager.kt
 ```
 
 ## Post-MVP Work

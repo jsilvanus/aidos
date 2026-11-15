@@ -519,6 +519,9 @@ files:
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/GlanceVoicePresenterTest.kt
   - agent/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceApprovalTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/AudioWaveformAtom.kt
+  - engine/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceProviders.kt
+  - engine/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceProvidersTest.kt
 ```
 
 ## Post-MVP Work

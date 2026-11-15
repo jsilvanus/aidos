@@ -579,6 +579,10 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SubscriptionRegistryTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TopicMatcherTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/MockRuntimeClientTest.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/CliFrontendTest.kt
 ```
 
 ## Post-MVP Work
@@ -589,7 +593,11 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 post_mvp:
   - id: "0004.1"
     title: "real-time event streaming"
-    status: todo
+    status: partial
+    done_when: "Live in-process event Flow with resumable replay exists; no network streaming transport"
+    files:
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
   - id: "0004.2"
     title: "event compression"
     status: todo

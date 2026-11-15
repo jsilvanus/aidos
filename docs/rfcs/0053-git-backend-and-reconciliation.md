@@ -331,6 +331,10 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/GitRunReconcilerTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
   - schema/project.sql
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/GitWorkerCommitter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunReconciler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerCommitter.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/RunReconcilerGateTest.kt
 ```
 
 ## Post-MVP Work

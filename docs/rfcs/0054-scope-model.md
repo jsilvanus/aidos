@@ -274,6 +274,8 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
   - schema/user.sql
   - schema/project.sql
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/McpUiModels.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/McpServersPane.kt
 ```
 
 ## Post-MVP Work

@@ -337,6 +337,7 @@ files:
   - schema/project.sql
   - schema/user.sql
   - schema/vault.sql
+  - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/KeyGen.kt
 ```
 
 ## Post-MVP Work

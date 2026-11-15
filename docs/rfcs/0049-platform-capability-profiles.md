@@ -340,6 +340,8 @@ files:
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/ProjectRequirements.kt
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Platform.kt
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/ui/AvailabilityReporter.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/DeviceProfileProvider.kt
 ```
 
 ## Post-MVP Work

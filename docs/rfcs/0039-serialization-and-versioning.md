@@ -249,6 +249,10 @@ files:
   - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/VersionedJsonTest.kt
   - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/MigrationRunnerTest.kt
   - tests/fixtures/schemas/v1.sql
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ArchiveFormat.kt
+  - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectImporter.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/HttpModelClientSerializationTest.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
 ```
 
 ## Post-MVP Work
@@ -259,7 +263,11 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 post_mvp:
   - id: "0039.1"
     title: "export format versioning beyond 1.0"
-    status: todo
+    status: partial
+    files:
+      - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ArchiveFormat.kt
+      - agent/portability/src/jvmMain/kotlin/dev/aidos/portability/ProjectImporter.kt
+    done_when: "The importer accepts only the 1.0 major version; there is no migration path for later format versions."
   - id: "0039.2"
     title: "field aliases"
     status: todo

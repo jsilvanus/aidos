@@ -472,6 +472,8 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ProvenanceAndErrorTaxonomyTest.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/GuardianApproval.kt
 ```
 
 ## Post-MVP Work
@@ -491,7 +493,11 @@ post_mvp:
     status: todo
   - id: "0025.4"
     title: "adversarial input scanning beyond secret redaction"
-    status: todo
+    status: partial
+    files:
+      - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/GuardianApproval.kt
+    done_when: "Untrusted tool text is screened for instruction injection by a model call (Gate A); prompts are not pattern-scanned."
   - id: "0025.5"
     title: "model-specific tokenizers"
     status: todo

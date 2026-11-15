@@ -821,6 +821,12 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerSpawner.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SessionLifecycleRfc0011Test.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/sessions/SessionListUiState.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientSessionTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/GitWorkerCommitter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerCommitter.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/DriverWorkerOrchestrationTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SampleAgentRuns.kt
 ```
 
 ## Post-MVP Work

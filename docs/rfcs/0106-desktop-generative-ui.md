@@ -328,4 +328,18 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/DiffReservationBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/DiffChunkAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/ScopePathChipAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/StepCounterAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/ActionButtonAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/AudioWaveformAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/MetricBadgeAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/TextSpanAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/molecules/InlineCardMolecule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/molecules/MetricClusterMolecule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/AidosTheme.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/Tokens.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/Typography.kt
 ```

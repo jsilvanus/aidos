@@ -247,6 +247,7 @@ files:
   - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
   - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
   - schema/project.sql
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectTypeBadge.kt
 ```
 
 ## Post-MVP Work

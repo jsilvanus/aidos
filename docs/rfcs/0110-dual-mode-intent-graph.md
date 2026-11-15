@@ -227,6 +227,9 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/ColorSemantics.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseOneTest.kt
   - schema/project.sql
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/intent/IntentList.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentRuntimeClientTest.kt
 ```
 
 ## Post-MVP Work

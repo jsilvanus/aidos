@@ -341,4 +341,9 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnels.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopTunnelsTest.kt
+  - agent/ssh-tunnel/src/commonTest/kotlin/fi/italeino/sshtunnel/CommonTests.kt
+  - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/KeyGen.kt
+  - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/MinaTransport.kt
+  - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/SshjTransport.kt
+  - agent/ssh-tunnel/src/jvmTest/kotlin/fi/italeino/sshtunnel/TransportContract.kt
 ```

@@ -395,6 +395,7 @@ files:
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/QrCode.kt
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/GgufLoader.kt
+  - engine/engineui/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/QrCodeTest.kt
 ```
 
 ## Post-MVP Work

@@ -760,6 +760,138 @@ files:
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/inference/InferenceRequestManagerTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/SmolVlmModel.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/SmolVlmModelTest.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/lan/LanTlsIdentity.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharing.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanTlsEndToEndTest.kt
+  - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderBackend.kt
+  - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderConfig.kt
+  - engine/providers/src/main/kotlin/dev/aidos/providers/OpenAiCompatibleModelAdapter.kt
+  - engine/providers/src/test/kotlin/dev/aidos/providers/ProviderTest.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentRuntimeConfigTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/MainActivity.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/approval/AppApprovalManager.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/approval/EncryptedAppApprovalStore.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/binder/EngineHandshakeImpl.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/binder/HandshakeResult.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppInferenceBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxSttBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/InferenceTester.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/license/EncryptedLicenseAcceptanceStore.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/loading/ModelLoader.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/navigation/NavHost.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/navigation/Routes.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/notification/AppNotificationManager.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/suggestions/SuggestionPreferences.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/HomeScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/McpToolsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/McpToolsViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelConfigScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ProviderDetailScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/StatusViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/TestChatScreen.kt
+  - engine/androidapp/src/androidUnitTest/kotlin/fi/italeino/aidos/engine/ui/PackageValidationTest.kt
+  - engine/cli/src/jvmMain/kotlin/dev/aidos/engine/cli/EngineCli.kt
+  - engine/cli/src/jvmMain/kotlin/dev/aidos/engine/cli/Main.kt
+  - engine/cli/src/jvmTest/kotlin/dev/aidos/engine/cli/EngineCliTest.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionWire.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/MixedModelsTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStore.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHostTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStoreTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/LoadedModelTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/EngineState.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/handshake/EngineCapabilities.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/handshake/HandshakeCore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/TokenManager.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/license/InMemoryLicenseAcceptanceStore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/license/LicenseAcceptanceStore.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/suggestions/SuggestedModels.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelSelfTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStoreTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/InMemoryAppApprovalStore.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/handshake/HandshakeWireContractTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/handshake/PermissionFlowTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/handshake/SdkHostContractTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/ChatImagesTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerEmbeddingsTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerHardeningTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerIntegrityTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSystemOneTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerTranscriptionTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/HttpModelClientSerializationTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/TokenManagerTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/license/LicenseAcceptanceStoreTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/suggestions/SuggestedModelsTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelLoadingStateTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSearchFiltersTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSelfTestTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/theme/AidosEngineTheme.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/Components.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsPane.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsPanes.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsContent.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/StatusPane.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/HuggingFaceClient.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/ModelArtifact.kt
+  - engine/huggingface/src/commonMain/kotlin/dev/aidos/huggingface/ModelPackage.kt
+  - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/HuggingFaceClientTest.kt
+  - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/ModelArtifactTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelRunSettingsTest.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/DatabaseModelCatalogManager.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/ModelCatalog.kt
+  - engine/models/src/commonMain/kotlin/dev/aidos/models/PackageInstall.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/DatabaseModelCatalogManagerTest.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/PackageInstallPlanTest.kt
+  - engine/models/src/jvmTest/kotlin/dev/aidos/models/PackageInstallTest.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/SttTypes.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WavDecoder.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperFeatures.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperTokenizer.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/OrtWhisperGraphs.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/SttPackages.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/WhisperPackage.kt
+  - engine/stt/src/jvmMain/kotlin/dev/aidos/stt/OnnxSttBackend.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/SttPackagesTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WavDecoderTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/Wavs.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperFeaturesTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperRealModelTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperSttModelTest.kt
+  - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WhisperTokenizerTest.kt
+  - engine/vision/src/androidMain/kotlin/dev/aidos/vision/AndroidImageDecoder.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/ByteLevelBpeTokenizer.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/ImagePreprocessor.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/OrtVisionRunner.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionModelAdapter.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionPackage.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionPackages.kt
+  - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/VisionRunner.kt
+  - engine/vision/src/jvmMain/kotlin/dev/aidos/vision/JvmImageDecoder.kt
+  - engine/vision/src/jvmMain/kotlin/dev/aidos/vision/OnnxVisionBackend.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/ByteLevelBpeTokenizerTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/ImagePreprocessorTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/LoadedSmolVlmTest.kt
+  - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/VisionPackageTest.kt
+  - engine/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceProviders.kt
+  - engine/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceProvidersTest.kt
+  - sdk/adapters/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/adapters/EngineModelAdapter.kt
+  - sdk/client/src/androidMain/kotlin/fi/italeino/aidos/sdk/client/AndroidEngineClient.kt
+  - sdk/client/src/androidMain/kotlin/fi/italeino/aidos/sdk/client/EngineBinderHandshake.kt
+  - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClientTest.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
 ```
 
 ## Post-MVP Work
@@ -770,19 +902,37 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 post_mvp:
   - id: "0103.1"
     title: "vision/multimodal endpoints"
-    status: todo
+    status: partial
+    files:
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
+      - engine/vision/src/jvmAndAndroidMain/kotlin/dev/aidos/vision/SmolVlmModel.kt
+      - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/SmolVlmModelTest.kt
+    done_when: "chat messages accept images[] and route them to a vision model; not the OpenAI image content-part form"
   - id: "0103.2"
     title: "cross-signature client trust"
     status: todo
   - id: "0103.3"
     title: "remote/LAN exposure"
-    status: todo
+    status: partial
+    files:
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+      - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/lan/LanTlsIdentity.kt
+      - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharing.kt
+      - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanTlsEndToEndTest.kt
+    done_when: "opt-in HTTPS LAN listener with a persistent TLS identity on desktop; no Android listener"
   - id: "0103.4"
     title: "persisted per-app usage history"
     status: todo
   - id: "0103.5"
     title: "remote-provider execution"
-    status: todo
+    status: partial
+    files:
+      - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderBackend.kt
+      - engine/providers/src/main/kotlin/dev/aidos/providers/ProviderConfig.kt
+      - engine/providers/src/main/kotlin/dev/aidos/providers/OpenAiCompatibleModelAdapter.kt
+      - engine/providers/src/test/kotlin/dev/aidos/providers/ProviderTest.kt
+    done_when: "HTTP providers from providers.json are served through the desktop Engine; no egress-policy or Android wiring for remote providers"
   - id: "0103.6"
     title: "broader Android instrumented tests not yet run on a device"
     status: todo

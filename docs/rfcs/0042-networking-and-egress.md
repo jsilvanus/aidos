@@ -316,6 +316,15 @@ files:
   - agent/http/src/jvmTest/kotlin/dev/aidos/http/HttpToolTest.kt
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
   - schema/project.sql
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStore.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStoreTest.kt
+  - engine/downloads/src/androidMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/commonMain/kotlin/dev/aidos/downloads/DownloadManager.kt
+  - engine/downloads/src/jvmMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/DownloadManagerTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStore.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStoreTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/InMemoryAppApprovalStore.kt
 ```
 
 ## Post-MVP Work

@@ -665,6 +665,7 @@ files:
   - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentGraphRepository.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TaskAppendingTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/DriverWorkerOrchestrationTest.kt
 ```
 
 ## Post-MVP Work

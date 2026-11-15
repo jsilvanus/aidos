@@ -485,6 +485,7 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonTest.kt
 ```
 
 ## Post-MVP Work

@@ -224,6 +224,7 @@ files:
   - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/ModelAdmissionPolicyTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ResourceBudgetAndDegradationTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/degradation/SqliteDegradationEventStoreTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackendTest.kt
 ```
 
 ## Post-MVP Work

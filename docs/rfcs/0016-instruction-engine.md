@@ -360,7 +360,10 @@ post_mvp:
     status: todo
   - id: "0016.2"
     title: "nested files"
-    status: todo
+    status: partial
+    done_when: "Nested instruction files are detected and counted but not read"
+    files:
+      - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/InstructionDiscovery.kt
   - id: "0016.3"
     title: "categories"
     status: todo

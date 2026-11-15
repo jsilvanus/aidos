@@ -271,6 +271,9 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunCreator.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CrashRecoveryTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RunExecutor.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteRunExecutorTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/RunCreatorTest.kt
 ```
 
 ## Post-MVP Work

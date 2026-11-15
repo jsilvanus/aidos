@@ -75,4 +75,11 @@ files:
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/ToolApprovalQueue.kt
   - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/ToolApprovalQueueTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopRemotePeersModelTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/ManagedModelAdapter.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentRoutesTest.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/AgentRuntimeConfigTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsScreen.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsViewModel.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsPane.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SampleAgentRuns.kt
 ```

@@ -482,6 +482,8 @@ files:
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Effects.kt
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Tools.kt
   - schema/project.sql
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/approval/ApprovalPresenterTest.kt
 ```
 
 ## Post-MVP Work
@@ -498,7 +500,10 @@ post_mvp:
     status: todo
   - id: "0030.3"
     title: "smart retries"
-    status: todo
+    status: partial
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+    done_when: "Retries are gated by error class and attempt budget; backoff is None, so there is no smart backoff."
   - id: "0030.4"
     title: "profiling"
     status: todo
