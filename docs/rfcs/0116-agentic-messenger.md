@@ -58,9 +58,9 @@ Devices connect over WebSocket with a blinded `mailbox_id = HMAC-SHA256(K_epoch,
 
 On desktop, the Amp agent service calls the Aidos Engine's loopback agent API (`/v1/agent/`, D48) with the Engine's bearer token and per-app approval; tools belong to the calling app, so a run that needs one returns `tool_calls`, Amp executes it and posts the result back. In process, Amp links `agent/amp` (`AmpAgentRunner`, `AmpToolDefinition`, the OpenAI-compatible adapter) to run the loop against any `ModelAdapter`. On Android, Amp serves a chosen set of its chat tools over the MCP Binder transport (`amp-mcp`, `amp-mcp-android`): deny by default, a caller allow-list at the transport, and a user approval screen per caller. Amp's own privacy policy still applies to every tool, because MCP calls run the same handlers.
 
-### UI ownership
+### UI
 
-Per D46, Amp owns the Conversation Mesh components: login and identity, contacts and presence, the four-party conversation, the dual view (natural-language stream versus a condensed cue ticker, cf. RFC-0057), progressive-disclosure `ApprovalCard`, provenance and privacy-seal badges, and the `GenerativeUiRegistry` that renders envelopes into components. The Aidos desktop consumes them (RFC-0106) rather than re-implementing them.
+Amp specifies the Conversation Mesh domain: login and identity, contacts and presence, the four-party conversation, the dual view (natural-language stream versus a condensed cue ticker, cf. RFC-0057), progressive-disclosure `ApprovalCard`, provenance and privacy-seal badges, and the `GenerativeUiRegistry` that renders envelopes into components. Where those components are implemented is governed by RFC-0123: the Trusted Component Registry (`aidos-tcr`) is the single implementer and the Aidos desktop consumes them (RFC-0106). Amp's own `amp-ui` module is the interim home until they move; its README still says the owning apps keep the components, which conflicts with RFC-0123 (see its Open Questions).
 
 ## Data Model
 
