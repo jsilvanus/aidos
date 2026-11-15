@@ -27,6 +27,7 @@ import dev.aidos.api.RuntimeClient
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.AidosUniversalApp
 import dev.aidos.tcr.engine.BackgroundPane
+import dev.aidos.tcr.engine.EngineControlCard
 import dev.aidos.tcr.engine.LanSharingPane
 import dev.aidos.tcr.engine.RemotePeersActions
 import dev.aidos.tcr.engine.RemotePeersPane
