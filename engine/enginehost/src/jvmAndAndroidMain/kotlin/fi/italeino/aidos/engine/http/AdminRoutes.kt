@@ -105,3 +105,21 @@ internal fun Route.adminPeersRoutes(control: fi.italeino.aidos.engine.control.Pe
     post("/v1/admin/peers/{id}/hints/remove") { admin(call) { control.removeHint(id(call), call.receive<fi.italeino.aidos.engine.control.PeerHintRemoveRequest>().hint); call.respond(no) } }
     put("/v1/admin/peers/{id}/tool-allowlist") { admin(call) { val r = call.receive<fi.italeino.aidos.engine.control.PeerToolAllowlistRequest>(); control.setToolAllowlist(id(call), r.app, r.tools); call.respond(no) } }
 }
+
+/** `/v1/admin/apps`: the connected apps and the user's decision on each (RFC-0103, D49, RFC-0104, RFC-0115). Loopback and admin only. */
+internal fun Route.adminAppsRoutes(control: fi.italeino.aidos.engine.control.AppsControl, adminSubjects: Set<String>) {
+    suspend fun admin(call: ApplicationCall, block: suspend () -> Unit) = adminGuard(call, adminSubjects, block)
+    fun id(call: ApplicationCall) = call.parameters["id"].orEmpty()
+    suspend fun answer(call: ApplicationCall, found: Boolean) {
+        if (found) call.respond(HttpStatusCode.NoContent)
+        else call.respond(HttpStatusCode.NotFound, ErrorResponse(ErrorDetail("no such app", "invalid_request_error", code = "not_found")))
+    }
+
+    get("/v1/admin/apps") { admin(call) { call.respond(control.list()) } }
+    post("/v1/admin/apps/{id}/approve") { admin(call) { answer(call, control.approve(id(call))) } }
+    post("/v1/admin/apps/{id}/deny") { admin(call) { answer(call, control.deny(id(call))) } }
+    post("/v1/admin/apps/{id}/revoke") { admin(call) { answer(call, control.revoke(id(call))) } }
+    post("/v1/admin/apps/{id}/undo-deny") { admin(call) { answer(call, control.undoDeny(id(call))) } }
+    put("/v1/admin/apps/{id}/agent-allowed") { admin(call) { answer(call, control.setAgentAllowed(id(call), call.receive<fi.italeino.aidos.engine.control.AppAgentAllowedRequest>().allowed)) } }
+    put("/v1/admin/apps/{id}/locality-limit") { admin(call) { answer(call, control.setLocalityLimit(id(call), call.receive<fi.italeino.aidos.engine.control.AppLocalityLimitRequest>().limit)) } }
+}

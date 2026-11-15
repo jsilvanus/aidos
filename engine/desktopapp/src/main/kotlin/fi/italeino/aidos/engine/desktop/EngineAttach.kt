@@ -1,7 +1,9 @@
 package fi.italeino.aidos.engine.desktop
 
 import fi.italeino.aidos.engine.control.HttpLanControl
+import fi.italeino.aidos.engine.control.AppsControl
 import fi.italeino.aidos.engine.control.ApprovalsControl
+import fi.italeino.aidos.engine.control.HttpAppsControl
 import fi.italeino.aidos.engine.control.HttpApprovalsControl
 import fi.italeino.aidos.engine.control.HttpPeersControl
 import fi.italeino.aidos.engine.control.HttpTunnelsControl
@@ -50,4 +52,7 @@ object EngineAttach {
 
     fun approvalsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ApprovalsControl =
         running?.let { HttpApprovalsControl(it.baseUrl, it.token) } ?: LocalApprovalsControl(host)
+
+    fun appsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): AppsControl =
+        running?.let { HttpAppsControl(it.baseUrl, it.token) } ?: LocalAppsControl(host)
 }

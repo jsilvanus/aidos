@@ -363,6 +363,7 @@ class DesktopEngineHost(
                 lanControl = LocalLanControl(lanSharing),
                 tunnelsControl = LocalTunnelsControl(this),
                 peersControl = LocalPeersControl(this),
+                appsControl = LocalAppsControl(this),
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),

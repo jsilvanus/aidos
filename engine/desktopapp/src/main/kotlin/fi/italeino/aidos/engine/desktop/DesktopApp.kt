@@ -64,7 +64,7 @@ class DesktopModels(
     val runtimeClient: RuntimeClient = RealRuntimeClient(),
 ) {
     val status = DesktopStatusModel(host, scope)
-    val apps = DesktopAppsModel(host, scope)
+    val apps = DesktopAppsModel(host, scope, control = { EngineAttach.appsControl(host) })
     val models = DesktopModelsModel(host, prefs, scope)
     val agents = DesktopAgentsModel(host, scope, prefs)
     val mcp = DesktopMcpModel(host, scope)

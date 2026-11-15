@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,9 +93,30 @@ class DesktopStatusModel(private val host: DesktopEngineHost, private val scope:
  * appear through [simulateHandshake], which records the same first-handshake entry
  * EngineHandshakeImpl would, letting the approve/deny/revoke/undo flow be exercised.
  */
-class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: CoroutineScope) {
-    val approvals: StateFlow<List<AppApprovalRecord>> =
-        host.approvalStore.watchApprovals().stateIn(scope, SharingStarted.Eagerly, emptyList())
+class DesktopAppsModel(
+    private val host: DesktopEngineHost,
+    private val scope: CoroutineScope,
+    private val pollMillis: Long = 1_000,
+    private val control: () -> fi.italeino.aidos.engine.control.AppsControl = { LocalAppsControl(host) },
+) {
+    private val _approvals = MutableStateFlow<List<AppApprovalRecord>>(emptyList())
+
+    /** The apps and their decisions, polled through [fi.italeino.aidos.engine.control.AppsControl] (RFC-0115, D61). */
+    val approvals: StateFlow<List<AppApprovalRecord>> = _approvals.asStateFlow()
+
+    init {
+        scope.launch {
+            while (isActive) {
+                refresh()
+                delay(pollMillis)
+            }
+        }
+    }
+
+    // A failed poll keeps the last list on screen: an Engine that is restarting is not "no apps".
+    private suspend fun refresh() {
+        runCatching { control().list() }.onSuccess { _approvals.value = it }
+    }
 
     fun simulateHandshake(displayName: String) {
         val name = displayName.trim().ifEmpty { "Debug App" }
@@ -103,18 +125,22 @@ class DesktopAppsModel(private val host: DesktopEngineHost, private val scope: C
             val store = host.approvalStore
             if (store.getApproval(id) == null) store.recordFirstHandshake(id, name)
             else store.recordHandshakeAttempt(id)
+            refresh()
         }
     }
 
-    fun approve(id: String) = act { it.approveApp(id) }
-    fun deny(id: String) = act { it.denyApp(id) }
-    fun revoke(id: String) = act { it.revokeApproval(id) }
+    fun approve(id: String) = act { it.approve(id) }
+    fun deny(id: String) = act { it.deny(id) }
+    fun revoke(id: String) = act { it.revoke(id) }
     fun setAgentAllowed(id: String, allowed: Boolean) = act { it.setAgentAllowed(id, allowed) }
     fun setLocalityLimit(id: String, localityLimit: String?) = act { it.setLocalityLimit(id, localityLimit) }
-    fun undoDeny(id: String) = act { it.undoDenyApp(id) }
+    fun undoDeny(id: String) = act { it.undoDeny(id) }
 
-    private fun act(action: suspend (fi.italeino.aidos.engine.approval.AppApprovalStore) -> Unit) {
-        scope.launch { action(host.approvalStore) }
+    private fun act(action: suspend (fi.italeino.aidos.engine.control.AppsControl) -> Boolean) {
+        scope.launch {
+            runCatching { action(control()) }
+            refresh()
+        }
     }
 }
 
