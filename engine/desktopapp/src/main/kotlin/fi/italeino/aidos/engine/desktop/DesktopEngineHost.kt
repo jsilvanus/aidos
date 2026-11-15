@@ -44,6 +44,7 @@ import dev.aidos.models.ModelCatalogManager
 import fi.italeino.aidos.engine.EngineState
 import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.PeerRunReaper
+import fi.italeino.aidos.engine.agent.adminAgentsRoutes
 import fi.italeino.aidos.engine.agent.agentRoutes
 import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
 import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
@@ -144,6 +145,9 @@ class DesktopEngineHost(
 ) {
     /** Models control over this host. One instance, because it owns the installs that are running. */
     val modelsControl: LocalModelsControl by lazy { LocalModelsControl(this) }
+
+    /** Agents control over this host's agent runtime, which is replaced when the Engine restarts, so it is read at each call. */
+    val agentsControl: fi.italeino.aidos.engine.agent.LocalAgentsControl = fi.italeino.aidos.engine.agent.LocalAgentsControl { _agentRuntime }
 
     /** Model detail control over this host; one instance, because it owns the downloads that are running. */
     val modelDetailControl: LocalModelDetailControl by lazy { LocalModelDetailControl(this) }
@@ -378,6 +382,7 @@ class DesktopEngineHost(
                 vaultControl = vaultGate,
                 modelsControl = modelsControl,
                 modelDetailControl = modelDetailControl,
+                adminExtraRoutes = { subjects -> adminAgentsRoutes(agentsControl, subjects) },
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),

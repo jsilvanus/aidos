@@ -177,6 +177,8 @@ class EngineHttpServer(
     private val vaultControl: fi.italeino.aidos.engine.control.VaultControl? = null,
     private val modelsControl: fi.italeino.aidos.engine.control.ModelsControl? = null,
     private val modelDetailControl: fi.italeino.aidos.engine.control.ModelDetailControl? = null,
+    /** Admin route groups a host adds from modules this one cannot depend on (the agent runtime); loopback only, given the admin subjects. */
+    private val adminExtraRoutes: (Route.(adminSubjects: Set<String>) -> Unit)? = null,
     private val adminSubjects: Set<String> = setOf(TokenManager.ENGINE_SUBJECT),
     /** RFC-0115 / D59: the pending-approvals feed behind the tray, served at `/v1/admin/approvals` (loopback only, admin only). */
     private val approvalsControl: fi.italeino.aidos.engine.control.ApprovalsControl? = null,
@@ -369,6 +371,7 @@ class EngineHttpServer(
                 if (!lan) modelDetailControl?.let { adminModelDetailRoutes(it, adminSubjects) }
                 if (!lan) approvalsControl?.let { adminApprovalsRoutes(it, adminSubjects) }
                 if (!lan) onAdminShutdown?.let { adminShutdownRoute(it, adminSubjects) }
+                if (!lan) adminExtraRoutes?.invoke(this, adminSubjects)
                 extraRoutes?.invoke(this)
             }
         }

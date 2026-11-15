@@ -143,6 +143,9 @@ class DesktopAgentsModel(
     private val host: DesktopEngineHost,
     private val scope: CoroutineScope,
     private val prefs: DesktopPreferences? = null,
+    private val control: () -> fi.italeino.aidos.engine.agent.AgentsControl = { host.agentsControl },
+    private val models: () -> fi.italeino.aidos.engine.control.ModelsControl = { host.modelsControl },
+    private val pollMillis: Long = 1_500,
 ) {
     private val _state = MutableStateFlow(AgentOverviewUiState())
     val state: StateFlow<AgentOverviewUiState> = _state.asStateFlow()
@@ -151,21 +154,17 @@ class DesktopAgentsModel(
     private var cachedInstalledModels: List<String> = emptyList()
 
     init {
-        refresh()
         scope.launch {
             while (true) {
                 refreshInstalledModels()
-                refresh()
-                delay(1_500)
+                refreshNow()
+                delay(pollMillis)
             }
         }
     }
 
     private suspend fun refreshInstalledModels() {
-        val installed = withContext(Dispatchers.IO) {
-            host.catalogManager.listInstalled().getOrNull().orEmpty()
-        }
-        cachedInstalledModels = installed.map { it.modelId }.distinct()
+        runCatching { models().installed() }.onSuccess { installed -> cachedInstalledModels = installed.map { it.id }.distinct() }
     }
 
     private fun parsePolicy(raw: String?): TcrTaintApprovalPolicy =
@@ -212,11 +211,21 @@ class DesktopAgentsModel(
         )
     }
 
+    /** Shows the user's choices at once and pushes them to the Engine's agent runtime, which applies them to new runs. */
     fun syncConfigToRuntime() {
         val projectConfig = buildProjectConfig()
         val launchConfig = buildRunLaunchConfig()
-        host.agentRuntime?.apply {
-            setRoutingConfig(
+        _state.value = _state.value.copy(
+            projectConfig = projectConfig,
+            runLaunchConfig = launchConfig,
+        )
+        scope.launch { pushConfig(projectConfig, launchConfig) }
+    }
+
+    private suspend fun pushConfig(projectConfig: TcrProjectModelConfigUiModel, launchConfig: TcrRunLaunchConfigUiModel) {
+        runCatching {
+            val agents = control()
+            agents.setRouting(
                 AgentRoutingConfigDto(
                     mainModelId = projectConfig.mainModelId,
                     defaultRunModelId = projectConfig.defaultRunModelId,
@@ -227,7 +236,7 @@ class DesktopAgentsModel(
                     guardianLlmModelId = projectConfig.guardianConfig.guardianLlmModelId,
                 )
             )
-            setRunLaunchConfig(
+            agents.setRunLaunch(
                 AgentRunLaunchConfigDto(
                     guardianPolicyOverride = launchConfig.guardianPolicyOverride?.name,
                     runModelOverride = launchConfig.runModelOverride,
@@ -235,10 +244,6 @@ class DesktopAgentsModel(
                 )
             )
         }
-        _state.value = _state.value.copy(
-            projectConfig = projectConfig,
-            runLaunchConfig = launchConfig,
-        )
     }
 
     fun setMainModel(modelId: String) {
@@ -320,17 +325,23 @@ class DesktopAgentsModel(
     }
 
     fun cancelRun(runId: String) {
-        host.agentRuntime?.cancelAny(runId)
-        refresh()
+        scope.launch {
+            runCatching { control().cancel(runId) }
+            refreshNow()
+        }
     }
 
     fun refresh() {
+        scope.launch { refreshNow() }
+    }
+
+    private suspend fun refreshNow() {
         val projectConfig = buildProjectConfig()
         val runLaunchConfig = buildRunLaunchConfig()
-        val runtime = host.agentRuntime
-        if (runtime == null) {
+        val overview = runCatching { control().overview() }.getOrNull()
+        if (overview == null || !overview.available) {
             _state.value = _state.value.copy(
-                isEngineRunning = host.isRunning.value,
+                isEngineRunning = false,
                 stats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(),
                 runs = emptyList(),
                 projectConfig = projectConfig,
@@ -338,10 +349,10 @@ class DesktopAgentsModel(
             )
             return
         }
-        syncConfigToRuntime()
+        pushConfig(projectConfig, runLaunchConfig)
 
-        val rawStats = runtime.stats()
-        val rawRuns = runtime.listAll()
+        val rawStats = overview.stats
+        val rawRuns = overview.runs
 
         val uiStats = dev.aidos.tcr.agent.AgentRuntimeOverviewStats(
             activeRuns = rawStats.activeRuns,
@@ -460,7 +471,7 @@ class DesktopAgentsModel(
         }
 
         _state.value = _state.value.copy(
-            isEngineRunning = host.isRunning.value,
+            isEngineRunning = true,
             stats = uiStats,
             runs = uiRuns,
             projectConfig = projectConfig,

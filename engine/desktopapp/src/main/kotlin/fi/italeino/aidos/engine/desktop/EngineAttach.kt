@@ -2,6 +2,8 @@ package fi.italeino.aidos.engine.desktop
 
 import fi.italeino.aidos.engine.control.HttpLanControl
 import fi.italeino.aidos.engine.control.AppsControl
+import fi.italeino.aidos.engine.agent.AgentsControl
+import fi.italeino.aidos.engine.agent.HttpAgentsControl
 import fi.italeino.aidos.engine.control.ApprovalsControl
 import fi.italeino.aidos.engine.control.HttpAppsControl
 import fi.italeino.aidos.engine.control.HttpModelDetailControl
@@ -81,4 +83,7 @@ object EngineAttach {
 
     fun modelDetailControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ModelDetailControl =
         running?.let { HttpModelDetailControl(it.baseUrl, it.token) } ?: host.modelDetailControl
+
+    fun agentsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): AgentsControl =
+        running?.let { HttpAgentsControl(it.baseUrl, it.token) } ?: host.agentsControl
 }

@@ -66,7 +66,7 @@ class DesktopModels(
     val status = DesktopStatusModel(host, scope, status = { EngineAttach.statusControl(host) }, apps = { EngineAttach.appsControl(host) })
     val apps = DesktopAppsModel(host, scope, control = { EngineAttach.appsControl(host) })
     val models = DesktopModelsModel(host, prefs, scope, control = { EngineAttach.modelsControl(host) })
-    val agents = DesktopAgentsModel(host, scope, prefs)
+    val agents = DesktopAgentsModel(host, scope, prefs, control = { EngineAttach.agentsControl(host) }, models = { EngineAttach.modelsControl(host) })
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(scope) { EngineAttach.lanControl(host) }
     val peers = DesktopRemotePeersModel(scope, peers = { EngineAttach.peersControl(host) }, approvals = { EngineAttach.approvalsControl(host) })

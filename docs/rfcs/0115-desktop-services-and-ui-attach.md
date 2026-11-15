@@ -150,8 +150,9 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Status group and no second Engine, done:** `StatusControl` (running, state name with port, resident models, linked peers) with Local and Http implementations and `GET /v1/admin/status`; the Home presenter composes it with `AppsControl`, and shows OFF when the service stops answering. The app no longer starts its own Engine, nor lets the toggle start one, while a live Engine service owns `engine.json`.
 - **Models group, list pane done:** `ModelsControl` (installed, Hub search with filters, one-click suggested installs with progress, delete) with Local and Http implementations and `/v1/admin/models`; installs are owned by the Engine and carry on in a service after the window closes, the presenter reads their progress back by polling. Tested through the admin API (including slashes in model ids).
 - **Model detail group, done:** `ModelDetailControl` (facts and fit table, install state, license, download with progress, load and unload, run settings, embedding and self tests) with Local and Http implementations and `/v1/admin/model-detail/<action>?model=<id>`; the presenter was rewritten onto it, downloads and loaded models belong to the Engine. Written test-first against the echo fixture, in-process and through the admin API, plus the presenter over the admin API (load, chat self test, settings saved in the Engine's preferences, unload). One behaviour note: the offline fallback that asked for acceptance of a license name when Hugging Face could not be reached is gone, because it depended on presenter state; with no reachable license text there is nothing to accept.
-- **Known gap:** the Agents pane still reads the in-process host, which is not started when attached to a service, so it shows nothing (the Tools pane shows sample data and uses no host at all, so there is nothing to attach until it is wired to a real MCP broker).
-- **Next:** the Agents pane, and trying the installers on a real Windows task / Linux unit.
+- **Agents group, done:** `AgentsControl` (overview of stats and runs, routing, run launch config, supervisory cancel) in `agenthost` with Local and Http implementations and `/v1/admin/agents` (mounted through a new `adminExtraRoutes` hook, so enginehost does not depend on agenthost); the Agents presenter was moved onto it and pushes the user's routing choices to the Engine. Tested in-process and through the admin API with a real run on the echo fixture.
+- **Every pane that has a real Engine behind it is now attached** (Status, Models, model detail, Agents, Apps, Sharing, Peers, Tunnels, Background). The Tools pane shows sample data and uses no host, so there is nothing to attach until it is wired to a real MCP broker.
+- **Next:** trying the tray and installers on a real Windows task / Linux unit / macOS agent, an integration test that spawns a real headless Engine and attaches the window to it, and the Agent daemon's own vault mode.
 
 ## Implementation Files
 
@@ -224,4 +225,6 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/ModelDetailControlTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModelTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentsControl.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AgentsControlTest.kt
 ```

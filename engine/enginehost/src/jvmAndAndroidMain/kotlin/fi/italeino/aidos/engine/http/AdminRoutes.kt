@@ -37,7 +37,7 @@ internal fun Route.adminLanRoutes(control: LanControl, adminSubjects: Set<String
 }
 
 /** Shared by every `/v1/admin/` route group: only the Engine's own local client may call, and errors map to 400 and 409. */
-internal suspend fun adminGuard(call: ApplicationCall, adminSubjects: Set<String>, block: suspend () -> Unit) {
+suspend fun adminGuard(call: ApplicationCall, adminSubjects: Set<String>, block: suspend () -> Unit) {
     val who = call.principal<UserIdPrincipal>()?.name
     if (who == null || who !in adminSubjects) {
         call.respond(HttpStatusCode.Forbidden, ErrorResponse(ErrorDetail("the Engine management API is for the Engine's own local client", "permission_error", code = "not_admin")))
