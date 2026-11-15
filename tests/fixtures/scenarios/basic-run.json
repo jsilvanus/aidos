@@ -1,0 +1,8 @@
+{
+  "name": "basic-run",
+  "turns": [
+    { "kind": "tool_call", "tool": "fs.read", "arguments": { "path": "README.md" } },
+    { "kind": "text", "content": "Done." }
+  ],
+  "expected_terminal_state": "COMPLETED"
+}

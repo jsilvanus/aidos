@@ -44,6 +44,7 @@ data class CrashRecord(
     @SerialName("stack_trace") val stackTrace: String? = null,
     @SerialName("cause_stack_trace") val causeStackTrace: String? = null,
     val frames: List<StackFrame> = emptyList(),
+    @SerialName("recent_logs") val recentLogs: List<StructuredLogger.LogRecord> = emptyList(),
 )
 
 /**
@@ -65,6 +66,7 @@ class CrashHandler(
     private val homeDir: String = System.getProperty("user.home"),
     private val previousHandler: Thread.UncaughtExceptionHandler? = Thread.getDefaultUncaughtExceptionHandler(),
     private val redactor: Redactor = Redactor(),
+    private val recentLogsProvider: () -> List<StructuredLogger.LogRecord> = { emptyList() },
 ) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
@@ -76,11 +78,24 @@ class CrashHandler(
             val redactedCauseTrace = exception.cause?.stackTraceToString()?.let { redactSensitive(it, redactor) }
             val frames = parseStackTrace(redactedStackTrace)
             val stackHash = computeStackHash(redactedStackTrace, frames)
+            val recentLogs = runCatching { recentLogsProvider().takeLast(200) }
+                .getOrDefault(emptyList())
+                .map { rec ->
+                    rec.copy(
+                        key = redactSensitive(rec.key, redactor),
+                        fields = rec.fields.mapValues { (_, v) -> redactSensitive(v, redactor) },
+                    )
+                }
             val crashesDir = Paths.get(homeDir, ".aidos", "crashes")
             Files.createDirectories(crashesDir)
 
             // Write detail file
             val detailFile = crashesDir.resolve("$crashId.txt").toFile()
+            val recentLogsSection = if (recentLogs.isEmpty()) {
+                "None"
+            } else {
+                recentLogs.joinToString("\n") { r -> "${r.timestamp} [${r.level}] ${r.key} ${r.fields}" }
+            }
             detailFile.writeText(
                 """
                 Crash Report
@@ -97,6 +112,9 @@ class CrashHandler(
 
                 Cause:
                 ${redactedCauseTrace ?: "None"}
+
+                Recent Logs (${recentLogs.size}):
+                $recentLogsSection
                 """.trimIndent(),
                 Charsets.UTF_8,
             )
@@ -121,6 +139,7 @@ class CrashHandler(
                 stackTrace = redactedStackTrace,
                 causeStackTrace = redactedCauseTrace,
                 frames = frames,
+                recentLogs = recentLogs,
             )
             writeRecordToFile(record, recordFile)
 

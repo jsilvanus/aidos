@@ -1,10 +1,18 @@
 package dev.aidos.storage
 
+import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ErrorCodes
+import kotlin.time.TimeSource
+
+/** A forward-only schema migration targeting [toVersion] (RFC-0039, RFC-0040). */
+data class SchemaMigration(
+    val toVersion: Int,
+    val statements: List<String>,
+)
 
 /** What `MigrationRunner.open` found. */
 sealed class OpenResult {
@@ -42,6 +50,7 @@ object MigrationRunner {
         schemaSql: String,
         runtimeVersion: String,
         nowIso: () -> String,
+        migrations: List<SchemaMigration> = emptyList(),
     ): OpenResult {
         val existing = readVersion(driver)
         return when {
@@ -49,7 +58,18 @@ object MigrationRunner {
                 bootstrap(driver, schemaSql, kind.currentVersion, runtimeVersion, nowIso())
                 OpenResult.Ready(kind.currentVersion)
             }
-            existing <= kind.currentVersion -> OpenResult.Ready(existing)
+            existing == kind.currentVersion -> OpenResult.Ready(existing)
+            existing < kind.currentVersion -> {
+                val appliedVersion = applyForwardMigrations(
+                    driver = driver,
+                    fromVersion = existing,
+                    targetVersion = kind.currentVersion,
+                    runtimeVersion = runtimeVersion,
+                    nowIso = nowIso,
+                    migrations = migrations,
+                )
+                OpenResult.Ready(appliedVersion)
+            }
             else -> OpenResult.ReadOnly(
                 AidosError(
                     code = ErrorCodes.STORAGE_MIGRATION_REQUIRED,
@@ -62,6 +82,64 @@ object MigrationRunner {
                     ),
                 ),
             )
+        }
+    }
+
+    private fun applyForwardMigrations(
+        driver: SqlDriver,
+        fromVersion: Int,
+        targetVersion: Int,
+        runtimeVersion: String,
+        nowIso: () -> String,
+        migrations: List<SchemaMigration>,
+    ): Int {
+        val pending = migrations
+            .filter { it.toVersion in (fromVersion + 1)..targetVersion }
+            .sortedBy { it.toVersion }
+        if (pending.isEmpty()) return fromVersion
+
+        val transacter = object : TransacterImpl(driver) {}
+        var current = fromVersion
+        for (migration in pending) {
+            val mark = TimeSource.Monotonic.markNow()
+            val appliedAt = nowIso()
+            transacter.transaction {
+                for (stmt in migration.statements) {
+                    driver.execute(identifier = null, sql = stmt, parameters = 0)
+                }
+                val durationMs = mark.elapsedNow().inWholeMilliseconds
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE schema_versions SET version = ?, applied_at = ?, runtime_version = ? WHERE id = 1",
+                    parameters = 3,
+                ) {
+                    bindLong(0, migration.toVersion.toLong())
+                    bindString(1, appliedAt)
+                    bindString(2, runtimeVersion)
+                }
+                recordMigrationHistory(driver, migration.toVersion, appliedAt, runtimeVersion, durationMs)
+            }
+            current = migration.toVersion
+        }
+        return current
+    }
+
+    private fun recordMigrationHistory(
+        driver: SqlDriver,
+        version: Int,
+        appliedAt: String,
+        runtimeVersion: String,
+        durationMs: Long,
+    ) {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT OR IGNORE INTO migration_history (version, applied_at, runtime_version, duration_ms) VALUES (?, ?, ?, ?)",
+            parameters = 4,
+        ) {
+            bindLong(0, version.toLong())
+            bindString(1, appliedAt)
+            bindString(2, runtimeVersion)
+            bindLong(3, durationMs)
         }
     }
 
@@ -116,6 +194,7 @@ object MigrationRunner {
             bindString(1, appliedAt)
             bindString(2, runtimeVersion)
         }
+        recordMigrationHistory(driver, version, appliedAt, runtimeVersion, 0L)
         // If page 1 was already initialized before PRAGMA auto_vacuum = INCREMENTAL took effect
         // (for instance by readVersion() or WAL mode configuration), SQLite requires VACUUM on
         // the same connection to persist auto_vacuum = INCREMENTAL (2).

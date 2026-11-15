@@ -458,7 +458,10 @@ class RuntimeCompositionRoot(
         nowIso: () -> String,
         runId: RunId? = null,
     ): SqliteExecutor {
-        val audit = AuditLog(projectDriver, deviceId)
+        // RFC-0035: registered before any adapter, audit log, or MCP server ever sees a secret.
+        val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
+        vault?.registerAllWith(redactor)
+        val audit = AuditLog(projectDriver, deviceId) { redactor.redactJson(it, RedactionBoundary.LOG) }
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
         val broker = ToolBroker(
             capabilityManager = capabilityManager,
@@ -477,11 +480,6 @@ class RuntimeCompositionRoot(
         }))
         // RFC-0021 / RFC-0023: every remote model invocation routes through EffectBroker.
         broker.register(RemoteModelEgressTool())
-
-        // RFC-0035: registered before any adapter or MCP server ever sees a secret, so any
-        // output_snapshot or log that could echo it back is already covered.
-        val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
-        vault?.registerAllWith(redactor)
         val memoryStore = SessionMemoryStore(
             driver = projectDriver,
             redact = { redactor.redact(it, RedactionBoundary.MEMORY) },

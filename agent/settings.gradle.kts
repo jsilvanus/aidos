@@ -41,6 +41,7 @@ include(":kernel")
 project(":kernel").projectDir = file("../kernel")
 
 include(":storage")
+include(":testing")
 include(":settings")
 include(":identity")
 include(":capability")

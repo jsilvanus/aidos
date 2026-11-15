@@ -48,6 +48,21 @@ object RuntimeClientFactory {
     ): RuntimeClient {
         val nowIso = { Clock.System.now().toString() }
         val userDb = AidosStorage.openUser(DesktopPaths.userDb(home), RUNTIME_VERSION, nowIso)
+        // RFC-0035: the vault is opened once per daemon. A vault that cannot be opened (e.g. the
+        // keystore refuses) is reported and the daemon carries on without it, falling back to
+        // environment variables, rather than refusing to start.
+        val opened = runCatching { DesktopVault.open(home) }
+            .onFailure { DaemonLog.err("aidos: secrets vault unavailable: ${it.message}") }
+            .getOrNull()
+        opened?.weakProtectionNotice?.let { DaemonLog.err("aidos: secrets vault: $it") }
+        val daemonRedactor = Redactor().also { r -> opened?.vault?.registerAllWith(r) }
+        opened?.vault?.let { DaemonLog.redactor = daemonRedactor }
+        val structuredLogger = StructuredLogger(
+            redactor = daemonRedactor,
+            platformProfile = platform.profile,
+            runtimeVersion = RUNTIME_VERSION,
+            homeDir = home,
+        )
         if (installCrashHandler) {
             val existing = Thread.getDefaultUncaughtExceptionHandler()
             if (existing !is CrashHandler) {
@@ -58,6 +73,8 @@ object RuntimeClientFactory {
                         runtimeVersion = RUNTIME_VERSION,
                         homeDir = home,
                         previousHandler = existing,
+                        redactor = daemonRedactor,
+                        recentLogsProvider = { structuredLogger.getRecentLogs(200) },
                     )
                 )
             }
@@ -90,14 +107,10 @@ object RuntimeClientFactory {
             }
             projectLocker = JvmProjectLocker()
             runtimeManagedProjectsRoot = "$home/.aidos/projects"
-            // RFC-0035: the vault is opened once per daemon. A vault that cannot be opened (e.g. the
-            // keystore refuses) is reported and the daemon carries on without it, falling back to
-            // environment variables, rather than refusing to start.
-            val opened = runCatching { DesktopVault.open(home) }
-                .onFailure { DaemonLog.err("aidos: secrets vault unavailable: ${it.message}") }
-                .getOrNull()
-            opened?.weakProtectionNotice?.let { DaemonLog.err("aidos: secrets vault: $it") }
-            opened?.vault?.let { v -> DaemonLog.redactor = Redactor().also(v::registerAllWith) }
+            structuredLogger.info("runtime.started") {
+                field("profile", platform.profile.name)
+                field("version", RUNTIME_VERSION)
+            }
             val compositionRoot = RuntimeCompositionRoot(
                 anthropicApiKey = { System.getenv("ANTHROPIC_API_KEY")?.toCharArray() },
                 userDriver = userDb.driver,

@@ -398,8 +398,26 @@ class SqliteCapabilityManager(
         }
     }
 
-    /** Recursively revokes a capability and all its delegated descendants. */
+    /** Recursively revokes a capability and all its delegated descendants, writing audit rows. */
     private fun revokeTree(capabilityId: CapabilityId, revokedBy: String, now: String) {
+        var meta: Triple<String, String, String>? = null
+        projectDriver.executeQuery(
+            identifier = null,
+            sql = "SELECT project_id, subject_id, permission FROM capabilities WHERE id = ? AND revoked_at IS NULL",
+            mapper = { cursor ->
+                if (cursor.next().value) {
+                    val pid = cursor.getString(0)
+                    val sid = cursor.getString(1)
+                    val perm = cursor.getString(2)
+                    if (pid != null && sid != null && perm != null) {
+                        meta = Triple(pid, sid, perm)
+                    }
+                }
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, capabilityId.value) }
+
         projectDriver.execute(
             identifier = null,
             sql = "UPDATE capabilities SET revoked_at = ?, revoked_by = ? WHERE id = ?",
@@ -408,6 +426,29 @@ class SqliteCapabilityManager(
             bindString(0, now)
             bindString(1, revokedBy)
             bindString(2, capabilityId.value)
+        }
+
+        meta?.let { (projectId, subjectId, permission) ->
+            val actorKind = if (
+                revokedBy.equals("runtime", ignoreCase = true) ||
+                revokedBy.startsWith("run.") ||
+                revokedBy == "recovery"
+            ) "RUNTIME" else "USER"
+            val detail = buildJsonObject {
+                put("permission", permission)
+                put("revoked_by", revokedBy)
+            }.toString()
+            insertAuditRow(
+                auditId = ids.next(),
+                projectId = projectId,
+                actorId = revokedBy,
+                now = now,
+                kind = "CapabilityRevoked",
+                actorKind = actorKind,
+                capabilityId = capabilityId.value,
+                subjectRef = subjectId,
+                detailJson = detail,
+            )
         }
 
         // Recursively revoke delegated children.
@@ -641,19 +682,23 @@ class SqliteCapabilityManager(
         now: String,
         kind: String = "CapabilityGranted",
         actorKind: String = "USER",
+        capabilityId: String? = null,
+        subjectRef: String? = null,
+        detailJson: String = "{}",
     ) {
         val seq = projectDriver.executeQuery(
             identifier = null,
-            sql = "SELECT COUNT(*) FROM audit_log WHERE project_id = ?",
-            mapper = { c -> QueryResult.Value(if (c.next().value) (c.getLong(0) ?: 0L) + 1L else 1L) },
+            sql = "SELECT COALESCE(MAX(sequence), 0) + 1 FROM audit_log WHERE project_id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getLong(0) ?: 1L else 1L) },
             parameters = 1,
         ) { bindString(0, projectId) }.value
 
         projectDriver.execute(
             identifier = null,
             sql = "INSERT INTO audit_log (id, project_id, sequence, occurred_at, kind, " +
-                "actor_kind, actor_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            parameters = 8,
+                "actor_kind, actor_id, device_id, subject_ref, capability_id, detail_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            parameters = 11,
         ) {
             bindString(0, auditId)
             bindString(1, projectId)
@@ -663,6 +708,9 @@ class SqliteCapabilityManager(
             bindString(5, actorKind)
             bindString(6, actorId)
             bindString(7, deviceId)
+            bindString(8, subjectRef)
+            bindString(9, capabilityId)
+            bindString(10, detailJson)
         }
     }
 

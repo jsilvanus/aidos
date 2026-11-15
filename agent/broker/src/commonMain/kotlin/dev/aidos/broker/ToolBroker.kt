@@ -306,6 +306,16 @@ class ToolBroker(
         val caps = runCatching { capabilityManager.loadForSubject(subjectId) }.getOrDefault(emptyList())
         val actor = resolveActor(subjectId, capabilityId, caps)
         val projectId = resolveProjectId(subjectId, capabilityId, caps)
+        val detailJson = when (val o = result.outcome) {
+            is ToolOutcome.Denied -> kotlinx.serialization.json.buildJsonObject {
+                put("reason", kotlinx.serialization.json.JsonPrimitive(o.reason.name))
+            }.toString()
+            is ToolOutcome.Failed -> kotlinx.serialization.json.buildJsonObject {
+                put("error_code", kotlinx.serialization.json.JsonPrimitive(o.error.code))
+                put("message", kotlinx.serialization.json.JsonPrimitive(o.error.message))
+            }.toString()
+            else -> "{}"
+        }
         audit.write(
             id = idGen(),
             projectId = projectId,
@@ -313,6 +323,7 @@ class ToolBroker(
             actor = actor,
             capabilityId = capabilityId?.value,
             subjectRef = call.toolName,
+            detailJson = detailJson,
             nowIso = nowIso(),
         )
         return result

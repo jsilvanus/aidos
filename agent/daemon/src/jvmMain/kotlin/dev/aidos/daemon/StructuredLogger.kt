@@ -12,6 +12,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.datetime.Clock
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -48,6 +49,7 @@ class StructuredLogger(
 ) {
     enum class Level { ERROR, WARN, INFO, DEBUG, TRACE }
 
+    @Serializable
     data class LogRecord(
         val timestamp: String,
         val level: Level,

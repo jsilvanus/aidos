@@ -1,0 +1,13 @@
+../etc/passwd
+..\etc\passwd
+/etc/passwd
+C:\Windows\System32\cmd.exe
+%2e%2e%2fetc/passwd
+a/../../b
+CON
+NUL
+PRN
+AUX
+COM1
+LPT1
+foo/./../bar

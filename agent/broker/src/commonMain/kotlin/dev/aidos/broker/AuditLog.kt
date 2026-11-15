@@ -17,7 +17,12 @@ import dev.aidos.kernel.ActorRef
  *   id, project_id, sequence, occurred_at, kind, actor_kind, actor_id, device_id,
  *   subject_ref, capability_id, detail_json
  */
-class AuditLog(private val driver: SqlDriver, val deviceId: String = "runtime") {
+class AuditLog(
+    private val driver: SqlDriver,
+    val deviceId: String = "runtime",
+    /** RFC-0003 / RFC-0035: detail_json is redacted before persistence. */
+    private val redact: (String) -> String = { it },
+) {
 
     constructor(driver: SqlDriver, deviceIdentity: DeviceIdentity) : this(driver, deviceIdentity.deviceIdString)
 
@@ -63,6 +68,7 @@ class AuditLog(private val driver: SqlDriver, val deviceId: String = "runtime") 
         nowIso: String,
     ): String {
         if (projectId.isBlank()) return id  // no project context — skip (e.g. pre-resolve denial)
+        val redactedDetail = redact(detailJson)
         val seq = nextSequence(projectId)
         driver.execute(
             identifier = null,
@@ -82,7 +88,7 @@ class AuditLog(private val driver: SqlDriver, val deviceId: String = "runtime") 
             bindString(7, deviceId)
             bindString(8, subjectRef)
             bindString(9, capabilityId)
-            bindString(10, detailJson)
+            bindString(10, redactedDetail)
         }
         return id
     }
