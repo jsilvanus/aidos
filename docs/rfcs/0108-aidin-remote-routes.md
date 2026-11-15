@@ -1,6 +1,6 @@
 # RFC-0108: AIDIN Remote Routes (reaching a peer from outside the LAN)
 
-Status: Draft (proposed with D53, 2026-11-10). Partially implemented (2026-11-15): the standalone libraries (phases 1 to 4) are now integrated into the AIDIN node and the desktop Engine (route classes, per-peer remote-access switch enforced at the listener, hint dialing, split refusal, audit, phase 5 continue-then-cancel). Wiring the SSH tunnel manager into the desktop Engine (key page, vault kinds, egress grant), Android integration and UI remain.
+Status: Accepted 2026-11-15, partially implemented. Detail: (proposed with D53, 2026-11-10). Partially implemented (2026-11-15): the standalone libraries (phases 1 to 4) are now integrated into the AIDIN node and the desktop Engine (route classes, per-peer remote-access switch enforced at the listener, hint dialing, split refusal, audit, phase 5 continue-then-cancel). Wiring the SSH tunnel manager into the desktop Engine (key page, vault kinds, egress grant), Android integration and UI remain.
 
 Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0051 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
 

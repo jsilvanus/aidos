@@ -1,6 +1,6 @@
 # RFC-0051: LAN Engine Sharing and External Device Pairing
 
-**Status:** Draft (desktop implemented 2026-11-15; Android not). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
+**Status:** Accepted 2026-11-15, partially implemented. Detail: (desktop implemented 2026-11-15; Android not). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
 Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, Android UI for adding devices, per-device permissions beyond inference access, signed manual descriptors)
 **Authors:** Aidos contributors  
 **Date:** 2026-08-18

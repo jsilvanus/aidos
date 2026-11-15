@@ -11,6 +11,9 @@ Each RFC progresses through the following statuses:
 - **Implemented**: The feature or system described in the RFC has been built and merged.
 - **Deprecated**: The system or design approach is no longer used or recommended.
 - **Superseded**: A newer RFC has replaced this one.
+- **Archived**: A review or record kept for history; not implementable.
+
+An **Accepted** RFC may say `partially implemented` in its status line; STATUS.md then records `PARTIAL` and lists what is missing. Only an RFC whose MVP is built, wired and tested is `Implemented`.
 
 ### Non-MVP Work marker
 

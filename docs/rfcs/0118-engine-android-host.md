@@ -1,6 +1,6 @@
 # RFC-0118: Aidos Engine Android Host
 
-Status: Draft (2026-11-15, written from D49, `sdk/CONTRACT.md` and the code). Partially implemented: written and reviewed by reading; the Android targets do not compile in the cloud environment and nothing has run on a physical device.
+Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from D49, `sdk/CONTRACT.md` and the code). Partially implemented: written and reviewed by reading; the Android targets do not compile in the cloud environment and nothing has run on a physical device.
 
 Related: D49 (one host app, multi-process), D24 (foreground service), D54; RFC-0050 (Android agent app), RFC-0103 (Engine), RFC-0104 (locality), RFC-0105 (groups), RFC-0111/0112 (UI), RFC-0121 (SDK contract), RFC-0035 (secrets).
 

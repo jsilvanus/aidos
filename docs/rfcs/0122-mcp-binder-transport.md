@@ -1,6 +1,6 @@
 # RFC-0122: MCP Binder Transport
 
-Status: Draft (2026-11-15, written from D51, the `kotlin-mcp-android-binder` design notes and the code). Partially implemented: the library passes cross-app tests on an API 36 emulator and in CI at API 28 and 34; nothing has run between two physical phones, and the library is still consumed from `mavenLocal`.
+Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from D51, the `kotlin-mcp-android-binder` design notes and the code). Partially implemented: the library passes cross-app tests on an API 36 emulator and in CI at API 28 and 34; nothing has run between two physical phones, and the library is still consumed from `mavenLocal`.
 
 Related: D51 (proposed), D30/D31 (MCP authority and adoption), RFC-0031 (MCP), RFC-0027 (taint), RFC-0107 (remote agent hosting and tool relay), RFC-0116 (Amp serves tools this way), RFC-0118 (Android host), RFC-0049 (platform profiles).
 

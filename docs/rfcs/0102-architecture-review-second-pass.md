@@ -1,6 +1,6 @@
 # RFC-0102: Second-Pass Architecture Review
 
-Status: Draft
+Status: Archived 2026-11-15 (informational review; not implementable, kept for history)
 
 ## Abstract
 

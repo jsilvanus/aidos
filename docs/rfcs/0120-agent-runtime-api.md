@@ -1,6 +1,6 @@
 # RFC-0120: Agent Runtime API (`/v1/agent`)
 
-Status: Draft (2026-11-15, written from `docs/agent-runtime-api.md`, D48 to D52 and the code). Implemented on the desktop host; the Android host does not serve it yet. Frozen as agent API v1 on 2026-11-15 (owner), additive changes only (D63).
+Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from `docs/agent-runtime-api.md`, D48 to D52 and the code). Implemented on the desktop host; the Android host does not serve it yet. Frozen as agent API v1 on 2026-11-15 (owner), additive changes only (D63).
 
 Related: D48 (proposed), D49 (per-app agent grant), D52 (placement and tool relay), RFC-0027 (taint), RFC-0030/0031 (tools, MCP), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0115 (Engine-side tools), RFC-0103/0121 (Engine API and SDK).
 

@@ -1,6 +1,6 @@
 # RFC-0101: Architecture Review and Implementation Priorities
 
-Status: Draft
+Status: Archived 2026-11-15 (informational review; not implementable, kept for history)
 
 ## Abstract
 

@@ -1,6 +1,7 @@
 # RFC-0121: Aidos SDK and the Engine API v1 Contract
 
-Status: Draft (2026-11-15, written from `sdk/CONTRACT.md` and the code). Implemented and enforced by tests; the Binder handshake path has not run on a device.
+Status: Implemented 2026-11-15 (MVP; written from `sdk/CONTRACT.md` and the code). Enforced by tripwire tests on both sides; the Binder handshake has not run on a physical device (the acceptance test).
+Non-MVP Work: **Remaining** (device verification, tool-calling types, streaming types, public registry, v2 trigger list)
 
 Related: RFC-0103 (Engine), RFC-0104 (locality), RFC-0117 (STT and vision), RFC-0118 (Android host), RFC-0120 (agent API), D45, D47.
 

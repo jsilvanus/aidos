@@ -1,6 +1,6 @@
 # RFC-0123: Trusted Component Registry (TCR)
 
-Status: Draft (2026-11-15, written from `docs/TCR_COMPONENT_DOMAIN_OWNERS.md`, `docs/TCR_UI_DEVELOPMENT_MANUAL.md` and D46). Partially implemented, verified against `jsilvanus/aidos-tcr` at `4ed8110` (2026-11-15): 120 Kotlin files in 17 packages, consumed by Aidos, Dictator and Amp builds. The ownership rule is contradicted by D46's own text, and Aidos and Amp both still carry duplicate components (see MVP and Open Questions).
+Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from `docs/TCR_COMPONENT_DOMAIN_OWNERS.md`, `docs/TCR_UI_DEVELOPMENT_MANUAL.md` and D46). Partially implemented, verified against `jsilvanus/aidos-tcr` at `4ed8110` (2026-11-15): 120 Kotlin files in 17 packages, consumed by Aidos, Dictator and Amp builds. The ownership rule is contradicted by D46's own text, and Aidos and Amp both still carry duplicate components (see MVP and Open Questions).
 
 Related: D46, D54; RFC-0051 Desktop, RFC-0106 (generative UI), RFC-0110/0111/0112 (intent-graph and adaptive UI), RFC-0113 (egress gate), RFC-0116 (Amp), RFC-0119 (Engine app UI).
 
