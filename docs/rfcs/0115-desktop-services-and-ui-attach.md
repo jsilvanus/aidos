@@ -152,7 +152,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Model detail group, done:** `ModelDetailControl` (facts and fit table, install state, license, download with progress, load and unload, run settings, embedding and self tests) with Local and Http implementations and `/v1/admin/model-detail/<action>?model=<id>`; the presenter was rewritten onto it, downloads and loaded models belong to the Engine. Written test-first against the echo fixture, in-process and through the admin API, plus the presenter over the admin API (load, chat self test, settings saved in the Engine's preferences, unload). One behaviour note: the offline fallback that asked for acceptance of a license name when Hugging Face could not be reached is gone, because it depended on presenter state; with no reachable license text there is nothing to accept.
 - **Agents group, done:** `AgentsControl` (overview of stats and runs, routing, run launch config, supervisory cancel) in `agenthost` with Local and Http implementations and `/v1/admin/agents` (mounted through a new `adminExtraRoutes` hook, so enginehost does not depend on agenthost); the Agents presenter was moved onto it and pushes the user's routing choices to the Engine. Tested in-process and through the admin API with a real run on the echo fixture.
 - **Every pane that has a real Engine behind it is now attached** (Status, Models, model detail, Agents, Apps, Sharing, Peers, Tunnels, Background). The Tools pane shows sample data and uses no host, so there is nothing to attach until it is wired to a real MCP broker.
-- **Next:** trying the tray and installers on a real Windows task / Linux unit / macOS agent, an integration test that spawns a real headless Engine and attaches the window to it, and the Agent daemon's own vault mode.
+- **Cross-process end to end, done:** `HeadlessEngineAttachTest` starts a real headless Engine as its own JVM, attaches the window's controls (status, apps, vault, agents, LAN) through `engine.json` and the admin API, checks the window would not start a second Engine, and has the tray's stop make the process exit.
+- **Next:** trying the tray and installers on a real Windows task / Linux unit / macOS agent, and the Agent daemon's own vault mode.
 
 ## Implementation Files
 
@@ -227,4 +228,5 @@ files:
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModelTest.kt
   - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentsControl.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AgentsControlTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/HeadlessEngineAttachTest.kt
 ```
