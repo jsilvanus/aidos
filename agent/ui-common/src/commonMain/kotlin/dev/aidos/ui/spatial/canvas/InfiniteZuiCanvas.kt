@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.spatial.edges.BezierCausalEdge
+import dev.aidos.ui.spatial.edges.EdgeCollisionRouter
+import androidx.compose.ui.geometry.Rect
 import dev.aidos.ui.spatial.nodes.AtomicTaskCapsule
 import dev.aidos.ui.spatial.nodes.GoalHexagonNode
 import dev.aidos.ui.spatial.nodes.SatelliteCriterionNode
@@ -56,10 +58,20 @@ fun InfiniteZuiCanvas(
                         val screenFrom = viewport.toScreenCoordinates(fromPos.first, fromPos.second)
                         val screenTo = viewport.toScreenCoordinates(toPos.first, toPos.second)
 
+                        // RFC-0106: anchor the edge on each node's boundary instead of its centre.
+                        val r = 24f * viewport.zoom
+                        val (anchorFrom, anchorTo) = EdgeCollisionRouter.routeAroundObstacles(
+                            screenFrom,
+                            screenTo,
+                            listOf(
+                                Rect(screenFrom.x - r, screenFrom.y - r, screenFrom.x + r, screenFrom.y + r),
+                                Rect(screenTo.x - r, screenTo.y - r, screenTo.x + r, screenTo.y + r),
+                            ),
+                        )
                         BezierCausalEdge.drawBezierEdge(
                             drawScope = this,
-                            start = screenFrom,
-                            end = screenTo,
+                            start = anchorFrom,
+                            end = anchorTo,
                             color = Color(0x6638BDF8),
                             strokeWidth = 2f * viewport.zoom,
                         )

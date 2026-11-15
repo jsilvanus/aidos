@@ -1,6 +1,6 @@
 # RFC-0117: Engine Speech and Vision (STT, vision, voice providers)
 
-Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from existing code and `docs/stt.md`). Partially implemented: speech-to-text and vision run on the JVM/desktop host with real weights; the Android backends are written and unrun.
+Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: nothing has run on a physical Android device; no streaming or timestamps).
 
 Related: RFC-0022 (inference backends; owns the ONNX Runtime backend and the Decision capability), RFC-0103 (Engine and API v1), RFC-0104 (locality), RFC-0050/0057 (Android, hands-free), RFC-0035 (secrets), D28, D36 to D44, D45.
 
