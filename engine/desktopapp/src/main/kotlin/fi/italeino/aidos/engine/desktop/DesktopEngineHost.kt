@@ -582,8 +582,12 @@ class DesktopEngineHost(
                   "pid": $pid
                 }
             """.trimIndent()
-            file.writeText(json)
-        } catch (_: Exception) {
+            // RFC-0115 / D57: the file holds the Engine's local token, so it is owner-only before it is written,
+            // and a failure to protect it removes it rather than leaving a readable token behind.
+            dev.aidos.api.socket.OwnerOnlyFiles.writeSecret(file.toPath(), json)
+        } catch (e: Exception) {
+            runCatching { file.delete() }
+            _lastError.value = "Could not write the Engine discovery file safely: ${e.message}"
         }
     }
 

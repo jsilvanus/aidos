@@ -126,9 +126,9 @@ class RuntimeSocketServer(
     }
 
     private fun writeTokenFile() {
-        Files.deleteIfExists(tokenPath)
-        Files.writeString(tokenPath, connectionToken)
-        restrictPermissions(tokenPath)
+        // RFC-0115 / D57: restricted before the token is written, and a failure to restrict is an error (on
+        // Windows this used to be a silent no-op, leaving the token as readable as its directory).
+        dev.aidos.api.socket.OwnerOnlyFiles.writeSecret(tokenPath, connectionToken)
     }
 
     private fun restrictPermissions(path: Path) {

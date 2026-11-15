@@ -150,11 +150,9 @@ class RuntimeCompositionRoot(
     /** RFC-0110 Gate B: optional override for the blind Guardian approval verifier. */
     private val guardianVerifier: GuardianApprovalVerifier? = null,
     /** RFC-0110 Gate A: Engine base URL used to construct [SystemOneTaintInputScreener] when [taintInputScreener] is null. */
-    private val systemOneBaseUrl: () -> String? = {
-        System.getenv("AIDOS_SYSTEMONE_URL") ?: System.getenv("AIDOS_ENGINE_URL")
-    },
+    private val systemOneBaseUrl: () -> String? = { EngineDiscovery().baseUrl() },
     /** Optional bearer token provider for [SystemOneTaintInputScreener]. */
-    private val systemOneBearerToken: () -> String? = { System.getenv("AIDOS_ENGINE_TOKEN") },
+    private val systemOneBearerToken: () -> String? = { EngineDiscovery().token() },
     /** RFC-0020: optional [ModelRuntime] (e.g. GlobalModelRuntime) for local model lifecycle & routing. */
     private val modelRuntime: ModelRuntime? = null,
     /** RFC-0048 / RFC-0049: platform adapter supplying profile, dirs, and execution window. */
