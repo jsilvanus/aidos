@@ -1,6 +1,8 @@
 # RFC-0115: Desktop Background Services and the App as a UI over Them
 
-Status: Draft (planning, 2026-11-15). Nothing here is built. Decisions D1 to D7 below are open and need the owner's answer before implementation starts.
+Status: Draft (planning, 2026-11-15). Nothing here is built. Decisions D55 to D61 below (tentatively numbered, Proposed in `docs/decisions.md`) are open and need the owner's answer before implementation starts.
+
+Decisions: D55 to D61 (Proposed).
 
 Related: RFC-0002 (runtime), RFC-0051 (LAN sharing), RFC-0055 (runtime socket and lock), RFC-0103 (Aidos Engine), RFC-0107/0108 (remote agent hosting, remote routes), RFC-0033 (Shell), RFC-0035 (secrets), `docs/TCR_UI_DEVELOPMENT_MANUAL.md`.
 
@@ -76,7 +78,7 @@ Per user, started at login, restarted on failure, logs under `~/.aidos/logs`:
 
 | OS | Mechanism | Notes |
 |---|---|---|
-| Windows | Scheduled Task "At log on" running the packaged launcher (no admin rights), or a Windows service via a wrapper if D2 says so | No Unix `chmod`: see D3 |
+| Windows | Scheduled Task "At log on" running the packaged launcher (no admin rights), or a Windows service via a wrapper if D2 says so | No Unix `chmod`: see D597 |
 | macOS | `launchd` user agent (`~/Library/LaunchAgents`) | |
 | Linux | `systemd --user` unit | `loginctl enable-linger` is optional and documented |
 
@@ -103,21 +105,21 @@ The app installs and removes these ("Run in background" setting), shows state, a
 - Integration: spawn the headless Engine and daemon, attach, exercise each pane's operations, stop and restart a service under a live app, version mismatch.
 - Security: admin routes absent on the LAN listener and the remote ingress; token ACL on Windows; an attached app opens no project database (assert by lock files and file handles).
 
-## Decisions needed before implementation
+## Decisions needed before implementation (Proposed: D55 to D61)
 
-**D1. Topology.** (a) UI, Engine service and Agent service as three parties (recommended; matches how the code is already split and how the daemon already reaches the Engine). (b) One combined service: needs merging two Gradle builds and the native runtime into the daemon for no functional gain.
+**D55 (was D1). Topology.** (a) UI, Engine service and Agent service as three parties (recommended; matches how the code is already split and how the daemon already reaches the Engine). (b) One combined service: needs merging two Gradle builds and the native runtime into the daemon for no functional gain.
 
-**D2. What "service" means per OS.** (a) Per-user background process started at login (Scheduled Task, launchd agent, `systemd --user`) (recommended: no admin rights, the vault and keystore are per user). (b) A true system service per OS (runs before login, needs elevation to install, cannot reach the user's keystore without extra work).
+**D56 (was D2). What "service" means per OS.** (a) Per-user background process started at login (Scheduled Task, launchd agent, `systemd --user`) (recommended: no admin rights, the vault and keystore are per user). (b) A true system service per OS (runs before login, needs elevation to install, cannot reach the user's keystore without extra work).
 
-**D3. Windows transport and token protection.** (a) Keep the Unix socket (Java supports it on Windows 10+) and add an owner-only ACL on the token file. (b) Loopback TCP with the token in an owner-only ACL file (works everywhere, easier to probe and debug, but a port any local process can try). Recommendation: (a), with (b) as the fallback if a Java or OS version lacks it.
+**D57 (was D3). Windows transport and token protection.** (a) Keep the Unix socket (Java supports it on Windows 10+) and add an owner-only ACL on the token file. (b) Loopback TCP with the token in an owner-only ACL file (works everywhere, easier to probe and debug, but a port any local process can try). Recommendation: (a), with (b) as the fallback if a Java or OS version lacks it.
 
-**D4. Where the Engine's management API lives.** (a) New `/v1/admin/` routes on the Engine's loopback listener, same token (recommended). (b) A second socket for control. (c) Reuse the Agent wire protocol, which would mix two services' concerns.
+**D58 (was D4). Where the Engine's management API lives.** (a) New `/v1/admin/` routes on the Engine's loopback listener, same token (recommended). (b) A second socket for control. (c) Reuse the Agent wire protocol, which would mix two services' concerns.
 
-**D5. Default when the app closes.** (a) If the services are installed, leave them running (the point of the feature); if not, behave as today (recommended). (b) Always ask. (c) Always stop.
+**D59 (was D5). Default when the app closes.** (a) If the services are installed, leave them running (the point of the feature); if not, behave as today (recommended). (b) Always ask. (c) Always stop.
 
-**D6. Scope of the first release.** (a) Both stages in the order above, Agent attach first (recommended). (b) Agent attach only, leave the Engine in the app until later. (c) Engine only. Recommendation includes shipping phase 2 on its own, since it removes the two-writer risk even without the Engine work.
+**D60 (was D6). Scope of the first release.** (a) Both stages in the order above, Agent attach first (recommended). (b) Agent attach only, leave the Engine in the app until later. (c) Engine only. Recommendation includes shipping phase 2 on its own, since it removes the two-writer risk even without the Engine work.
 
-**D7. Refactor depth for the UI models.** (a) All panes onto `EngineControl` in one change, mechanical but wide (about a dozen models). (b) Pane by pane, with the app supporting a mix during the transition (recommended: smaller reviews, the in-process path keeps working throughout).
+**D61 (was D7). Refactor depth for the UI models.** (a) All panes onto `EngineControl` in one change, mechanical but wide (about a dozen models). (b) Pane by pane, with the app supporting a mix during the transition (recommended: smaller reviews, the in-process path keeps working throughout).
 
 ## Implementation Files
 

@@ -709,6 +709,48 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 **Forecloses:** Siloing desktop and mobile codebases into separate UI features; leaking private life context over network messaging channels; native inference crashes bringing down the UI or Git repositories.  
 **RFCs:** 0027, 0042, 0047, 0050, 0051, 0106, 0110, 0111, 0112; D42, D49.
 
+## D55. Desktop services: the UI, the Engine and the Agent runtime are three parties (proposed)
+
+**Decision.** The desktop app is a UI. The Engine and the Agent runtime are separate background services (they already are two Gradle builds, and the daemon already calls the Engine over HTTP). **Proposed:** three parties. **Alternative:** one merged service, which needs merging two builds and the native model runtime for no functional gain.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D56. Desktop services: per-user background processes, not system services (proposed)
+
+**Decision.** The services start at login for the current user (Windows Scheduled Task, macOS launchd agent, Linux `systemd --user`). **Proposed:** per-user: no admin rights, and the vault and OS keystore are per user. **Alternative:** a system service per OS (runs before login, needs elevation, cannot reach the user keystore without extra work).
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D57. Desktop services: Windows transport and token protection (proposed)
+
+**Decision.** The Agent runtime keeps its Unix domain socket (Java supports it on Windows 10+) and the token file gets an owner-only ACL, as an error if it cannot be set (today `0600` is a silent no-op on Windows). **Proposed:** socket plus ACL. **Fallback:** loopback TCP with the token in an owner-only ACL file.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D58. Desktop services: the Engine management API is loopback-only `/v1/admin/` (proposed)
+
+**Decision.** The app controls an Engine service through `/v1/admin/` routes on the Engine's loopback listener, with the existing `engine.json` token. They are never installed on the LAN listener and never reachable through the AIDIN remote ingress. **Proposed:** loopback routes. **Alternatives:** a second control socket; or reuse the Agent wire protocol, which would mix two services' concerns.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D59. Desktop services: closing the app leaves installed services running (proposed)
+
+**Decision.** If the services are installed, closing the window leaves them running (that is the purpose); if not, the app behaves as today and stops what it started. **Proposed:** leave running. **Alternatives:** always ask; always stop.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D60. Desktop services: first release order (proposed)
+
+**Decision.** Ship Agent-runtime attach first (small, and it removes the two-writers-on-one-SQLite-set hazard on its own), then the Engine service. **Proposed:** both stages, Agent attach first. **Alternatives:** Agent attach only; Engine service only.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
+## D61. Desktop services: UI models move to `EngineControl` pane by pane (proposed)
+
+**Decision.** The desktop models stop calling `DesktopEngineHost` directly and go through an `EngineControl` interface with in-process and HTTP implementations. **Proposed:** pane by pane, with a mix supported during the transition so the in-process path keeps working. **Alternative:** all panes in one change.
+
+**RFCs:** 0115 (draft), 0103, 0107, 0108.
+
 ---
 
 ## Revision history
@@ -734,3 +776,4 @@ Settled by the owner pending review: decisions 2, 4, 5 and 7 as stated by Juha i
 | 2026-11-10 | D53 proposed: remote routes; a tunnel is a transport, not a placement; layer split LAN only; Engine-managed SSH tunnels. |
 | 2026-11-14 | D49 amended: Single APK with multi-process native isolation (`:main` and `:native_inference`) for crash resilience and Android system assistant integration. |
 | 2026-11-14 | D54 settled: Universal UI parity across Desktop and Android (OTG/DeX responsive switching) and Blinded Egress Bridge for messaging across zero-egress Life and Code projects (RFC-0112). |
+| 2026-11-15 | D55-D61 proposed (tentative numbers): desktop background services and the app as a UI over them (RFC-0115): three parties, per-user services, Windows socket plus ACL, loopback admin API, leave services running, Agent attach first, pane-by-pane `EngineControl`. |
