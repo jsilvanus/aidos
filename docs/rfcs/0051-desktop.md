@@ -1,6 +1,6 @@
 # RFC-0051: Desktop
 
-Status: Draft
+Status: Draft (partially implemented, audited 2026-11-15): a Compose Desktop app exists (Engine host and Universal Adaptive UI, RFC-0103/0106/0111/0112); core view modes are superseded by RFC-0106. The IDE/Obsidian-style modes, keyboard layer and remote-runtime connection described here are not built.
 
 ## Abstract
 
@@ -579,5 +579,9 @@ Theme engine:
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/Main.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
 ```

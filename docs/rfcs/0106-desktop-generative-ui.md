@@ -1,6 +1,6 @@
 # RFC-0106: Aidos Desktop — Spatial Canvas & Generative UI Architecture
 
-Status: Draft  
+Status: Draft (partially implemented, audited 2026-11-15): Phase 3 spatial canvas, semantic zoom and the RFC-0111/0112 view modes are built in `agent/ui-common` and wired into the desktop app; the Trusted Component Registry lives in the separate `aidos-tcr` repository. Phase 1 caret companion, Phase 4 compartments and Phase 5 analytics/API synthesis are not built.  
 Date: 2026-10-22  
 Supersedes: RFC-0051 Core View Modes (Amended)  
 Related RFCs: [RFC-0012 Intent Graph](0012-intent-graph.md), [RFC-0051 Desktop](0051-desktop.md), [RFC-0103 Aidos Engine](0103-aidos-engine.md)  
@@ -306,5 +306,26 @@ Orchestrators communicate strictly via typed, blinded queries:
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/CanvasMinimapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ForceDirectedLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/InfiniteZuiCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SemanticZoomManager.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ViewportTransform.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/BezierCausalEdge.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/EdgeCollisionRouter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/AtomicTaskCapsule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/GoalHexagonNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/GroupNebulaRenderer.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/SatelliteCriterionNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/MobileHorizonArcView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/RadialRadarScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroMapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
 ```

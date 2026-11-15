@@ -75,15 +75,13 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 |---|---|---|
 | 0022 Inference Backend Architecture | Implemented | Decisions D36-D44 settled; llama.cpp, ONNX (decisions, STT, vision) backends built and tested. |
 | 0033 Shell | Draft | No code; post-MVP. |
-| 0051 Desktop | Draft | No code matching this RFC; desktop engine app exists under RFC-0103. |
+| 0051 Desktop | Draft | Partial: Compose Desktop app (Engine host + Universal Adaptive UI) exists; IDE/Obsidian view modes, keyboard layer and remote-runtime connection not built (core views superseded by 0106). |
 | 0051 LAN Engine Sharing | Proposed | No LAN/HTTPS sharing code; only AIDIN peer links (RFC-0105). |
 | 0060 Plugin SDK | Draft | Not scheduled for v1. |
-| 0106 Desktop Generative UI | Draft | No code. |
-| 0107 Remote Agent Hosting | Draft | Phase 1 (router adoption of the agent loop) built; peer agent endpoints, `agent` scope, tool relay not built. |
+| 0106 Desktop Generative UI | Draft | Partial: spatial canvas, semantic zoom and view modes built in `agent/ui-common` (TCR is the separate `aidos-tcr` repo); caret companion, compartments, analytics/API synthesis not built. |
+| 0107 Remote Agent Hosting | Draft | Partial: routed model adapter and agent runtime built; peer agent endpoints, `agent` scope, MCP tool relay, tool-host taint/approval, two-device run not built. |
 | 0108 AIDIN Remote Routes | Draft | Phases 1–4 standalone libraries built and JVM unit-tested (`agent:routes`, `agent:wire-aidin`, `agent:policy`, `agent:ssh-tunnel`, `agent:tunnel-manager` KMP JVM target with `SecretsVault` & pinned host keys); Android Keystore vault (`agent/vault` `androidMain`) written with direct AES-256-GCM Keystore encryption (`android()` target disabled in `agent/vault/build.gradle.kts`). Still not wired into Engine/AIDIN runtime, UI (`TunnelKeyPage`), or RFC-0107 Phase 5. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
-| 0110 Optional Guardian Approval for Tainted Runs | Draft | Planning only; no code. Partially amends RFC-0027 with opt-in `trust.taint_approval_policy` (`MANUAL` default, `GUARDIAN` opt-in), Gate A System One `noul` suspicion latch, Gate B blind zero-tool Guardian LLM verifier, and `Permission.APP_IPC` taint attenuation. |
-| 0113 Blinded Egress Bridge | Draft | Core engine components (`agent/bridge`) and tests implemented. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
 ## RFC-0036 requirement map

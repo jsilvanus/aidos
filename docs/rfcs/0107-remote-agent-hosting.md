@@ -1,6 +1,6 @@
 # RFC-0107: Remote Agent Hosting over AIDIN
 
-Status: Draft (proposed with D52, 2026-11-10). Not implemented.
+Status: Draft (proposed with D52, 2026-11-10). Partially implemented (audited 2026-11-15): phase 1 (model on a peer, loop local) and the phase 2 agent runtime exist; peer agent endpoints, the `agent` scope, the MCP tool relay and tool-host taint/approval (phase 3) and a real two-device run (phase 4) are not built.
 
 Related: RFC-0105 (inference groups), RFC-0104 (locality), RFC-0027 (trust and taint), RFC-0031 (MCP), D48, D49, D51, D52. Study: `plans/cross-device-agent-routing.md` in the project files.
 
@@ -42,5 +42,9 @@ Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapter.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/EngineAgentRuntime.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentRoutes.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/RoutedModelAdapterTest.kt
 ```
