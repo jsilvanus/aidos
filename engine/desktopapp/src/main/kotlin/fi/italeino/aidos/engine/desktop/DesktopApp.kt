@@ -36,6 +36,7 @@ enum class DesktopRightPaneTab {
     MODELS,
     AGENTS,
     TOOLS,
+    SHARING,
 }
 
 enum class DesktopViewMode {
@@ -56,6 +57,7 @@ class DesktopModels(
     val models = DesktopModelsModel(host, prefs, scope)
     val agents = DesktopAgentsModel(host, scope, prefs)
     val mcp = DesktopMcpModel(host, scope)
+    val lan = DesktopLanSharingModel(host)
 
     init {
         scope.launch {
@@ -249,6 +251,11 @@ fun EngineHostView(
                         Text(if (serverCount > 0) "Tools ($serverCount)" else "Tools")
                     }
                 )
+                Tab(
+                    selected = rightPaneTab == DesktopRightPaneTab.SHARING,
+                    onClick = { onSelectRightPaneTab(DesktopRightPaneTab.SHARING) },
+                    text = { Text("Sharing") }
+                )
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -284,6 +291,17 @@ fun EngineHostView(
                             onRunGuardianPolicyOverride = { models.agents.setRunGuardianPolicyOverride(it) },
                             onRunModelOverride = { models.agents.setRunModelOverride(it) },
                             onRunLocalityOverride = { models.agents.setRunLocalityOverride(it) },
+                        )
+                    }
+                    DesktopRightPaneTab.SHARING -> {
+                        val lanState by models.lan.state.collectAsState()
+                        LanSharingPane(
+                            state = lanState,
+                            onSetEnabled = models.lan::setEnabled,
+                            onAddByCode = models.lan::addByCode,
+                            onAddManually = models.lan::addManually,
+                            onRevoke = models.lan::revoke,
+                            onDismissPairing = models.lan::dismissPairing,
                         )
                     }
                     DesktopRightPaneTab.TOOLS -> {

@@ -45,6 +45,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
 
     testImplementation(kotlin("test"))
+    testImplementation("com.squareup.okhttp3:okhttp:4.11.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
 

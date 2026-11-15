@@ -1,7 +1,7 @@
 # RFC-0051: LAN Engine Sharing and External Device Pairing
 
-**Status:** Draft (partially implemented 2026-11-15: desktop listener). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
-Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, desktop/Android UI screens for adding devices, SDK client pairing helper, mDNS discovery, QR rendering)
+**Status:** Draft (desktop implemented 2026-11-15; Android not). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
+Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, Android UI for adding devices, per-device permissions beyond inference access, signed manual descriptors)
 **Authors:** Aidos contributors  
 **Date:** 2026-08-18
 
@@ -382,6 +382,15 @@ Manual QR codes containing bearer credentials are sensitive and should not be un
 - Code pairing: single-use, short-lived eight-digit code exchanged at `POST /lan/v1/pair`, attempt- and rate-limited; a code is never a bearer credential. Manual pairing returns URL, fingerprint and credential.
 - TLS identity: self-signed, generated once and persisted (`LanTlsIdentity`); clients pin its SHA-256 fingerprint. Open question 1 is settled as pinning, not a local CA.
 
+### Desktop, completed (2026-11-15)
+
+- **Pairing UI.** The desktop window has a *Sharing* tab (`LanSharingPane`, presenter `DesktopLanSharingModel`): the on/off switch, certificate fingerprint, add-a-device by code or QR (`aidos-pair://host:port/code?fp=...`) or by manual connection details, and per-device revoke. A device is also listed in Connected Apps as `LAN: <label>`, where agent access and the locality limit are set.
+- **SDK pairing helper.** `LanPairing` (`sdk/client`) parses the URI, makes an HTTP client that trusts exactly the certificate with that fingerprint, redeems the code, and builds authenticated requests. The fingerprint travels inside the URI so a device in the middle cannot collect the code. It uses only OkHttp, no Aidos types, so a generic client can do the same from the manual descriptor.
+- **Discovery.** While sharing is on the Engine announces `_aidos-engine._tcp` over mDNS with its port and fingerprint (`LanDiscovery`); a client can find it without typing an address. The announcement is convenience only.
+- **Tested end to end** through the real desktop host: off by default, enabled from the pane's model, paired with the SDK, model use works, agent routes refuse a device without an agent grant, and a revocation in Connected Apps stops the next request.
+- **Open questions settled:** self-signed certificate with fingerprint pinning (no local CA); a purpose-built single-use code rather than TOTP.
+- **Not built:** the Android listener (Ktor CIO cannot serve TLS, Netty on Android and a non-JVM certificate generator need device validation), the Android pairing UI, and per-device permissions beyond what the approval store already gives.
+
 ## Decision
 
 LAN inference is an **explicitly enabled, per-device paired capability**, not simply an HTTP server bound to `0.0.0.0`.
@@ -415,4 +424,11 @@ files:
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanSharingTest.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanTlsEndToEndTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingTest.kt
+  - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/LanPairing.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/lan/LanDiscovery.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/LanSharingPane.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingModel.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanPairingEndToEndTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanEndToEndTest.kt
 ```

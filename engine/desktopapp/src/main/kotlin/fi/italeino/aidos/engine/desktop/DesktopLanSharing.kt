@@ -4,9 +4,11 @@ import fi.italeino.aidos.engine.approval.AppApprovalStore
 import fi.italeino.aidos.engine.http.EngineHttpServer
 import fi.italeino.aidos.engine.lan.ExternalDeviceGrants
 import fi.italeino.aidos.engine.lan.IssuedExternalDevice
+import fi.italeino.aidos.engine.lan.LanDiscovery
 import fi.italeino.aidos.engine.lan.LanSslConfig
 import fi.italeino.aidos.engine.lan.LanTlsIdentity
 import fi.italeino.aidos.engine.lan.PairingCodes
+import fi.italeino.aidos.sdk.client.LanPairingUri
 import java.io.File
 import java.security.SecureRandom
 import java.time.Instant
@@ -50,6 +52,14 @@ class DesktopLanSharing(
     @Volatile
     private var activeServer: EngineHttpServer? = null
 
+    @Volatile
+    private var announcement: LanDiscovery.Announcement? = null
+
+    /** The port the LAN listener is actually bound to (differs from [port] only when that is 0), or null while it is off. */
+    @Volatile
+    var boundPort: Int? = null
+        private set
+
     val isEnabled: Boolean get() = readSettings().enabled
     val port: Int get() = readSettings().port
 
@@ -68,9 +78,18 @@ class DesktopLanSharing(
         if (!s.enabled) return
         val identity = ssl ?: LanTlsIdentity.loadOrCreate(File(stateDir, "lan-tls.p12"), password()).also { ssl = it }
         server.startLan(identity, io.ktor.server.netty.Netty, port = s.port)
+        boundPort = runBlocking { server.getBoundLanPort() }
+        // RFC-0051 "Service discovery": announce the listener so clients need not type an address. Best effort:
+        // a network without multicast just means the address has to be entered.
+        announcement = runCatching {
+            LanDiscovery.announce("aidos-engine-${java.net.InetAddress.getLocalHost().hostName}".take(60), boundPort ?: s.port, identity.fingerprintSha256)
+        }.getOrNull()
     }
 
     fun stop() {
+        announcement?.close()
+        announcement = null
+        boundPort = null
         activeServer?.stopLan()
     }
 
@@ -83,6 +102,17 @@ class DesktopLanSharing(
     fun startCodePairing(label: String, deviceLifetimeSeconds: Long): String =
         pairing.start(label, deviceLifetimeSeconds)
 
+    /**
+     * Mode A as shown to the user: `aidos-pair://host:port/code?fp=...`, which is what the QR code holds and what
+     * the SDK's `LanPairing.redeem` takes. The fingerprint is inside it so the code is only ever sent to the
+     * certificate on this screen. Needs LAN sharing to have been enabled once (that is what creates the certificate).
+     */
+    fun startCodePairingUri(label: String, deviceLifetimeSeconds: Long): String {
+        val fp = fingerprint() ?: error("Turn LAN sharing on first: the Engine has no TLS identity yet")
+        val host = LanTlsIdentity.lanAddresses().firstOrNull() ?: "localhost"
+        return LanPairingUri(host, boundPort ?: port, startCodePairing(label, deviceLifetimeSeconds), fp).toString()
+    }
+
     /** Mode B: a credential plus the connection details to enter or scan into a generic client. */
     fun addManually(label: String, deviceLifetimeSeconds: Long): ManualPairing {
         val issued = devices.issue(label, Instant.now().plusSeconds(deviceLifetimeSeconds))
@@ -92,7 +122,7 @@ class DesktopLanSharing(
     fun describe(issued: IssuedExternalDevice): ManualPairing {
         val host = LanTlsIdentity.lanAddresses().firstOrNull() ?: "localhost"
         return ManualPairing(
-            url = "https://$host:${port}",
+            url = "https://$host:${boundPort ?: port}",
             fingerprintSha256 = fingerprint(),
             credential = issued.credential,
             expiresAt = issued.grant.expiresAt,

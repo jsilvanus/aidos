@@ -56,6 +56,8 @@ kotlin {
             implementation("io.ktor:ktor-network-tls-certificates:3.5.2")
             // CIO cannot serve HTTPS, so the TLS-only LAN listener runs on Netty.
             api("io.ktor:ktor-server-netty:3.5.2")
+            // RFC-0051 mDNS announcement of the LAN listener.
+            implementation("org.jmdns:jmdns:3.6.4")
         }
 
         val jvmTest by getting {
@@ -63,6 +65,7 @@ kotlin {
                 implementation(kotlin("test-junit"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
                 implementation("io.ktor:ktor-server-test-host:3.5.2")
+                implementation("com.squareup.okhttp3:okhttp:4.11.0")
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.1")
             }
         }
