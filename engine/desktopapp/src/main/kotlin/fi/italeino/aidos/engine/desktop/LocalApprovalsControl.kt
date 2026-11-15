@@ -22,7 +22,15 @@ class LocalApprovalsControl(private val host: DesktopEngineHost) : ApprovalsCont
                 it.requestedAtMillis,
             )
         }
-        return apps + tools
+        // RFC-0115: an agent loop on this Engine wants to run an adopted MCP operation that may change things.
+        val engine = host.agentRuntime?.engineToolApprovals?.pending?.value.orEmpty().map {
+            PendingApproval(
+                "etool:${it.id}", "tool", "${it.app} wants to run ${it.tool}",
+                "An agent loop on this Engine wants to run an MCP operation that may change things. No answer counts as no.",
+                it.requestedAtMillis,
+            )
+        }
+        return apps + tools + engine
     }
 
     override suspend fun decide(id: String, allow: Boolean): Boolean = when {
@@ -33,6 +41,7 @@ class LocalApprovalsControl(private val host: DesktopEngineHost) : ApprovalsCont
             else (if (allow) host.approvalStore.approveApp(pkg) else host.approvalStore.denyApp(pkg)) != null
         }
         id.startsWith("tool:") -> host.remoteAgent?.approvals?.decide(id.removePrefix("tool:"), allow) ?: false
+        id.startsWith("etool:") -> host.agentRuntime?.engineToolApprovals?.decide(id.removePrefix("etool:"), allow) ?: false
         else -> false
     }
 }

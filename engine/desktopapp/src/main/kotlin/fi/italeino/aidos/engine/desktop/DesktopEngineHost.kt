@@ -128,6 +128,8 @@ class DesktopEngineHost(
     val vaultGate: VaultGate = VaultGate.fromEnvironment(),
     /** Where per-model run settings are saved; the app and the headless launcher pass theirs. */
     val preferences: DesktopPreferences? = null,
+    /** RFC-0115: adopted MCP operations the agent loop may use when a request asks for them; null offers none. */
+    private val engineToolSource: fi.italeino.aidos.engine.agent.EngineToolSource? = null,
     /** Injectable so tests need no SSH server. */
     private val tunnelTransport: fi.italeino.sshtunnel.SshTransport = fi.italeino.sshtunnel.SshjTransport(),
     /**
@@ -338,6 +340,7 @@ class DesktopEngineHost(
                     )
                 )
             }
+            agent.engineTools = engineToolSource
             _agentRuntime = agent
             // RFC-0107: the peers this Engine prefers for agent turns (local is always the last resort), and the
             // handler that lets a peer with the explicit `agent` scope run a loop here.

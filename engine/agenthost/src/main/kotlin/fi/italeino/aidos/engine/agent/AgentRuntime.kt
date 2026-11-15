@@ -90,6 +90,12 @@ class AgentRuntime(
     }
 
     private val runs = ConcurrentHashMap<String, Run>()
+
+    /** RFC-0115: MCP operations the user adopted, run by the Engine for loops that ask ([AgentTurnRequest.useEngineTools]). Null: none. */
+    @Volatile var engineTools: EngineToolSource? = null
+
+    /** The user's answers for Engine-side tools that are not read only. */
+    val engineToolApprovals: EngineToolApprovals = EngineToolApprovals()
     private val _routingConfig = MutableStateFlow(AgentRoutingConfigDto())
     private val _runLaunchConfig = MutableStateFlow(AgentRunLaunchConfigDto())
 
@@ -221,12 +227,27 @@ class AgentRuntime(
         val tools = request.tools.map { spec ->
             AmpToolDefinition(spec.name, spec.description, spec.inputSchema) { args -> awaitClient(run, spec.name, args, "call_${++callCounter}") }
         }
+        val clientNames = tools.map { it.name }.toSet()
+        val engineSide = if (request.useEngineTools) {
+            val source = engineTools
+            (try { source?.toolsFor(owner).orEmpty() } catch (e: Exception) { emptyList() })
+                .filter { it.name !in clientNames }
+                .map { t ->
+                    AmpToolDefinition(t.name, t.description, t.inputSchema) { args ->
+                        if (!t.readOnly && !engineToolApprovals.request(owner, t.name)) {
+                            AmpToolExecutionResult("The user did not approve running '${t.name}'.", isError = true)
+                        } else {
+                            try { t.execute(args) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { AmpToolExecutionResult("'${t.name}' failed: ${e.message ?: e::class.simpleName}", isError = true) }
+                        }
+                    }
+                }
+        } else emptyList()
         run.job = scope.launch {
             val outcome = runner.executeTurn(
                 systemPrompt = request.systemPrompt ?: DEFAULT_SYSTEM_PROMPT,
                 conversationHistory = request.history,
                 incomingMessage = request.message,
-                tools = tools,
+                tools = tools + engineSide,
             )
             publish(
                 run,

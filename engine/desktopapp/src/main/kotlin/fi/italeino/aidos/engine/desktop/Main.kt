@@ -52,6 +52,8 @@ fun main(args: Array<String>) {
     val host = DesktopEngineHost(
         runSettings = prefs.runSettingsSource,
         preferences = prefs,
+        // The adopted MCP operations (Tools pane) are available to agent loops that ask for them.
+        engineToolSource = fi.italeino.aidos.engine.desktop.EngineMcpTools(fi.italeino.aidos.engine.desktop.McpManager.forDesktop()),
         ramBaselineUsedBytes = { prefs.data.value.ramBaselineUsedMb?.let { it * 1024L * 1024L } },
         serverPort = { effectivePort },
         discoveryFile = DesktopPaths.discoveryFile,

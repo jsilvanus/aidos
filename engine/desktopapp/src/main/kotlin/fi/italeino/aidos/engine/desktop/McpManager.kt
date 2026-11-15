@@ -3,7 +3,12 @@ package fi.italeino.aidos.engine.desktop
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.mcp.McpAdoptionService
+import dev.aidos.amp.AmpToolExecutionResult
+import dev.aidos.mcp.McpActivationOutcome
 import dev.aidos.mcp.McpClientFactory
+import dev.aidos.mcp.McpServerActivator
+import dev.aidos.mcp.describe
+import dev.aidos.mcp.core.McpContent
 import dev.aidos.mcp.McpOperationAdoptionStore
 import dev.aidos.mcp.McpSecretResolver
 import dev.aidos.mcp.McpServerLoadOutcome
@@ -154,6 +159,46 @@ class McpManager(
                 descriptorHash = McpDescriptorHash.hash(t.spec),
                 adoptedAt = if (t.isAdopted && t.spec.name in adoptedAt) nowIso() else null,
             )
+        }
+    }
+
+    /** An operation the Engine's default project has adopted, with the server it belongs to. */
+    class AdoptedTool(val serverId: String, val spec: McpToolSpec)
+
+    /** Every adopted operation of every registered server that is available on this device. */
+    fun adoptedTools(): List<AdoptedTool> {
+        val adoption = adoptionStore()
+        return McpServerStore(userDriver()).loadAll(profile)
+            .filterIsInstance<McpServerLoadOutcome.Loaded>()
+            .filter { profile in it.load.profiles }
+            .flatMap { loaded -> adoption.adoptedCatalog(projectId, loaded.load.registration.serverId).map { AdoptedTool(loaded.load.registration.serverId, it) } }
+    }
+
+    /**
+     * Calls one adopted operation: connects to (or starts) the server through the broker's activator, calls it, and closes
+     * the connection. Only an adopted operation can be called, whatever name is asked for. A failure comes back as an
+     * error result for the model to read, never as an exception.
+     */
+    suspend fun callTool(serverId: String, toolName: String, arguments: kotlinx.serialization.json.JsonObject): AmpToolExecutionResult {
+        if (adoptionStore().adoptedCatalog(projectId, serverId).none { it.name == toolName }) {
+            return AmpToolExecutionResult("'$toolName' is not an adopted operation of $serverId.", isError = true)
+        }
+        val activator = McpServerActivator(McpServerStore(userDriver()), adoptionStore(), resolver, clientFactory)
+        return when (val outcome = activator.activate(projectId, serverId, profile)) {
+            is McpActivationOutcome.Failed -> AmpToolExecutionResult("Could not reach $serverId: ${outcome.failure.describe()}", isError = true)
+            is McpActivationOutcome.Activated -> {
+                val client = outcome.activation.client
+                try {
+                    val r = client.callTool(toolName, arguments)
+                    AmpToolExecutionResult(r.content.joinToString("\n") { (it as? McpContent.Text)?.text ?: "[non-text content]" }, isError = r.isError)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AmpToolExecutionResult("$serverId failed: ${e.message ?: e::class.simpleName}", isError = true)
+                } finally {
+                    client.closeSuspend()
+                }
+            }
         }
     }
 

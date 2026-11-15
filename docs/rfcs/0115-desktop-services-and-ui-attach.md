@@ -157,7 +157,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Cross-process end to end, done:** `HeadlessEngineAttachTest` starts a real headless Engine as its own JVM, attaches the window's controls (status, apps, vault, agents, LAN) through `engine.json` and the admin API, checks the window would not start a second Engine, and has the tray's stop make the process exit.
 - **Agent daemon vault mode, done:** `DaemonVaultGate` (`AIDOS_VAULT_MODE=passphrase`, set by `--install-service agent --system`): the daemon starts locked and carries on without a vault, and `vault.status` / `vault.unlock` / `vault.lock` on the daemon socket (`SocketRuntimeClient.vaultStatus/vaultUnlock/vaultLock`) open it with the passphrase and register its secrets with the log redactor. The Engine and the daemon share one vault, so the tray's `Unlock vault…` unlocks both with one passphrase. Also fixed: the tray and the window now connect to the daemon as interactive, because the daemon refuses capability approvals and grants from a connection that claims no TTY, which would have made every tray Approve fail.
 - **Ready for a real-desktop test:** `--tray-check` (read-only report of tray support, services, vault lock and waiting approvals), `--dry-run` on every install and uninstall (prints the files and commands, applies nothing), and [desktop-services-e2e.md](../desktop-services-e2e.md), the step-by-step checklist. The run itself needs a real desktop and, for machine-wide installs, a second account.
-- **Next:** feeding adopted MCP tools into the Engine's agent loop, and running that checklist (it needs a real desktop).
+- **Adopted MCP tools in the Engine's agent loop, done:** a turn request with `useEngineTools: true` also offers the operations adopted in the Tools pane, named `<server>:<operation>`; the Engine runs them itself (`EngineTool`, `EngineToolSource`, `McpManager.callTool`, only for adopted operations). Default off, and gated by the same per-app agent grant as any agent run (D49). Every call waits for the user (`EngineToolApprovals`; no answer in a minute is a refusal; nothing is remembered), shown in the approvals feed and the tray as `<app> wants to run <tool>`, with no arguments. Nothing is treated as read only: the adoption record does not keep a server's annotations and they are untrusted claims anyway; an explicit allow-without-asking choice would be a separate step. A client tool of the same name wins; a failing or refused tool is an error result for the model, and the run completes.
+- **Next:** running the real-desktop checklist (needs a real desktop), and an allow-without-asking choice per adopted operation if the prompts prove too noisy.
 
 ## Implementation Files
 
@@ -238,6 +239,10 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/McpManager.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopMcpModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/McpManagerTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/EngineTools.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/EngineToolsTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineMcpTools.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/EngineMcpToolsTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayCheck.kt
   - docs/desktop-services-e2e.md
 ```

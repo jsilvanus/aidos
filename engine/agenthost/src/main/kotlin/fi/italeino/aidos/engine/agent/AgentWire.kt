@@ -42,6 +42,11 @@ data class AgentTurnRequest(
     val taintApprovalPolicy: String? = null,
     val modelChosenByMainModel: Boolean = false,
     val enforcedLocality: String? = null,
+    /**
+     * Also offer the operations of the MCP servers the user adopted on this Engine (RFC-0115). The Engine runs them
+     * itself; an operation that is not read only waits for the user's approval on every call. Default off.
+     */
+    val useEngineTools: Boolean = false,
 )
 
 @Serializable

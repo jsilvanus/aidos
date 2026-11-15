@@ -68,3 +68,7 @@ same layering as the model API (the strictest of the request, the app's limit an
 checks every model call of the turn, so a turn cannot reach a provider or peer its caller did not
 allow. Model calls inside the agent runtime go through the in-process inference manager, not through
 the Engine's own HTTP API.
+
+## Engine-side tools (RFC-0115)
+
+`POST /v1/agent/turns` accepts `useEngineTools` (default `false`). When `true`, the turn is also offered the operations of the MCP servers the user adopted in the Engine's Tools pane, named `<server>:<operation>`. Unlike the app's own tools these are not handed to the caller: the Engine runs them itself, and only operations the user adopted can run. Every call waits for the user's approval (shown in Connected Apps' approvals feed and the tray, with no arguments); no answer within a minute is a refusal, and the model sees an error for a refused call. A tool the app declares under the same name wins. The per-app agent grant (D49) is what allows an app to use this at all.
