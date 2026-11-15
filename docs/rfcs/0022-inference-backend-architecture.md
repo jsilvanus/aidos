@@ -321,3 +321,23 @@ files:
   - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionModelAdapter.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0022.1"
+    title: "ExecuTorch"
+    status: todo
+  - id: "0022.2"
+    title: "OpenVINO"
+    status: todo
+  - id: "0022.3"
+    title: "TensorRT"
+    status: todo
+  - id: "0022.4"
+    title: "zero-copy tensor interchange"
+    status: todo
+```

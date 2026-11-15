@@ -628,3 +628,32 @@ files:
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0020.1"
+    title: "adaptive routing"
+    status: todo
+  - id: "0020.2"
+    title: "cost optimization"
+    status: todo
+  - id: "0020.3"
+    title: "speculative decoding"
+    status: todo
+  - id: "0020.4"
+    title: "ensembles"
+    status: todo
+  - id: "0020.5"
+    title: "distillation"
+    status: todo
+  - id: "0020.6"
+    title: "voice-first"
+    status: todo
+  - id: "0020.7"
+    title: "streaming"
+    status: todo
+```

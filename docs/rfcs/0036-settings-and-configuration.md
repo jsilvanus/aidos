@@ -231,3 +231,23 @@ files:
   - schema/project.sql
   - schema/user.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0036.1"
+    title: "dynamic reconfiguration without restart"
+    status: todo
+  - id: "0036.2"
+    title: "import settings diff view"
+    status: todo
+  - id: "0036.3"
+    title: "policy profiles"
+    status: todo
+  - id: "0036.4"
+    title: "settings UI"
+    status: todo
+```

@@ -432,3 +432,20 @@ files:
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsStore.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/ModelDetailScreen.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0022.1"
+    title: "remote-model cookbook section"
+    status: todo
+  - id: "0022.2"
+    title: "cross-session auto-tuning"
+    status: todo
+  - id: "0022.3"
+    title: "on-device G3/M21 budget validation"
+    status: todo
+```

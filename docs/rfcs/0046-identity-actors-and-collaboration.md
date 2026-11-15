@@ -230,3 +230,20 @@ files:
   - schema/project.sql
   - schema/user.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0046.1"
+    title: "signed audit records"
+    status: todo
+  - id: "0046.2"
+    title: "operational state merge semantics"
+    status: todo
+  - id: "0046.3"
+    title: "multi-device attribution reporting"
+    status: todo
+```

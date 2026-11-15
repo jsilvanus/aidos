@@ -525,3 +525,29 @@ files:
   - agent/portability/src/jvmTest/kotlin/dev/aidos/portability/PortabilityCliTest.kt
   - agent/portability/src/jvmTest/kotlin/dev/aidos/portability/PortabilityTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0041.1"
+    title: "snapshot exports"
+    status: todo
+  - id: "0041.2"
+    title: "selective export"
+    status: todo
+  - id: "0041.3"
+    title: "incremental export"
+    status: todo
+  - id: "0041.4"
+    title: "cloud backup"
+    status: todo
+  - id: "0041.5"
+    title: "project merging"
+    status: todo
+  - id: "0041.6"
+    title: "UI"
+    status: todo
+```

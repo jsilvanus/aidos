@@ -321,3 +321,20 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0008.1"
+    title: "parallel Read execution"
+    status: todo
+  - id: "0008.2"
+    title: "tool descriptor caching/prompt-prefix reuse"
+    status: todo
+  - id: "0008.3"
+    title: "sub-agent tools"
+    status: todo
+```

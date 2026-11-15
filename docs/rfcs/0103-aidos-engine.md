@@ -761,3 +761,29 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0103.1"
+    title: "vision/multimodal endpoints"
+    status: todo
+  - id: "0103.2"
+    title: "cross-signature client trust"
+    status: todo
+  - id: "0103.3"
+    title: "remote/LAN exposure"
+    status: todo
+  - id: "0103.4"
+    title: "persisted per-app usage history"
+    status: todo
+  - id: "0103.5"
+    title: "remote-provider execution"
+    status: todo
+  - id: "0103.6"
+    title: "broader Android instrumented tests not yet run on a device"
+    status: todo
+```

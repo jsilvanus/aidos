@@ -288,3 +288,20 @@ files:
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/SqliteScheduledJobManagerTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/TriggerCalculatorTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0044.1"
+    title: "usage-driven opportunistic scheduling"
+    status: todo
+  - id: "0044.2"
+    title: "inline notification approval actions"
+    status: todo
+  - id: "0044.3"
+    title: "calendar trigger integration"
+    status: todo
+```

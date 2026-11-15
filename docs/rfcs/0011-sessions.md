@@ -822,3 +822,17 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SessionLifecycleRfc0011Test.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0011.1"
+    title: "session forking"
+    status: todo
+  - id: "0011.2"
+    title: "direct session-to-session messaging"
+    status: todo
+```

@@ -381,3 +381,23 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CrashRecoveryTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0006.1"
+    title: "mid-stream AI yield"
+    status: todo
+  - id: "0006.2"
+    title: "full continuation resumption for all async operation types"
+    status: todo
+  - id: "0006.3"
+    title: "compensation protocols"
+    status: todo
+  - id: "0006.4"
+    title: "configurable priority interrupt policies"
+    status: todo
+```

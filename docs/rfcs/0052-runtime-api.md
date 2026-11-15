@@ -761,3 +761,26 @@ files:
   - agent/git/src/jvmTest/kotlin/dev/aidos/git/JGitDiffServiceTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SocketRuntimeApiRoundTripTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0052.1"
+    title: "Remote home-server access"
+    status: todo
+  - id: "0052.2"
+    title: "GraphQL/gRPC transport"
+    status: todo
+  - id: "0052.3"
+    title: "frontend capability grants"
+    status: todo
+  - id: "0052.4"
+    title: "session recording"
+    status: todo
+  - id: "0052.5"
+    title: "multi-runtime spanning"
+    status: todo
+```

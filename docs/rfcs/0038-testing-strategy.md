@@ -316,3 +316,26 @@ files:
   - .github/workflows/ci.yml
   - .github/workflows/schema.yml
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0038.1"
+    title: "property-based testing"
+    status: todo
+  - id: "0038.2"
+    title: "fuzzing of tool arguments"
+    status: todo
+  - id: "0038.3"
+    title: "chaos testing"
+    status: todo
+  - id: "0038.4"
+    title: "UI tests"
+    status: todo
+  - id: "0038.5"
+    title: "performance benchmarks"
+    status: todo
+```

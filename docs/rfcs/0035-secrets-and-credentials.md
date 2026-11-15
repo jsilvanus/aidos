@@ -338,3 +338,20 @@ files:
   - schema/user.sql
   - schema/vault.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0035.1"
+    title: "breach-response report"
+    status: todo
+  - id: "0035.2"
+    title: "provider-assisted rotation"
+    status: todo
+  - id: "0035.3"
+    title: "Android hardware-backed attestation"
+    status: todo
+```

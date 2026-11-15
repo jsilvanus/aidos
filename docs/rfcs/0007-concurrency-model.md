@@ -349,3 +349,23 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch6RfcTests.kt
   - agent/lock/src/jvmTest/kotlin/dev/aidos/lock/ProjectLockTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0007.1"
+    title: "slow-subscriber Event Bus backpressure"
+    status: todo
+  - id: "0007.2"
+    title: "session priority queue"
+    status: todo
+  - id: "0007.3"
+    title: "distributed execution"
+    status: todo
+  - id: "0007.4"
+    title: "per-dispatcher starvation metrics"
+    status: todo
+```

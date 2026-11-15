@@ -243,3 +243,23 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/TestRuntime.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0048.1"
+    title: "runtime feature flags"
+    status: todo
+  - id: "0048.2"
+    title: "hot-swapping providers"
+    status: todo
+  - id: "0048.3"
+    title: "plugin service injection"
+    status: todo
+  - id: "0048.4"
+    title: "generated dependency diagram"
+    status: todo
+```

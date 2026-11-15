@@ -521,3 +521,26 @@ files:
   - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditIntegrityTest.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0003.1"
+    title: "encrypted secrets at rest"
+    status: todo
+  - id: "0003.2"
+    title: "OS-level sandboxing"
+    status: todo
+  - id: "0003.3"
+    title: "cryptographic audit verification"
+    status: todo
+  - id: "0003.4"
+    title: "capability certificates"
+    status: todo
+  - id: "0003.5"
+    title: "policy language"
+    status: todo
+```

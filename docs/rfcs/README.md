@@ -19,6 +19,10 @@ Every `IMPLEMENTED` RFC document MUST include a `Non-MVP Work:` header line imme
 - `Non-MVP Work: **None**` — if no Future Work / post-MVP items remain unimplemented.
 - `Non-MVP Work: **Remaining**` — if Future Work / post-MVP items remain unimplemented, optionally followed by a brief parenthetical summary.
 
+### Post-MVP checklist
+
+Every RFC whose header says `Non-MVP Work: **Remaining**` MUST carry a `## Post-MVP Work` section with a fenced `yaml` block (`post_mvp:` list). Each item has a stable `id` (`<rfc number>.<n>`, never reused), `title`, `status` (`todo`, `partial`, `done`), and optionally `phase` (a label such as `P1` for items that chain), `depends_on`, `done_when` (one line, also usable as a semantic-search query) and `files`. `partial` and `done` items must list `files` that exist. When every item is `done`, change the header to `Non-MVP Work: **None**`. `python3 scripts/rfc/postmvp.py --report` validates the blocks and prints completion per RFC; CI runs it (`schema.yml`).
+
 ### Accepted is not implemented
 
 Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, two (0046, and 0036 since 2026-11-10) are fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.

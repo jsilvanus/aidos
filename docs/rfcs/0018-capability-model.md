@@ -550,3 +550,26 @@ files:
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0018.1"
+    title: "delegation attenuation validation"
+    status: todo
+  - id: "0018.2"
+    title: "capability certificates"
+    status: todo
+  - id: "0018.3"
+    title: "policy language"
+    status: todo
+  - id: "0018.4"
+    title: "time-bounded renewal"
+    status: todo
+  - id: "0018.5"
+    title: "bundles"
+    status: todo
+```

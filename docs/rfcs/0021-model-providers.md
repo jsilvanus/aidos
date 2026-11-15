@@ -284,3 +284,23 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0021.1"
+    title: "additional remote adapters"
+    status: todo
+  - id: "0021.2"
+    title: "streaming"
+    status: todo
+  - id: "0021.3"
+    title: "batch/cached-prefix APIs"
+    status: todo
+  - id: "0021.4"
+    title: "published provider SPI"
+    status: todo
+```

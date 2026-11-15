@@ -446,3 +446,26 @@ files:
   - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/PrivacyAndProvenanceRfc0025Test.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0024.1"
+    title: "cross-project references"
+    status: todo
+  - id: "0024.2"
+    title: "content-addressed deduplication"
+    status: todo
+  - id: "0024.3"
+    title: "semantic tagging"
+    status: todo
+  - id: "0024.4"
+    title: "differential promotion"
+    status: todo
+  - id: "0024.5"
+    title: "sensitivity inference"
+    status: todo
+```

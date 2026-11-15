@@ -278,3 +278,26 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/StructuredLoggerTest.kt
   - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/DiagnoseCommandTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0037.1"
+    title: "`TRACE` mode"
+    status: todo
+  - id: "0037.2"
+    title: "OpenTelemetry adapter"
+    status: todo
+  - id: "0037.3"
+    title: "remote telemetry backend"
+    status: todo
+  - id: "0037.4"
+    title: "metric retention beyond the default window"
+    status: todo
+  - id: "0037.5"
+    title: "desktop status endpoint"
+    status: todo
+```

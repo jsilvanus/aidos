@@ -666,3 +666,23 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TaskAppendingTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0019.1"
+    title: "parallel intra-Run `DEPENDS_ON` execution"
+    status: todo
+  - id: "0019.2"
+    title: "compensation graphs"
+    status: todo
+  - id: "0019.3"
+    title: "execution graph visualization"
+    status: todo
+  - id: "0019.4"
+    title: "cross-session provenance"
+    status: todo
+```

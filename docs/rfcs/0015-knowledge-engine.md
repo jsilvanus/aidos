@@ -442,3 +442,26 @@ files:
   - agent/knowledge/src/jvmTest/kotlin/dev/aidos/knowledge/KnowledgeServiceIntegrationTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0015.1"
+    title: "uncommitted-content indexing"
+    status: todo
+  - id: "0015.2"
+    title: "structural graph and symbol-level identity"
+    status: todo
+  - id: "0015.3"
+    title: "multi-repo and cross-project search"
+    status: todo
+  - id: "0015.4"
+    title: "ranking-weight tuning"
+    status: todo
+  - id: "0015.5"
+    title: "on-device (Android instrumented) validation"
+    status: todo
+```

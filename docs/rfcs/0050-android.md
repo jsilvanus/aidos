@@ -437,3 +437,20 @@ files:
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/ui/editor/EditorPresenterTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0050.1"
+    title: "Camera/OCR"
+    status: todo
+  - id: "0050.2"
+    title: "wearable companion"
+    status: todo
+  - id: "0050.3"
+    title: "paired execution delegation"
+    status: todo
+```

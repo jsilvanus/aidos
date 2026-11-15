@@ -432,3 +432,23 @@ files:
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanPairingEndToEndTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanEndToEndTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0051.1"
+    title: "Android LAN listener and TLS identity"
+    status: todo
+  - id: "0051.2"
+    title: "Android UI for adding devices"
+    status: todo
+  - id: "0051.3"
+    title: "per-device permissions beyond inference access"
+    status: todo
+  - id: "0051.4"
+    title: "signed manual descriptors"
+    status: todo
+```

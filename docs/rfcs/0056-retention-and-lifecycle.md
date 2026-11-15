@@ -296,3 +296,23 @@ files:
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0056.1"
+    title: "cold export"
+    status: todo
+  - id: "0056.2"
+    title: "Git content verification before compaction"
+    status: todo
+  - id: "0056.3"
+    title: "Stage 2 DERIVED eviction"
+    status: todo
+  - id: "0056.4"
+    title: "retention UI"
+    status: todo
+```

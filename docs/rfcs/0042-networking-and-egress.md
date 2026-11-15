@@ -317,3 +317,20 @@ files:
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0042.1"
+    title: "per-destination byte budgets"
+    status: todo
+  - id: "0042.2"
+    title: "pre-flight egress preview"
+    status: todo
+  - id: "0042.3"
+    title: "Tor/proxy-chain transport"
+    status: todo
+```

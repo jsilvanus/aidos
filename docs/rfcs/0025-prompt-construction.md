@@ -473,3 +473,26 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ProvenanceAndErrorTaxonomyTest.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0025.1"
+    title: "adaptive context compression"
+    status: todo
+  - id: "0025.2"
+    title: "multi-modal context"
+    status: todo
+  - id: "0025.3"
+    title: "project prompt templates"
+    status: todo
+  - id: "0025.4"
+    title: "adversarial input scanning beyond secret redaction"
+    status: todo
+  - id: "0025.5"
+    title: "model-specific tokenizers"
+    status: todo
+```

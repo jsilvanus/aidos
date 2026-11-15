@@ -287,3 +287,25 @@ files:
   - schema/project.sql
   - schema/user.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0027.1"
+    title: "configurable attenuation policy"
+    status: todo
+  - id: "0027.2"
+    title: "taint-aware context assembly"
+    status: todo
+  - id: "0027.3"
+    title: "injection-pattern detection"
+    status: todo
+  - id: "0027.4"
+    title: "RFC-0110 Guardian escalation"
+    status: done
+    files:
+      - docs/rfcs/0110-optional-guardian-approval.md
+```
