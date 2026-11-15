@@ -1,8 +1,8 @@
 # RFC-0115: Desktop Background Services and the App as a UI over Them
 
-Status: Draft (planning, 2026-11-15). Nothing here is built. Decisions D55 to D61 below (tentatively numbered, Proposed in `docs/decisions.md`) are open and need the owner's answer before implementation starts.
+Status: Draft (planning, 2026-11-15). Nothing here is built. D55 (three parties), D58 (loopback admin API) and D59 (keep running, tray icon) are settled; D56 is amended (per-user by default, system service when installed as administrator); D57, D60 and D61 are open (`docs/decisions.md`).
 
-Decisions: D55 to D61 (Proposed).
+Decisions: D55 (settled), D56 (amended), D57 (open), D58 (settled), D59 (settled), D60 (open), D61 (open).
 
 Related: RFC-0002 (runtime), RFC-0051 (LAN sharing), RFC-0055 (runtime socket and lock), RFC-0103 (Aidos Engine), RFC-0107/0108 (remote agent hosting, remote routes), RFC-0033 (Shell), RFC-0035 (secrets), `docs/TCR_UI_DEVELOPMENT_MANUAL.md`.
 
@@ -74,15 +74,24 @@ New routes under `/v1/admin/` on the Engine's **loopback** listener only (never 
 
 ### Service installation
 
-Per user, started at login, restarted on failure, logs under `~/.aidos/logs`:
+Two modes (D56). **Per user** (default, no administrator rights): started at login, restarted on failure, logs under `~/.aidos/logs`. **System** (when the installer is run as administrator and the user chooses it): started at boot as a named user account, never SYSTEM or root, since the data and vault are per user; before that user logs in there is no OS keystore session, so the vault runs in passphrase mode and the services start with it locked until unlocked. The tray (below) shows "locked" and asks for the passphrase. Per-user mechanisms:
 
 | OS | Mechanism | Notes |
 |---|---|---|
 | Windows | Scheduled Task "At log on" running the packaged launcher (no admin rights), or a Windows service via a wrapper if D2 says so | No Unix `chmod`: see D597 |
-| macOS | `launchd` user agent (`~/Library/LaunchAgents`) | |
-| Linux | `systemd --user` unit | `loginctl enable-linger` is optional and documented |
+| macOS | `launchd` user agent (`~/Library/LaunchAgents`), or a launchd daemon with `UserName` (system mode) | |
+| Linux | `systemd --user` unit (`loginctl enable-linger` optional), or a system unit with `User=` (system mode) | |
 
 The app installs and removes these ("Run in background" setting), shows state, and can start or stop them. Packaging adds a headless launcher for each service (`aidos-engine`, existing `aidos-daemon`) and the module split in finding 6: `DesktopEngineHost` and its collaborators move to a non-Compose module `engine/desktopengine` used by both the Compose app (in-process) and a new headless `main`.
+
+### Tray icon, notifications and quick approvals (D59)
+
+Closing the window leaves the services running, so something must still show that they are, and let the user act on them. A separate lightweight **tray process** (`aidos-tray`, started at login, cheap enough to stay resident; the Compose window is launched on demand) provides:
+
+- **Context menu:** Open Aidos (starts or focuses the window); for each service (Engine, Agent runtime) its state with Start, Stop and Restart; Close daemon (stops the Agent runtime and, if the user chooses, the Engine); Run on login on or off; Quit tray. State is colour-coded on the icon (running, needs attention, stopped, vault locked).
+- **Quick approvals:** every service publishes a *pending approvals* feed that the tray subscribes to: new-app approval requests (`AppApprovalStatus.PENDING`), tool-call approvals on tainted remote runs (`ToolApprovalQueue`, which refuses after a minute), capability and effect approvals parked by the Agent runtime, and LAN device pairing requests. A new item raises an OS toast; clicking the toast or the tray icon opens a small popup listing the pending items with Approve and Deny. Toasts themselves are informational (cross-platform toasts cannot carry reliable buttons), and the decision always happens in the popup, so the same path works on all three systems.
+- **What it must not do:** approve anything without a click, cache an approval, or show content (arguments, file text) in a toast; a toast names who is asking and what kind of thing, nothing more. Approvals keep the semantics of their source (per call, timeout is refusal).
+- **Needs from the services:** a pending-approvals stream and decide calls on both control interfaces (`EngineControl` and the Agent socket), a state and start/stop/restart surface, and the vault-locked state.
 
 ### Security
 
@@ -93,6 +102,7 @@ The app installs and removes these ("Run in background" setting), shows state, a
 
 ## Phases
 
+0. **Tray and approvals feed.** Needs the services' pending-approvals streams first, so it lands with phases 2 and 3; the first useful cut is state, start/stop and the approvals popup for what the Engine already queues.
 1. **Foundations.** Split `engine/desktopengine` out of the Compose app; fix the Windows token ACL; make the daemon read `~/.aidos/engine.json` for the Engine URL and token when the environment variables are not set.
 2. **Agent attach.** App picks `SocketRuntimeClient` when the daemon answers, else the in-process client; single-writer rule; reconnect handling. Small, and removes the dual-database risk first.
 3. **EngineControl.** Define the interface and `LocalEngineControl`, move the models onto it with no behaviour change (this is where the tests catch regressions), then add `/v1/admin/` and `HttpEngineControl` one group at a time.
@@ -107,15 +117,15 @@ The app installs and removes these ("Run in background" setting), shows state, a
 
 ## Decisions needed before implementation (Proposed: D55 to D61)
 
-**D55 (was D1). Topology.** (a) UI, Engine service and Agent service as three parties (recommended; matches how the code is already split and how the daemon already reaches the Engine). (b) One combined service: needs merging two Gradle builds and the native runtime into the daemon for no functional gain.
+**D55 (was D1, settled: three parties).** (a) UI, Engine service and Agent service as three parties (recommended; matches how the code is already split and how the daemon already reaches the Engine). (b) One combined service: needs merging two Gradle builds and the native runtime into the daemon for no functional gain.
 
-**D56 (was D2). What "service" means per OS.** (a) Per-user background process started at login (Scheduled Task, launchd agent, `systemd --user`) (recommended: no admin rights, the vault and keystore are per user). (b) A true system service per OS (runs before login, needs elevation to install, cannot reach the user's keystore without extra work).
+**D56 (was D2, amended: both modes).** Settled direction: per user by default, system service when installed as administrator (see Service installation). Original question: what "service" means per OS. (a) Per-user background process started at login (Scheduled Task, launchd agent, `systemd --user`) (recommended: no admin rights, the vault and keystore are per user). (b) A true system service per OS (runs before login, needs elevation to install, cannot reach the user's keystore without extra work).
 
 **D57 (was D3). Windows transport and token protection.** (a) Keep the Unix socket (Java supports it on Windows 10+) and add an owner-only ACL on the token file. (b) Loopback TCP with the token in an owner-only ACL file (works everywhere, easier to probe and debug, but a port any local process can try). Recommendation: (a), with (b) as the fallback if a Java or OS version lacks it.
 
-**D58 (was D4). Where the Engine's management API lives.** (a) New `/v1/admin/` routes on the Engine's loopback listener, same token (recommended). (b) A second socket for control. (c) Reuse the Agent wire protocol, which would mix two services' concerns.
+**D58 (was D4, accepted; may be revisited). Where the Engine's management API lives.** (a) New `/v1/admin/` routes on the Engine's loopback listener, same token (recommended). (b) A second socket for control. (c) Reuse the Agent wire protocol, which would mix two services' concerns.
 
-**D59 (was D5). Default when the app closes.** (a) If the services are installed, leave them running (the point of the feature); if not, behave as today (recommended). (b) Always ask. (c) Always stop.
+**D59 (was D5, settled: keep running, with a tray icon). Default when the app closes.** (a) If the services are installed, leave them running (the point of the feature); if not, behave as today (recommended). (b) Always ask. (c) Always stop.
 
 **D60 (was D6). Scope of the first release.** (a) Both stages in the order above, Agent attach first (recommended). (b) Agent attach only, leave the Engine in the app until later. (c) Engine only. Recommendation includes shipping phase 2 on its own, since it removes the two-writer risk even without the Engine work.
 
