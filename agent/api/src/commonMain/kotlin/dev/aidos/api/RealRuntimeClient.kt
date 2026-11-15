@@ -1,6 +1,9 @@
 package dev.aidos.api
 
 import app.cash.sqldelight.db.QueryResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
 import dev.aidos.identity.ProjectRegistry
@@ -283,6 +286,78 @@ class RealRuntimeClient : RuntimeClient {
                 }
                 CapabilitySummary(cap.id.value, cap.permission.name, scope, cap.expiresAt)
             }
+    }
+
+    /**
+     * RFC-0113: `scope` for a `BLINDED_QUERY` or `MESSAGE_SEND` grant is `bridge:` followed by `;`-separated
+     * `schemas=A,B`, `targets=<projectId>,...` and `channels=sms,matrix` lists, for example
+     * `bridge:schemas=CheckAvailability;targets=life-1`. A list that is left out is empty, which allows
+     * nothing: cross-project authority is always named. Returns null (placeholder behaviour) when this
+     * host cannot persist capabilities or the session is unknown.
+     */
+    private suspend fun realBridgeGrant(request: GrantCapabilityRequest): CapabilityResult? {
+        val factory = capabilityManagerFor ?: return null
+        val session = _sessions[request.sessionId] ?: return null
+        val driver = _openProjectDrivers[session.projectId] ?: return null
+        val parts = request.scope?.removePrefix("bridge:").orEmpty().split(';')
+            .mapNotNull { part -> part.split('=', limit = 2).takeIf { it.size == 2 } }
+            .associate { (key, value) -> key.trim() to value.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
+        val permission = dev.aidos.kernel.Permission.valueOf(request.permission)
+        val result = factory(driver).grant(
+            subjectId = request.sessionId,
+            subjectKind = dev.aidos.kernel.SubjectKind.SESSION,
+            permission = permission,
+            scope = dev.aidos.kernel.CapabilityScope.Bridge(
+                allowedQuerySchemas = parts["schemas"].orEmpty(),
+                targetProjectIds = parts["targets"].orEmpty(),
+                allowedChannels = parts["channels"].orEmpty(),
+            ),
+            constraints = dev.aidos.kernel.CapabilityConstraints(),
+            expiresAt = request.expiresAt,
+            grantedBy = dev.aidos.kernel.UserId("user"),
+        )
+        return result.fold(
+            onSuccess = {
+                _realCapabilityProjects[it.id.value] = session.projectId
+                CapabilityResult.Success(it.id.value)
+            },
+            onFailure = { CapabilityResult.Error("capability.grant_failed", it.message ?: "grant refused") },
+        )
+    }
+
+    private fun parkedEgressIn(projectId: String, driver: SqlDriver): List<ParkedEgressRequest> {
+        val parked = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT run_id, operation_detail_json FROM continuations WHERE suspended_operation = 'TOOL_CALL'",
+            mapper = { cursor ->
+                val out = mutableListOf<Pair<String, String>>()
+                while (cursor.next().value) out += cursor.getString(0)!! to cursor.getString(1)!!
+                QueryResult.Value(out)
+            },
+            parameters = 0,
+        ).value
+        return parked.mapNotNull { (runId, detailJson) ->
+            // The continuation names the one call that is parked; a Run's history may hold others.
+            val detail = runCatching { Json.parseToJsonElement(detailJson).jsonObject }.getOrNull() ?: return@mapNotNull null
+            if (detail["toolName"]?.jsonPrimitive?.content != "message:send") return@mapNotNull null
+            val callId = detail["callId"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            val argumentsJson = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT arguments_json FROM tool_calls WHERE call_id = ? AND tool_name = 'message:send'",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, callId) }.value ?: return@mapNotNull null
+            val arguments = runCatching { Json.parseToJsonElement(argumentsJson).jsonObject }.getOrNull() ?: return@mapNotNull null
+            fun arg(name: String) = arguments[name]?.jsonPrimitive?.content
+            ParkedEgressRequest(
+                runId = runId,
+                projectId = projectId,
+                channel = arg("channel") ?: return@mapNotNull null,
+                recipient = arg("recipient") ?: return@mapNotNull null,
+                payload = arg("payload") ?: return@mapNotNull null,
+                reason = arg("reason"),
+            )
+        }
     }
 
     /** Opens (or reuses an already-open) driver for a project's own state.db. */
@@ -806,6 +881,9 @@ class RealRuntimeClient : RuntimeClient {
     override val capabilities: CapabilityCommands = object : CapabilityCommands {
         override suspend fun grant(request: GrantCapabilityRequest): CapabilityResult {
             if (request.permission == "SHELL_EXEC") realShellGrant(request)?.let { return it }
+            if (request.permission == "BLINDED_QUERY" || request.permission == "MESSAGE_SEND") {
+                realBridgeGrant(request)?.let { return it }
+            }
             val id = nextId()
             _capabilities[id] = CapabilitySummary(id, request.permission, request.scope, request.expiresAt)
             return CapabilityResult.Success(id)
@@ -826,6 +904,11 @@ class RealRuntimeClient : RuntimeClient {
 
         override suspend fun listPending(): List<PendingCapabilityRequest> =
             _pendingCapabilities.toList()
+
+        // RFC-0113: read straight from the durable parked state (the TOOL_CALL continuation and the
+        // tool_calls row it points at), so a restart or a second process sees the same queue.
+        override suspend fun listParkedEgress(): List<ParkedEgressRequest> =
+            _openProjectDrivers.flatMap { (projectId, driver) -> parkedEgressIn(projectId, driver) }
 
         override suspend fun approve(requestId: String): CapabilityResult {
             val req = _pendingCapabilities.firstOrNull { it.requestId == requestId }

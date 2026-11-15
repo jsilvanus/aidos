@@ -13,6 +13,7 @@ kotlin {
                 implementation(project(":intent"))
                 implementation(project(":settings"))
                 implementation(project(":broker"))
+                implementation("app.cash.sqldelight:runtime:2.0.2")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

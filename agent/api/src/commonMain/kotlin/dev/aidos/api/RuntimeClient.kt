@@ -174,6 +174,13 @@ interface CapabilityCommands {
     suspend fun revoke(capabilityId: String)
     suspend fun list(sessionId: String): List<CapabilitySummary>
     suspend fun listPending(): List<PendingCapabilityRequest>
+
+    /**
+     * RFC-0113 §4.3: outbound messages a zero-egress project's agent wants to send, parked until a
+     * person decides. Approve or deny with [approveEffect] / [denyEffect] using [ParkedEgressRequest.runId].
+     * Hosts that cannot read project state return an empty list.
+     */
+    suspend fun listParkedEgress(): List<ParkedEgressRequest> = emptyList()
     suspend fun approve(requestId: String): CapabilityResult
     suspend fun deny(requestId: String, reason: String)
     suspend fun approveEffect(runId: String, taskId: String): CapabilityResult
@@ -206,6 +213,19 @@ data class CapabilitySummary(
     val scope: String?,
     val expiresAt: Instant?,
 )
+
+/** A `message:send` call waiting for a person's declassification decision (RFC-0113 §4.3). */
+data class ParkedEgressRequest(
+    val runId: String,
+    val projectId: String,
+    val channel: String,
+    val recipient: String,
+    val payload: String,
+    val reason: String? = null,
+) {
+    /** Lowercase hex SHA-256 of [payload]: what the approval's declassification grant is bound to. */
+    val payloadFingerprint: String get() = PayloadFingerprint.sha256Hex(payload)
+}
 
 data class PendingCapabilityRequest(
     val requestId: String,

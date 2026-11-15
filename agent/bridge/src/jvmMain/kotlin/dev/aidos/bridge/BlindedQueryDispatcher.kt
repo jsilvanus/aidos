@@ -174,6 +174,12 @@ class DefaultIngressTaskHandler(
     private val repository: IntentGraphRepository? = null,
     private val idGen: () -> String = { UUID.randomUUID().toString() },
     private val nowIso: () -> String = { Clock.System.now().toString() },
+    /**
+     * How a proposed task is dispatched. The default keeps the RFC-0113 §4.1 sketch (an unblocked
+     * task); the daemon passes [NodeDispatchPolicy.MANUAL_START], because the summary is text an
+     * outside party wrote and must not start an agent run on its own (RFC-0113 §5).
+     */
+    private val dispatchPolicy: NodeDispatchPolicy = NodeDispatchPolicy.AUTO_WHEN_READY,
 ) : IngressTaskHandler {
     private val inMemoryTasks = mutableMapOf<String, IntentNodeRecord>()
 
@@ -190,7 +196,7 @@ class DefaultIngressTaskHandler(
             lifecycle = IntentLifecycle.ACTIVE,
             parentId = proposal.suggestedParentGoalId,
             actorKind = IntentActorKind.AGENT,
-            dispatchPolicy = NodeDispatchPolicy.AUTO_WHEN_READY,
+            dispatchPolicy = dispatchPolicy,
             granularity = IntentGranularity.ATOMIC,
             targetProfile = null,
             minLocality = null,
@@ -228,7 +234,7 @@ class DefaultIngressTaskHandler(
                 priority = 100,
                 parentId = proposal.suggestedParentGoalId,
                 actorKind = IntentActorKind.AGENT,
-                dispatchPolicy = NodeDispatchPolicy.AUTO_WHEN_READY,
+                dispatchPolicy = dispatchPolicy,
                 granularity = IntentGranularity.ATOMIC,
                 tags = record.tags,
                 createdBy = actor,

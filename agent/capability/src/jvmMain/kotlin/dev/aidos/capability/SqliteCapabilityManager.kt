@@ -855,6 +855,17 @@ class SqliteCapabilityManager(
                     null
                 }
             }
+            parentScope is CapabilityScope.Bridge && delegatedScope is CapabilityScope.Bridge -> {
+                if (!parentScope.allowedQuerySchemas.containsAll(delegatedScope.allowedQuerySchemas)) {
+                    "bridge delegated query schemas not contained in parent"
+                } else if (!parentScope.targetProjectIds.containsAll(delegatedScope.targetProjectIds)) {
+                    "bridge delegated target projects not contained in parent"
+                } else if (!parentScope.allowedChannels.containsAll(delegatedScope.allowedChannels)) {
+                    "bridge delegated channels not contained in parent"
+                } else {
+                    null
+                }
+            }
             parentScope::class != delegatedScope::class -> {
                 "scope type mismatch: parent is ${parentScope::class.simpleName}, delegated is ${delegatedScope::class.simpleName}"
             }
@@ -1010,6 +1021,7 @@ private fun CapabilityScope.projectId(): ProjectId? = when (this) {
     is CapabilityScope.Model -> null
     is CapabilityScope.Worker -> null
     is CapabilityScope.Events -> null
+    is CapabilityScope.Bridge -> null
 }
 
 /**
@@ -1070,6 +1082,12 @@ private fun CapabilityScope.toJson(): JsonElement = buildJsonObject {
             put("type", "events")
             put("topic_patterns", buildJsonArray { topicPatterns.forEach { add(it) } })
         }
+        is CapabilityScope.Bridge -> {
+            put("type", "bridge")
+            put("allowed_query_schemas", buildJsonArray { allowedQuerySchemas.sorted().forEach { add(it) } })
+            put("target_project_ids", buildJsonArray { targetProjectIds.sorted().forEach { add(it) } })
+            put("allowed_channels", buildJsonArray { allowedChannels.sorted().forEach { add(it) } })
+        }
     }
 }
 
@@ -1113,6 +1131,11 @@ private fun parseScope(json: String, fallbackProjectId: ProjectId): CapabilitySc
             allowedRoles = strings("allowed_roles").map { SessionRole.valueOf(it) }.toSet(),
         )
         "events" -> CapabilityScope.Events(topicPatterns = strings("topic_patterns"))
+        "bridge" -> CapabilityScope.Bridge(
+            allowedQuerySchemas = strings("allowed_query_schemas").toSet(),
+            targetProjectIds = strings("target_project_ids").toSet(),
+            allowedChannels = strings("allowed_channels").toSet(),
+        )
         // "filesystem", or a legacy row from before this fix (no "type" tag; the raw string was
         // the whole scope_json — never valid JSON for any other variant, so this remains a safe
         // default): treat the whole thing as a Filesystem scope, same as the pre-fix behaviour.
