@@ -85,7 +85,7 @@ fun main(args: Array<String>) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Swing)
     val models = DesktopModels(host, prefs, scope)
 
-    if (prefs.data.value.autoStartEngine) {
+    if (EngineAttach.shouldStartOwnEngine(prefs.data.value.autoStartEngine)) {
         scope.launch { host.start() }
     }
 

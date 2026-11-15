@@ -4,6 +4,8 @@ import fi.italeino.aidos.engine.control.HttpLanControl
 import fi.italeino.aidos.engine.control.AppsControl
 import fi.italeino.aidos.engine.control.ApprovalsControl
 import fi.italeino.aidos.engine.control.HttpAppsControl
+import fi.italeino.aidos.engine.control.HttpStatusControl
+import fi.italeino.aidos.engine.control.StatusControl
 import fi.italeino.aidos.engine.control.HttpApprovalsControl
 import fi.italeino.aidos.engine.control.HttpPeersControl
 import fi.italeino.aidos.engine.control.HttpTunnelsControl
@@ -55,4 +57,13 @@ object EngineAttach {
 
     fun appsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): AppsControl =
         running?.let { HttpAppsControl(it.baseUrl, it.token) } ?: LocalAppsControl(host)
+
+    /**
+     * The app starts its own Engine only when the user wants that ([autoStart]) and no Engine service already owns
+     * `engine.json`: a second Engine would fight for the port and overwrite the discovery file (RFC-0115, D61).
+     */
+    fun shouldStartOwnEngine(autoStart: Boolean, running: RunningEngine? = runningEngine()): Boolean = autoStart && running == null
+
+    fun statusControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): StatusControl =
+        running?.let { HttpStatusControl(it.baseUrl, it.token) } ?: LocalStatusControl(host)
 }

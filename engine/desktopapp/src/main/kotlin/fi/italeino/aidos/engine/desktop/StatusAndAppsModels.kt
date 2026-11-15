@@ -31,7 +31,12 @@ import kotlinx.coroutines.withContext
  * Desktop counterpart of Android's StatusViewModel: polls the in-process host every 2 s, as the
  * Android Home screen does while visible (RAM and resident models change without UI events).
  */
-class DesktopStatusModel(private val host: DesktopEngineHost, private val scope: CoroutineScope) {
+class DesktopStatusModel(
+    private val host: DesktopEngineHost,
+    private val scope: CoroutineScope,
+    private val status: () -> fi.italeino.aidos.engine.control.StatusControl = { LocalStatusControl(host) },
+    private val apps: () -> fi.italeino.aidos.engine.control.AppsControl = { LocalAppsControl(host) },
+) {
     private val _state = MutableStateFlow(StatusUiState())
     val state: StateFlow<StatusUiState> = _state.asStateFlow()
 
@@ -46,45 +51,31 @@ class DesktopStatusModel(private val host: DesktopEngineHost, private val scope:
 
     fun toggleEngine() {
         scope.launch {
+            // An Engine service already owns the port and engine.json: starting a second one would break it.
+            if (!host.isRunning.value && !EngineAttach.shouldStartOwnEngine(autoStart = true)) return@launch
             if (host.isRunning.value) host.stop() else host.start()
             refresh()
         }
     }
 
     suspend fun refresh() {
-        val approvals = host.approvalStore.listAllApprovals()
-        val runtime = host.modelRuntime
-        val resident = if (runtime == null) emptyList() else {
-            val installedById = withContext(Dispatchers.IO) {
-                host.catalogManager.listInstalled().getOrNull()
-            }.orEmpty().associateBy { it.modelId }
-            val now = System.currentTimeMillis()
-            runtime.loaded().map { id ->
-                val installed = installedById[id]
-                ResidentModel(
-                    id = id,
-                    displayName = installed?.userLabel ?: id,
-                    quantization = installed?.quantization ?: "unknown",
-                    loadedAgoMs = runtime.loadedAtMillis(id)?.let { now - it } ?: 0L,
-                )
-            }
+        try {
+            val info = status().status()
+            val approvals = apps().list()
+            _state.value = StatusUiState(
+                isEngineRunning = info.running,
+                engineStateName = info.stateName,
+                residentModels = info.residentModels.map { ResidentModel(it.id, it.displayName, it.quantization, it.loadedAgoMs) },
+                memory = DesktopDevice.memory(),
+                freeStorageGb = DesktopDevice.freeStorageGb(),
+                approvedApps = approvals.filter { it.status == AppApprovalStatus.APPROVED }.map { it.displayName },
+                pendingAppCount = approvals.count { it.status == AppApprovalStatus.PENDING },
+                linkedPeerCount = info.linkedPeerCount,
+            )
+        } catch (_: Exception) {
+            // The Engine service stopped answering: show it as off rather than a stale "running".
+            _state.value = _state.value.copy(isEngineRunning = false, engineStateName = "OFF")
         }
-        val port = host.boundPort.value
-        _state.value = StatusUiState(
-            isEngineRunning = host.isRunning.value,
-            // EngineState has no "stopped" value (Android shows STARTING when off); say OFF here.
-            engineStateName = when {
-                host.isRunning.value && port != null -> "${host.state.value.name} · 127.0.0.1:$port"
-                host.state.value == EngineState.STARTING && !host.isRunning.value -> "OFF"
-                else -> host.state.value.name
-            },
-            residentModels = resident,
-            memory = DesktopDevice.memory(),
-            freeStorageGb = DesktopDevice.freeStorageGb(),
-            approvedApps = approvals.filter { it.status == AppApprovalStatus.APPROVED }.map { it.displayName },
-            pendingAppCount = approvals.count { it.status == AppApprovalStatus.PENDING },
-            linkedPeerCount = host.aidin.value?.peers?.value?.count { it.connected } ?: 0,
-        )
     }
 }
 

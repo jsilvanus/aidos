@@ -79,4 +79,12 @@ class AppsControlTest {
         model.setAgentAllowed(id, true)
         eventually("agent allowed") { model.approvals.value.single { it.packageName == id }.agentAllowed }
     }
+
+    @Test
+    fun `the app does not start its own Engine while a service already runs`() {
+        val live = RunningEngine("http://127.0.0.1:1", "t", 7)
+        assertFalse(EngineAttach.shouldStartOwnEngine(autoStart = true, running = live))
+        assertTrue(EngineAttach.shouldStartOwnEngine(autoStart = true, running = null))
+        assertFalse(EngineAttach.shouldStartOwnEngine(autoStart = false, running = null))
+    }
 }

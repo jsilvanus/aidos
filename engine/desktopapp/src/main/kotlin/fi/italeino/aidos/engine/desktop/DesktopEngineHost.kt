@@ -364,6 +364,7 @@ class DesktopEngineHost(
                 tunnelsControl = LocalTunnelsControl(this),
                 peersControl = LocalPeersControl(this),
                 appsControl = LocalAppsControl(this),
+                statusControl = LocalStatusControl(this),
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),

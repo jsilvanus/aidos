@@ -123,3 +123,8 @@ internal fun Route.adminAppsRoutes(control: fi.italeino.aidos.engine.control.App
     put("/v1/admin/apps/{id}/agent-allowed") { admin(call) { answer(call, control.setAgentAllowed(id(call), call.receive<fi.italeino.aidos.engine.control.AppAgentAllowedRequest>().allowed)) } }
     put("/v1/admin/apps/{id}/locality-limit") { admin(call) { answer(call, control.setLocalityLimit(id(call), call.receive<fi.italeino.aidos.engine.control.AppLocalityLimitRequest>().limit)) } }
 }
+
+/** `GET /v1/admin/status`: whether the Engine is up and what it holds (RFC-0115). Loopback and admin only. */
+internal fun Route.adminStatusRoute(control: fi.italeino.aidos.engine.control.StatusControl, adminSubjects: Set<String>) {
+    get("/v1/admin/status") { adminGuard(call, adminSubjects) { call.respond(control.status()) } }
+}

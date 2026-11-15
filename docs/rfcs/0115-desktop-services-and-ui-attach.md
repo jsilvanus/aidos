@@ -147,7 +147,9 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Tunnels group, done:** `TunnelsControl` with `LocalTunnelsControl` and `HttpTunnelsControl`, `/v1/admin/tunnels` (list, create, probe, confirm, start, stop, rotate-key, delete; loopback and admin only), the Tunnels presenter knows only the interface and `EngineAttach.tunnelsControl` picks the implementation. The same create-probe-confirm-start walk is tested in-process and through the admin API.
 - **Peers and remote access group, done:** `PeersControl` (status, hosting switch, preferred hosts, remote access, hints, tool allowlists) with Local and Http implementations and `/v1/admin/peers`; tool approvals are answered through the approvals feed (`tool:<id>`). The Peers presenter knows only the two interfaces and runs its actions one at a time. The switches and a tool prompt are tested in-process and through the admin API against a real paired node.
 - **Connected apps group, done:** `AppsControl` (list, approve, deny, revoke, undo deny, agent use, locality limit; an unknown app is `false`, a bad limit is an error) with Local and Http implementations and `/v1/admin/apps`; the Connected Apps presenter polls it and keeps the last list through a failed poll. Tested through the admin API against the real store. The debug handshake button stays on the in-process host.
-- **Next:** the models and status groups, vault passphrase mode for system installs, not starting the app's own Engine when a service is already running, and trying the installers on a real Windows task / Linux unit.
+- **Status group and no second Engine, done:** `StatusControl` (running, state name with port, resident models, linked peers) with Local and Http implementations and `GET /v1/admin/status`; the Home presenter composes it with `AppsControl`, and shows OFF when the service stops answering. The app no longer starts its own Engine, nor lets the toggle start one, while a live Engine service owns `engine.json`.
+- **Known gap until the models group lands:** with a service running and the window attached, the Models and Agents panes still read the in-process host, which is not started, so they show nothing; Status, Apps, Sharing, Peers and Tunnels are attached.
+- **Next:** the models group (catalog, installs, load and unload) and the agents pane, vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -199,4 +201,8 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalAppsControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/StatusAndAppsModels.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AppsControlTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/StatusControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpStatusControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalStatusControl.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/StatusControlTest.kt
 ```
