@@ -323,3 +323,27 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseThreeTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`).
+
+```yaml
+post_mvp:
+  - id: "0113.1"
+    title: "Messenger channel adapters"
+    status: todo
+    phase: P1
+  - id: "0113.2"
+    title: "An Android-host run of the bridge"
+    status: todo
+    phase: P1
+  - id: "0113.3"
+    title: "A PII-token step in the ingress sanitizer"
+    status: todo
+    phase: P2
+  - id: "0113.4"
+    title: "A UI for creating bridge grants"
+    status: todo
+    phase: P2
+```
