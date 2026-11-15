@@ -125,6 +125,8 @@ class DesktopEngineHost(
     private val tunnelVault: (() -> dev.aidos.vault.SecretsVault)? = null,
     /** RFC-0115, D56: a machine-wide service starts with a locked passphrase vault; a per-user Engine uses the OS keystore. */
     val vaultGate: VaultGate = VaultGate.fromEnvironment(),
+    /** Where per-model run settings are saved; the app and the headless launcher pass theirs. */
+    val preferences: DesktopPreferences? = null,
     /** Injectable so tests need no SSH server. */
     private val tunnelTransport: fi.italeino.sshtunnel.SshTransport = fi.italeino.sshtunnel.SshjTransport(),
     /**
@@ -142,6 +144,9 @@ class DesktopEngineHost(
 ) {
     /** Models control over this host. One instance, because it owns the installs that are running. */
     val modelsControl: LocalModelsControl by lazy { LocalModelsControl(this) }
+
+    /** Model detail control over this host; one instance, because it owns the downloads that are running. */
+    val modelDetailControl: LocalModelDetailControl by lazy { LocalModelDetailControl(this) }
 
     private val _state = MutableStateFlow(EngineState.STARTING)
     /** STARTING also means "stopped"; see [isRunning]. */
@@ -372,6 +377,7 @@ class DesktopEngineHost(
                 statusControl = LocalStatusControl(this),
                 vaultControl = vaultGate,
                 modelsControl = modelsControl,
+                modelDetailControl = modelDetailControl,
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),

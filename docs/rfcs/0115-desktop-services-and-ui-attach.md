@@ -149,8 +149,9 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Connected apps group, done:** `AppsControl` (list, approve, deny, revoke, undo deny, agent use, locality limit; an unknown app is `false`, a bad limit is an error) with Local and Http implementations and `/v1/admin/apps`; the Connected Apps presenter polls it and keeps the last list through a failed poll. Tested through the admin API against the real store. The debug handshake button stays on the in-process host.
 - **Status group and no second Engine, done:** `StatusControl` (running, state name with port, resident models, linked peers) with Local and Http implementations and `GET /v1/admin/status`; the Home presenter composes it with `AppsControl`, and shows OFF when the service stops answering. The app no longer starts its own Engine, nor lets the toggle start one, while a live Engine service owns `engine.json`.
 - **Models group, list pane done:** `ModelsControl` (installed, Hub search with filters, one-click suggested installs with progress, delete) with Local and Http implementations and `/v1/admin/models`; installs are owned by the Engine and carry on in a service after the window closes, the presenter reads their progress back by polling. Tested through the admin API (including slashes in model ids).
-- **Known gap:** with a service running and the window attached, the model detail screen (license acceptance, load and unload, test chat) and the Agents pane still read the in-process host, which is not started, so they show nothing (the Tools pane shows sample data and uses no host at all, so there is nothing to attach until it is wired to a real MCP broker); Status, Models list, Apps, Sharing, Peers, Tunnels and Background are attached.
-- **Next:** the model detail group, the agents and MCP panes, and trying the installers on a real Windows task / Linux unit.
+- **Model detail group, done:** `ModelDetailControl` (facts and fit table, install state, license, download with progress, load and unload, run settings, embedding and self tests) with Local and Http implementations and `/v1/admin/model-detail/<action>?model=<id>`; the presenter was rewritten onto it, downloads and loaded models belong to the Engine. Written test-first against the echo fixture, in-process and through the admin API, plus the presenter over the admin API (load, chat self test, settings saved in the Engine's preferences, unload). One behaviour note: the offline fallback that asked for acceptance of a license name when Hugging Face could not be reached is gone, because it depended on presenter state; with no reachable license text there is nothing to accept.
+- **Known gap:** the Agents pane still reads the in-process host, which is not started when attached to a service, so it shows nothing (the Tools pane shows sample data and uses no host at all, so there is nothing to attach until it is wired to a real MCP broker).
+- **Next:** the Agents pane, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -217,4 +218,10 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalModelsControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelsModel.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/ModelsControlTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/ModelDetailControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpModelDetailControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalModelDetailControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModel.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/ModelDetailControlTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelDetailModelTest.kt
 ```

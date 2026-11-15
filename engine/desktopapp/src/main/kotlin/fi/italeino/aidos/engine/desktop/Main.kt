@@ -47,6 +47,7 @@ fun main(args: Array<String>) {
 
     val host = DesktopEngineHost(
         runSettings = prefs.runSettingsSource,
+        preferences = prefs,
         ramBaselineUsedBytes = { prefs.data.value.ramBaselineUsedMb?.let { it * 1024L * 1024L } },
         serverPort = { effectivePort },
         discoveryFile = DesktopPaths.discoveryFile,

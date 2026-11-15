@@ -4,7 +4,9 @@ import fi.italeino.aidos.engine.control.HttpLanControl
 import fi.italeino.aidos.engine.control.AppsControl
 import fi.italeino.aidos.engine.control.ApprovalsControl
 import fi.italeino.aidos.engine.control.HttpAppsControl
+import fi.italeino.aidos.engine.control.HttpModelDetailControl
 import fi.italeino.aidos.engine.control.HttpModelsControl
+import fi.italeino.aidos.engine.control.ModelDetailControl
 import fi.italeino.aidos.engine.control.HttpStatusControl
 import fi.italeino.aidos.engine.control.ModelsControl
 import fi.italeino.aidos.engine.control.HttpVaultControl
@@ -76,4 +78,7 @@ object EngineAttach {
 
     fun modelsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ModelsControl =
         running?.let { HttpModelsControl(it.baseUrl, it.token) } ?: host.modelsControl
+
+    fun modelDetailControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ModelDetailControl =
+        running?.let { HttpModelDetailControl(it.baseUrl, it.token) } ?: host.modelDetailControl
 }

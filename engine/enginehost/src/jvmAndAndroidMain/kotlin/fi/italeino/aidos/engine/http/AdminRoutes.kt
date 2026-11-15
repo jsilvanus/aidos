@@ -161,3 +161,26 @@ internal fun Route.adminModelsRoutes(control: fi.italeino.aidos.engine.control.M
         admin(call) { control.delete(call.parameters.getAll("id").orEmpty().joinToString("/")); call.respond(HttpStatusCode.NoContent) }
     }
 }
+
+/** `/v1/admin/model-detail/<action>?model=<id>`: one model's facts, license, download, residency, settings and self tests (RFC-0115). Loopback and admin only. */
+internal fun Route.adminModelDetailRoutes(control: fi.italeino.aidos.engine.control.ModelDetailControl, adminSubjects: Set<String>) {
+    val c = "fi.italeino.aidos.engine.control"
+    suspend fun admin(call: ApplicationCall, block: suspend (String) -> Unit) = adminGuard(call, adminSubjects) {
+        block(call.request.queryParameters["model"]?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("model is required"))
+    }
+    val base = "/v1/admin/model-detail"
+    get("$base/detail") { admin(call) { call.respond(control.detail(it)) } }
+    get("$base/installed") { admin(call) { call.respond(control.installedState(it)) } }
+    get("$base/license") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ModelFlag(control.licenseAccepted(it))) } }
+    post("$base/license/accept") { admin(call) { control.acceptLicense(it); call.respond(HttpStatusCode.NoContent) } }
+    post("$base/download/start") { admin(call) { control.startDownload(it); call.respond(HttpStatusCode.Accepted) } }
+    get("$base/download") { admin(call) { id -> control.downloadStatus(id)?.let { call.respond(it) } ?: call.respond(HttpStatusCode.NoContent) } }
+    post("$base/download/cancel") { admin(call) { control.cancelDownload(it); call.respond(HttpStatusCode.NoContent) } }
+    get("$base/residency") { admin(call) { call.respond(control.residency(it)) } }
+    post("$base/load") { admin(call) { control.load(it); call.respond(HttpStatusCode.NoContent) } }
+    post("$base/unload") { admin(call) { control.unload(it); call.respond(HttpStatusCode.NoContent) } }
+    get("$base/run-settings") { admin(call) { call.respond(control.runSettings(it)) } }
+    put("$base/run-settings") { admin(call) { control.setRunSettings(it, call.receive<fi.italeino.aidos.engine.control.RunSettingsInfo>()); call.respond(HttpStatusCode.NoContent) } }
+    post("$base/embed") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ModelVectorResponse(control.embed(it, call.receive<fi.italeino.aidos.engine.control.ModelTextRequest>().text.trim().ifEmpty { throw IllegalArgumentException("Enter text to embed.") }))) } }
+    post("$base/self-test") { admin(call) { val r = call.receive<fi.italeino.aidos.engine.control.ModelTextRequest>(); call.respond(control.selfTest(it, r.text, r.file)) } }
+}
