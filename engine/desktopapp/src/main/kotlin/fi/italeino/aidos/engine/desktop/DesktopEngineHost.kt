@@ -119,6 +119,8 @@ class DesktopEngineHost(
     /** Builds the group node; tests replace it to avoid real mDNS and fixed ports. */
     private val aidinFactory: ((CoroutineScope) -> AidinNode)? = null,
     private val aidinPort: Int = DesktopAidin.DEFAULT_PORT,
+    /** Set by the headless launcher so the tray can stop it through the admin API; null when the Engine lives in a window. */
+    private val onAdminShutdown: (() -> Unit)? = null,
     /** Opens the user vault that holds SSH tunnel keys; only called when the user first uses a tunnel. */
     private val tunnelVault: () -> dev.aidos.vault.SecretsVault = { dev.aidos.vault.DesktopVault.open().vault },
     /** Injectable so tests need no SSH server. */
@@ -359,6 +361,8 @@ class DesktopEngineHost(
                 aidinNode = { _aidin.value },
                 externalDevices = lanSharing.devices,
                 lanControl = LocalLanControl(lanSharing),
+                approvalsControl = LocalApprovalsControl(this),
+                onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),
                 pairingCodes = lanSharing.pairing,
                 peerAgentEndpoints = remoteAgent.peerEndpoints(agent),

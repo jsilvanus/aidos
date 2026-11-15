@@ -25,6 +25,7 @@ fun main(args: Array<String>) {
     DesktopPaths.ensureCreated()
     val prefs = DesktopPreferences(File(DesktopPaths.stateDir, "preferences.json"))
     val isHeadless = args.any { it == "--daemon" || it == "--headless" || it == "-d" }
+    val shutdownLatch = java.util.concurrent.CountDownLatch(1)
 
     // Wire crash handler early before anything else might fail (RFC-0037)
     val userDbDriver = JdbcSqliteDriver(
@@ -43,6 +44,8 @@ fun main(args: Array<String>) {
         serverPort = { effectivePort },
         discoveryFile = DesktopPaths.discoveryFile,
         groupSharing = { prefs.data.value.groupSharingEnabled },
+        // Headless only: lets the tray stop this Engine through the loopback admin API (RFC-0115).
+        onAdminShutdown = if (isHeadless) ({ shutdownLatch.countDown() }) else null,
     )
 
     if (isHeadless) {
@@ -62,10 +65,12 @@ fun main(args: Array<String>) {
                 println("Stopping Aidos Engine...")
                 runBlocking { host.close() }
             })
+            // Runs until Ctrl+C, a service stop, or the tray asks through the admin API.
             try {
-                awaitCancellation()
+                kotlinx.coroutines.withContext(Dispatchers.IO) { shutdownLatch.await() }
             } catch (_: InterruptedException) {
             }
+            runBlocking { host.close() }
         }
         return
     }
