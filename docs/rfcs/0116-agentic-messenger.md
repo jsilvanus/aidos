@@ -60,7 +60,7 @@ On desktop, the Amp agent service calls the Aidos Engine's loopback agent API (`
 
 ### UI
 
-Amp specifies the Conversation Mesh domain: login and identity, contacts and presence, the four-party conversation, the dual view (natural-language stream versus a condensed cue ticker, cf. RFC-0057), progressive-disclosure `ApprovalCard`, provenance and privacy-seal badges, and the `GenerativeUiRegistry` that renders envelopes into components. Where those components are implemented is governed by RFC-0123: the Trusted Component Registry (`aidos-tcr`) is the single implementer and the Aidos desktop consumes them (RFC-0106). Amp's own `amp-ui` module is the interim home until they move; its README still says the owning apps keep the components, which conflicts with RFC-0123 (see its Open Questions).
+Amp specifies the Conversation Mesh domain: login and identity, contacts and presence, the four-party conversation, the dual view (natural-language stream versus a condensed cue ticker, cf. RFC-0057), progressive-disclosure `ApprovalCard`, provenance and privacy-seal badges, and the `GenerativeUiRegistry` that renders envelopes into components. Where those components are implemented is governed by RFC-0123: the Trusted Component Registry (`aidos-tcr`) is the single implementer and the Aidos desktop consumes them (RFC-0106). The registry already contains the mesh components, and Amp's `amp-ui` depends on it, but `amp-ui` still carries its own `MessageBubble`, `ProvenanceBadge`, `ApprovalCard`, `ContactRow` and `GenerativeUiRegistry` that do not import the registry. Its README still says the owning apps keep the components, which conflicts with RFC-0123.
 
 ## Data Model
 
@@ -170,4 +170,8 @@ post_mvp:
     title: "Web client for invite links (Kotlin/Wasm) and promotion to a full device"
     status: todo
     phase: P4
+  - id: "0116.13"
+    title: "Delete amp-ui's duplicate mesh components and consume dev.aidos.tcr.mesh and generative"
+    status: todo
+    phase: P2
 ```

@@ -1,6 +1,6 @@
 # RFC-0123: Trusted Component Registry (TCR)
 
-Status: Draft (2026-11-15, written from `docs/TCR_COMPONENT_DOMAIN_OWNERS.md`, `docs/TCR_UI_DEVELOPMENT_MANUAL.md` and D46). Partially implemented: the registry repository `jsilvanus/aidos-tcr` exists and is consumed by the Aidos builds; the ownership rule is contradicted by D46's own text and by the Amp repository (see Open Questions).
+Status: Draft (2026-11-15, written from `docs/TCR_COMPONENT_DOMAIN_OWNERS.md`, `docs/TCR_UI_DEVELOPMENT_MANUAL.md` and D46). Partially implemented, verified against `jsilvanus/aidos-tcr` at `4ed8110` (2026-11-15): 120 Kotlin files in 17 packages, consumed by Aidos, Dictator and Amp builds. The ownership rule is contradicted by D46's own text, and Aidos and Amp both still carry duplicate components (see MVP and Open Questions).
 
 Related: D46, D54; RFC-0051 Desktop, RFC-0106 (generative UI), RFC-0110/0111/0112 (intent-graph and adaptive UI), RFC-0113 (egress gate), RFC-0116 (Amp), RFC-0119 (Engine app UI).
 
@@ -28,7 +28,7 @@ A generative UI that invents controls produces visual chaos, hallucinated action
 
 ### Repository and namespace
 
-`jsilvanus/aidos-tcr` (`dev.aidos.tcr:aidos-tcr`) is the sole implementer and publisher of shared Compose Multiplatform components. Aidos builds consume it as a sibling checkout (`../aidos-tcr`; CI checks it out beside `aidos`). Packages: `dev.aidos.tcr.document`, `.pill`, `.actor`, `.mesh`, `.model`, `.intent`, `.generative`, `.engine`.
+`jsilvanus/aidos-tcr` (`dev.aidos.tcr:aidos-tcr`) is the sole implementer and publisher of shared Compose Multiplatform components. Aidos builds consume it as a sibling checkout (`../aidos-tcr`; CI checks it out beside `aidos`). Packages (verified): `theme`, `atom`, `layout`, `actor`, `pill`, `document`, `mesh`, `model`, `intent`, `paradigm`, `spatial`, `overlay`, `frontdoors`, `generative`, `agent`, `engine`, `mcp`.
 
 ### Domains
 
@@ -56,13 +56,18 @@ The generative UI host and spatial canvas are Aidos Desktop's, not the registry'
 
 ## MVP
 
-Built, as recorded in the domain-owners document (the `aidos-tcr` repository itself was not available when this RFC was written, so component presence is unverified here): the registry repository and package layout; consumption from Aidos (17 files in `agent/` and `engine/` import `dev.aidos.tcr.*`, and the builds resolve a sibling `../aidos-tcr`); the listed intent, egress-gate and split-verification components. Not built: a manifest that the generator validates against, versioned component contracts, and moving Amp's local `amp-ui` components into the registry.
+Built and verified in the registry: every component named in the domain-owners document exists (`PersistentRedPill`, `PillConstellationOverlay`, `DocumentInputSection`, `DocumentChatFlow`, `MessageBubble`, `ContactRow`, `ProvenanceBadge`, `PrivacySealBadge`, `ApprovalCard`, `WaveformVisualizer`, `IdentityCard`, `CalendarCopilotCard`, `DualViewToggle`, `CueTickerRow`, the intent badges, `EgressGateCard`, `SplitVerificationCard`, and the `GenerativeUiRegistry` object). Beyond the document, the registry also holds the Engine app panes (`engine`: Status, Models, Model detail, Connected Apps, Settings, Sharing, Remote peers, SSH tunnels, Shell grants, Background; `agent`; `mcp`), which RFC-0119 relies on. The registry has a README package map and design tokens (`TcrColors`, shapes, typography). Aidos's `agent/ui-common`, `engine/desktopapp` and `engine/engineui`, Dictator's Android module and Amp's `amp-ui` build against it.
+
+Violations of the single-implementation rule found while verifying: Aidos `engine/engineui` still contains its own Status, Connected Apps, Agents and MCP Servers panes (the last is 1,078 lines) next to the registry's, and Amp's `amp-ui` keeps its own `MessageBubble`, `ProvenanceBadge`, `ApprovalCard`, `ContactRow` and `GenerativeUiRegistry`, none of which import the registry. Test coverage is thin: 6 test files for 120 source files (actor, agent config, engine models and sharing, intent components, MCP config parsing).
+
+Not built: a manifest that the generator validates against, versioned component contracts, and the removal of the duplicates above.
 
 ## Open Questions
 
 1. **Ownership is contradictory.** D46 says "for now, all UI components are owned by the applications that first came up with them" and the Amp README repeats it; the TCR domain-owners document says the registry is the sole implementer and apps keep only specifications. This RFC follows the domain-owners document. D46 needs amending, and Amp's `amp-ui` (29 files) must either migrate or be declared the interim home.
-2. Where does the validated component manifest live, and who may add a component?
-3. A sibling-checkout dependency is fragile for contributors; publish the registry as an artifact?
+2. Should the duplicates be deleted now (Aidos engineui panes, Amp amp-ui components) or kept as fallbacks until the registry versions are stable?
+3. Where does the validated component manifest live, and who may add a component?
+4. A sibling-checkout dependency is fragile for contributors; publish the registry as an artifact?
 
 ## Implementation Files
 
@@ -99,4 +104,12 @@ post_mvp:
     title: "Process for proposing and reviewing a new component"
     status: todo
     phase: P3
+  - id: "0123.6"
+    title: "Delete duplicate Engine panes from engine/engineui in favour of dev.aidos.tcr.engine"
+    status: todo
+    phase: P1
+  - id: "0123.7"
+    title: "Test coverage for the registry (6 test files for 120 sources); golden or screenshot tests for security components"
+    status: todo
+    phase: P2
 ```

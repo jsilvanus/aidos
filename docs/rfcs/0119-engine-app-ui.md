@@ -57,6 +57,10 @@ Each pane has a presenter (`Desktop*Model`) that talks to a `*Control` interface
 - `/v1/admin/` uses the loopback listener and the `engine.json` token. A page cannot cause an admin call to be reachable from the network.
 - Approval prompts show the requesting package and the specific grant, never a generic "allow".
 
+### Where the panes live
+
+The Engine panes are implemented in the Trusted Component Registry (`aidos-tcr`, packages `dev.aidos.tcr.engine`, `.agent`, `.mcp`; RFC-0123) and the desktop app imports them (for example `LanSharingPane`). `engine/engineui` still holds its own older copies of several panes (Status, Connected Apps, Agents, MCP Servers), which breaks the single-implementation rule and should be removed once Android consumes the registry versions. Presenters and the control seam stay in Aidos.
+
 ## MVP
 
 Built (desktop): Status, Models, Model detail, Connected Apps, Agents, MCP Servers, Groups, Remote and Tunnels, Sharing, with presenters tested on the JVM; the control seam for the listed controls with in-process implementations and the HTTP admin path for status; the tray (RFC-0115). Android has its own Compose screens (RFC-0118). The Compose panes themselves are not UI-tested.
@@ -178,4 +182,8 @@ post_mvp:
     title: "Accessibility pass (keyboard, screen reader) on all panes"
     status: todo
     phase: P3
+  - id: "0119.6"
+    title: "Remove the engineui pane copies that duplicate dev.aidos.tcr.engine, agent and mcp"
+    status: todo
+    phase: P1
 ```

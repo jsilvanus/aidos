@@ -89,7 +89,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0120 Agent Runtime API | Draft | Partial (2026-11-15): all `/v1/agent` routes, agent grant, locality, engine-side tools and peer runs on the desktop host; not served on Android; no streaming or persistence; outside the API v1 freeze. |
 | 0121 SDK and Client Contract | Draft | Implemented in code and tripwire tests (2026-11-15); Binder handshake not run on a device; the RFC is a Draft until reviewed. |
 | 0122 MCP Binder Transport | Draft | Partial (2026-11-15): library and Aidos integration built; emulator (API 36) and CI (API 28, 34) tests pass; no physical-device run; library still from `mavenLocal`; D51 still proposed. |
-| 0123 Trusted Component Registry | Draft | Partial (2026-11-15): registry repo and consumption exist per the domain-owners doc; ownership rule contradicts D46 text and Amp README; no generator manifest or versioned contracts. |
+| 0123 Trusted Component Registry | Draft | Partial (2026-11-15): verified against `aidos-tcr` 4ed8110: 120 files, all documented components present; duplicates remain in Aidos `engineui` and Amp `amp-ui`; 6 test files; no generator manifest or versioned contracts; ownership rule contradicts D46 text and Amp README. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
 | 0100, 0101, 0102 | Draft | Architecture reviews. |
 
