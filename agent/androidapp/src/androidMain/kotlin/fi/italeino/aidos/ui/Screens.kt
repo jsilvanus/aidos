@@ -624,7 +624,7 @@ fun CommitReviewScreen(
                     Text("Committing changes...")
                 }
                 is DiffUiState.Committed -> {
-                    Text("Committed ${st.commitSha.take(8)}", fontWeight = FontWeight.Medium)
+                    Text("Committed ${st.commitHash.take(8)}", fontWeight = FontWeight.Medium)
                 }
                 is DiffUiState.Changes -> {
                     Text(
