@@ -358,6 +358,8 @@ class DesktopEngineHost(
                 onClientVersions = { id, sdk, api -> approvalStore.recordClientVersions(id, sdk, api) },
                 aidinNode = { _aidin.value },
                 externalDevices = lanSharing.devices,
+                lanControl = LocalLanControl(lanSharing),
+                adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),
                 pairingCodes = lanSharing.pairing,
                 peerAgentEndpoints = remoteAgent.peerEndpoints(agent),
             )

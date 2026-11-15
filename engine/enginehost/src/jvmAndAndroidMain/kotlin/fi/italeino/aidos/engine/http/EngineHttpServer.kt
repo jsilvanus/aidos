@@ -164,6 +164,13 @@ class EngineHttpServer(
      * RFC-0107: handler for the `/aidin/v1/agent/` endpoints over the peer link. The node has already required the
      * peer's `agent` scope; null means this Engine hosts no agent loops for peers (404).
      */
+    /**
+     * RFC-0115 / D58: the management API for the LAN group, served at `/v1/admin/lan` on the **loopback listener
+     * only** (never installed on the LAN listener), and only to the subjects in [adminSubjects] (the Engine's own
+     * local token), not to any approved app. Null means this Engine exposes no management API.
+     */
+    private val lanControl: fi.italeino.aidos.engine.control.LanControl? = null,
+    private val adminSubjects: Set<String> = setOf(TokenManager.ENGINE_SUBJECT),
     private val peerAgentEndpoints: (suspend (fromPeer: NodeId, request: LinkMessage.DelegateRequest) -> LinkMessage.DelegateResponse)? = null,
 ) {
     private var server: EmbeddedServer<*, *>? = null
@@ -341,6 +348,7 @@ class EngineHttpServer(
                     post("/aidin/v1/systemone") { handleAidinHttpDelegation(call, "/aidin/v1/systemone") }
                 }
 
+                if (!lan) lanControl?.let { adminLanRoutes(it, adminSubjects) }
                 extraRoutes?.invoke(this)
             }
         }
