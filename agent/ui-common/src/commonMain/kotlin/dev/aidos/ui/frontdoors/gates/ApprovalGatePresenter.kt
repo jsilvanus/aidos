@@ -1,5 +1,6 @@
 package dev.aidos.ui.frontdoors.gates
 
+import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.ui.state.MviPresenter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +17,16 @@ data class ApprovalGateUiState(
     val inspectedDiffs: List<FileDiffPreview>? = null,
     val isLoading: Boolean = false,
     val message: String? = null,
+)
+
+/** The Human Egress Gate Card's view of a message the runtime has parked (RFC-0113 §4.3). */
+fun ParkedEgressRequest.toUiModel(): BlindedEgressRequestUiModel = BlindedEgressRequestUiModel(
+    requestId = runId,
+    projectId = projectId,
+    channel = channel,
+    recipient = recipient,
+    payloadPreview = payload,
+    cryptographicFingerprint = payloadFingerprint,
 )
 
 sealed interface ApprovalGateIntent {
@@ -41,6 +52,15 @@ class ApprovalGatePresenter(
         _state.update {
             it.copy(pendingEgressRequests = it.pendingEgressRequests + request)
         }
+    }
+
+    /**
+     * Makes the staged egress requests exactly [requests] (RFC-0113 §4.3 step 3): called with the
+     * runtime's parked-message list, so a message that was decided elsewhere (CLI, another window)
+     * disappears from this card and a newly parked one appears.
+     */
+    fun syncEgressRequests(requests: List<BlindedEgressRequestUiModel>) {
+        _state.update { it.copy(pendingEgressRequests = requests) }
     }
 
     fun stageVerification(verification: SplitVerificationUiModel) {

@@ -1,7 +1,7 @@
 # RFC-0113: The Blinded Egress Bridge — Cross-Domain Messaging with Zero-Egress Life Projects
 
-**Status:** Implemented 2026-11-14  
-Non-MVP Work: **None**
+**Status:** Implemented 2026-11-15 (the 2026-11-14 entry was a library with no caller; wired into the daemon, executor, API and UI on 2026-11-15)  
+Non-MVP Work: **Remaining** (messenger channel adapters, an Android-host run, a PII-token step in the ingress sanitizer, a UI for creating bridge grants)
 **Date:** 2026-11-14  
 **Authors:** Aidos Core Architecture Team  
 **Related RFCs:** [RFC-0003 Security](0003-security.md), [RFC-0006 Session Execution Contract](0006-session-execution-contract.md), [RFC-0010 Projects](0010-projects.md), [RFC-0018 Capability Model](0018-capability-model.md), [RFC-0027 Trust and Taint](0027-trust-and-taint.md), [RFC-0042 Networking and Egress](0042-networking-and-egress.md), [RFC-0047 Project Types](0047-project-templates-and-project-types.md), [RFC-0106 Desktop Generative UI](0106-desktop-generative-ui.md), [RFC-0110 Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md), [RFC-0112 Universal Adaptive UI](0112-universal-adaptive-ui-and-blinded-egress-bridge.md)  
@@ -242,14 +242,48 @@ An attacker sending an SMS:
 ## 6. Implementation Architecture
 
 ### 6.1 Module Placement
+- `kernel/`: `Permission.BLINDED_QUERY`, `Permission.MESSAGE_SEND` and `CapabilityScope.Bridge` (the schemas, target projects and channels a grant names). This is the "BlindedCapabilityGrant": there is no separate type, a grant is an ordinary capability whose scope is a `Bridge`.
+- `agent/capability/`: stores, round-trips and attenuates `CapabilityScope.Bridge` (a delegated grant may only narrow it).
 - `agent/bridge/`:
-  - `BlindedQueryDispatcher.kt`: Validates query schemas, resolves target project context, and ensures query isolation.
-  - `BlindedQueryRegistry.kt`: Definitions of accepted queries and typed responses.
-  - `EgressGateCoordinator.kt`: Manages `PARKED` outbound messages and declassification tokens.
-- `agent/capability/`:
-  - `BlindedCapabilityGrant.kt`: Grants authority to invoke specific blinded query schemas across project boundaries.
-- `agent/ui/`:
-  - `HumanEgressGateCard.kt`: Responsive Compose card rendering proposed outgoing transmissions with diff/content inspection.
+  - `BlindedQueryModels.kt`, `BlindedQueryDispatcher.kt`: the typed query registry, responses and the dispatcher (§4.2).
+  - `EgressGateCoordinator.kt`: parking, approval and the signed single-use grant (§4.3).
+  - `BridgeTools.kt`: the model-facing tools, `bridge:check_availability`, `bridge:verify_contact_circle`, `bridge:check_list_contains`, `bridge:propose_task` (`BlindedQueryTool`) and `message:send` (`MessageSendTool`).
+  - `BridgeRuntime.kt`: the one object the daemon shares across projects (coordinator, dispatcher, transport, rate limit, project policy).
+  - `LifeProjectBinding.kt`: answers queries from the target project's real Intent Graph, writes `BLINDED_QUERY_EXECUTED` to the target's `audit_log`, ingests proposals.
+  - `OutboundMessageTransport.kt`: the seam a messenger adapter implements.
+- `agent/daemon/`: `RuntimeCompositionRoot` registers both tools for every project it drives, records the person's decision on approve or deny, and `RuntimeClientFactory` registers each opened project.
+- `agent/api/`: `CapabilityCommands.listParkedEgress()` (read from the durable parked state, also over the daemon socket) and real `BLINDED_QUERY` / `MESSAGE_SEND` grants made through `capabilities.grant`.
+- `agent/ui-common/`: `BlindedEgressGateCard`, fed by `AidosUniversalApp` from `listParkedEgress()`; Approve and Deny go through `approveEffect` / `denyEffect`.
+
+### 6.2 How the Gate Works at Runtime
+
+1. A session calls `message:send`. It needs a `MESSAGE_SEND` grant naming the channel.
+2. If the project is air-gapped (`personal`, or `routing.remote_egress` of `never` or `ask`), the tool does not send. It answers `DenialReason.REQUIRES_APPROVAL`, which parks the Run on a `TOOL_CALL` continuation (RFC-0006, RFC-0009). That parking is durable: it survives a restart, and the message text is the `tool_calls` row the continuation points at. The denial text carries `EGRESS_POLICY_PROHIBITED`; the kernel's `DenialReason` enum is frozen, so the code is not a separate value.
+3. The card (or `aidos approve-run`) shows recipient and exact text. Deny fails the Run and records a refusal; no grant exists.
+4. Approve makes the daemon issue the `EgressGrant` for that exact payload and recipient (HMAC-signed, 60 s, single use) from the arguments read back out of the database, never from anything the model supplies. The re-driven call finds it, `EgressGateCoordinator.transmit` re-verifies signature, expiry, payload hash, recipient and single use, and only then calls the `OutboundMessageTransport`.
+5. The tool requires that grant for air-gapped projects even if a standing capability would let the call through, so loosening a capability cannot open the gate. A run that read untrusted text is additionally stopped by the taint rule (RFC-0027) before the tool is reached.
+6. With no `OutboundMessageTransport` installed, `message:send` fails and nothing is sent.
+
+### 6.3 Storage Convention for Blinded Queries (MVP)
+
+A Life project keeps the data a query needs as Intent Graph nodes (RFC-0110), found by tag:
+
+| Kind | Node |
+|---|---|
+| Calendar event | tag `calendar`; `due_at` is the start; optional tag `duration:<minutes>` (default 60) |
+| Contact | tag `contact`; tag `handle:<handle>`; tags `circle:<name>` |
+| List item | tag `list:<listTag>`; the title is the item; items marked DONE are ignored |
+
+A query against a project the daemon has not opened fails; it is never answered as "free" or "no".
+
+### 6.4 Grants
+
+`aidos grant <session> BLINDED_QUERY "bridge:schemas=CheckAvailability,CheckListContains;targets=<lifeProjectId>"` and `aidos grant <session> MESSAGE_SEND "bridge:channels=sms,matrix"`. A list that is left out allows nothing. `IngressIntentProposal` is a schema name for `bridge:propose_task`.
+
+### 6.5 Deviations from the Original Text
+- Ingress proposals are created with `NodeDispatchPolicy.MANUAL_START`, not `AUTO_WHEN_READY`: text an outside party wrote must not start an agent run by itself (§5). The library default is unchanged for direct callers.
+- Blinded queries are limited to 14-day windows and 30 queries per session per minute (§2.2 side channels).
+- The node id of a proposal is derived from the proposal, so a re-driven call does not duplicate it.
 
 ---
 
@@ -266,6 +300,26 @@ files:
   - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BlindedQueryDispatcher.kt
   - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BlindedQueryModels.kt
   - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/EgressGateCoordinator.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BridgeRuntime.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/BridgeTools.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/LifeProjectBinding.kt
+  - agent/bridge/src/jvmMain/kotlin/dev/aidos/bridge/OutboundMessageTransport.kt
   - agent/bridge/src/jvmTest/kotlin/dev/aidos/bridge/BlindedBridgeTest.kt
+  - agent/bridge/src/jvmTest/kotlin/dev/aidos/bridge/BridgeRuntimeWiringTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/BridgeScopeTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/BridgeDaemonWiringTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/PayloadFingerprint.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Wire.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/SocketRuntimeClient.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/BlindedEgressGateCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseThreeTest.kt
 ```

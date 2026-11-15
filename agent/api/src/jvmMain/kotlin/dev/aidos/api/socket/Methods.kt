@@ -30,6 +30,7 @@ object Methods {
     const val CAPABILITIES_REVOKE = "capabilities.revoke"
     const val CAPABILITIES_LIST = "capabilities.list"
     const val CAPABILITIES_LIST_PENDING = "capabilities.listPending"
+    const val CAPABILITIES_LIST_PARKED_EGRESS = "capabilities.listParkedEgress"
     const val CAPABILITIES_APPROVE = "capabilities.approve"
     const val CAPABILITIES_DENY = "capabilities.deny"
 

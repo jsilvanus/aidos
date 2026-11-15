@@ -25,6 +25,7 @@ import dev.aidos.api.IntentCommands
 import dev.aidos.api.KnowledgeQueries
 import dev.aidos.api.KnowledgeQuery
 import dev.aidos.api.KnowledgeResult
+import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
 import dev.aidos.api.ProjectCommands
 import dev.aidos.api.ProjectDetail
@@ -269,6 +270,9 @@ class SocketRuntimeClient(
         }
         override suspend fun listPending(): List<PendingCapabilityRequest> = withContext(Dispatchers.IO) {
             Wire.decodePendingCapabilityList(call(Methods.CAPABILITIES_LIST_PENDING, JsonObject(emptyMap())).jsonArray)
+        }
+        override suspend fun listParkedEgress(): List<ParkedEgressRequest> = withContext(Dispatchers.IO) {
+            Wire.decodeParkedEgressList(call(Methods.CAPABILITIES_LIST_PARKED_EGRESS, JsonObject(emptyMap())).jsonArray)
         }
         override suspend fun approve(requestId: String): CapabilityResult = withContext(Dispatchers.IO) {
             val params = buildJsonObject { put("requestId", requestId) }

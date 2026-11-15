@@ -70,6 +70,18 @@ enum class Permission {
     EVENT_SUBSCRIBE,
 
     NOTIFY,
+
+    /**
+     * Ask a zero-egress project one typed, boolean-valued question (RFC-0113 §4.2). Read-only and
+     * taint-neutral: the answer carries no project data, so it is allowed under an UNTRUSTED Run.
+     */
+    BLINDED_QUERY,
+
+    /**
+     * Send a message over an external channel (SMS, Matrix, email; RFC-0113 §4.3). From a
+     * zero-egress project every use needs a human's declassification approval.
+     */
+    MESSAGE_SEND,
 }
 
 sealed interface CapabilityScope {
@@ -114,6 +126,18 @@ sealed interface CapabilityScope {
     ) : CapabilityScope
 
     data class Events(val topicPatterns: List<String>) : CapabilityScope
+
+    /**
+     * RFC-0113 Blinded Egress Bridge: which blinded-query schemas may be asked of which target
+     * projects ([BLINDED_QUERY]) and which channels may be written to ([MESSAGE_SEND]). Empty
+     * [targetProjectIds] / [allowedChannels] mean none, never "all": a cross-project authority is
+     * always named.
+     */
+    data class Bridge(
+        val allowedQuerySchemas: Set<String> = emptySet(),
+        val targetProjectIds: Set<String> = emptySet(),
+        val allowedChannels: Set<String> = emptySet(),
+    ) : CapabilityScope
 }
 
 enum class GitOperation { READ, WRITE, PUSH, PULL, WORKTREE }

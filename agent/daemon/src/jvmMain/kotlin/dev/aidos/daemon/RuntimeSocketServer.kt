@@ -302,6 +302,8 @@ class RuntimeSocketServer(
             )
         Methods.CAPABILITIES_LIST_PENDING ->
             Wire.encodePendingCapabilityList(client.capabilities.listPending())
+        Methods.CAPABILITIES_LIST_PARKED_EGRESS ->
+            Wire.encodeParkedEgressList(client.capabilities.listParkedEgress())
         Methods.CAPABILITIES_APPROVE ->
             Wire.encodeCapabilityResult(client.capabilities.approve(params["requestId"]!!.jsonPrimitive.content))
         Methods.CAPABILITIES_DENY -> {
