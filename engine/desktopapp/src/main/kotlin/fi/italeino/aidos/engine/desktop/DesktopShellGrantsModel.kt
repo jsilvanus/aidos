@@ -20,14 +20,16 @@ import kotlinx.datetime.Clock
 import kotlin.time.Duration.Companion.hours
 
 /**
- * Presenter for the Shell grants tab (RFC-0033). [clientProvider] is called on first use, so opening the
- * app never touches the project databases until the user opens this tab.
+ * Presenter for the Shell grants tab (RFC-0033). [connectionProvider] is called on first use, so opening the
+ * app never touches the project databases until the user opens this tab. It talks to the running Agent daemon
+ * when there is one and to an in-process runtime otherwise (RFC-0115); the pane says which.
  */
 class DesktopShellGrantsModel(
     private val scope: CoroutineScope,
-    private val clientProvider: () -> RuntimeClient,
+    private val connectionProvider: () -> AgentConnection,
 ) {
-    private val client by lazy(clientProvider)
+    private val connection by lazy(connectionProvider)
+    private val client: RuntimeClient get() = connection.client
     private val _state = MutableStateFlow(ShellGrantsUiState())
     val state: StateFlow<ShellGrantsUiState> = _state.asStateFlow()
 
@@ -48,6 +50,7 @@ class DesktopShellGrantsModel(
     }
 
     private suspend fun loadProjects(keepProject: String?, keepSession: String?) {
+        _state.update { it.copy(runtimeNote = if (connection is AgentConnection.Attached) "Connected to the running Agent runtime." else "Agent runtime not running: using this app's own. Grants apply once the daemon next opens this project.") }
         val projects = client.projects.list().map { ShellProjectUi(it.id, it.name, it.projectPath) }
         _state.update { it.copy(projects = projects) }
         if (keepProject != null && projects.any { p -> p.id == keepProject }) loadSessions(keepProject, keepSession)

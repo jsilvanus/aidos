@@ -68,7 +68,7 @@ class DesktopModels(
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(host)
     val peers = DesktopRemotePeersModel(host, scope)
-    val shell = DesktopShellGrantsModel(scope) { DesktopRuntimeClient.create() }
+    val shell = DesktopShellGrantsModel(scope) { AgentRuntimeAttach.connect() }
     val tunnels = DesktopTunnelsModel(host, scope)
 
     init {

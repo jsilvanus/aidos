@@ -135,8 +135,24 @@ Closing the window leaves the services running, so something must still show tha
 
 The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and macOS as well as Windows; the agent and engine suites already run on `ubuntu-latest`. Risks to carry: the Compose window and tray have only been exercised on Windows; the Java tray needs the AppIndicator extension on GNOME and a status-notifier host on some desktops; on Linux the vault uses libsecret when present and the passphrase mode otherwise.
 
+## Progress
+
+- **Phase 1, done (2026-11-15):** owner-only token files (`OwnerOnlyFiles`: POSIX `rw-------`, an owner-only ACL on Windows, failure is an error and the file is removed; used for the runtime token and `engine.json`); the daemon finds the Engine through `engine.json` (`EngineDiscovery`, environment variables still win, a dead pid is ignored).
+- **Phase 2, first step done:** `AgentRuntimeAttach` in the desktop app attaches to a running Agent daemon through `SocketRuntimeClient` and falls back to the in-process runtime; when a daemon answers the in-process runtime (and so any project database in the app) is never created. The Shell tab uses it and says which runtime it is on. Not yet: the other panes, reconnect while the app is open, an integration test that spawns a real daemon.
+- **Next:** phase 3 (`EngineControl`), starting with `LocalEngineControl` and the LAN pane.
+
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/OwnerOnlyFiles.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/socket/OwnerOnlyFilesTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/EngineDiscovery.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/EngineDiscoveryTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/AgentRuntimeAttach.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AgentRuntimeAttachTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopShellGrantsModel.kt
 ```

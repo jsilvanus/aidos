@@ -46,7 +46,7 @@ class DesktopShellGrantsModelTest {
         val project = assertIs<ProjectResult.Success>(client.projects.create(CreateProjectRequest("demo", "", ProjectLocation.LocalPath(proj.path)))).project
         val session = assertIs<SessionResult.Success>(client.sessions.create(CreateSessionRequest(project.id, "main"))).session
 
-        val model = DesktopShellGrantsModel(scope) { client }
+        val model = DesktopShellGrantsModel(scope) { AgentConnection.InProcess(client) }
         model.refresh()
         eventually("projects listed") { model.state.value.projects.any { it.id == project.id } }
         model.selectProject(project.id)
@@ -80,7 +80,7 @@ class DesktopShellGrantsModelTest {
         val client = DesktopRuntimeClient.create(home.path)
         val project = assertIs<ProjectResult.Success>(client.projects.create(CreateProjectRequest("demo2", "", ProjectLocation.LocalPath(proj.path)))).project
         val session = assertIs<SessionResult.Success>(client.sessions.create(CreateSessionRequest(project.id, "main"))).session
-        val model = DesktopShellGrantsModel(scope) { client }
+        val model = DesktopShellGrantsModel(scope) { AgentConnection.InProcess(client) }
         model.selectProject(project.id)
         eventually("sessions") { model.state.value.sessions.isNotEmpty() }
         model.selectSession(session.id)

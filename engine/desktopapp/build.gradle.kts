@@ -45,6 +45,8 @@ dependencies {
     implementation(project(":tunnel-manager"))
     implementation(project(":ssh-tunnel"))
     implementation(project(":vault"))
+    // RFC-0115: SocketRuntimeClient, to attach to a running Agent daemon.
+    implementation(project(":cli"))
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
 
     implementation(compose.desktop.currentOs)
