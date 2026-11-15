@@ -42,6 +42,27 @@ class TrayActions(
 
     fun openWindow() = launch(emptyList())
 
+    /** True when the Engine's vault is waiting for its passphrase (a machine-wide service starts locked, D56). */
+    fun vaultLocked(): Boolean {
+        val e = running() ?: return false
+        return runCatching { kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).status().locked } }.getOrDefault(false)
+    }
+
+    /** Unlocks the running Engine's vault. Returns null on success, else the reason to show the user. */
+    fun unlockVault(passphrase: CharArray): String? {
+        val e = running() ?: return "The Engine is not running."
+        return try {
+            kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).unlock(passphrase) }
+            null
+        } catch (ex: fi.italeino.aidos.engine.control.EngineControlException) {
+            ex.message ?: "The Engine refused."
+        } catch (ex: Exception) {
+            "Could not reach the Engine."
+        } finally {
+            passphrase.fill('\u0000')
+        }
+    }
+
     companion object {
         /** The command that starts this application again: the running JVM, its class path, and the main class. */
         fun selfCommand(args: List<String>): List<String> {

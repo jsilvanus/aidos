@@ -5,6 +5,8 @@ import fi.italeino.aidos.engine.control.AppsControl
 import fi.italeino.aidos.engine.control.ApprovalsControl
 import fi.italeino.aidos.engine.control.HttpAppsControl
 import fi.italeino.aidos.engine.control.HttpStatusControl
+import fi.italeino.aidos.engine.control.HttpVaultControl
+import fi.italeino.aidos.engine.control.VaultControl
 import fi.italeino.aidos.engine.control.StatusControl
 import fi.italeino.aidos.engine.control.HttpApprovalsControl
 import fi.italeino.aidos.engine.control.HttpPeersControl
@@ -66,4 +68,7 @@ object EngineAttach {
 
     fun statusControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): StatusControl =
         running?.let { HttpStatusControl(it.baseUrl, it.token) } ?: LocalStatusControl(host)
+
+    fun vaultControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): VaultControl =
+        running?.let { HttpVaultControl(it.baseUrl, it.token) } ?: host.vaultGate
 }

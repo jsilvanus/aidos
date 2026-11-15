@@ -149,7 +149,8 @@ The JVM parts (daemon, CLI, Engine core, headless services) run on Linux and mac
 - **Connected apps group, done:** `AppsControl` (list, approve, deny, revoke, undo deny, agent use, locality limit; an unknown app is `false`, a bad limit is an error) with Local and Http implementations and `/v1/admin/apps`; the Connected Apps presenter polls it and keeps the last list through a failed poll. Tested through the admin API against the real store. The debug handshake button stays on the in-process host.
 - **Status group and no second Engine, done:** `StatusControl` (running, state name with port, resident models, linked peers) with Local and Http implementations and `GET /v1/admin/status`; the Home presenter composes it with `AppsControl`, and shows OFF when the service stops answering. The app no longer starts its own Engine, nor lets the toggle start one, while a live Engine service owns `engine.json`.
 - **Known gap until the models group lands:** with a service running and the window attached, the Models and Agents panes still read the in-process host, which is not started, so they show nothing; Status, Apps, Sharing, Peers and Tunnels are attached.
-- **Next:** the models group (catalog, installs, load and unload) and the agents pane, vault passphrase mode for system installs, and trying the installers on a real Windows task / Linux unit.
+- **Vault passphrase mode, done:** `VaultGate` and `VaultControl` (`/v1/admin/vault`: status, unlock, lock). A machine-wide Engine service (`AIDOS_VAULT_MODE=passphrase`, set by `--system` installs on Linux and macOS) has no login session, so it uses a passphrase vault (`forcePassphrase`) and starts locked: tunnels cannot start until the owner unlocks it from the tray (`Unlock vault…`) or the admin API; a wrong passphrase leaves it locked (409). A per-user Engine uses the OS keystore and is never locked. Windows system installs run as the named user and use DPAPI, so they need no passphrase. The Agent daemon's own vault is not covered yet.
+- **Next:** the models group (catalog, installs, load and unload) and the agents pane, and trying the installers on a real Windows task / Linux unit.
 
 ## Implementation Files
 
@@ -205,4 +206,10 @@ files:
   - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpStatusControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalStatusControl.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/StatusControlTest.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/DesktopVault.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/control/VaultControl.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpVaultControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/VaultGate.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/VaultGateTest.kt
 ```

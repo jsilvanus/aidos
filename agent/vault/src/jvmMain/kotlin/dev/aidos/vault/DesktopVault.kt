@@ -24,13 +24,15 @@ object DesktopVault {
         runner: CommandRunner = SystemCommandRunner,
         osName: String = System.getProperty("os.name") ?: "",
         passphrase: (() -> CharArray?)? = { System.getenv("AIDOS_VAULT_PASSPHRASE")?.toCharArray() },
+        /** Passphrase protection even where the OS has a keystore; see [VaultKeyProviders.platformDefault]. */
+        forcePassphrase: Boolean = false,
     ): OpenedVault {
         val dir = secretsDir(home)
         dir.mkdirs()
         runCatching {
             java.nio.file.Files.setPosixFilePermissions(dir.toPath(), java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
         }
-        val provider = VaultKeyProviders.platformDefault(dir, osName, runner, passphrase)
+        val provider = VaultKeyProviders.platformDefault(dir, osName, runner, passphrase, forcePassphrase)
         return OpenedVault(SqliteSecretsVault(File(dir, "vault.db"), provider, redactor, accessSink), provider.protection)
     }
 }

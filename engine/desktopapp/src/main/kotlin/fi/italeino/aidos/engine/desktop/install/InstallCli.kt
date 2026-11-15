@@ -35,6 +35,8 @@ object InstallCli {
             "engine" -> ServiceSpec(
                 "engine", "Aidos Engine", TrayActions.selfCommand(listOf("--daemon")),
                 if (system) InstallScope.SYSTEM else InstallScope.USER, runAs,
+                // A machine-wide service has no login session, so no OS keystore: it uses a passphrase vault and starts locked (D56).
+                env = if (system) mapOf("AIDOS_VAULT_MODE" to "passphrase") else emptyMap(),
             )
             "tray" -> {
                 require(!system) { "the tray needs your desktop, so it can only be installed for the signed-in user" }

@@ -30,6 +30,8 @@ data class ServiceSpec(
     val scope: InstallScope,
     val runAsUser: String? = null,
     val home: String? = null,
+    /** Environment for the service (systemd and launchd). Windows tasks do not carry one; the Windows vault needs none (DPAPI, as the named user). */
+    val env: Map<String, String> = emptyMap(),
 ) {
     init {
         require(name.matches(Regex("[a-z][a-z0-9-]*"))) { "service name must be lower-case letters, digits and dashes" }
@@ -37,6 +39,7 @@ data class ServiceSpec(
         require(scope == InstallScope.USER || !runAsUser.isNullOrBlank()) { "a system service runs as a named user, never as root or SYSTEM" }
         require(runAsUser.isNullOrBlank() || runAsUser !in setOf("root", "SYSTEM", "NT AUTHORITY\\SYSTEM", "LocalSystem")) { "refusing to run as a privileged account" }
         require(command.none { it.contains('\n') || it.contains('\r') }) { "a command argument cannot contain a line break" }
+        require(env.all { (k, v) -> k.matches(Regex("[A-Z][A-Z0-9_]*")) && v.none { it == '\n' || it == '\r' || it == '"' } }) { "invalid environment entry" }
     }
 
     val label: String get() = "fi.italeino.aidos.$name"
@@ -86,6 +89,7 @@ object ServiceDefinitions {
             appendLine("[Service]")
             appendLine("Type=simple")
             if (!user) appendLine("User=${s.runAsUser}")
+            s.env.forEach { (k, v) -> appendLine("Environment=\"$k=$v\"") }
             appendLine("ExecStart=$exec")
             appendLine("Restart=on-failure")
             appendLine("RestartSec=5")
@@ -122,7 +126,7 @@ object ServiceDefinitions {
   <array>
 $args
   </array>
-${if (user) "" else "  <key>UserName</key>\n  <string>${xml(s.runAsUser!!)}</string>\n"}  <key>RunAtLoad</key>
+${if (user) "" else "  <key>UserName</key>\n  <string>${xml(s.runAsUser!!)}</string>\n"}${if (s.env.isEmpty()) "" else "  <key>EnvironmentVariables</key>\n  <dict>\n" + s.env.entries.joinToString("") { "    <key>${xml(it.key)}</key>\n    <string>${xml(it.value)}</string>\n" } + "  </dict>\n"}  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <dict>

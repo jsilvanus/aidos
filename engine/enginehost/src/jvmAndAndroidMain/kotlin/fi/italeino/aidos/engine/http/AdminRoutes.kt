@@ -128,3 +128,15 @@ internal fun Route.adminAppsRoutes(control: fi.italeino.aidos.engine.control.App
 internal fun Route.adminStatusRoute(control: fi.italeino.aidos.engine.control.StatusControl, adminSubjects: Set<String>) {
     get("/v1/admin/status") { adminGuard(call, adminSubjects) { call.respond(control.status()) } }
 }
+
+/** `/v1/admin/vault`: lock state of the Engine's vault and unlocking it with its passphrase (RFC-0115, D56). Loopback and admin only. */
+internal fun Route.adminVaultRoutes(control: fi.italeino.aidos.engine.control.VaultControl, adminSubjects: Set<String>) {
+    get("/v1/admin/vault") { adminGuard(call, adminSubjects) { call.respond(control.status()) } }
+    post("/v1/admin/vault/unlock") {
+        adminGuard(call, adminSubjects) {
+            control.unlock(call.receive<fi.italeino.aidos.engine.control.VaultUnlockRequest>().passphrase.toCharArray())
+            call.respond(HttpStatusCode.NoContent)
+        }
+    }
+    post("/v1/admin/vault/lock") { adminGuard(call, adminSubjects) { control.lock(); call.respond(HttpStatusCode.NoContent) } }
+}

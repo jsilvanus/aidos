@@ -104,4 +104,15 @@ class ServiceInstallTest {
         assertEquals(InstallScope.USER, spec.scope)
         assertFailsWith<IllegalArgumentException> { InstallCli.specFor("agent", listOf("--install-service", "agent")) }
     }
+
+    @Test
+    fun `a machine-wide Engine is told to use a passphrase vault and a per-user one is not`() {
+        val sys = InstallCli.specFor("engine", listOf("--install-service", "engine", "--system", "--run-as", "juha"))
+        assertEquals(mapOf("AIDOS_VAULT_MODE" to "passphrase"), sys.env)
+        assertTrue(ServiceDefinitions.plan(sys, OsFamily.LINUX, home = "/h").files.single().content.contains("Environment=\"AIDOS_VAULT_MODE=passphrase\""))
+        val plist = ServiceDefinitions.plan(sys, OsFamily.MACOS, home = "/h", uid = "501").files.single().content
+        assertTrue(plist.contains("<key>EnvironmentVariables</key>") && plist.contains("<string>passphrase</string>"))
+        assertTrue(InstallCli.specFor("engine", listOf("--install-service", "engine")).env.isEmpty())
+        assertFailsWith<IllegalArgumentException> { user.copy(env = mapOf("bad name" to "x")) }
+    }
 }

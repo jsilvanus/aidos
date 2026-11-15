@@ -58,6 +58,7 @@ class TrayApp(
         item("Start Engine") { actions.startEngine() }
         item("Stop Engine") { actions.stopEngine() }
         item("Restart Engine") { actions.stopEngine(); waitStopped(); actions.startEngine() }
+        item("Unlock vault…") { SwingUtilities.invokeLater { promptUnlock() } }
         menu.addSeparator()
         item("Quit tray") { scope.coroutineContext[kotlinx.coroutines.Job]?.cancel(); SystemTray.getSystemTray().remove(icon); System.exit(0) }
         icon.popupMenu = menu
@@ -88,6 +89,18 @@ class TrayApp(
     private fun waitStopped() {
         val end = System.currentTimeMillis() + 10_000
         while (actions.engineRunning() && System.currentTimeMillis() < end) Thread.sleep(200)
+    }
+
+    private fun promptUnlock() {
+        if (!actions.engineRunning()) { javax.swing.JOptionPane.showMessageDialog(null, "The Engine is not running.", "Aidos", javax.swing.JOptionPane.INFORMATION_MESSAGE); return }
+        val field = javax.swing.JPasswordField(24)
+        val ok = javax.swing.JOptionPane.showConfirmDialog(null, arrayOf<Any>("Vault passphrase", field), "Unlock the Aidos vault", javax.swing.JOptionPane.OK_CANCEL_OPTION, javax.swing.JOptionPane.PLAIN_MESSAGE)
+        if (ok != javax.swing.JOptionPane.OK_OPTION) { field.text = ""; return }
+        val pass = field.password
+        Thread {
+            val problem = actions.unlockVault(pass)
+            SwingUtilities.invokeLater { javax.swing.JOptionPane.showMessageDialog(null, problem ?: "The vault is unlocked.", "Aidos", if (problem == null) javax.swing.JOptionPane.INFORMATION_MESSAGE else javax.swing.JOptionPane.WARNING_MESSAGE) }
+        }.start()
     }
 
     private fun showAll() {

@@ -174,6 +174,7 @@ class EngineHttpServer(
     private val peersControl: fi.italeino.aidos.engine.control.PeersControl? = null,
     private val appsControl: fi.italeino.aidos.engine.control.AppsControl? = null,
     private val statusControl: fi.italeino.aidos.engine.control.StatusControl? = null,
+    private val vaultControl: fi.italeino.aidos.engine.control.VaultControl? = null,
     private val adminSubjects: Set<String> = setOf(TokenManager.ENGINE_SUBJECT),
     /** RFC-0115 / D59: the pending-approvals feed behind the tray, served at `/v1/admin/approvals` (loopback only, admin only). */
     private val approvalsControl: fi.italeino.aidos.engine.control.ApprovalsControl? = null,
@@ -361,6 +362,7 @@ class EngineHttpServer(
                 if (!lan) peersControl?.let { adminPeersRoutes(it, adminSubjects) }
                 if (!lan) appsControl?.let { adminAppsRoutes(it, adminSubjects) }
                 if (!lan) statusControl?.let { adminStatusRoute(it, adminSubjects) }
+                if (!lan) vaultControl?.let { adminVaultRoutes(it, adminSubjects) }
                 if (!lan) approvalsControl?.let { adminApprovalsRoutes(it, adminSubjects) }
                 if (!lan) onAdminShutdown?.let { adminShutdownRoute(it, adminSubjects) }
                 extraRoutes?.invoke(this)

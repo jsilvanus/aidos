@@ -122,7 +122,9 @@ class DesktopEngineHost(
     /** Set by the headless launcher so the tray can stop it through the admin API; null when the Engine lives in a window. */
     private val onAdminShutdown: (() -> Unit)? = null,
     /** Opens the user vault that holds SSH tunnel keys; only called when the user first uses a tunnel. */
-    private val tunnelVault: () -> dev.aidos.vault.SecretsVault = { dev.aidos.vault.DesktopVault.open().vault },
+    private val tunnelVault: (() -> dev.aidos.vault.SecretsVault)? = null,
+    /** RFC-0115, D56: a machine-wide service starts with a locked passphrase vault; a per-user Engine uses the OS keystore. */
+    val vaultGate: VaultGate = VaultGate.fromEnvironment(),
     /** Injectable so tests need no SSH server. */
     private val tunnelTransport: fi.italeino.sshtunnel.SshTransport = fi.italeino.sshtunnel.SshjTransport(),
     /**
@@ -365,6 +367,7 @@ class DesktopEngineHost(
                 peersControl = LocalPeersControl(this),
                 appsControl = LocalAppsControl(this),
                 statusControl = LocalStatusControl(this),
+                vaultControl = vaultGate,
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),
@@ -423,7 +426,7 @@ class DesktopEngineHost(
             routing.start()
             remoteRouting = routing
             // RFC-0108 phase 3: the user's SSH reverse tunnels publish the remote-ingress listener; saved, confirmed ones start now.
-            val tunnels = DesktopTunnels(stateDir, node = { _aidin.value }, scope = scope, vaultProvider = tunnelVault, transport = tunnelTransport, onAuditLine = ::addAuditLine)
+            val tunnels = DesktopTunnels(stateDir, node = { _aidin.value }, scope = scope, vaultProvider = tunnelVault ?: vaultGate::vault, transport = tunnelTransport, onAuditLine = ::addAuditLine)
             this.tunnels = tunnels
             runCatching { tunnels.startSaved() }.onFailure { addAuditLine("tunnels: ${it.message}") }
             // RFC-0108 phase 5: a hosted run outlives a dropped origin for a bounded window, then is cancelled.

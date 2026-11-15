@@ -221,8 +221,18 @@ object VaultKeyProviders {
         osName: String = System.getProperty("os.name") ?: "",
         runner: CommandRunner = SystemCommandRunner,
         passphrase: (() -> CharArray?)? = null,
+        /**
+         * Use a passphrase even where an OS keystore exists. For a machine-wide service (RFC-0115, D56): a service
+         * started at boot has no login session, so it cannot reach the user's keychain or Secret Service, and it
+         * starts locked until the owner supplies the passphrase.
+         */
+        forcePassphrase: Boolean = false,
     ): VaultKeyProvider {
         val os = osName.lowercase()
+        if (forcePassphrase) {
+            val supplier = requireNotNull(passphrase) { "a passphrase source is required when the passphrase is forced" }
+            return PassphraseKeyProvider(File(secretsDir, "vault.salt"), { supplier()?.takeIf { it.isNotEmpty() } ?: error("secrets.locked: the vault passphrase has not been supplied") })
+        }
         when {
             "mac" in os || "darwin" in os -> return KeychainKeyProvider(runner)
             "win" in os -> return DpapiKeyProvider(File(secretsDir, "vault.key.dpapi"), runner)
