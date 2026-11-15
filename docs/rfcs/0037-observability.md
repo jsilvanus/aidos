@@ -1,7 +1,7 @@
 # RFC-0037: Observability
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (`TRACE` mode, OpenTelemetry adapter, remote telemetry backend, metric retention beyond the default window, desktop status endpoint)
 ## Abstract
 
 This RFC defines how Aidos is diagnosed: structured logging, metrics, tracing, crash reporting,
@@ -263,3 +263,18 @@ OpenTelemetry export adapter over the Execution Graph for desktop users with exi
 
 Anomaly surfacing: telling the user their session failure rate or spend has changed, rather than
 waiting for them to notice.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/CrashHandler.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/MetricsCollector.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/StructuredLogger.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
+  - agent/cli/src/jvmMain/kotlin/dev/aidos/cli/DiagnoseCommand.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/CrashHandlerTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/MetricsCollectorTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/StructuredLoggerTest.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/DiagnoseCommandTest.kt
+```

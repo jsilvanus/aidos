@@ -1,7 +1,7 @@
 # RFC-0003: Security
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (encrypted secrets at rest, OS-level sandboxing, cryptographic audit verification, capability certificates, policy language)
 ## Abstract
 
 Aidos uses capability-based security to protect user data and control what AI agents can do. The runtime enforces explicit permissions: every tool access requires explicit grant, every permission is auditable and revocable, and there is no implicit trust. This RFC establishes the security model that protects the user and their projects.
@@ -503,3 +503,17 @@ deny network:*
 ```
 
 This allows projects to express complex policies declaratively.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/AuditLog.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/AuditVerifier.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/ToolBroker.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditTest.kt
+  - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditIntegrityTest.kt
+  - schema/project.sql
+```

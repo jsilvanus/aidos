@@ -1,7 +1,7 @@
 # RFC-0038: Testing Strategy
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (property-based testing, fuzzing of tool arguments, chaos testing, UI tests, performance benchmarks)
 ## Abstract
 
 This RFC defines how Aidos is verified. It centres on one non-negotiable suite — crash recovery
@@ -293,3 +293,26 @@ from CI.
 
 Long-running soak tests: a session woken thousands of times, asserting bounded memory, bounded
 storage, and no capability leakage.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/testing/build.gradle.kts
+  - agent/testing/src/commonMain/kotlin/dev/aidos/testing/FakeModelAdapter.kt
+  - agent/testing/src/commonMain/kotlin/dev/aidos/testing/FakeTool.kt
+  - agent/testing/src/commonMain/kotlin/dev/aidos/testing/SeededIdGenerator.kt
+  - agent/testing/src/commonMain/kotlin/dev/aidos/testing/TestClock.kt
+  - agent/testing/src/jvmMain/kotlin/dev/aidos/testing/InjectableFilesystem.kt
+  - agent/testing/src/jvmTest/kotlin/dev/aidos/testing/TestingKitTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/CrashRecoveryTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ConcurrencyModelTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/MigrationRunnerTest.kt
+  - tests/fixtures/golden/prompt-basic.txt
+  - tests/fixtures/injection/prompt-injection-corpus.txt
+  - tests/fixtures/paths/escape-vectors.txt
+  - tests/fixtures/scenarios/basic-run.json
+  - tests/fixtures/schemas/v1.sql
+  - .github/workflows/ci.yml
+  - .github/workflows/schema.yml
+```

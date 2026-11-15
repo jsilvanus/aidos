@@ -1,7 +1,7 @@
 # RFC-0039: Serialization and Versioning
 
-Status: Accepted 2026-08-03
-
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (export format versioning beyond 1.0, field aliases, published compatibility matrix)
 ## Abstract
 
 This RFC defines the four independent version numbers in Aidos, why they must not be conflated,
@@ -237,3 +237,16 @@ number of persisted types makes hand-maintenance error-prone.
 Cross-version fuzzing: generate objects at version N, read at N−1 and N+1, assert no field loss.
 
 Signed exports, so an archive's integrity and origin can be verified before import (RFC-0041).
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/VersionedJson.kt
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/MigrationRunner.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/VersionedJsonTest.kt
+  - agent/storage/src/jvmTest/kotlin/dev/aidos/storage/MigrationRunnerTest.kt
+  - tests/fixtures/schemas/v1.sql
+```
