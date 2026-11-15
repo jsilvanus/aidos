@@ -348,3 +348,41 @@ files:
   - schema/project.sql
   - schema/user.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0016.1"
+    title: "additional formats"
+    status: todo
+  - id: "0016.2"
+    title: "nested files"
+    status: partial
+    done_when: "Nested instruction files are detected and counted but not read"
+    files:
+      - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/InstructionDiscovery.kt
+  - id: "0016.3"
+    title: "categories"
+    status: todo
+  - id: "0016.4"
+    title: "priorities"
+    status: todo
+  - id: "0016.5"
+    title: "filtering"
+    status: todo
+  - id: "0016.6"
+    title: "conflict detection"
+    status: todo
+  - id: "0016.7"
+    title: "provider plugins"
+    status: todo
+  - id: "0016.8"
+    title: "instruction editing UI"
+    status: todo
+  - id: "0016.9"
+    title: "instruction generation"
+    status: todo
+```

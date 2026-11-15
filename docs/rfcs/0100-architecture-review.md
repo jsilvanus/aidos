@@ -1,6 +1,6 @@
 # RFC-0100: Comprehensive Architecture Review
 
-Status: Draft
+Status: Archived 2026-11-15 (informational review; not implementable, kept for history)
 
 ## Purpose
 

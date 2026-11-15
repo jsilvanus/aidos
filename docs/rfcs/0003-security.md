@@ -520,4 +520,36 @@ files:
   - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditTest.kt
   - agent/broker/src/jvmTest/kotlin/dev/aidos/broker/AuditIntegrityTest.kt
   - schema/project.sql
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SqliteSecretsVault.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/Rfc0035RequirementsTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerHardeningTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0003.1"
+    title: "encrypted secrets at rest"
+    status: done
+    done_when: "Secrets are stored as AES-256-GCM ciphertext in the vault database"
+    files:
+      - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SqliteSecretsVault.kt
+      - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
+      - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/Rfc0035RequirementsTest.kt
+  - id: "0003.2"
+    title: "OS-level sandboxing"
+    status: todo
+  - id: "0003.3"
+    title: "cryptographic audit verification"
+    status: todo
+  - id: "0003.4"
+    title: "capability certificates"
+    status: todo
+  - id: "0003.5"
+    title: "policy language"
+    status: todo
 ```

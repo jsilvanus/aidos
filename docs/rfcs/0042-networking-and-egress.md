@@ -316,4 +316,30 @@ files:
   - agent/http/src/jvmTest/kotlin/dev/aidos/http/HttpToolTest.kt
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
   - schema/project.sql
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStore.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/FileAppApprovalStoreTest.kt
+  - engine/downloads/src/androidMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/commonMain/kotlin/dev/aidos/downloads/DownloadManager.kt
+  - engine/downloads/src/jvmMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/DownloadManagerTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStore.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/AppApprovalStoreTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/approval/InMemoryAppApprovalStore.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0042.1"
+    title: "per-destination byte budgets"
+    status: todo
+  - id: "0042.2"
+    title: "pre-flight egress preview"
+    status: todo
+  - id: "0042.3"
+    title: "Tor/proxy-chain transport"
+    status: todo
 ```

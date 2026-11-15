@@ -286,4 +286,37 @@ files:
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
   - schema/project.sql
   - schema/user.sql
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+  - agent/amp/src/jvmTest/kotlin/dev/aidos/amp/AmpAgentRunnerTest.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/projects/ProjectsUiState.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/approval/ApprovalPresenterTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0027.1"
+    title: "configurable attenuation policy"
+    status: partial
+    files:
+      - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/TaintAttenuation.kt
+      - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+    done_when: "A fixed attenuation table is applied to UNTRUSTED runs; it is not configurable per project or policy."
+  - id: "0027.2"
+    title: "taint-aware context assembly"
+    status: todo
+  - id: "0027.3"
+    title: "injection-pattern detection"
+    status: partial
+    files:
+      - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+    done_when: "A model-based injection screener (Gate A latch) is wired; there is no pattern-based detection."
+  - id: "0027.4"
+    title: "RFC-0110 Guardian escalation"
+    status: done
+    files:
+      - docs/rfcs/0110-optional-guardian-approval.md
 ```

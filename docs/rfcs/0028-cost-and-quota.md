@@ -245,4 +245,25 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerTest.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0028.1"
+    title: "cost-aware routing"
+    status: partial
+    files:
+      - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+    done_when: "Among remote candidates the router picks the lowest estimated cost; budget-aware routing is not evidenced."
+  - id: "0028.2"
+    title: "learned step-cost estimation"
+    status: todo
+  - id: "0028.3"
+    title: "per-provider rate-limit quota tracking"
+    status: todo
 ```

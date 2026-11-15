@@ -436,4 +436,34 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/ui/editor/EditorPresenterTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/navigation/Routes.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/theme/AidosTheme.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ui/HomeScreen.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/service/ForegroundServiceExecutionWindow.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/eventstream/EventStreamUiState.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/projects/ProjectsUiState.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/runs/RunListUiState.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/sessions/SessionListUiState.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/ui/AvailabilityReporter.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/ModelRoutingAndGuardianPresenterTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/Phase4M28M31Tests.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/Phase4Tests.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/service/ForegroundServiceExecutionWindowTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0050.1"
+    title: "Camera/OCR"
+    status: todo
+  - id: "0050.2"
+    title: "wearable companion"
+    status: todo
+  - id: "0050.3"
+    title: "paired execution delegation"
+    status: todo
 ```

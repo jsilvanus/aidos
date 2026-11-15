@@ -482,4 +482,32 @@ files:
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Effects.kt
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Tools.kt
   - schema/project.sql
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/approval/ApprovalPresenterTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0030.1"
+    title: "tool middleware"
+    status: todo
+  - id: "0030.2"
+    title: "tool composition pipelines"
+    status: todo
+  - id: "0030.3"
+    title: "smart retries"
+    status: partial
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+    done_when: "Retries are gated by error class and attempt budget; backoff is None, so there is no smart backoff."
+  - id: "0030.4"
+    title: "profiling"
+    status: todo
+  - id: "0030.5"
+    title: "rate limiting"
+    status: todo
 ```

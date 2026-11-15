@@ -233,4 +233,12 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFiveTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSixTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSevenParadigmsAndTimelineTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionItemCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectTypeBadge.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/DiffReservationBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/ScopePathChipAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/ActionButtonAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/AidosTheme.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/Tokens.kt
 ```

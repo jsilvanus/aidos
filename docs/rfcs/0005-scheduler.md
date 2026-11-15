@@ -189,3 +189,23 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerMatcherTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0005.1"
+    title: "coalescing debounce window"
+    status: todo
+  - id: "0005.2"
+    title: "predictive wake"
+    status: todo
+  - id: "0005.3"
+    title: "cross-project scheduling"
+    status: todo
+  - id: "0005.4"
+    title: "priority/deadline scheduling"
+    status: todo
+```

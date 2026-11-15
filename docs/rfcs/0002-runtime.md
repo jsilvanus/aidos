@@ -485,4 +485,31 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/BudgetAndProjectTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ExecutorTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0002.1"
+    title: "distribution/remote execution"
+    status: todo
+  - id: "0002.2"
+    title: "semantic/cross-project knowledge"
+    status: todo
+  - id: "0002.3"
+    title: "plugins"
+    status: todo
+  - id: "0002.4"
+    title: "streaming"
+    status: todo
+  - id: "0002.5"
+    title: "replay"
+    status: todo
+  - id: "0002.6"
+    title: "multi-modal workflows"
+    status: todo
 ```

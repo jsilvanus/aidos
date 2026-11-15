@@ -549,4 +549,36 @@ files:
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
   - schema/project.sql
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/CapabilityResolver.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/CapabilityResolverTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0018.1"
+    title: "delegation attenuation validation"
+    status: done
+    done_when: "Delegation rejects scope and constraint widening and expired or revoked parents"
+    files:
+      - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+      - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
+  - id: "0018.2"
+    title: "capability certificates"
+    status: todo
+  - id: "0018.3"
+    title: "policy language"
+    status: todo
+  - id: "0018.4"
+    title: "time-bounded renewal"
+    status: partial
+    done_when: "Capabilities carry expires_at and delegated children are clamped to the parent expiry; renewal is not built"
+    files:
+      - agent/capability/src/jvmMain/kotlin/dev/aidos/capability/SqliteCapabilityManager.kt
+  - id: "0018.5"
+    title: "bundles"
+    status: todo
 ```

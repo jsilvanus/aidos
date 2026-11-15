@@ -1,6 +1,6 @@
 # RFC-0051: LAN Engine Sharing and External Device Pairing
 
-**Status:** Draft (desktop implemented 2026-11-15; Android not). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
+**Status:** Accepted 2026-11-15, partially implemented. Detail: (desktop implemented 2026-11-15; Android not). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
 Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, Android UI for adding devices, per-device permissions beyond inference access, signed manual descriptors)
 **Authors:** Aidos contributors  
 **Date:** 2026-08-18
@@ -431,4 +431,24 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanPairingEndToEndTest.kt
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanEndToEndTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0051.1"
+    title: "Android LAN listener and TLS identity"
+    status: todo
+  - id: "0051.2"
+    title: "Android UI for adding devices"
+    status: todo
+  - id: "0051.3"
+    title: "per-device permissions beyond inference access"
+    status: todo
+  - id: "0051.4"
+    title: "signed manual descriptors"
+    status: todo
 ```

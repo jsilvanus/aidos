@@ -1,6 +1,6 @@
 # RFC-0106: Aidos Desktop — Spatial Canvas & Generative UI Architecture
 
-Status: Draft (partially implemented, audited 2026-11-15): Phase 3 spatial canvas, semantic zoom and the RFC-0111/0112 view modes are built in `agent/ui-common` and wired into the desktop app; the Trusted Component Registry lives in the separate `aidos-tcr` repository. Phase 1 caret companion, Phase 4 compartments and Phase 5 analytics/API synthesis are not built.  
+Status: Accepted 2026-11-15, partially implemented. Detail: (partially implemented, audited 2026-11-15): Phase 3 spatial canvas, semantic zoom and the RFC-0111/0112 view modes are built in `agent/ui-common` and wired into the desktop app; the Trusted Component Registry lives in the separate `aidos-tcr` repository. Phase 1 caret companion, Phase 4 compartments and Phase 5 analytics/API synthesis are not built.  
 Date: 2026-10-22  
 Supersedes: RFC-0051 Core View Modes (Amended)  
 Related RFCs: [RFC-0012 Intent Graph](0012-intent-graph.md), [RFC-0051 Desktop](0051-desktop.md), [RFC-0103 Aidos Engine](0103-aidos-engine.md)  
@@ -328,4 +328,18 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/DiffReservationBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/DiffChunkAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/ScopePathChipAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/StepCounterAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/ActionButtonAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/AudioWaveformAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/MetricBadgeAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/TextSpanAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/molecules/InlineCardMolecule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/molecules/MetricClusterMolecule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/AidosTheme.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/Tokens.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/Typography.kt
 ```

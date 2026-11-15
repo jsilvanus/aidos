@@ -291,3 +291,20 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
   - schema/project.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0026.1"
+    title: "auto-invalidation of FACTs on source_refs change"
+    status: todo
+  - id: "0026.2"
+    title: "90-day retention report"
+    status: todo
+  - id: "0026.3"
+    title: "user-stated preferences"
+    status: todo
+```

@@ -245,4 +245,6 @@ files:
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/EngineMcpToolsTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/tray/TrayCheck.kt
   - docs/desktop-services-e2e.md
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEnvironment.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsPane.kt
 ```

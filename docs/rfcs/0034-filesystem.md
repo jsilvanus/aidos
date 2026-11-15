@@ -497,3 +497,29 @@ files:
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Capabilities.kt
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0034.1"
+    title: "streaming reads"
+    status: todo
+  - id: "0034.2"
+    title: "chmod"
+    status: todo
+  - id: "0034.3"
+    title: "change notifications"
+    status: todo
+  - id: "0034.4"
+    title: "remote filesystem"
+    status: todo
+  - id: "0034.5"
+    title: "transactional writes"
+    status: todo
+  - id: "0034.6"
+    title: "content validation"
+    status: todo
+```

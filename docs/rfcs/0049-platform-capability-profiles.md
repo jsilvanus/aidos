@@ -340,4 +340,26 @@ files:
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/ProjectRequirements.kt
   - kernel/src/commonMain/kotlin/dev/aidos/kernel/Platform.kt
   - kernel/src/commonTest/kotlin/dev/aidos/kernel/ContractTest.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/ui/AvailabilityReporter.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/DeviceProfileProvider.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0049.1"
+    title: "`BUNDLED` tool set"
+    status: todo
+  - id: "0049.2"
+    title: "desktop worktree workers"
+    status: todo
+  - id: "0049.3"
+    title: "queued offline network intents"
+    status: todo
+  - id: "0049.4"
+    title: "paired remote execution"
+    status: todo
 ```

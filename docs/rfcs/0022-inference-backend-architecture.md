@@ -320,4 +320,50 @@ files:
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
   - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionModelAdapter.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxDecisionBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxSttBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxVisionBackend.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionTypes.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionWire.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/GemmaBpeTokenizer.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/LayaDecisionModel.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/LayaDecoder.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/LayaEncoder.kt
+  - engine/decisions/src/jvmAndAndroidMain/kotlin/dev/aidos/decisions/DecisionPackages.kt
+  - engine/decisions/src/jvmAndAndroidMain/kotlin/dev/aidos/decisions/LayaPackage.kt
+  - engine/decisions/src/jvmAndAndroidMain/kotlin/dev/aidos/decisions/OrtDecisionRunner.kt
+  - engine/decisions/src/jvmMain/kotlin/dev/aidos/decisions/OnnxDecisionBackend.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/DecisionPackagesTest.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/GemmaBpeTokenizerTest.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/LayaGoldenTest.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/MixedModelsTest.kt
+  - engine/decisions/src/jvmTest/kotlin/dev/aidos/decisions/OnnxDecisionBackendTest.kt
+  - engine/downloads/src/androidMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/commonMain/kotlin/dev/aidos/downloads/DownloadManager.kt
+  - engine/downloads/src/jvmMain/kotlin/dev/aidos/downloads/LocalDownloadManager.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/DownloadManagerTest.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/CatalogInferenceBackend.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackend.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackendTest.kt
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Inference.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0022.1"
+    title: "ExecuTorch"
+    status: todo
+  - id: "0022.2"
+    title: "OpenVINO"
+    status: todo
+  - id: "0022.3"
+    title: "TensorRT"
+    status: todo
+  - id: "0022.4"
+    title: "zero-copy tensor interchange"
+    status: todo
 ```

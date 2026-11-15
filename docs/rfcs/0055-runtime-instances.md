@@ -232,4 +232,24 @@ files:
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
   - schema/project.sql
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/SocketPaths.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0055.1"
+    title: "read-only instances with live event subscription"
+    status: partial
+    files:
+      - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+      - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+    done_when: "live events.subscribe stream from the owning runtime exists; read-only open mode of an instance does not"
+  - id: "0055.2"
+    title: "paired remote runtime for PLATFORM-tier steps"
+    status: todo
 ```

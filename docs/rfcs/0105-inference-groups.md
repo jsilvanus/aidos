@@ -395,4 +395,34 @@ files:
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/QrCode.kt
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/GgufLoader.kt
+  - engine/engineui/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/QrCodeTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0105.1"
+    title: "coordinator election"
+    status: todo
+  - id: "0105.2"
+    title: "GGUF transfer"
+    status: todo
+  - id: "0105.3"
+    title: "checkpoint/KV-cache migration"
+    status: todo
+  - id: "0105.4"
+    title: "tensor parallelism"
+    status: todo
+  - id: "0105.5"
+    title: "ONNX split"
+    status: todo
+  - id: "0105.6"
+    title: "BLE/Wi-Fi Direct"
+    status: todo
+  - id: "0105.7"
+    title: "model attestation"
+    status: todo
 ```

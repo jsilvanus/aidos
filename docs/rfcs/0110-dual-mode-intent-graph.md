@@ -227,4 +227,33 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/ColorSemantics.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseOneTest.kt
   - schema/project.sql
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/intent/IntentList.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentRuntimeClientTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0110.1"
+    title: "Android/Desktop Compose UI views"
+    status: done
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
+  - id: "0110.2"
+    title: "socket wire protocol for intents.*"
+    status: done
+    files:
+      - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - id: "0110.3"
+    title: "WorkManager AUTO_WHEN_READY trigger"
+    status: done
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/IntentRunCoordinator.kt
+  - id: "0110.4"
+    title: "SHELL_COMMAND runner"
+    status: todo
 ```

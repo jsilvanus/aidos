@@ -579,3 +579,38 @@ files:
   - agent/lock/src/jvmMain/kotlin/dev/aidos/lock/ProjectLock.kt
   - agent/lock/src/jvmTest/kotlin/dev/aidos/lock/ProjectLockTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0010.1"
+    title: "templates"
+    status: todo
+  - id: "0010.2"
+    title: "hierarchies"
+    status: todo
+  - id: "0010.3"
+    title: "workspaces"
+    status: partial
+    done_when: "Projects carry a workspace_id and workspace rows are ensured; no workspace behaviour beyond that"
+    files:
+      - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
+  - id: "0010.4"
+    title: "collaborative projects"
+    status: todo
+  - id: "0010.5"
+    title: "analytics"
+    status: todo
+  - id: "0010.6"
+    title: "snapshots"
+    status: todo
+  - id: "0010.7"
+    title: "dependencies"
+    status: todo
+  - id: "0010.8"
+    title: "cloning"
+    status: todo
+```

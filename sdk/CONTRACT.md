@@ -117,7 +117,7 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 
 ## Not covered
 
-- `/v1/agent/*` (additive, D49) answers 403 `agent_not_granted` to an approved app the user has not allowed to run agents; `GET /v1/agent/info` stays open. Inference routes are unchanged.
+- `/v1/agent/*` is frozen separately, see "Agent API v1" below. It answers 403 `agent_not_granted` to an approved app the user has not allowed to run agents; `GET /v1/agent/info` stays open. Inference routes are unchanged.
 - Tool-calling is not modelled in the SDK types yet (additive when a consumer needs it).
 - STT takes a whole utterance and returns no partial results and no timestamps; audio over 30 s is
   cut into windows internally, so send utterance-sized pieces for best results.
@@ -126,3 +126,13 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   the cloud environment, so the Binder path (`EngineBinderHandshake`, `EngineHandshakeImpl`, `EngineService.onBind`,
   the notification/`PendingIntent`) is verified by reading, not running. The first real Dictator →
   Engine approval on a phone is the acceptance test for this contract.
+
+## Agent API v1
+
+Frozen 2026-11-15 (owner), under the same additive-only policy (D63). Governs `/v1/agent/*` on the Engine's loopback server (RFC-0120). It rides on the Engine handshake and token, so the handshake keys and the per-app agent grant (`agent_not_granted`) are part of it.
+
+**Frozen:** routes `GET /v1/agent/info`, `POST /v1/agent/turns`, `POST /v1/agent/runs/{id}/tool-results`, `GET /v1/agent/runs`, `GET /v1/agent/runs/{id}?since=&waitMs=`, `DELETE /v1/agent/runs/{id}`, `GET /v1/agent/events`; the JSON names of `AgentTurnRequest` (`model`, `message`, `systemPrompt`, `history`, `tools`, `maxSteps`, `contextWindow`, `async`, `locality`, `useEngineTools`), `ClientToolSpec`, `PendingToolCall`, `ToolResultsRequest`, `ClientToolResult`, `ExecutedToolCallDto`, `AgentTurnResponse` (`status`, `runId`, `reply`, `toolCalls`, `executedToolCalls`, `steps`, `error`, `seq`) and `AgentInfo`; status values `running`, `tool_calls`, `completed`, `failed`, `cancelled`; error codes `invalid_request`, `unknown_call`, `run_not_found`, `run_finished`, `too_many_runs`, `agent_not_granted`; `seq` semantics and the rule that notifications are advisory.
+
+**Not frozen (experimental):** worker, guardian and routing-config fields (`role`, `parentSessionId`, `parentRunId`, `workerBrief`, `taintApprovalPolicy`, `modelChosenByMainModel`, `enforcedLocality`, and the extra fields of `AgentRunSummaryDto`), the peer endpoints used between Engines (RFC-0107), and anything not listed above.
+
+**Enforced by:** `engine/agenthost` `AgentContractFreezeTest` (pinned field names, status values, `apiVersion` 1) and `AgentRoutesTest` (routes, grant refusal, errors). Streaming, durable runs and per-agent identity are additive and may land within v1.

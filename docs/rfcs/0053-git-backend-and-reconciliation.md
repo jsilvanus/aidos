@@ -331,4 +331,25 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/GitRunReconcilerTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch2RfcIntegrationTest.kt
   - schema/project.sql
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/GitWorkerCommitter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunReconciler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerCommitter.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/RunReconcilerGateTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0053.1"
+    title: "desktop worktree workers"
+    status: todo
+  - id: "0053.2"
+    title: "reachability-aware git gc coordination"
+    status: todo
+  - id: "0053.3"
+    title: "libgit2 evaluation"
+    status: todo
 ```

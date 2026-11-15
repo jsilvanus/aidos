@@ -519,4 +519,24 @@ files:
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/HybridSttRouterTest.kt
   - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/voice/GlanceVoicePresenterTest.kt
   - agent/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceApprovalTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/core/AudioWaveformAtom.kt
+  - engine/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceProviders.kt
+  - engine/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceProvidersTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0057.1"
+    title: "Freeform Q&A"
+    status: todo
+  - id: "0057.2"
+    title: "earcons"
+    status: todo
+  - id: "0057.3"
+    title: "multi-run session summary"
+    status: todo
 ```

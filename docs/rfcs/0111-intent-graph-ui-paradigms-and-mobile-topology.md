@@ -356,4 +356,7 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFiveTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSixTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSevenParadigmsAndTimelineTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionItemCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/BatonHandoffBadge.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/StepCounterAtom.kt
 ```

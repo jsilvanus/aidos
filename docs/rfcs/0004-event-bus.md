@@ -579,4 +579,38 @@ files:
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SubscriptionRegistryTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/TopicMatcherTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/MockRuntimeClientTest.kt
+  - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/CliFrontendTest.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0004.1"
+    title: "real-time event streaming"
+    status: partial
+    done_when: "Live in-process event Flow with resumable replay exists; no network streaming transport"
+    files:
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - id: "0004.2"
+    title: "event compression"
+    status: todo
+  - id: "0004.3"
+    title: "distributed events"
+    status: todo
+  - id: "0004.4"
+    title: "complex event processing"
+    status: todo
+  - id: "0004.5"
+    title: "time-travel debugging"
+    status: todo
+  - id: "0004.6"
+    title: "event source plugins"
+    status: todo
 ```

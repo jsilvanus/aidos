@@ -277,4 +277,44 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/MetricsCollectorTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/StructuredLoggerTest.kt
   - agent/cli/src/jvmTest/kotlin/dev/aidos/cli/DiagnoseCommandTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/AdminRoutes.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpStatusControl.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineAttach.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/StatusViewModel.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/observability/CrashHandler.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/observability/MetricsCollector.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/observability/CrashHandlerTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/observability/MetricsCollectorTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/StatusPane.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0037.1"
+    title: "`TRACE` mode"
+    status: partial
+    files:
+      - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/StructuredLogger.kt
+    done_when: "enableTrace turns on TRACE records written to a separate file; there is no per-subsystem scoping."
+  - id: "0037.2"
+    title: "OpenTelemetry adapter"
+    status: todo
+  - id: "0037.3"
+    title: "remote telemetry backend"
+    status: todo
+  - id: "0037.4"
+    title: "metric retention beyond the default window"
+    status: todo
+  - id: "0037.5"
+    title: "desktop status endpoint"
+    status: done
+    files:
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/AdminRoutes.kt
+      - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpStatusControl.kt
+      - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineAttach.kt
+    done_when: "GET /v1/admin/status serves Engine status, and the desktop app reads it through HttpStatusControl."
 ```

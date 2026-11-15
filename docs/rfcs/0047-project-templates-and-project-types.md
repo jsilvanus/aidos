@@ -247,4 +247,31 @@ files:
   - agent/identity/src/commonMain/kotlin/dev/aidos/identity/ProjectRegistry.kt
   - agent/identity/src/jvmTest/kotlin/dev/aidos/identity/IdentityTest.kt
   - schema/project.sql
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectTypeBadge.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0047.1"
+    title: "built-in templates"
+    status: todo
+  - id: "0047.2"
+    title: "template instantiation"
+    status: todo
+  - id: "0047.3"
+    title: "substitution"
+    status: todo
+  - id: "0047.4"
+    title: "prohibition-list validation"
+    status: todo
+  - id: "0047.5"
+    title: "user template export"
+    status: todo
+  - id: "0047.6"
+    title: "intent seeding"
+    status: todo
 ```

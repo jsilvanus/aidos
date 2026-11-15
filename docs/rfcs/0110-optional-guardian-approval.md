@@ -282,4 +282,5 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/GuardianApprovalEndToEndTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/ModelRoutingAndGuardianPresenterTest.kt
 ```

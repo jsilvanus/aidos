@@ -202,3 +202,29 @@ files:
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopShellGrantsModelTest.kt
   - agent/capability/src/jvmTest/kotlin/dev/aidos/capability/CapabilityTest.kt
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0033.1"
+    title: "OS-level sandboxing (containers, seccomp, chroot)"
+    status: todo
+  - id: "0033.2"
+    title: "network blocking and file-visibility limits"
+    status: todo
+  - id: "0033.3"
+    title: "interactive sessions"
+    status: todo
+  - id: "0033.4"
+    title: "confirmation prompts for dangerous commands"
+    status: todo
+  - id: "0033.5"
+    title: "CPU and memory quotas"
+    status: todo
+  - id: "0033.6"
+    title: "signal handling"
+    status: todo
+```

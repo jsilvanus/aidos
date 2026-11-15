@@ -821,4 +821,24 @@ files:
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerSpawner.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SessionLifecycleRfc0011Test.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/ui/sessions/SessionListUiState.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientSessionTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/GitWorkerCommitter.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerCommitter.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/DriverWorkerOrchestrationTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SampleAgentRuns.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0011.1"
+    title: "session forking"
+    status: todo
+  - id: "0011.2"
+    title: "direct session-to-session messaging"
+    status: todo
 ```

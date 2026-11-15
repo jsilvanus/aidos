@@ -1,6 +1,6 @@
 # RFC-0051: Desktop
 
-Status: Draft (partially implemented, audited 2026-11-15): a Compose Desktop app exists (Engine host and Universal Adaptive UI, RFC-0103/0106/0111/0112); core view modes are superseded by RFC-0106. The IDE/Obsidian-style modes, keyboard layer and remote-runtime connection described here are not built.
+Status: Superseded by [RFC-0106](0106-desktop-generative-ui.md), [RFC-0115](0115-desktop-services-and-ui-attach.md) and [RFC-0119](0119-engine-app-ui.md) (2026-11-15). Previously: Draft (partially implemented, audited 2026-11-15): a Compose Desktop app exists (Engine host and Universal Adaptive UI, RFC-0103/0106/0111/0112); core view modes are superseded by RFC-0106. The IDE/Obsidian-style modes, keyboard layer and remote-runtime connection described here are not built.
 
 ## Abstract
 
@@ -584,4 +584,10 @@ files:
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/Main.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEnvironment.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHostTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferencesRoutingTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopPreferencesRunSettingsTest.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/theme/AidosEngineTheme.kt
+  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/Components.kt
 ```

@@ -471,4 +471,37 @@ files:
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RealSocketIntegrationTest.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SqliteEgressRecorderTest.kt
   - schema/project.sql
+  - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/PolicyInferenceRouterTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqlBudgetLedger.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/HttpTransport.kt
+```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0023.1"
+    title: "automatic privacy detection"
+    status: todo
+  - id: "0023.2"
+    title: "cost optimization"
+    status: partial
+    files:
+      - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+      - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/PolicyInferenceRouterTest.kt
+    done_when: "Remote candidate choice picks the lowest estimated cost; no spend-based optimization or cost comparison across providers."
+  - id: "0023.3"
+    title: "provider comparison UI"
+    status: todo
+  - id: "0023.4"
+    title: "usage reporting"
+    status: partial
+    files:
+      - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqlBudgetLedger.kt
+    done_when: "Settled actual cost is recorded in budget_ledger; no usage report or query surface exists."
+  - id: "0023.5"
+    title: "audit dashboard"
+    status: todo
 ```

@@ -300,3 +300,23 @@ files:
   - schema/user.sql
   - schema/vault.sql
 ```
+
+## Post-MVP Work
+
+Checklist for work beyond the MVP. Each item has a stable id; set `status` to `partial` or `done` and list the implementing `files` (checked by `scripts/rfc/postmvp.py`). The `Non-MVP Work:` header must say `None` once every item is `done`.
+
+```yaml
+post_mvp:
+  - id: "0040.1"
+    title: "per-database encryption"
+    status: todo
+  - id: "0040.2"
+    title: "FTS5 over content nodes"
+    status: todo
+  - id: "0040.3"
+    title: "incremental export"
+    status: todo
+  - id: "0040.4"
+    title: "storage diagnostics"
+    status: todo
+```
