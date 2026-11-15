@@ -26,6 +26,8 @@ import java.util.UUID
  */
 class SessionMemoryStore(
     private val driver: SqlDriver,
+    /** RFC-0011: soft cap on active `FACT` entries per session, enforced via LRU eviction. */
+    private val factCap: Int = DEFAULT_FACT_CAP,
     /** RFC-0035: before a secret becomes a remembered "fact". Defaults to identity. */
     private val redact: (String) -> String = { it },
 ) {
@@ -70,7 +72,41 @@ class SessionMemoryStore(
             bindString(10, now)
             bindString(11, resolvedExpiresAt)
         }
+        if (entry.kind == MemoryKind.FACT && factCap > 0) {
+            evictExcessFacts(entry.sessionId, now)
+        }
         return id
+    }
+
+    /**
+     * Evicts the least-recently-used active `FACT` entries for [sessionId] when the count exceeds
+     * [factCap] (RFC-0011). `expires_at` is refreshed on recall ([refreshFactExpiry]), so ordering
+     * by `COALESCE(expires_at, created_at) ASC, created_at ASC` evicts the least-recently-used facts.
+     */
+    private fun evictExcessFacts(sessionId: String, nowIso: String) {
+        val activeFactIds = mutableListOf<String>()
+        driver.executeQuery(
+            identifier = null,
+            sql = """SELECT id FROM memory_entries
+                WHERE session_id = ? AND kind = 'FACT' AND superseded_by IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY COALESCE(expires_at, created_at) ASC, created_at ASC""",
+            mapper = { cursor ->
+                while (cursor.next().value) {
+                    activeFactIds.add(cursor.getString(0)!!)
+                }
+                app.cash.sqldelight.db.QueryResult.Value(Unit)
+            },
+            parameters = 2,
+        ) {
+            bindString(0, sessionId)
+            bindString(1, nowIso)
+        }
+        val excess = activeFactIds.size - factCap
+        if (excess <= 0) return
+        for (i in 0 until excess) {
+            delete(activeFactIds[i])
+        }
     }
 
     /** Reads all active (non-superseded, non-expired) entries for a session. */
@@ -246,6 +282,7 @@ class SessionMemoryStore(
 
     companion object {
         const val DEFAULT_FACT_TTL_DAYS: Long = 90L
+        const val DEFAULT_FACT_CAP: Int = 100
     }
 
     /**

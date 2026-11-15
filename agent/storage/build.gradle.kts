@@ -12,6 +12,7 @@ kotlin {
             implementation(project(":kernel"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
             // D35: the driver only, not SQLDelight's .sq schema codegen. schema/ stays the one
             // canonical DDL (RFC-0040); this is the KMP SqlDriver interface gitsema-kotlin also
             // uses, so both libraries share one SQLite build per process on Android.

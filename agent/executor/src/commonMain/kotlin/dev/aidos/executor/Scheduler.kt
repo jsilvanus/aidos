@@ -82,6 +82,8 @@ class Scheduler(
         val queued: List<String> = emptyList(),
         /** Sessions interrupted by a `PRIORITY_INTERRUPT` event (RFC-0006). */
         val interrupted: List<String> = emptyList(),
+        /** Matched, but parked in `SLEEPING` after 3 consecutive `FAILED` Runs (RFC-0011). */
+        val failureBudgetParked: List<String> = emptyList(),
     )
 
     /**
@@ -140,11 +142,37 @@ class Scheduler(
         val depthCeilingRefused = mutableListOf<String>()
         val alreadyRunning = mutableListOf<String>()
         val queued = mutableListOf<String>()
+        val failureBudgetParked = mutableListOf<String>()
 
         for (sessionId in match.woken) {
             // RFC-0004: Visibility check — never deliver PRIVILEGED or other-session events.
             if (!events.canDeliver(event, ActorKind.SESSION, sessionId)) {
                 continue
+            }
+
+            // RFC-0011: A session with >= 3 consecutive FAILED Runs is parked in SLEEPING and
+            // stops responding to non-user events until the user intervenes.
+            val userEvent = event.type == EventTypes.USER_COMMAND || event.source == "user"
+            if (isFailureBudgetExhausted(sessionId)) {
+                if (!userEvent) {
+                    audit.write(
+                        id = idGen(),
+                        projectId = projectId.value,
+                        kind = "WakeRefused",
+                        actor = resolveSessionActor(sessionId),
+                        subjectRef = event.type,
+                        detailJson = buildJsonObject {
+                            put("reason", "failure_budget_exhausted")
+                            put("event_id", event.id)
+                            put("session_id", sessionId)
+                        }.toString(),
+                        nowIso = nowIso(),
+                    )
+                    failureBudgetParked.add(sessionId)
+                    continue
+                } else {
+                    resetFailureBudget(sessionId)
+                }
             }
 
             val wokenEventId = idGen()
@@ -224,6 +252,7 @@ class Scheduler(
             depthCeilingRefused = depthCeilingRefused,
             alreadyRunning = alreadyRunning,
             queued = queued,
+            failureBudgetParked = failureBudgetParked,
         )
     }
 
@@ -233,17 +262,14 @@ class Scheduler(
      * `SLEEPING` if the queue is empty.
      */
     fun onRunFinished(sessionId: String): WokenSession? {
+        if (isFailureBudgetExhausted(sessionId)) {
+            eventQueue.clear(sessionId)
+            parkSessionSleeping(sessionId)
+            return null
+        }
         val next = eventQueue.dequeue(sessionId)
         if (next == null) {
-            driver.execute(
-                identifier = null,
-                sql = "UPDATE sessions SET state = 'SLEEPING', state_updated_at = ?, row_version = row_version + 1 " +
-                    "WHERE id = ? AND state = 'RUNNING'",
-                parameters = 2,
-            ) {
-                bindString(0, nowIso())
-                bindString(1, sessionId)
-            }
+            parkSessionSleeping(sessionId)
             return null
         }
 
@@ -370,5 +396,43 @@ class Scheduler(
             ActorKind.SESSION
         }
         return ActorRef(kind, sessionId)
+    }
+
+    private fun parkSessionSleeping(sessionId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE sessions SET state = 'SLEEPING', state_updated_at = ?, row_version = row_version + 1 " +
+                "WHERE id = ? AND state = 'RUNNING'",
+            parameters = 2,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, sessionId)
+        }
+    }
+
+    private fun isFailureBudgetExhausted(sessionId: String): Boolean {
+        val failures = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT consecutive_failures FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) (c.getLong(0) ?: 0L) else 0L) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
+        return failures >= FAILURE_BUDGET
+    }
+
+    private fun resetFailureBudget(sessionId: String) {
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE sessions SET consecutive_failures = 0, state_updated_at = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, sessionId)
+        }
+    }
+
+    companion object {
+        /** RFC-0011: 3 consecutive FAILED Runs parks a session in SLEEPING. */
+        const val FAILURE_BUDGET: Long = 3L
     }
 }

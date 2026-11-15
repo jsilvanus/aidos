@@ -334,7 +334,7 @@ class ToolBroker(
     private fun failed(call: ToolCall, error: Throwable): ToolCallResult =
         ToolCallResult(
             callId = call.callId,
-            outcome = ToolOutcome.Failed(AidosError(code = "tool.failed", errorClass = dev.aidos.kernel.ErrorClass.TRANSIENT, message = error.message ?: "tool execution failed")),
+            outcome = ToolOutcome.Failed(AidosError(code = dev.aidos.kernel.ErrorCodes.TOOL_EXECUTION_FAILED, errorClass = dev.aidos.kernel.ErrorClass.TRANSIENT, message = error.message ?: "tool execution failed")),
             content = listOf(ContentBlock.Text("Tool execution failed: ${error.message}")),
             trustLevel = TrustLevel.TRUSTED,
         )

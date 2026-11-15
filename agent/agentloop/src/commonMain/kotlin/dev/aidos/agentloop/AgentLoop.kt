@@ -204,12 +204,26 @@ class AgentLoop(
                     runTaint = newTaint
                     taintSourceDescription = toolCall.toolName
                 }
-                if (result.outcome is dev.aidos.kernel.ToolOutcome.Denied) {
-                    val denial = result.outcome as dev.aidos.kernel.ToolOutcome.Denied
-                    val taintDesc = if (runTaint != TrustLevel.TRUSTED) " (Run is tainted by: $taintSourceDescription)" else ""
-                    transcript.add(Turn.ToolResult(result.copy(content = listOf(ContentBlock.Text("Denied: ${denial.reason}$taintDesc")))))
-                } else {
-                    transcript.add(Turn.ToolResult(result))
+                when (val outcome = result.outcome) {
+                    is dev.aidos.kernel.ToolOutcome.Denied -> {
+                        val taintDesc = if (runTaint != TrustLevel.TRUSTED) " (Run is tainted by: $taintSourceDescription)" else ""
+                        transcript.add(Turn.ToolResult(result.copy(content = listOf(ContentBlock.Text("Denied: ${outcome.reason}$taintDesc")))))
+                    }
+                    is dev.aidos.kernel.ToolOutcome.Failed -> {
+                        val err = outcome.error
+                        // RFC-0029: only model-audience errors are rendered into the transcript;
+                        // user-only errors (EXHAUSTED, CONFLICT, INDETERMINATE, INTERNAL) terminate
+                        // and surface to the user without leaking internals to the model.
+                        if (!err.errorClass.isModelAudience) {
+                            checkpoint(StepEvent.RunFailed(step = steps, reason = "${err.code}: ${err.message}"))
+                            return RunOutcome.Failed("${err.code}: ${err.message}")
+                        }
+                        val rendered = "<tool_result call_id=\"${result.callId}\" status=\"error\" code=\"${err.code}\">\n  ${err.message}\n</tool_result>"
+                        transcript.add(Turn.ToolResult(result.copy(content = listOf(ContentBlock.Text(rendered)))))
+                    }
+                    else -> {
+                        transcript.add(Turn.ToolResult(result))
+                    }
                 }
             }
             checkpoint(StepEvent.StepCompleted(step = steps, taint = runTaint))

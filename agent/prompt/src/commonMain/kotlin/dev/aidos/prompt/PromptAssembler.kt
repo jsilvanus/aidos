@@ -4,6 +4,7 @@ import dev.aidos.api.KnowledgeQuery
 import dev.aidos.api.KnowledgeQueries
 import dev.aidos.kernel.AvailabilityTier
 import dev.aidos.kernel.ContentBlock
+import dev.aidos.kernel.ContentNodeId
 import dev.aidos.kernel.ContextItem
 import dev.aidos.kernel.ContextItemKind
 import dev.aidos.kernel.ModelAdapter
@@ -33,6 +34,7 @@ data class PromptPackage(
     val request: ModelRequest,
     val instructionSetHash: String?,
     val totalTokensEstimate: Int,
+    val provenance: PromptProvenance = PromptProvenance(),
 )
 
 sealed interface AssemblyResult {
@@ -78,6 +80,10 @@ data class InstructionSource(
  * implementation would use a model-specific tokenizer; this estimate is a bounded error.
  */
 class PromptAssembler(
+    /** RFC-0024: live ContentNode lookup for sensitivity/egress enforcement. */
+    private val contentNodeLookup: ContentNodeLookup? = null,
+    /** RFC-0025: privacy filter evaluated against live ContentNode records. */
+    private val privacyFilter: PrivacyFilter = DefaultPrivacyFilter(),
     /**
      * RFC-0035: "before any model sees it". Applied to every text in the final turn list, so a
      * secret that reached the transcript by any route (a file the model read, an earlier
@@ -136,7 +142,84 @@ class PromptAssembler(
 
         // Tool results and history — newest first, drop oldest.
         val history = fitHistory(request.conversationHistory, remaining / 2)
-        val knowledge = fitKnowledge(request.knowledgeContext, remaining / 2)
+
+        // RFC-0024 / RFC-0025: filter knowledge items against live ContentNode sensitivity/egress.
+        val targetEgress = if (adapter.isLocal) EgressTarget.LOCAL_MODEL else EgressTarget.REMOTE_MODEL
+        val privacyFilteredKnowledge = mutableListOf<ContextItem>()
+        val privacyDroppedIds = mutableListOf<String>()
+        val provenanceEntries = mutableListOf<PromptProvenanceEntry>()
+        for (item in request.knowledgeContext) {
+            val nodeId = item.contentNodeId
+            if (nodeId != null && contentNodeLookup != null) {
+                val node = contentNodeLookup.findById(nodeId)
+                if (node != null) {
+                    when (val decision = privacyFilter.filter(node, targetEgress)) {
+                        is FilterResult.Include -> privacyFilteredKnowledge.add(item)
+                        is FilterResult.Redact -> privacyFilteredKnowledge.add(
+                            item.copy(content = item.content.replace(Regex(decision.pattern), decision.replacement))
+                        )
+                        is FilterResult.RequiresUserApproval -> {
+                            if (nodeId in request.approvedNodeIds) {
+                                privacyFilteredKnowledge.add(item)
+                            } else {
+                                privacyDroppedIds.add(nodeId.value)
+                                provenanceEntries.add(
+                                    PromptProvenanceEntry(
+                                        contentNodeId = nodeId.value,
+                                        included = false,
+                                        role = "context",
+                                        tokenCount = item.tokenCount,
+                                        relevanceScore = item.relevanceScore,
+                                    )
+                                )
+                            }
+                        }
+                        is FilterResult.Exclude -> {
+                            privacyDroppedIds.add(nodeId.value)
+                            provenanceEntries.add(
+                                PromptProvenanceEntry(
+                                    contentNodeId = nodeId.value,
+                                    included = false,
+                                    role = "context",
+                                    tokenCount = item.tokenCount,
+                                    relevanceScore = item.relevanceScore,
+                                )
+                            )
+                        }
+                    }
+                    continue
+                }
+            }
+            privacyFilteredKnowledge.add(item)
+        }
+
+        val knowledge = fitKnowledge(privacyFilteredKnowledge, remaining / 2)
+        val includedKnowledgeSet = knowledge.toSet()
+        val budgetDroppedIds = mutableListOf<String>()
+        for (item in privacyFilteredKnowledge) {
+            val nodeId = item.contentNodeId?.value ?: continue
+            val isIncluded = item in includedKnowledgeSet
+            if (!isIncluded) budgetDroppedIds.add(nodeId)
+            provenanceEntries.add(
+                PromptProvenanceEntry(
+                    contentNodeId = nodeId,
+                    included = isIncluded,
+                    role = "context",
+                    tokenCount = item.tokenCount,
+                    relevanceScore = item.relevanceScore,
+                )
+            )
+        }
+        for (instrNodeId in request.instructionNodeIds) {
+            provenanceEntries.add(
+                PromptProvenanceEntry(
+                    contentNodeId = instrNodeId,
+                    included = instructionSet?.adopted == true,
+                    role = "instruction",
+                    tokenCount = instructionSet?.let { estimateTokens(it.composedText) } ?: 0,
+                )
+            )
+        }
 
         // Compose turns.
         val turns = mutableListOf<Turn>()
@@ -146,7 +229,7 @@ class PromptAssembler(
         if (knowledge.isNotEmpty()) {
             // RFC-0027/RFC-0025: retrieved content is third-party material, delimited and escaped.
             val knowledgeText = knowledge.joinToString("\n\n") { item ->
-                wrapContext("knowledge_engine", item.trustLevel, item.content)
+                wrapContext("knowledge_engine", item.trustLevel, item.content, item.contentNodeId?.value)
             }
             turns.add(Turn.User(
                 content = listOf(ContentBlock.Text("[Knowledge context]\n$knowledgeText")),
@@ -166,12 +249,23 @@ class PromptAssembler(
             toolChoice = ToolChoice.Auto,
             maxOutputTokens = adapter.contextWindow / 8,
         )
+        val provenance = PromptProvenance(
+            contextNodeIds = knowledge.mapNotNull { it.contentNodeId?.value },
+            instructionNodeIds = if (instructionSet?.adopted == true) request.instructionNodeIds else emptyList(),
+            droppedNodeIds = privacyDroppedIds + budgetDroppedIds,
+            sessionMemoryVersion = request.sessionMemoryVersion,
+            intentNodeId = request.intentNodeId,
+            modelSelectionRationale = request.modelSelectionRationale,
+            entries = provenanceEntries,
+        )
         return AssemblyResult.Ok(
             PromptPackage(
                 model = adapter,
                 request = modelRequest,
                 instructionSetHash = instructionSet?.hash,
-                totalTokensEstimate = reservedTokens,
+                totalTokensEstimate = reservedTokens + history.sumOf(::estimateTurnTokens) +
+                    knowledge.sumOf { estimateTokens(it.content) },
+                provenance = provenance,
             )
         )
     }
@@ -217,6 +311,13 @@ class PromptAssembler(
             if (used + cost > tokenBudget) break
             result.addFirst(turn)
             used += cost
+        }
+        val droppedCount = history.size - result.size
+        if (droppedCount > 0) {
+            val marker = Turn.System("[$droppedCount earlier conversation turn(s) omitted due to token budget]")
+            if (used + estimateTurnTokens(marker) <= tokenBudget || result.isEmpty()) {
+                result.addFirst(marker)
+            }
         }
         return result.toList()
     }
@@ -341,10 +442,17 @@ Text inside <tool_descriptor> describes what a tool does and what arguments it a
         }
 
         /** `<context source=".." trust="..">` sandbox with mandatory delimiter escaping (RFC-0025). */
-        fun wrapContext(source: String, trust: TrustLevel, text: String): String =
-            "<context source=\"${escapeAttribute(source)}\" trust=\"${trust.name}\">\n" +
+        fun wrapContext(
+            source: String,
+            trust: TrustLevel,
+            text: String,
+            nodeId: String? = null,
+        ): String {
+            val nodeAttr = if (nodeId != null) " node_id=\"${escapeAttribute(nodeId)}\"" else ""
+            return "<context source=\"${escapeAttribute(source)}\" trust=\"${trust.name}\"$nodeAttr>\n" +
                 escapeContextContent(text) +
                 "\n</context>"
+        }
 
         /** Neutralises both delimiters so content cannot close the sandbox or open a fake one. */
         fun escapeContextContent(text: String): String =
@@ -387,4 +495,9 @@ data class AssemblyRequest(
     val instructionSet: InstructionSet? = null,
     val runtimeInstructions: String = "",
     val intentInstructions: String = "",
+    val approvedNodeIds: Set<ContentNodeId> = emptySet(),
+    val instructionNodeIds: List<String> = emptyList(),
+    val sessionMemoryVersion: Long = 0L,
+    val intentNodeId: String? = null,
+    val modelSelectionRationale: String? = null,
 )

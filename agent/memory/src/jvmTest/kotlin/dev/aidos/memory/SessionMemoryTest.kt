@@ -250,4 +250,21 @@ class SessionMemoryTest {
         assertEquals(setOf(promotedId, sess2Id), visibleToSess2.map { it.id }.toSet())
         assertTrue(unpromotedOtherId !in visibleToSess2.map { it.id })
     }
+
+    @Test
+    fun `FACT cap evicts least recently used FACTs while leaving DECISIONs uncapped (RFC-0011)`() {
+        val cappedStore = SessionMemoryStore(driver, factCap = 2)
+        val f1 = cappedStore.write(baseEntry(MemoryKind.FACT).copy(content = "fact-1"))
+        val f2 = cappedStore.write(baseEntry(MemoryKind.FACT).copy(content = "fact-2"))
+        // Recall f1 so f2 becomes the least-recently-used FACT.
+        assertTrue(cappedStore.refreshFactExpiry(f1, nowIso = "2099-01-01T00:00:00Z"))
+        // DECISIONs do not count toward the FACT cap and are never evicted.
+        val d1 = cappedStore.write(baseEntry(MemoryKind.DECISION).copy(content = "decision-1"))
+
+        val f3 = cappedStore.write(baseEntry(MemoryKind.FACT).copy(content = "fact-3"))
+
+        val remainingIds = cappedStore.readForSession("sess-1").map { it.id }.toSet()
+        assertEquals(setOf(f1, f3, d1), remainingIds)
+        assertEquals(null, cappedStore.inspect(f2))
+    }
 }

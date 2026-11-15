@@ -1,6 +1,7 @@
 # RFC-0011: Sessions
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (session forking, direct session-to-session messaging)
 
 ## Abstract
 
@@ -805,3 +806,19 @@ between instruction sources are surfaced to the user rather than silently ordere
   interacts with worker refs and provenance in ways not yet worked through.)
 - Should sessions be able to message each other directly, or is coordination through artifacts,
   events, and child Runs sufficient?
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Errors.kt
+  - schema/project.sql
+  - agent/memory/src/jvmMain/kotlin/dev/aidos/memory/SessionMemoryStore.kt
+  - agent/memory/src/jvmTest/kotlin/dev/aidos/memory/SessionMemoryTest.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/RunCreator.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/WorkerSpawner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SessionLifecycleRfc0011Test.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+```

@@ -59,6 +59,7 @@ import dev.aidos.settings.Settings
 import dev.aidos.settings.SettingsStore
 import dev.aidos.settings.TaintApprovalPolicy
 import dev.aidos.settings.UserDbSettingsAudit
+import dev.aidos.storage.SqliteContentNodeStore
 import dev.aidos.vault.AnthropicAdapter
 import dev.aidos.vault.ConsumerKind
 import dev.aidos.vault.ConsumerRef
@@ -644,13 +645,17 @@ class RuntimeCompositionRoot(
                 },
             )
         val budgetLedger = SqlBudgetLedger(projectDriver, idGen, nowIso)
+        val contentNodeStore = SqliteContentNodeStore(projectDriver)
         val taskRunner = AgentLoopTaskRunner(
             driver = projectDriver,
             audit = audit,
             idGen = idGen,
             nowIso = nowIso,
             router = router,
-            assembler = PromptAssembler(redact = { redactor.redact(it, RedactionBoundary.PROMPT) }),
+            assembler = PromptAssembler(
+                redact = { redactor.redact(it, RedactionBoundary.PROMPT) },
+                contentNodeLookup = { id -> contentNodeStore.get(id) },
+            ),
             broker = broker,
             subjectId = sessionId,
             redact = { redactor.redact(it, RedactionBoundary.ATTEMPT) },
@@ -758,6 +763,7 @@ class RuntimeCompositionRoot(
             workerSpawner = workerSpawner,
             workerCommitter = GitWorkerCommitter(projectDriver),
             budgetLedger = budgetLedger,
+            capabilityManager = capabilityManager,
         )
     }
 

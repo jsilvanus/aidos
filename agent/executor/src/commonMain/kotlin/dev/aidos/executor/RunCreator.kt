@@ -45,10 +45,21 @@ class RunCreator(
         networkAvailable: Boolean,
         maxSteps: Int = 24,
         targetIntentNodeId: String? = null,
-    ): RunId = create(
-        sessionId, projectId, triggerEventId, userMessageSummary,
-        platformProfile, deviceId, networkAvailable, maxSteps, targetIntentNodeId,
-    )
+    ): RunId {
+        // RFC-0011: User intervention resets the session's failure budget so it unparks.
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE sessions SET consecutive_failures = 0, state_updated_at = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, nowIso())
+            bindString(1, sessionId.value)
+        }
+        return create(
+            sessionId, projectId, triggerEventId, userMessageSummary,
+            platformProfile, deviceId, networkAvailable, maxSteps, targetIntentNodeId,
+        )
+    }
 
     /**
      * Creates a Run for a session woken by an event (RFC-0005), not a direct user message.

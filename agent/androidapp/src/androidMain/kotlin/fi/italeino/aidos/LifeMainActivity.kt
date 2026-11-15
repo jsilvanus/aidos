@@ -5,8 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import dev.aidos.ui.AidosUniversalApp
 import dev.aidos.ui.theme.AidosTheme
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
+import fi.italeino.aidos.service.AndroidNativeInferenceConnector
 
 /**
  * Launcher 1 (RFC-0111): "Aidos Life"
@@ -14,12 +13,13 @@ import kotlinx.coroutines.SupervisorJob
  */
 class LifeMainActivity : ComponentActivity() {
 
-    private val scope = CoroutineScope(SupervisorJob())
+    private lateinit var nativeConnector: AndroidNativeInferenceConnector
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val runtimeClient = AndroidRuntimeClientFactory.createRuntimeClient(this)
+        nativeConnector = AndroidNativeInferenceConnector(this).also { it.start() }
 
         setContent {
             AidosTheme {
@@ -28,11 +28,19 @@ class LifeMainActivity : ComponentActivity() {
                     initialDestinationId = "inbox",
                     initialLifeFilterOnly = true,
                     initialProjectId = "life",
+                    nativeProcessHealth = nativeConnector.health,
                     onPinProjectLauncher = { projectId, projectName ->
                         ProjectLauncher.pinProjectShortcut(this, projectId, projectName)
                     },
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (::nativeConnector.isInitialized) {
+            nativeConnector.stop()
+        }
+        super.onDestroy()
     }
 }

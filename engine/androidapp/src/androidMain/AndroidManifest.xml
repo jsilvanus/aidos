@@ -78,6 +78,7 @@
              inference) in-process. Exposes an HTTP server on loopback + Binder handshake. -->
         <service
             android:name="fi.italeino.aidos.engine.EngineService"
+            android:process=":native_inference"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="dataSync"

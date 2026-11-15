@@ -1,6 +1,7 @@
 # RFC-0029: Error Taxonomy and Failure Semantics
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (localized user copy, error-rate telemetry)
 
 ## Abstract
 
@@ -170,3 +171,16 @@ Not in MVP: localized user copy, error-rate telemetry.
 Per-code user-facing copy and suggested remediation, owned by the frontend.
 
 Error-rate monitoring to detect a provider or tool degrading over time (RFC-0037).
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Errors.kt
+  - agent/broker/src/commonMain/kotlin/dev/aidos/broker/ToolBroker.kt
+  - agent/agentloop/src/commonMain/kotlin/dev/aidos/agentloop/AgentLoop.kt
+  - agent/agentloop/src/jvmTest/kotlin/dev/aidos/agentloop/ErrorTaxonomyRfc0029Test.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SqliteExecutor.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ProvenanceAndErrorTaxonomyTest.kt
+```

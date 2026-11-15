@@ -10,6 +10,7 @@ import dev.aidos.kernel.AidosError
 import dev.aidos.kernel.BackoffStrategy
 import dev.aidos.kernel.BudgetLedger
 import dev.aidos.kernel.BudgetScope
+import dev.aidos.kernel.CapabilityManager
 import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ErrorCodes
 import dev.aidos.kernel.EventId
@@ -74,6 +75,8 @@ class SqliteExecutor(
     private val executionWindow: ExecutionWindow? = null,
     /** Minimum remaining window (ms) required to start a step (RFC-0009). */
     private val estimatedStepMillis: Long = 1_000L,
+    /** RFC-0011: capability manager for recursive revocation on orphan worker cancellation. */
+    private val capabilityManager: CapabilityManager? = null,
 ) : Executor {
 
     private val cancelledRuns = mutableSetOf<String>()
@@ -124,7 +127,7 @@ class SqliteExecutor(
             if (stepIndex >= currentRun.maxSteps) {
                 // Budget ceiling: terminate with FAILED.
                 updateRunState(runId, RunState.FAILED,
-                    AidosError("run.max_steps_exceeded", ErrorClass.EXHAUSTED,
+                    AidosError(ErrorCodes.RUN_STEP_LIMIT, ErrorClass.EXHAUSTED,
                         "Run exceeded max steps (${currentRun.maxSteps})"))
                 resumeAwaitingParent(runId)
                 break
@@ -390,6 +393,10 @@ class SqliteExecutor(
             detailJson = reason?.let { buildJsonObject { put("reason", it) }.toString() } ?: "{}",
             nowIso = now,
         )
+        val cancelledRun = loadRun(runId)
+        if (cancelledRun != null) {
+            cancelOrphanedWorkers(cancelledRun.sessionId.value)
+        }
         resumeAwaitingParent(runId)
     }
 
@@ -608,6 +615,176 @@ class SqliteExecutor(
                 bindString(4, error?.errorClass?.name)
                 bindString(5, error?.detail?.toString())
             }
+        }
+        if (isTerminal) {
+            val sessionId = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT session_id FROM runs WHERE id = ?",
+                mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, runId.value) }.value
+            if (sessionId != null) {
+                updateSessionFailureBudget(sessionId, state)
+                cancelOrphanedWorkerRunsSync(sessionId)
+            }
+        }
+    }
+
+    /** RFC-0011: Track consecutive FAILED Runs; 3 consecutive failures parks the session in SLEEPING. */
+    private fun updateSessionFailureBudget(sessionId: String, state: RunState) {
+        val now = nowIso()
+        when (state) {
+            RunState.FAILED -> {
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE sessions SET consecutive_failures = consecutive_failures + 1, " +
+                        "state_updated_at = ? WHERE id = ?",
+                    parameters = 2,
+                ) {
+                    bindString(0, now)
+                    bindString(1, sessionId)
+                }
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE sessions SET state = 'SLEEPING', state_updated_at = ?, " +
+                        "row_version = row_version + 1 " +
+                        "WHERE id = ? AND consecutive_failures >= 3 AND state = 'RUNNING'",
+                    parameters = 2,
+                ) {
+                    bindString(0, now)
+                    bindString(1, sessionId)
+                }
+            }
+            RunState.COMPLETED -> {
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE sessions SET consecutive_failures = 0, state_updated_at = ? WHERE id = ?",
+                    parameters = 2,
+                ) {
+                    bindString(0, now)
+                    bindString(1, sessionId)
+                }
+            }
+            else -> {}
+        }
+    }
+
+    /**
+     * RFC-0011: When a driver session reaches a terminal state (Run terminated or session archived),
+     * every worker whose `parent_session_id` is that driver and whose Run is non-terminal is
+     * cancelled with `run.parent_terminated`, and delegated capabilities are revoked recursively.
+     */
+    suspend fun cancelOrphanedWorkers(driverSessionId: String) {
+        val workerIds = childWorkerSessionIds(driverSessionId)
+        cancelOrphanedWorkerRunsSync(driverSessionId)
+        for (workerId in workerIds) {
+            if (capabilityManager != null) {
+                val activeCaps = capabilityManager.loadForSubject(workerId).filter { it.revokedAt == null }
+                for (cap in activeCaps) {
+                    capabilityManager.revoke(cap.id, "parent_terminated:$driverSessionId")
+                }
+            }
+            cancelOrphanedWorkers(workerId)
+        }
+    }
+
+    private fun childWorkerSessionIds(driverSessionId: String): List<String> {
+        val ids = mutableListOf<String>()
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM sessions WHERE parent_session_id = ?",
+            mapper = { c ->
+                while (c.next().value) ids.add(c.getString(0)!!)
+                QueryResult.Value(Unit)
+            },
+            parameters = 1,
+        ) { bindString(0, driverSessionId) }
+        return ids
+    }
+
+    private fun cancelOrphanedWorkerRunsSync(driverSessionId: String) {
+        val workerIds = childWorkerSessionIds(driverSessionId)
+        if (workerIds.isEmpty()) return
+        val now = nowIso()
+        for (workerId in workerIds) {
+            val activeRuns = mutableListOf<Pair<String, String>>()
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT id, project_id FROM runs WHERE session_id = ? " +
+                    "AND state IN ('PENDING', 'RUNNING', 'YIELDED')",
+                mapper = { c ->
+                    while (c.next().value) {
+                        activeRuns.add(c.getString(0)!! to c.getString(1)!!)
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) { bindString(0, workerId) }
+
+            for ((orphanRunId, projectId) in activeRuns) {
+                cancelledRuns.add(orphanRunId)
+                inTransactionSync {
+                    driver.execute(
+                        identifier = null,
+                        sql = "UPDATE tasks SET state = 'CANCELLED', ended_at = ?, row_version = row_version + 1 " +
+                            "WHERE run_id = ? AND state IN ('AWAITING_APPROVAL', 'AWAITING_INPUT')",
+                        parameters = 2,
+                    ) { bindString(0, now); bindString(1, orphanRunId) }
+                    driver.execute(
+                        identifier = null,
+                        sql = "UPDATE tasks SET state = 'SKIPPED', ended_at = ?, row_version = row_version + 1 " +
+                            "WHERE run_id = ? AND state = 'PENDING'",
+                        parameters = 2,
+                    ) { bindString(0, now); bindString(1, orphanRunId) }
+                    driver.execute(
+                        identifier = null,
+                        sql = "DELETE FROM continuations WHERE run_id = ?",
+                        parameters = 1,
+                    ) { bindString(0, orphanRunId) }
+                    driver.execute(
+                        identifier = null,
+                        sql = "UPDATE runs SET state = 'CANCELLED', ended_at = ?, " +
+                            "error_code = ?, error_class = ?, row_version = row_version + 1 " +
+                            "WHERE id = ? AND state IN ('PENDING', 'RUNNING', 'YIELDED')",
+                        parameters = 4,
+                    ) {
+                        bindString(0, now)
+                        bindString(1, ErrorCodes.RUN_PARENT_TERMINATED)
+                        bindString(2, ErrorClass.EXHAUSTED.name)
+                        bindString(3, orphanRunId)
+                    }
+                }
+                audit.write(
+                    id = idGen(),
+                    projectId = projectId,
+                    kind = "RunCancelled",
+                    actor = ActorRef(ActorKind.RUNTIME, "orphan-canceller"),
+                    subjectRef = orphanRunId,
+                    detailJson = buildJsonObject {
+                        put("reason", ErrorCodes.RUN_PARENT_TERMINATED)
+                        put("parent_session_id", driverSessionId)
+                    }.toString(),
+                    nowIso = now,
+                )
+            }
+            // Revoke active capabilities on the orphaned worker if not already revoked.
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE capabilities SET revoked_at = ?, revoked_by = ? " +
+                    "WHERE subject_id = ? AND revoked_at IS NULL",
+                parameters = 3,
+            ) {
+                bindString(0, now)
+                bindString(1, "parent_terminated:$driverSessionId")
+                bindString(2, workerId)
+            }
+            cancelOrphanedWorkerRunsSync(workerId)
+        }
+    }
+
+    private fun inTransactionSync(block: () -> Unit) {
+        object : app.cash.sqldelight.TransacterImpl(driver) {}.transaction {
+            block()
         }
     }
 

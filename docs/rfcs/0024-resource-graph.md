@@ -1,6 +1,7 @@
 # RFC-0024: Resource Graph
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (cross-project references, content-addressed deduplication, semantic tagging, differential promotion, sensitivity inference)
 
 ## Abstract
 
@@ -430,3 +431,18 @@ Semantic tagging: automated tagging via the Knowledge Engine based on content an
 Differential promotion: promote only changed sections of a large document.
 
 Sensitivity inference: the Knowledge Engine can suggest sensitivity levels based on content analysis (e.g., detecting API keys, personal data).
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Types.kt
+  - schema/project.sql
+  - agent/storage/build.gradle.kts
+  - agent/storage/src/commonMain/kotlin/dev/aidos/storage/SqliteContentNodeStore.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/content/SqliteContentNodeStore.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PrivacyFilter.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/PrivacyAndProvenanceRfc0025Test.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+```

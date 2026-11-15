@@ -66,6 +66,25 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- System Assistant Service (RFC-0111 §1.2): Power button / corner swipe -->
+        <service
+            android:name="fi.italeino.aidos.assistant.AidosVoiceInteractionService"
+            android:label="Aidos Assistant"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="fi.italeino.aidos.assistant.AidosVoiceInteractionSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="false" />
+
     </application>
 
 </manifest>

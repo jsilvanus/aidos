@@ -1,6 +1,7 @@
 # RFC-0111: Intent Graph UI Presentation Paradigms & Multi-Launcher Mobile Topology
 
-Status: **Draft**
+Status: **Implemented** 2026-11-15
+Non-MVP Work: **None**
 Phase: **3 (UX & Multi-Surface)**
 Depends on: **0010 (Projects), 0019 (Execution Graph), 0024 (Resource Graph), 0050 (Mobile Architecture), 0051 (Desktop Architecture), 0052 (Runtime API), 0103 (Aidos Engine), 0106 (Desktop Generative UI), 0109 (Capture Device Protocol), 0110 (Dual-Mode Intent Graph)**
 Related: **0008 (Agent Loop), 0012 (Intent Graph — superseded), 0025 (Prompt Assembly), 0049 (Platform Capability Profiles), 0057 (Glanceable and Hands-Free)**
@@ -293,3 +294,66 @@ Per **RFC-0106** and **RFC-0051**, Dictator provides speech-to-intent transcript
 | **Desktop — Architecture & Whole Picture** | **Design 7: Mind-Map Constellation** | **Design 2: Transit Metro Map** |
 | **Desktop — Active Coding Execution** | **Design 3: Modular Cartridge Dock** | **Design 5: Logic Breadboard** |
 | **Desktop — Rapid Keyboard Navigation** | **Design 6: Causal Outliner** | **Design 3: Modular Cartridge Dock** |
+
+---
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/androidMain/AndroidManifest.xml
+  - agent/androidapp/src/androidMain/res/xml/voice_interaction_service.xml
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectLauncher.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/assistant/AidosVoiceInteractionService.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/service/AndroidNativeInferenceConnector.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/service/NativeInferenceConnectionMonitor.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/service/NativeInferenceConnectionMonitorTest.kt
+  - engine/androidapp/src/androidMain/AndroidManifest.xml
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/TaskCartridgeView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalJumpPill.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerNodeRow.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/BatonVectorLine.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/HandoffChannelView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelinePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelineScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/LineReservationLock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/MultiAgentPillOverlay.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/PillRole.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/TravelingVoiceCaret.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/WaveSignalingCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/WorkerPillNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/CanvasMinimapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ForceDirectedLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/InfiniteZuiCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SemanticZoomManager.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ViewportTransform.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/BezierCausalEdge.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/EdgeCollisionRouter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/AtomicTaskCapsule.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/GoalHexagonNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/GroupNebulaRenderer.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/SatelliteCriterionNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/MobileHorizonArcView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/RadialRadarScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroMapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/system/NativeProcessRecoveryBar.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseTwoTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFourTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFiveTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSixTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSevenParadigmsAndTimelineTest.kt
+```

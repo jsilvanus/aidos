@@ -1,6 +1,7 @@
 # RFC-0025: Prompt Construction and Context Assembly
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (adaptive context compression, multi-modal context, project prompt templates, adversarial input scanning beyond secret redaction, model-specific tokenizers)
 
 ## Abstract
 
@@ -458,3 +459,17 @@ Prompt templates: project-level prompt templates that define the structure for c
 Adversarial input scanning: active detection of prompt injection attempts in retrieved content, with configurable rejection policies.
 
 Token counting accuracy: use model-specific tokenizers for accurate budget calculations (MVP may use word-count approximations).
+
+## Implementation Files
+
+```yaml
+files:
+  - schema/project.sql
+  - agent/prompt/build.gradle.kts
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PrivacyFilter.kt
+  - agent/prompt/src/commonMain/kotlin/dev/aidos/prompt/PromptAssembler.kt
+  - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/PrivacyAndProvenanceRfc0025Test.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ProvenanceAndErrorTaxonomyTest.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+```

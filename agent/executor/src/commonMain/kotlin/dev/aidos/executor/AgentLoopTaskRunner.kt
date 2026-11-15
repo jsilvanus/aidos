@@ -16,6 +16,7 @@ import dev.aidos.kernel.ContextItemKind
 import dev.aidos.kernel.DenialReason
 import dev.aidos.kernel.EffectBroker
 import dev.aidos.kernel.ErrorClass
+import dev.aidos.kernel.ErrorCodes
 import dev.aidos.kernel.ExecutionWindow
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.CapabilityId
@@ -119,6 +120,9 @@ private data class StoredToolResult(
     val injectionSuspected: Boolean = false,
     /** RFC-0110 Gate A: optional probability reported by [TaintInputScreener]. */
     val injectionProbability: Double? = null,
+    /** RFC-0029: error code and class when outcome is FAILED. */
+    val errorCode: String? = null,
+    val errorClass: String? = null,
 )
 
 /**
@@ -547,6 +551,11 @@ class AgentLoopTaskRunner(
         // the first, so a Run that spans a mid-run instruction-file edit reflects the set that
         // actually steered its most recent turn, not a stale first-turn value.
         updateInstructionSetHash(task.runId, pkg.instructionSetHash)
+
+        // RFC-0025: record PromptPackage provenance on the RUNNING attempt before the model call.
+        findRunningAttemptId(task.id.value)?.let { attemptId ->
+            writePromptProvenance(attemptId, pkg)
+        }
 
         val modelReq = ModelRequest(
             messages = pkg.request.messages,
@@ -1143,6 +1152,8 @@ class AgentLoopTaskRunner(
                     resultTrust = result.trustLevel.name,
                     injectionSuspected = injectionSuspected,
                     injectionProbability = injectionProbability,
+                    errorCode = (result.outcome as? ToolOutcome.Failed)?.error?.code,
+                    errorClass = (result.outcome as? ToolOutcome.Failed)?.error?.errorClass?.name,
                 )
             ),
         )
@@ -1216,7 +1227,7 @@ class AgentLoopTaskRunner(
                 ToolCallResult(
                     callId = callRow.callId,
                     outcome = ToolOutcome.Failed(
-                        AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "spawn_worker requires non-empty 'brief'")
+                        AidosError(ErrorCodes.TOOL_INVALID_ARGUMENTS, ErrorClass.INVALID_INPUT, "spawn_worker requires non-empty 'brief'")
                     ),
                     content = listOf(ContentBlock.Text("spawn_worker requires non-empty 'brief'")),
                     trustLevel = TrustLevel.TRUSTED,
@@ -1239,7 +1250,7 @@ class AgentLoopTaskRunner(
                     ToolCallResult(
                         callId = callRow.callId,
                         outcome = ToolOutcome.Failed(
-                            AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "Invalid locality '$locality'")
+                            AidosError(ErrorCodes.TOOL_INVALID_ARGUMENTS, ErrorClass.INVALID_INPUT, "Invalid locality '$locality'")
                         ),
                         content = listOf(ContentBlock.Text("Invalid locality '$locality': expected local, cluster, or remote")),
                         trustLevel = TrustLevel.TRUSTED,
@@ -1258,7 +1269,7 @@ class AgentLoopTaskRunner(
                     ToolCallResult(
                         callId = callRow.callId,
                         outcome = ToolOutcome.Failed(
-                            AidosError("tool.invalid_args", ErrorClass.INVALID_INPUT, "Invalid taint_approval_policy '$taintApprovalPolicy'")
+                            AidosError(ErrorCodes.TOOL_INVALID_ARGUMENTS, ErrorClass.INVALID_INPUT, "Invalid taint_approval_policy '$taintApprovalPolicy'")
                         ),
                         content = listOf(ContentBlock.Text("Invalid taint_approval_policy '$taintApprovalPolicy': expected MANUAL or GUARDIAN")),
                         trustLevel = TrustLevel.TRUSTED,
@@ -1435,16 +1446,26 @@ class AgentLoopTaskRunner(
                         "TOOL_CALL" -> {
                             val tr = json.decodeFromString<StoredToolResult>(snapshot)
                             val callId = c.getString(2) ?: ""
-                            turns.add(
-                                Turn.ToolResult(
-                                    result = ToolCallResult(
-                                        callId = callId,
-                                        outcome = storedOutcome(tr),
-                                        content = listOf(ContentBlock.Text(tr.text)),
-                                        trustLevel = TrustLevel.valueOf(tr.resultTrust ?: tr.trustLevel),
+                            val outcome = storedOutcome(tr)
+                            if (outcome is ToolOutcome.Failed && !outcome.error.errorClass.isModelAudience) {
+                                // RFC-0029: user-only errors are never rendered into the model transcript.
+                            } else {
+                                val text = if (outcome is ToolOutcome.Failed) {
+                                    "<tool_result call_id=\"$callId\" status=\"error\" code=\"${outcome.error.code}\">\n  ${outcome.error.message}\n</tool_result>"
+                                } else {
+                                    tr.text
+                                }
+                                turns.add(
+                                    Turn.ToolResult(
+                                        result = ToolCallResult(
+                                            callId = callId,
+                                            outcome = outcome,
+                                            content = listOf(ContentBlock.Text(text)),
+                                            trustLevel = TrustLevel.valueOf(tr.resultTrust ?: tr.trustLevel),
+                                        )
                                     )
                                 )
-                            )
+                            }
                         }
                     }
                 }
@@ -1464,7 +1485,80 @@ class AgentLoopTaskRunner(
             runCatching { DenialReason.valueOf(tr.detail ?: "") }.getOrDefault(DenialReason.NO_CAPABILITY)
         )
         "CANCELLED" -> ToolOutcome.Cancelled
-        else -> ToolOutcome.Failed(AidosError(code = "tool.error", errorClass = ErrorClass.TRANSIENT, message = tr.detail ?: "unknown"))
+        else -> ToolOutcome.Failed(
+            AidosError(
+                code = tr.errorCode ?: ErrorCodes.TOOL_EXECUTION_FAILED,
+                errorClass = tr.errorClass?.let { runCatching { ErrorClass.valueOf(it) }.getOrNull() }
+                    ?: ErrorClass.TRANSIENT,
+                message = tr.detail ?: "unknown",
+            )
+        )
+    }
+
+    private fun findRunningAttemptId(taskId: String): String? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT id FROM attempts WHERE task_id = ? AND state = 'RUNNING' ORDER BY attempt_number DESC LIMIT 1",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, taskId) }.value
+
+    /** RFC-0025: persist `attempts.prompt_package_json` and `prompt_provenance` rows. */
+    private fun writePromptProvenance(attemptId: String, pkg: dev.aidos.prompt.PromptPackage) {
+        val prov = pkg.provenance
+        val pkgJson = kotlinx.serialization.json.buildJsonObject {
+            put("modelProvider", pkg.model.providerId)
+            put("modelId", pkg.model.modelId)
+            put("modelVersion", pkg.model.modelVersion)
+            pkg.instructionSetHash?.let { put("instructionSetHash", it) }
+            put("totalTokensEstimate", pkg.totalTokensEstimate)
+            put("provenance", kotlinx.serialization.json.buildJsonObject {
+                put("contextNodeIds", kotlinx.serialization.json.buildJsonArray {
+                    prov.contextNodeIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                })
+                put("instructionNodeIds", kotlinx.serialization.json.buildJsonArray {
+                    prov.instructionNodeIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                })
+                put("droppedNodeIds", kotlinx.serialization.json.buildJsonArray {
+                    prov.droppedNodeIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                })
+                put("sessionMemoryVersion", prov.sessionMemoryVersion)
+                prov.intentNodeId?.let { put("intentNodeId", it) }
+                prov.modelSelectionRationale?.let { put("modelSelectionRationale", it) }
+            })
+        }.toString()
+        driver.execute(
+            identifier = null,
+            sql = "UPDATE attempts SET prompt_package_json = ? WHERE id = ?",
+            parameters = 2,
+        ) {
+            bindString(0, pkgJson)
+            bindString(1, attemptId)
+        }
+        for (entry in prov.entries) {
+            val nodeExists = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT 1 FROM content_nodes WHERE id = ? LIMIT 1",
+                mapper = { c -> QueryResult.Value(c.next().value) },
+                parameters = 1,
+            ) { bindString(0, entry.contentNodeId) }.value
+            if (!nodeExists) continue
+            driver.execute(
+                identifier = null,
+                sql = "INSERT INTO prompt_provenance " +
+                    "(id, attempt_id, content_node_id, included, role, token_count, relevance_score) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                parameters = 7,
+            ) {
+                bindString(0, idGen())
+                bindString(1, attemptId)
+                bindString(2, entry.contentNodeId)
+                bindLong(3, if (entry.included) 1L else 0L)
+                bindString(4, entry.role)
+                bindLong(5, entry.tokenCount.toLong())
+                bindDouble(6, entry.relevanceScore?.toDouble())
+            }
+        }
     }
 
     private fun parseJsonObject(raw: String): JsonObject = json.parseToJsonElement(raw).jsonObject

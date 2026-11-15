@@ -1,6 +1,7 @@
 # RFC-0112: Universal Adaptive UI Architecture & The Blinded Egress Bridge
 
-**Status:** Accepted 2026-11-14  
+**Status:** Implemented 2026-11-15
+Non-MVP Work: **None**
 **Date:** 2026-11-14  
 **Authors:** Aidos Core Architecture Team  
 **Related RFCs:** [RFC-0010](0010-projects.md), [RFC-0027](0027-trust-and-taint.md), [RFC-0042](0042-networking-and-egress.md), [RFC-0047](0047-project-templates-and-project-types.md), [RFC-0050](0050-android.md), [RFC-0051](0051-desktop.md), [RFC-0106](0106-desktop-generative-ui.md), [RFC-0110](0110-dual-mode-intent-graph.md), [RFC-0111](0111-intent-graph-ui-paradigms-and-mobile-topology.md)  
@@ -185,3 +186,51 @@ As approved in **Decision D49**:
 1. **Every screen on every platform:** The complete 2D Infinite Canvas, Living Document, Tree-List, Pipeline, and Kanban exist inside the single APK, automatically adapting to phone screens, tablets, foldables, and external desktop monitors (OTG/DeX).
 2. **Zero accidental leaks:** `LIFE` projects remain zero-egress. External communication occurs only through typed Blinded Queries (inward flow or Boolean outward flow) or explicit user-confirmed Egress Gates.
 3. **Seamless cross-domain coordination:** You can manage work repositories, personal goals, and cross-channel messaging in a single unified operating environment.
+
+---
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/ui-common/build.gradle.kts
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/dex/DexStatePreserver.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatesScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/BlindedEgressGateCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/DiffInspectionSheet.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/SplitVerificationCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/AdaptiveLayoutState.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ResponsiveScaffold.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/WindowSizeClass.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/palette/CommandPaletteModal.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/palette/CommandPalettePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/palette/KeyboardShortcutRegistry.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/MviPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/ViewState.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/service/AndroidNativeInferenceConnector.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/service/NativeInferenceConnectionMonitor.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/service/NativeInferenceConnectionMonitorTest.kt
+  - engine/androidapp/src/androidMain/AndroidManifest.xml
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseOneTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseTwoTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseThreeTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFourTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseFiveTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSixTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseSevenParadigmsAndTimelineTest.kt
+```
