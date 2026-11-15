@@ -1,6 +1,7 @@
 # RFC-0110: Optional Guardian Approval for Tainted Runs
 
-Status: Draft (2026-11-14). Partially amends [RFC-0027](0027-trust-and-taint.md).
+Status: Implemented 2026-11-15 (Draft 2026-11-14).
+Non-MVP Work: **None** Partially amends [RFC-0027](0027-trust-and-taint.md).
 
 Related: RFC-0027 (trust and taint), RFC-0008 (agent loop), RFC-0009 (durable execution), RFC-0018 (capability model), RFC-0020 (AI engine), RFC-0022 (inference backend / Decision capability), RFC-0025 (prompt construction), RFC-0030 (tool broker), RFC-0031 (MCP & Binder transport), RFC-0036 (settings), RFC-0046 (identity & audit), D7, D30, D31, D45, D51.
 
@@ -272,3 +273,13 @@ private data class StoredToolResult(
 - Fine-tuned Laya / System One prompt-injection dataset and temperature calibration to raise Gate A recall and reduce false-positive manual escalations.
 - Per-permission or per-recovery-class Guardian policy granularity (for example, allowing Guardian for `APP_IPC` while keeping `SHELL_EXEC` strictly `MANUAL`) under `ScopeClass.SECURITY`.
 - Exposing Gate A suspicion indicators and Gate B audit rationales in Run Summary (RFC-0057) and desktop/Android approval sheets.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/GuardianApproval.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/GuardianApprovalEndToEndTest.kt
+```

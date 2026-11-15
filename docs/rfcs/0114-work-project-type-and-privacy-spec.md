@@ -1,6 +1,6 @@
 # RFC-0114: Work Project Type, Privacy Invariants, and Default Policies
 
-**Status:** Accepted 2026-11-14  
+**Status:** Implemented 2026-11-15 (Accepted 2026-11-14). Implementation evidence: [STATUS.md](STATUS.md).  
 Non-MVP Work: **None**
 **Date:** 2026-11-14  
 **Authors:** Aidos Project Type & Privacy Security Architecture  

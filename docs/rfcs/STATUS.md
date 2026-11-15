@@ -73,7 +73,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 
 | RFC | Status | Note |
 |---|---|---|
-| 0022 Inference Backend Architecture | Draft | Decisions D36-D44 settled; llama.cpp backend and ONNX backends (decisions, STT, vision) exist. Candidate for Accepted. |
+| 0022 Inference Backend Architecture | Implemented | Decisions D36-D44 settled; llama.cpp, ONNX (decisions, STT, vision) backends built and tested. |
 | 0033 Shell | Draft | No code; post-MVP. |
 | 0051 Desktop | Draft | No code matching this RFC; desktop engine app exists under RFC-0103. |
 | 0051 LAN Engine Sharing | Proposed | No LAN/HTTPS sharing code; only AIDIN peer links (RFC-0105). |

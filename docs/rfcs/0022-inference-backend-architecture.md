@@ -1,6 +1,7 @@
 # RFC-0022: Inference Backend Architecture
 
-**Status:** Draft — decisions D36–D44 settled. Implemented in part (audited 2026-11-09): `InferenceBackend` interface, llama.cpp backend, ONNX backends for decisions, STT and vision. See [STATUS.md](STATUS.md).
+**Status:** Implemented 2026-11-15 (decisions D36-D44 settled). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (ExecuTorch, OpenVINO, TensorRT, zero-copy tensor interchange)
 
 ## Abstract
 
@@ -310,3 +311,13 @@ These decisions supersede the earlier open questions in the draft RFC. The amend
 ## Future work
 
 ExecuTorch, OpenVINO, TensorRT, specialized media backends, zero-copy tensor interchange, device-resident tensors, and richer accelerator-aware routing remain future backend work. They must implement the same capability-oriented architecture rather than expanding the base backend into a god interface.
+
+## Implementation Files
+
+```yaml
+files:
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
+  - engine/decisions/src/commonMain/kotlin/dev/aidos/decisions/DecisionModelAdapter.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GlobalModelRuntimeTest.kt
+```

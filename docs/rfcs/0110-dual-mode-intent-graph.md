@@ -1,6 +1,6 @@
 # RFC-0110: Dual-Mode Intent Graph (Life & Coding Management)
 
-Status: **Draft**
+Status: **Implemented** 2026-11-15 (see [STATUS.md](STATUS.md); UI views by RFC-0111/0112)
 Non-MVP Work: **Remaining** (Android/Desktop Compose UI views, socket wire protocol for intents.*, WorkManager AUTO_WHEN_READY trigger, SHELL_COMMAND runner)
 Phase: **1 (Foundation) / 3 (UX & Multi-Surface)**
 Depends on: **0002 (Core Data Model), 0003 (Agent Model), 0006 (Security Model), 0010 (Project Model), 0012 (Intent Graph — superseded), 0019 (Execution Graph), 0049 (Platform Capability Profiles), 0052 (Runtime API), 0053 (Git Backend and Reconciliation), 0104 (Inference Locality)**
