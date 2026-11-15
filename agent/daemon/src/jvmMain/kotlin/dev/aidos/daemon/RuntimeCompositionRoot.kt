@@ -157,6 +157,8 @@ class RuntimeCompositionRoot(
     private val modelRuntime: ModelRuntime? = null,
     /** RFC-0048 / RFC-0049: platform adapter supplying profile, dirs, and execution window. */
     val platform: PlatformAdapter = DesktopPlatformAdapter(),
+    /** RFC-0045: live degradation-ladder monitor & `degradation_events` recorder. */
+    val degradationMonitor: DaemonDegradationMonitor = DaemonDegradationMonitor(userDriver = userDriver),
 ) {
     /** RFC-0031: user-scope write path for `mcp_servers` when [userDriver] is present. */
     val mcpServerRegistry: McpServerRegistry? = userDriver?.let(::McpServerRegistry)
@@ -201,7 +203,9 @@ class RuntimeCompositionRoot(
         runCatching { MetricsCollector(projectDriver).collect(projectId.value) }
             .onFailure { DaemonLog.err("aidos: metrics collection failed: ${it.message}") }
         // RFC-0056: compaction runs after the Run, on a background dispatcher; it never fails a Run.
-        runCatching { retention.schedule(projectDriver, projectId.value, rootPath, userDriver, idGen, nowIso) }
+        if (!degradationMonitor.shouldPauseBackgroundMaintenance(projectDriver, projectId.value)) {
+            runCatching { retention.schedule(projectDriver, projectId.value, rootPath, userDriver, idGen, nowIso) }
+        }
     }
 
     /**

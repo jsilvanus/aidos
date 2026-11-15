@@ -1,6 +1,7 @@
 # RFC-0007: Concurrency Model
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (slow-subscriber Event Bus backpressure, session priority queue, distributed execution, per-dispatcher starvation metrics)
 
 ## Abstract
 
@@ -336,3 +337,15 @@ Priority queue for the session dispatcher, allowing interactive sessions to pree
 Distributed session execution across multiple machines (long-term).
 
 Performance monitoring per dispatcher to detect scheduling starvation.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/ConcurrencyModel.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/LifecycleScopes.kt
+  - agent/lock/src/jvmMain/kotlin/dev/aidos/lock/ProjectLock.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/ConcurrencyModelTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/Batch6RfcTests.kt
+  - agent/lock/src/jvmTest/kotlin/dev/aidos/lock/ProjectLockTest.kt
+```

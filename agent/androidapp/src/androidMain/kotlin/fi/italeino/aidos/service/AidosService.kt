@@ -12,6 +12,7 @@ import dev.aidos.androidapp.service.RuntimeServiceHost
 import dev.aidos.api.RealRuntimeClient
 import fi.italeino.aidos.AndroidRuntimeClientFactory
 import fi.italeino.aidos.MainActivity
+import fi.italeino.aidos.work.ScheduledJobWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,6 +48,8 @@ class AidosService : LifecycleService() {
         super.onCreate()
         runtimeClient = AndroidRuntimeClientFactory.createRuntimeClient(this)
         runtimeServiceHost = RuntimeServiceHost(client = runtimeClient, scope = serviceScope)
+        runtimeServiceHost.startScheduleLoop()
+        ScheduledJobWorker.schedule(this)
         createNotificationChannel()
 
         serviceScope.launch {

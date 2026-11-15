@@ -63,6 +63,16 @@ class Scheduler(
     private val idGen: () -> String,
     private val nowIso: () -> String,
     val eventQueue: SessionEventQueue = SessionEventQueue(),
+    /** RFC-0005 Admission 1 (RFC-0055): runtime must hold the project lock to wake sessions. */
+    private val isProjectLockHeld: () -> Boolean = { true },
+    /** RFC-0005 Admission 2 (RFC-0049): session's implied tools must be available on this profile. */
+    private val isSessionAvailable: (sessionId: String) -> Boolean = { true },
+    /** RFC-0005 Admission 4 (RFC-0028): session must have remaining wake budget. */
+    private val hasWakeBudget: (sessionId: String) -> Boolean = { true },
+    /** RFC-0005 Admission 3 (D24): whether deterministic work is available for [sessionId] on [event]. */
+    private val hasDeterministicWork: (sessionId: String, event: EventRow) -> Boolean = { _, event ->
+        event.type in DEFAULT_DETERMINISTIC_EVENT_TYPES
+    },
 ) {
     private val transacter = object : TransacterImpl(driver) {}
 
@@ -84,6 +94,14 @@ class Scheduler(
         val interrupted: List<String> = emptyList(),
         /** Matched, but parked in `SLEEPING` after 3 consecutive `FAILED` Runs (RFC-0011). */
         val failureBudgetParked: List<String> = emptyList(),
+        /** Matched, but refused because the project lock is not held (RFC-0005 Admission 1). */
+        val lockRefused: List<String> = emptyList(),
+        /** Matched, but refused because required tools are unavailable on this profile (RFC-0005 Admission 2). */
+        val availabilityRefused: List<String> = emptyList(),
+        /** Matched on MOBILE without FGS and without deterministic work; deferred (RFC-0005 Admission 3, D24). */
+        val deferredNoForeground: List<String> = emptyList(),
+        /** Matched, but refused because wake budget is exhausted (RFC-0005 Admission 4). */
+        val budgetRefused: List<String> = emptyList(),
     )
 
     /**
@@ -97,6 +115,7 @@ class Scheduler(
         platformProfile: PlatformProfile,
         deviceId: String,
         networkAvailable: Boolean,
+        hasForegroundService: Boolean = true,
     ): WakeResult {
         val match = SchedulerMatcher.match(
             event = event,
@@ -143,10 +162,56 @@ class Scheduler(
         val alreadyRunning = mutableListOf<String>()
         val queued = mutableListOf<String>()
         val failureBudgetParked = mutableListOf<String>()
+        val lockRefused = mutableListOf<String>()
+        val availabilityRefused = mutableListOf<String>()
+        val deferredNoForeground = mutableListOf<String>()
+        val budgetRefused = mutableListOf<String>()
 
+        // RFC-0005 Admission 1: Project lock (RFC-0055). No runtime holding it, no wake.
+        if (!isProjectLockHeld()) {
+            for (sessionId in match.woken) {
+                if (!events.canDeliver(event, ActorKind.SESSION, sessionId)) continue
+                recordWakeRefused(projectId.value, sessionId, event, "project_lock_not_held")
+                lockRefused.add(sessionId)
+            }
+            return WakeResult(
+                woken = emptyList(),
+                selfWakeRefused = match.selfWakeRefused,
+                depthCeilingRefused = emptyList(),
+                alreadyRunning = emptyList(),
+                lockRefused = lockRefused,
+            )
+        }
+
+        // RFC-0005 Admission 2-4 + RFC-0011 failure budget filter before fairness ordering.
+        val eligible = mutableListOf<String>()
         for (sessionId in match.woken) {
             // RFC-0004: Visibility check — never deliver PRIVILEGED or other-session events.
             if (!events.canDeliver(event, ActorKind.SESSION, sessionId)) {
+                continue
+            }
+
+            // RFC-0005 Admission 2: Availability (RFC-0049).
+            if (!isSessionAvailable(sessionId)) {
+                recordWakeRefused(projectId.value, sessionId, event, "tool_unavailable")
+                availabilityRefused.add(sessionId)
+                continue
+            }
+
+            // RFC-0005 Admission 3: Foreground on MOBILE (D24) — deterministic-only wake without FGS.
+            if (platformProfile == PlatformProfile.MOBILE &&
+                !hasForegroundService &&
+                !hasDeterministicWork(sessionId, event)
+            ) {
+                recordWakeRefused(projectId.value, sessionId, event, "foreground_required_no_deterministic_work")
+                deferredNoForeground.add(sessionId)
+                continue
+            }
+
+            // RFC-0005 Admission 4: Wake budget (RFC-0028).
+            if (!hasWakeBudget(sessionId)) {
+                recordWakeRefused(projectId.value, sessionId, event, "wake_budget_exhausted")
+                budgetRefused.add(sessionId)
                 continue
             }
 
@@ -155,25 +220,25 @@ class Scheduler(
             val userEvent = event.type == EventTypes.USER_COMMAND || event.source == "user"
             if (isFailureBudgetExhausted(sessionId)) {
                 if (!userEvent) {
-                    audit.write(
-                        id = idGen(),
-                        projectId = projectId.value,
-                        kind = "WakeRefused",
-                        actor = resolveSessionActor(sessionId),
-                        subjectRef = event.type,
-                        detailJson = buildJsonObject {
-                            put("reason", "failure_budget_exhausted")
-                            put("event_id", event.id)
-                            put("session_id", sessionId)
-                        }.toString(),
-                        nowIso = nowIso(),
-                    )
+                    recordWakeRefused(projectId.value, sessionId, event, "failure_budget_exhausted")
                     failureBudgetParked.add(sessionId)
                     continue
                 } else {
                     resetFailureBudget(sessionId)
                 }
             }
+
+            eligible.add(sessionId)
+        }
+
+        // RFC-0005 Admission 5: Fairness — least-recently-run first (oldest last_active_at first).
+        val ordered = if (eligible.size > 1) {
+            eligible.sortedBy { sessionLastActiveAt(it) ?: "" }
+        } else {
+            eligible
+        }
+
+        for (sessionId in ordered) {
 
             val wokenEventId = idGen()
             val seq = events.publish(
@@ -253,6 +318,10 @@ class Scheduler(
             alreadyRunning = alreadyRunning,
             queued = queued,
             failureBudgetParked = failureBudgetParked,
+            lockRefused = lockRefused,
+            availabilityRefused = availabilityRefused,
+            deferredNoForeground = deferredNoForeground,
+            budgetRefused = budgetRefused,
         )
     }
 
@@ -431,8 +500,48 @@ class Scheduler(
         }
     }
 
+    private fun recordWakeRefused(
+        projectId: String,
+        sessionId: String,
+        event: EventRow,
+        reason: String,
+    ) {
+        audit.write(
+            id = idGen(),
+            projectId = projectId,
+            kind = "WakeRefused",
+            actor = resolveSessionActor(sessionId),
+            subjectRef = event.type,
+            detailJson = buildJsonObject {
+                put("reason", reason)
+                put("event_id", event.id)
+                put("session_id", sessionId)
+            }.toString(),
+            nowIso = nowIso(),
+        )
+    }
+
+    private fun sessionLastActiveAt(sessionId: String): String? =
+        driver.executeQuery(
+            identifier = null,
+            sql = "SELECT last_active_at FROM sessions WHERE id = ?",
+            mapper = { c -> QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            parameters = 1,
+        ) { bindString(0, sessionId) }.value
+
     companion object {
         /** RFC-0011: 3 consecutive FAILED Runs parks a session in SLEEPING. */
         const val FAILURE_BUDGET: Long = 3L
+
+        /** Events that can be handled deterministically without a model call (D24). */
+        val DEFAULT_DETERMINISTIC_EVENT_TYPES: Set<String> = setOf(
+            EventTypes.FILE_MODIFIED,
+            EventTypes.FILE_CREATED,
+            EventTypes.FILE_DELETED,
+            EventTypes.GIT_COMMIT,
+            "IndexUpdated",
+            "SyncCompleted",
+            "DeterministicPrep",
+        )
     }
 }

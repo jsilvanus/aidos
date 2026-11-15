@@ -1,5 +1,8 @@
 package dev.aidos.androidapp.service
 
+import dev.aidos.androidapp.notification.NotificationContent
+import dev.aidos.androidapp.notification.NotificationDispatchResult
+import dev.aidos.androidapp.notification.NotificationManager
 import dev.aidos.androidapp.scheduling.InMemoryScheduledJobManager
 import dev.aidos.androidapp.scheduling.JobScheduler
 import dev.aidos.androidapp.scheduling.RuntimeClientWorkDispatcher
@@ -11,9 +14,11 @@ import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -60,6 +65,22 @@ class RuntimeServiceHost(
     /** Job scheduler that runs periodically (RFC-0044). */
     val scheduler = JobScheduler(jobManager, jobDispatcher)
 
+    /** Platform-neutral notification manager with per-project hourly budget (RFC-0044). */
+    val notificationManager = NotificationManager()
+
+    /** Evaluates a notification for [projectId] against budget, quiet hours, and throttle. */
+    fun evaluateNotification(
+        projectId: String,
+        content: NotificationContent,
+        isInitiatedByUser: Boolean = false,
+        redact: (String) -> String = { it },
+    ): NotificationDispatchResult = notificationManager.evaluateForProject(
+        projectId = projectId,
+        content = content,
+        isInitiatedByUser = isInitiatedByUser,
+        redact = redact,
+    )
+
     /** Human-readable text for the foreground service notification (D24). */
     val currentNotificationText: String
         get() = when (val s = _state.value) {
@@ -68,10 +89,6 @@ class RuntimeServiceHost(
             is ServiceState.EvictedMidRun -> "Aidos: paused at step ${s.lastCheckpointStep}"
         }
 
-    // TODO: never actually assigned anywhere today, so shutdown()'s cancelAndJoin() below is a
-    // no-op in practice — a pre-existing gap, not introduced by this move from JVM-only
-    // AtomicReference (dropped since nothing here is JVM-specific once RuntimeServiceHost is
-    // visible to the Android target too). Flagged, not fixed, in PIPELINE.md.
     private var activeJob: Job? = null
 
     /**
@@ -120,8 +137,23 @@ class RuntimeServiceHost(
         scheduler.runScheduleRound()
     }
 
+    /**
+     * Starts a periodic timer loop on [scope] that calls [runScheduleRound] every [intervalMs]
+     * (RFC-0044). Calling again when already running is a no-op.
+     */
+    fun startScheduleLoop(intervalMs: Long = 60_000L) {
+        if (activeJob?.isActive == true) return
+        activeJob = scope.launch {
+            while (isActive) {
+                runCatching { runScheduleRound() }
+                delay(intervalMs)
+            }
+        }
+    }
+
     suspend fun shutdown() {
         activeJob?.cancelAndJoin()
+        activeJob = null
         _state.value = ServiceState.Idle
     }
 }

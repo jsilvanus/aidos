@@ -213,4 +213,125 @@ class SchedulerTest {
         assertEquals(1, auditRows.size)
         assertEquals("WakeRefused", auditRows.single().kind)
     }
+
+    @Test
+    fun `MOBILE without foreground service defers non-deterministic wake and audits refusal`() {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProject(driver, pid)
+        seedSession(driver, pid, sid, state = "SLEEPING")
+        SessionSubscriptionStore(driver).subscribe(
+            id = nextId(), sessionId = sid, topicPatterns = listOf("timer:*"),
+            eventTypes = listOf(EventTypes.TIMER_FIRED), nowIso = nowIso,
+        )
+        val eventStore = EventStore(driver)
+        val eid = nextId()
+        eventStore.publish(
+            id = eid, projectId = pid, type = EventTypes.TIMER_FIRED, source = "timer",
+            topic = "timer:daily", causalDepth = 0, nowIso = nowIso,
+        )
+        val event = eventStore.eventsForProject(pid, type = EventTypes.TIMER_FIRED).single()
+
+        val result = scheduler(driver).wake(
+            event = event, sourceSessionId = null, projectId = ProjectId(pid),
+            platformProfile = PlatformProfile.MOBILE, deviceId = "dev-1", networkAvailable = false,
+            hasForegroundService = false,
+        )
+
+        assertTrue(result.woken.isEmpty())
+        assertEquals(listOf(sid), result.deferredNoForeground)
+        assertEquals("SLEEPING", sessionState(driver, sid))
+        val auditRows = AuditLog(driver).rowsForProject(pid)
+        assertEquals(1, auditRows.size)
+        assertEquals("WakeRefused", auditRows.single().kind)
+        val detailJson = driver.executeQuery(
+            null,
+            "SELECT detail_json FROM audit_log WHERE id = ?",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) },
+            1,
+        ) { bindString(0, auditRows.single().id) }.value
+        assertTrue(detailJson?.contains("foreground_required_no_deterministic_work") == true)
+    }
+
+    @Test
+    fun `MOBILE without foreground service allows deterministic wake`() {
+        val driver = openDriver()
+        val pid = nextId(); val sid = nextId()
+        seedProject(driver, pid)
+        seedSession(driver, pid, sid, state = "SLEEPING")
+        SessionSubscriptionStore(driver).subscribe(
+            id = nextId(), sessionId = sid, topicPatterns = listOf("git:*"),
+            eventTypes = listOf(EventTypes.GIT_COMMIT), nowIso = nowIso,
+        )
+        val eventStore = EventStore(driver)
+        val event = publishGitCommit(eventStore, pid)
+
+        val result = scheduler(driver).wake(
+            event = event, sourceSessionId = null, projectId = ProjectId(pid),
+            platformProfile = PlatformProfile.MOBILE, deviceId = "dev-1", networkAvailable = false,
+            hasForegroundService = false,
+        )
+
+        assertEquals(1, result.woken.size)
+        assertTrue(result.deferredNoForeground.isEmpty())
+        assertEquals("RUNNING", sessionState(driver, sid))
+    }
+
+    @Test
+    fun `admission policy enforces lock availability wake budget and least-recently-run order`() {
+        val driver = openDriver()
+        val pid = nextId()
+        val sOlder = nextId(); val sNewer = nextId(); val sUnavailable = nextId(); val sNoBudget = nextId()
+        seedProject(driver, pid)
+        seedSession(driver, pid, sNewer, state = "SLEEPING")
+        seedSession(driver, pid, sOlder, state = "SLEEPING")
+        seedSession(driver, pid, sUnavailable, state = "SLEEPING")
+        seedSession(driver, pid, sNoBudget, state = "SLEEPING")
+        driver.execute(null, "UPDATE sessions SET last_active_at = ? WHERE id = ?", 2) {
+            bindString(0, "2026-08-01T00:00:00Z"); bindString(1, sOlder)
+        }
+        driver.execute(null, "UPDATE sessions SET last_active_at = ? WHERE id = ?", 2) {
+            bindString(0, "2026-08-08T00:00:00Z"); bindString(1, sNewer)
+        }
+
+        val subs = SessionSubscriptionStore(driver)
+        for (sid in listOf(sNewer, sOlder, sUnavailable, sNoBudget)) {
+            subs.subscribe(
+                id = nextId(), sessionId = sid, topicPatterns = listOf("git:*"),
+                eventTypes = listOf(EventTypes.GIT_COMMIT), nowIso = nowIso,
+            )
+        }
+        val eventStore = EventStore(driver)
+        val event = publishGitCommit(eventStore, pid)
+
+        // First: project lock not held refuses all.
+        val lockedOut = Scheduler(
+            driver = driver, events = eventStore, subscriptions = subs,
+            runCreator = RunCreator(driver, idGen = { nextId() }, nowIso = { nowIso }),
+            audit = AuditLog(driver), idGen = { nextId() }, nowIso = { nowIso },
+            isProjectLockHeld = { false },
+        ).wake(
+            event = event, sourceSessionId = null, projectId = ProjectId(pid),
+            platformProfile = PlatformProfile.DESKTOP, deviceId = "dev-1", networkAvailable = false,
+        )
+        assertTrue(lockedOut.woken.isEmpty())
+        assertEquals(4, lockedOut.lockRefused.size)
+
+        // Second: availability, wake budget, and least-recently-run ordering.
+        val admitted = Scheduler(
+            driver = driver, events = eventStore, subscriptions = subs,
+            runCreator = RunCreator(driver, idGen = { nextId() }, nowIso = { nowIso }),
+            audit = AuditLog(driver), idGen = { nextId() }, nowIso = { nowIso },
+            isProjectLockHeld = { true },
+            isSessionAvailable = { it != sUnavailable },
+            hasWakeBudget = { it != sNoBudget },
+        ).wake(
+            event = event, sourceSessionId = null, projectId = ProjectId(pid),
+            platformProfile = PlatformProfile.DESKTOP, deviceId = "dev-1", networkAvailable = false,
+        )
+
+        assertEquals(listOf(sUnavailable), admitted.availabilityRefused)
+        assertEquals(listOf(sNoBudget), admitted.budgetRefused)
+        assertEquals(listOf(sOlder, sNewer), admitted.woken.map { it.sessionId })
+    }
 }

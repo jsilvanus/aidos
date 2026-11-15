@@ -1,6 +1,7 @@
 # RFC-0044: Notifications, Timers, and Background Work
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (usage-driven opportunistic scheduling, inline notification approval actions, calendar trigger integration)
 
 ## Abstract
 
@@ -265,3 +266,25 @@ Notification actions: approve or deny a capability directly from the notificatio
 mobile use case removes the most common reason to open the app at all.
 
 Calendar integration as a trigger source, for the life-management surfaces.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/notification/NotificationBudget.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/notification/NotificationManager.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/InMemoryScheduledJobManager.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/RuntimeClientWorkDispatcher.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/ScheduledJobManager.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/SqliteScheduledJobManager.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/scheduling/TriggerCalculator.kt
+  - agent/androidapp/src/commonMain/kotlin/dev/aidos/androidapp/service/RuntimeServiceHost.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/service/AidosService.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/work/ScheduledJobWorker.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/notification/NotificationBudgetTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/notification/NotificationManagerTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/InMemoryScheduledJobManagerTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/RuntimeClientWorkDispatcherTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/SqliteScheduledJobManagerTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/scheduling/TriggerCalculatorTest.kt
+```

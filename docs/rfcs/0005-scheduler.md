@@ -1,6 +1,7 @@
 # RFC-0005: Scheduler
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (coalescing debounce window, predictive wake, cross-project scheduling, priority/deadline scheduling)
 
 ## Abstract
 
@@ -174,3 +175,17 @@ recurring sessions need, and those are post-MVP.
 - When a wake is deferred on MOBILE and the same event class fires forty more times before the
   user opens the app, is the session woken once with a summary or once per event? Coalescing is
   the general answer; the deferred case needs it first.
+
+## Implementation Files
+
+```yaml
+files:
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/Scheduler.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SchedulerMatcher.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SessionSubscriptionStore.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/TopicMatcher.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteRunExecutor.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/SchedulerMatcherTest.kt
+  - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/Batch4RfcComplianceTest.kt
+```

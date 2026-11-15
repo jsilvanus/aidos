@@ -54,6 +54,8 @@ class SqliteRunExecutor(
     private val compositionRoot: RuntimeCompositionRoot? = null,
     /** RFC-0056 Stage 3: refuses to start a Run when the device is critically short of storage. */
     private val admission: RunAdmission? = null,
+    /** RFC-0045 Rung 5: refuses to start new Runs under critical memory pressure. */
+    private val degradationMonitor: DaemonDegradationMonitor? = compositionRoot?.degradationMonitor,
 ) : RunExecutor {
 
     override suspend fun send(
@@ -66,6 +68,9 @@ class SqliteRunExecutor(
         networkAvailable: Boolean,
     ): RunResult {
         admission?.refusal(projectDriver, projectId)?.let { return RunResult.Error("run.storage_critical", it) }
+        degradationMonitor?.refusalForNewRun(projectDriver, projectId)?.let {
+            return RunResult.Error("run.critical_memory", it)
+        }
 
         val runTaintPolicy = message.runOptions.taintApprovalPolicy
             ?.trim()

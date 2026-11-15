@@ -107,4 +107,44 @@ class NotificationManagerTest {
         assertFalse(content.isOneShot)
         assertFalse(content.isApproval)
     }
+
+    @Test
+    fun `evaluateForProject enforces hourly NotificationBudget, coalesces excess, and redacts`() {
+        val nm = NotificationManager(throttleWindowMs = 0L, defaultHourlyBudget = 2)
+        val t0 = 1_786_200_000_000L
+
+        val r1 = nm.evaluateForProject(
+            projectId = "proj-1",
+            content = NotificationContent("k1", "Title secret", "Body secret", isOneShot = false),
+            nowMs = t0,
+            redact = { it.replace("secret", "«redacted»") },
+        )
+        assertTrue(r1 is NotificationDispatchResult.Fire)
+        assertEquals("Title «redacted»", r1.content.title)
+        assertEquals("Body «redacted»", r1.content.body)
+
+        val r2 = nm.evaluateForProject(
+            projectId = "proj-1",
+            content = NotificationContent("k2", "Title 2", "Body 2", isOneShot = false),
+            nowMs = t0 + 1_000L,
+        )
+        assertTrue(r2 is NotificationDispatchResult.Fire)
+
+        // Third background notification exceeds hourly budget -> coalesced.
+        val r3 = nm.evaluateForProject(
+            projectId = "proj-1",
+            content = NotificationContent("k3", "Title 3", "Body 3", isOneShot = false),
+            nowMs = t0 + 2_000L,
+        )
+        assertTrue(r3 is NotificationDispatchResult.Coalesced)
+        assertEquals(1, r3.coalescedCount)
+
+        // Approval notification bypasses budget even when exhausted.
+        val r4 = nm.evaluateForProject(
+            projectId = "proj-1",
+            content = nm.approvalContent("run-9", "shell", "Needs approval"),
+            nowMs = t0 + 3_000L,
+        )
+        assertTrue(r4 is NotificationDispatchResult.Fire)
+    }
 }

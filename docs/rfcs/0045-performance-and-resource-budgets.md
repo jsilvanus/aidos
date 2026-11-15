@@ -1,6 +1,7 @@
 # RFC-0045: Performance and Resource Budgets
 
-Status: Accepted 2026-08-03
+Status: Implemented 2026-11-15 (Accepted 2026-08-03). Implementation evidence: [STATUS.md](STATUS.md).
+Non-MVP Work: **Remaining** (rungs 3 and 6, adaptive execution windows, per-project battery attribution, device-class model quantization selection)
 
 ## Abstract
 
@@ -206,3 +207,21 @@ Battery attribution per project, answering "which project is costing me power".
 
 Model quantisation selection by device class, so a mid-range phone gets a smaller variant
 automatically rather than failing admission.
+
+## Implementation Files
+
+```yaml
+files:
+  - kernel/src/commonMain/kotlin/dev/aidos/kernel/Degradation.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/DegradationLadder.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/ModelAdmissionPolicy.kt
+  - agent/routing/src/commonMain/kotlin/dev/aidos/routing/PolicyInferenceRouter.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/ResourceBudgetAndDegradation.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SqliteRunExecutor.kt
+  - agent/androidapp/src/jvmMain/kotlin/dev/aidos/androidapp/degradation/SqliteDegradationEventStore.kt
+  - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/DegradationLadderTest.kt
+  - agent/routing/src/jvmTest/kotlin/dev/aidos/routing/ModelAdmissionPolicyTest.kt
+  - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/ResourceBudgetAndDegradationTest.kt
+  - agent/androidapp/src/jvmTest/kotlin/dev/aidos/androidapp/degradation/SqliteDegradationEventStoreTest.kt
+```

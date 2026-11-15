@@ -23,10 +23,13 @@ class NotificationManager(
     private val throttleWindowMs: Long = DEFAULT_THROTTLE_MS,
     private val quietHoursStart: LocalTime? = null,  // e.g., 22:00
     private val quietHoursEnd: LocalTime? = null,    // e.g., 08:00
+    private val defaultHourlyBudget: Int = 3,
 ) {
     private val lastFiredAt = mutableMapOf<String, Long>()
     private val firedOnce = mutableSetOf<String>()
     private val pendingQuietHours = mutableSetOf<String>()
+    private val projectBudgets = mutableMapOf<String, NotificationBudget>()
+    private val coalescedCounts = mutableMapOf<String, Int>()
 
     companion object {
         const val DEFAULT_THROTTLE_MS = 60_000L  // 1 minute
@@ -140,6 +143,55 @@ class NotificationManager(
             category = NotificationCategory.APPROVAL,
         )
 
+    /**
+     * Evaluates a notification for [projectId] against throttle, quiet hours, [NotificationBudget],
+     * and [redact] (RFC-0044 §Notifications & Security 1).
+     */
+    fun evaluateForProject(
+        projectId: String,
+        content: NotificationContent,
+        isInitiatedByUser: Boolean = false,
+        nowMs: Long = Clock.System.now().toEpochMilliseconds(),
+        nowIso: () -> String = { Instant.fromEpochMilliseconds(nowMs).toString() },
+        redact: (String) -> String = { it },
+    ): NotificationDispatchResult {
+        if (!shouldFire(content.key, nowMs, oneShot = content.isOneShot, isApproval = content.isApproval)) {
+            return NotificationDispatchResult.Suppressed(
+                if (isInQuietHours(nowMs) && !content.isApproval) "quiet_hours" else "throttled_or_one_shot"
+            )
+        }
+
+        val budget = projectBudgets.getOrPut(projectId) {
+            NotificationBudget(projectId = projectId, defaultBudget = defaultHourlyBudget)
+        }
+        if (!budget.tryConsume(content, isInitiatedByUser = isInitiatedByUser, nowIso = nowIso)) {
+            val count = (coalescedCounts[projectId] ?: 0) + 1
+            coalescedCounts[projectId] = count
+            val summary = NotificationContent(
+                key = "coalesced_$projectId",
+                title = redact("Aidos — $projectId"),
+                body = redact("$count background updates coalesced"),
+                isOneShot = false,
+                isApproval = false,
+                category = NotificationCategory.INFORMATIONAL,
+            )
+            return NotificationDispatchResult.Coalesced(summary, count)
+        }
+
+        recordFired(content.key, nowMs)
+        val redacted = content.copy(
+            title = redact(content.title),
+            body = redact(content.body),
+        )
+        return NotificationDispatchResult.Fire(redacted)
+    }
+
+    /** Returns the [NotificationBudget] for [projectId]. */
+    fun budgetFor(projectId: String): NotificationBudget =
+        projectBudgets.getOrPut(projectId) {
+            NotificationBudget(projectId = projectId, defaultBudget = defaultHourlyBudget)
+        }
+
     private fun isInQuietHours(nowMs: Long): Boolean {
         if (quietHoursStart == null || quietHoursEnd == null) return false
 
@@ -170,4 +222,10 @@ enum class NotificationCategory {
     APPROVAL,        // Run awaiting capability grant; blocks work until answered
     COMPLETION,      // Session completed; may be coalesced
     INFORMATIONAL,   // Status update; always coalesced
+}
+
+sealed interface NotificationDispatchResult {
+    data class Fire(val content: NotificationContent) : NotificationDispatchResult
+    data class Coalesced(val summary: NotificationContent, val coalescedCount: Int) : NotificationDispatchResult
+    data class Suppressed(val reason: String) : NotificationDispatchResult
 }

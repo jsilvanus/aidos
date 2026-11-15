@@ -1,5 +1,6 @@
 package dev.aidos.routing
 
+import dev.aidos.kernel.DeviceSignals
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.InferenceRouter
 import dev.aidos.kernel.ModelAdapter
@@ -87,7 +88,19 @@ class PolicyInferenceRouter(
     private val adapterCosts: Map<String, Long> = emptyMap(),
     private val clusterAdapters: List<ModelAdapter> = emptyList(),
     private val modelRuntime: ModelRuntime? = null,
+    private val admissionPolicy: ModelAdmissionPolicy? = null,
+    private val deviceSignalsProvider: (() -> DeviceSignals)? = null,
+    private val availableMemoryBytesProvider: (() -> Long)? = null,
+    private val modelWorkingSetBytes: Map<String, Long> = emptyMap(),
 ) : InferenceRouter {
+
+    private fun isLocalModelAdmitted(modelId: String): Boolean {
+        val admission = admissionPolicy ?: return true
+        val signals = deviceSignalsProvider?.invoke() ?: return true
+        val availableMem = availableMemoryBytesProvider?.invoke() ?: return true
+        val workingSet = modelWorkingSetBytes[modelId] ?: 0L
+        return admission.evaluate(workingSet, availableMem, signals) is ModelAdmissionPolicy.AdmissionDecision.Admitted
+    }
 
     /**
      * Resolves the [ModelKind] served by [adapter] using descriptor metadata, explicit kind map,
@@ -200,14 +213,16 @@ class PolicyInferenceRouter(
             ?.takeIf { it.isNotEmpty() }
         val minCtx = context.minimumContextWindow
 
-        // 1. Candidates per locality tier filtered by ModelKind and minimum context window.
+        // 1. Candidates per locality tier filtered by ModelKind, minimum context window, and admission (RFC-0045).
         val localCandidates = localAdapters
             .filter { matchesKind(it, kind) }
             .filter { minCtx == null || it.contextWindow >= minCtx }
+            .filter { isLocalModelAdmitted(it.modelId) }
 
         val runtimeInstalledLocal = modelRuntime?.installed()
             .orEmpty()
             .filter { it.isLocal && it.kind == kind && (minCtx == null || it.contextWindow >= minCtx) }
+            .filter { isLocalModelAdmitted(it.id) }
 
         val clusterCandidates = clusterAdapters
             .filter { matchesKind(it, kind) }
