@@ -7,6 +7,7 @@ import dev.aidos.kernel.EffectKind
 import dev.aidos.kernel.ErrorClass
 import dev.aidos.kernel.ErrorCodes
 import dev.aidos.kernel.Permission
+import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.Preview
 import dev.aidos.kernel.RecoveryClass
 import dev.aidos.kernel.ResourceHandle
@@ -86,7 +87,7 @@ class FakeTool(
         handle: ResourceHandle,
         operation: String,
         arguments: JsonObject,
-    ): Result<Preview> = Result.success(Preview.Summary("fake preview for $operation"))
+    ): Result<Preview> = Result.success(Preview.Description("fake preview for $operation"))
 
     override suspend fun cancel(operationId: String) {
         cancelledOperations.add(operationId)
@@ -97,9 +98,10 @@ class FakeTool(
             name: String = "fake.echo",
             effect: EffectKind = EffectKind.Read,
             permission: Permission = Permission.FS_READ,
-            availability: ToolAvailability = ToolAvailability(tier = AvailabilityTier.ALWAYS),
+            availability: ToolAvailability = ToolAvailability(setOf(PlatformProfile.DESKTOP, PlatformProfile.HEADLESS_SERVER, PlatformProfile.MOBILE), AvailabilityTier.UNIVERSAL),
         ): ToolDescriptor = ToolDescriptor(
             name = name,
+            title = name,
             description = "Fake test tool operation",
             inputSchema = buildJsonObject {
                 put("type", "object")
