@@ -64,7 +64,7 @@ jobs:
         run: |
           # lintVital is excluded: its lint model cannot resolve the aidos-tcr included build
           # ("Could not find jar for project :aidos-tcr"), and it is not part of producing the APK.
-          gradle :androidapp:assembleRelease -x lintVitalAnalyzeRelease --no-daemon
+          gradle :androidapp:assembleRelease -x lintVitalAnalyzeRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel --no-daemon
       
       - name: Find and inspect APK
         id: find-apk
