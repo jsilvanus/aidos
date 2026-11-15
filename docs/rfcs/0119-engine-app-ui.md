@@ -1,6 +1,6 @@
 # RFC-0119: Engine App UI and Desktop Control
 
-Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15, written from the code and RFC-0115/D58/D61). Partially implemented on desktop; the Android screens are listed in RFC-0118.
+Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: Compose panes are not UI-tested; HTTP controls for most panes pending (RFC-0115)).
 
 Related: RFC-0115 (desktop services; owns the service split, tray and install), RFC-0103 (Engine), RFC-0051 LAN and RFC-0105/0107/0108 (the features the panes control), RFC-0106 and RFC-0123 (generative UI and the component registry), D58, D59, D61.
 

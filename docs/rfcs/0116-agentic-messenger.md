@@ -1,6 +1,6 @@
 # RFC-0116: Agentic Messenger (AMP)
 
-Status: Accepted 2026-11-15, partially implemented. Detail: (2026-11-15). Partially implemented: the messenger itself lives in the separate repository `jsilvanus/agentic-messenger` (relay, client SDK, envelope and policy engine, desktop UI, Aidos agent bridge, MCP over Binder); the Aidos side of the bridge is `agent/amp`. MLS encryption, federation, hardware-backed keys and the persistent-memory bridge are not built.
+Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: MLS, hardware keys, federation, persistent memory bridge).
 
 Related: RFC-0003 (security), RFC-0024/0025 (content and prompts), RFC-0026 (memory), RFC-0027 (trust and taint), RFC-0031 (MCP), RFC-0035 (secrets), RFC-0042 (egress), RFC-0046 (identity and actors), RFC-0057 (glanceable), RFC-0106 (generative UI), RFC-0107 (remote agent hosting), RFC-0113 (blinded egress), RFC-0114 (work projects). Source plans: `agentic-messenger/docs/plan.md`, `roadmap.md`, `identity-and-cryptography.md`, `relay-and-storage.md`, `agent-memory-architecture.md`, `federation-architecture.md`, `aidos-joint-app-ux.md`.
 
