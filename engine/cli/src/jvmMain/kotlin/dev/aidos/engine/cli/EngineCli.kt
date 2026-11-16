@@ -7,6 +7,7 @@ import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
+import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ModelRuntime
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.TrustLevel
@@ -14,6 +15,9 @@ import dev.aidos.kernel.Turn
 import dev.aidos.modelruntime.GgufLoader
 import java.io.File
 import kotlinx.coroutines.flow.collect
+
+/** The concatenated text outputs of a response; null when it produced none. */
+val ModelResponse.text: String? get() = outputs.filterIsInstance<TextOutput>().takeIf { it.isNotEmpty() }?.joinToString("") { it.text }
 
 /** Testable command layer for the Aidos Engine CLI. */
 class EngineCli(
@@ -45,7 +49,7 @@ class EngineCli(
                     ModelRequest(turns.toList(), emptyList(), ToolChoice.None, maxOutputTokens)
                 ).getOrElse { return Result.failure(it) }
                 responses += response
-                response.text?.let { turns += Turn.Assistant(listOf(ContentBlock.Text(it))) }
+                response.text?.let { turns += Turn.Assistant(it, emptyList()) }
             }
             Result.success(responses)
         } finally { runtime.unload(modelId) }
@@ -78,8 +82,8 @@ class EngineCli(
         downloadManager.download(url, destination.absolutePath, expectedDigest = null).collect { event ->
             when (event) {
                 is DownloadEvent.Started -> println("download started at ${event.resumeFromBytes} bytes${event.totalBytes?.let { " / $it bytes" } ?: ""}")
-                is DownloadEvent.Progress -> if (event.totalBytes != null && event.totalBytes > 0) {
-                    print("\rDownloading: ${(event.bytesDownloaded * 100 / event.totalBytes).coerceIn(0, 100)}%")
+                is DownloadEvent.Progress -> event.totalBytes?.takeIf { it > 0 }?.let { total ->
+                    print("\rDownloading: ${(event.bytesDownloaded * 100 / total).coerceIn(0, 100)}%")
                 }
                 is DownloadEvent.Completed -> { println(); completed = File(event.finalPath) }
                 is DownloadEvent.Failed -> failure = IllegalStateException(event.reason)

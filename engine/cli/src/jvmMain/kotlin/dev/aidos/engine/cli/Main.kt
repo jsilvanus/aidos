@@ -2,6 +2,7 @@ package dev.aidos.engine.cli
 
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.modelruntime.GlobalModelRuntime
+import dev.aidos.modelruntime.create
 import kotlinx.coroutines.runBlocking
 import java.io.File
 

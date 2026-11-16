@@ -59,6 +59,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gradle jvmTest --continue --no-daemon
+      # :engine-cli is a plain JVM module, so the jvmTest above never reaches it.
+      - name: Test the Aidos Engine CLI
+        working-directory: engine
+        run: gradle :engine-cli:test --no-daemon
 
   build-engine-androidapp:
     runs-on: ubuntu-latest
