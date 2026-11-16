@@ -208,6 +208,108 @@ class VirtualModelAndDelegationTest {
         )
 
     @Test
+    fun aSplitModelThisEngineAnchorsAnswersChatWithRolesUsageAndTheRequestsOwnLimits() = testApplication {
+        // RFC-0105 phase 3 from the app's side: `aidos:chat` resolves to the split model this
+        // Engine anchors, and the request reaches llama-server as chat turns, not one joined string.
+        val buildId = dev.aidos.aidin.HelperProcessSupervisor.DEFAULT_LLAMA_CPP_BUILD_ID
+        fun splitNode() = AidinNode(
+            key = SigningKey.generate(),
+            stateStore = InMemoryAidinStateStore(),
+            scope = scope,
+            engineVersion = "test",
+            tracker = PeerTracker(heartbeatIntervalMillis = 80, leaveAfterMillis = 2_000),
+            heartbeatContent = {
+                Heartbeat(
+                    protocolVersion = AIDIN_PROTOCOL_VERSION,
+                    engineVersion = "test",
+                    llamaCppBuild = buildId,
+                    contributionRamBytes = 4_000_000_000L,
+                    charging = true,
+                    batteryPercent = 100,
+                )
+            },
+        ).also {
+            it.start("127.0.0.1")
+            nodes += it
+        }
+        val anchorNode = splitNode()
+        val helperNode = splitNode()
+        val group = anchorNode.createGroup("Lab")
+        anchorNode.enrol(helperNode.createInvite(listOf("127.0.0.1")), group)
+        eventually("enrolment offered") { helperNode.pairingViews.value.isNotEmpty() }
+        anchorNode.confirmPairing(anchorNode.pairingViews.value.last().id, "helper")
+        helperNode.confirmPairing(helperNode.pairingViews.value.single().id, "Lab")
+        eventually("anchor authorizes the helper in the group") {
+            anchorNode.peers.value.any { it.nodeId == helperNode.nodeId && it.connected && it.lastHeartbeat != null } &&
+                (anchorNode.authorize(helperNode.nodeId, dev.aidos.aidin.Scope.HELP) as? dev.aidos.aidin.TrustDecision.Allowed)
+                    ?.domains?.contains(dev.aidos.aidin.TrustDomain.Group(group)) == true
+        }
+        val cacheDir = java.nio.file.Files.createTempDirectory("split-http-cache").toFile()
+        val helperSup = dev.aidos.aidin.HelperProcessSupervisor(helperNode, cacheDir, buildId)
+        val anchorSup = dev.aidos.aidin.AnchorProcessSupervisor(anchorNode, scope, buildId)
+        try {
+            val planned = anchorSup.startSplitModel(
+                domain = dev.aidos.aidin.TrustDomain.Group(group),
+                modelId = "big-split",
+                modelDigest = "sha256:big-split",
+                modelFile = java.io.File.createTempFile("big-split", ".gguf").apply { deleteOnExit() },
+                totalModelBytes = 3_000_000_000L,
+                blockCount = 24,
+                anchorRamBudgetBytes = 2_000_000_000L,
+            )
+            assertTrue(planned is dev.aidos.aidin.SplitPlanOutcome.Planned, "not planned: $planned")
+
+            val tokens = TokenManager()
+            val server = EngineHttpServer(
+                tokenManager = tokens,
+                modelRuntime = TestRuntime(emptyList(), "anchor"),
+                aidinNode = { anchorNode },
+                virtualModels = {
+                    listOf(VirtualModelConfig("aidos:chat", ModelKind.LLM, listOf(VirtualCandidate.Group(group, "big-split"))))
+                },
+            )
+            application { server.installInto(this) }
+            val token = tokens.generateNewToken().token
+            val body = json.encodeToString(
+                ChatCompletionRequest(
+                    model = "aidos:chat",
+                    messages = listOf(
+                        ChatMessage(role = "system", content = "Be brief."),
+                        ChatMessage(role = "user", content = "Hello"),
+                    ),
+                )
+            )
+
+            val res = client.post("/v1/chat/completions") {
+                bearerAuth(token)
+                contentType(ContentType.Application.Json)
+                header(LOCALITY_HEADER, "trusted_cluster")
+                setBody(body)
+            }
+
+            assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
+            assertEquals("cluster", res.headers[PLACEMENT_HEADER])
+            val chat = json.decodeFromString<ChatCompletionResponse>(res.bodyAsText())
+            val answer = chat.choices.single().message.content.orEmpty()
+            assertTrue(answer.endsWith("system:Be brief.|user:Hello"), "roles were lost on the way to the split model: $answer")
+            assertTrue(chat.usage.prompt_tokens > 0 && chat.usage.completion_tokens > 0, "usage not reported: ${chat.usage}")
+            assertEquals("aidos:chat", chat.model)
+
+            // Activations leave this device, so the default local_only must not reach the split model.
+            val localOnly = client.post("/v1/chat/completions") {
+                bearerAuth(token)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertEquals(HttpStatusCode.Forbidden, localOnly.status, localOnly.bodyAsText())
+        } finally {
+            anchorSup.close()
+            helperSup.close()
+            cacheDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun aidosChatResolvesLocallyOnDefaultLocalOnlyAndDelegatesToTrustedPeerOnTrustedCluster() = testApplication {
         val originNode = createNode(models = listOf(ModelAdvert("qwen2.5-3b", "llm", "sha256:3b", "local", loaded = true)))
         val peerNode = createNode(models = listOf(ModelAdvert("qwen2.5-14b", "llm", "sha256:14b", "local", loaded = true)))

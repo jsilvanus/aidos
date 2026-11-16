@@ -140,6 +140,14 @@ class NativeSplitInferenceTest {
         val answer = anchorSup.invoke("Hello", planned.plan.version, maxTokens = 1, temperature = 0.0)
         assertEquals("b", assertIs<SplitInferenceOutcome.Success>(answer, "logs in $logs").text)
 
+        // A chat request goes to llama-server with its roles and is rendered with a chat template
+        // there (the fixture has none, so llama.cpp's default), which is why the prompt it counts
+        // is longer than the five bytes of the message itself.
+        val chat = anchorSup.chat(listOf(SplitChatMessage("user", "Hello")), planned.plan.version, maxTokens = 1, temperature = 0.0)
+        val chatAnswer = assertIs<SplitInferenceOutcome.Success>(chat, "chat failed: $chat; logs: ${logs.listFiles()?.joinToString { it.name + ": " + it.readText().takeLast(1500) }}")
+        assertTrue(chatAnswer.promptTokens > "Hello".length, "no chat template applied: $chatAnswer")
+        assertEquals(1, chatAnswer.completionTokens)
+
         // Losing the only helper takes the model down; it must not answer from a partial model.
         helperSup.stopRpcServer()
         val after = anchorSup.invoke("Hello", planned.plan.version, maxTokens = 1, temperature = 0.0)

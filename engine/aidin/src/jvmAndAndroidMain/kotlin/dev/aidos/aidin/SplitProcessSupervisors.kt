@@ -28,7 +28,6 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.system.exitProcess
 
@@ -119,6 +118,8 @@ class OsSplitProcessSpawner(
                 "--n-gpu-layers", offload.layers.toString(),
                 "--tensor-split", offload.split,
                 "--ctx-size", contextLength.toString(),
+                // Chat requests are rendered with the model's own GGUF chat template (RFC-0022).
+                "--jinja",
                 "--host", "127.0.0.1",
                 "--port", port.toString(),
                 "--api-key", apiKey,
@@ -377,6 +378,50 @@ object LoopbackLlamaServerChildMain {
                                 val content = JsonPrimitive("[split:$modelName:$tensorSplit] $state")
                                 writeHttpResponse(sock, 200, """{"content":$content}""")
                             }
+                            request.method == "POST" && request.path == "/v1/chat/completions" -> {
+                                if (request.headers["authorization"] != "Bearer $apiKey") {
+                                    writeHttpResponse(sock, 401, """{"error":{"message":"Invalid API Key"}}""")
+                                    return@use
+                                }
+                                val messages = runCatching {
+                                    Json.parseToJsonElement(request.body).jsonObject["messages"] as? kotlinx.serialization.json.JsonArray
+                                }.getOrNull()
+                                if (messages == null || messages.isEmpty()) {
+                                    // What the real server answers to a request it cannot serve.
+                                    writeHttpResponse(sock, 400, """{"error":{"message":"messages is required"}}""")
+                                    return@use
+                                }
+                                // Stands in for the chat template: every turn keeps its role.
+                                var state = messages.joinToString("|") { m ->
+                                    val o = m.jsonObject
+                                    "${o["role"]?.jsonPrimitive?.content}:${o["content"]?.jsonPrimitive?.content.orEmpty()}"
+                                }
+                                val promptLength = state.length
+                                for (endpoint in rpcEndpoints) {
+                                    val parts = endpoint.split(":")
+                                    try {
+                                        Socket().use { rpcSock ->
+                                            rpcSock.soTimeout = 3_000
+                                            rpcSock.connect(InetSocketAddress(parts[0], parts[1].toInt()), 2_000)
+                                            val rpcIn = DataInputStream(rpcSock.getInputStream())
+                                            val rpcOut = DataOutputStream(rpcSock.getOutputStream())
+                                            rpcOut.writeUTF("FORWARD:$state")
+                                            rpcOut.flush()
+                                            val reply = rpcIn.readUTF()
+                                            if (!reply.startsWith("ACTIVATION:")) exitProcess(134)
+                                            state = reply.removePrefix("ACTIVATION:")
+                                        }
+                                    } catch (_: Exception) {
+                                        exitProcess(134)
+                                    }
+                                }
+                                val content = JsonPrimitive("[split-chat:$tensorSplit] $state")
+                                writeHttpResponse(
+                                    sock, 200,
+                                    """{"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":$content}}],""" +
+                                        """"usage":{"prompt_tokens":$promptLength,"completion_tokens":${state.length},"total_tokens":${promptLength + state.length}}}""",
+                                )
+                            }
                             else -> writeHttpResponse(sock, 404, """{"error":{"message":"not found"}}""")
                         }
                     } catch (_: Exception) {
@@ -615,10 +660,24 @@ class HelperProcessSupervisor(
 }
 
 sealed interface SplitInferenceOutcome {
-    data class Success(val text: String, val plan: SplitPlan) : SplitInferenceOutcome
+    data class Success(
+        val text: String,
+        val plan: SplitPlan,
+        /** Counted by `llama-server`; 0 where it reports none (the raw [AnchorProcessSupervisor.invoke] path). */
+        val promptTokens: Int = 0,
+        val completionTokens: Int = 0,
+        /** OpenAI finish reason as `llama-server` gave it: `stop` or `length`. */
+        val finishReason: String = "stop",
+    ) : SplitInferenceOutcome
+
+    /** `llama-server` refused this request (too long for the context, malformed). The split itself is healthy. */
+    data class Rejected(val status: Int, val reason: String) : SplitInferenceOutcome
     data class PlanChanged(val expectedVersion: Long, val currentVersion: Long?) : SplitInferenceOutcome
     data class Unavailable(val reason: String) : SplitInferenceOutcome
 }
+
+/** One chat turn handed to the split model; `llama-server` applies the model's chat template to the list. */
+data class SplitChatMessage(val role: String, val content: String)
 
 /**
  * RFC-0105 Phase 3 Anchor supervisor:
@@ -662,7 +721,14 @@ class AnchorProcessSupervisor(
     private val tunnelListeners = mutableListOf<ServerSocket>()
     private val activeClientSockets = ConcurrentHashMap<String, Socket>()
     private var monitorJob: Job? = null
-    private val reconnecting = AtomicBoolean(false)
+
+    // One deployment at a time. A restart that finds a deployment already running leaves it be:
+    // that deployment is the recovery.
+    private val deployLock = java.util.concurrent.locks.ReentrantLock()
+
+    // When the monitor may next try to bring the hosted model back after a failed deployment.
+    @Volatile private var nextRecoveryAtMillis = 0L
+    private var recoveryBackoffMillis = RECOVERY_BACKOFF_MIN_MILLIS
 
     init {
         node.attachAnchorSupervisor(this)
@@ -699,12 +765,20 @@ class AnchorProcessSupervisor(
             contextLength = contextLength,
             anchorRamBudgetBytes = anchorRamBudgetBytes,
         )
-        synchronized(lock) {
-            hostedSpec = spec
+        deployLock.lock()
+        try {
+            synchronized(lock) { hostedSpec = spec }
+            val outcome = deployPlan(spec)
+            // A model that never started is not "hosted": nothing should keep trying to start it
+            // behind the back of whoever was just told it could not be split.
+            if (outcome is SplitPlanOutcome.Refused) synchronized(lock) { if (hostedSpec === spec) hostedSpec = null }
+            return outcome
+        } finally {
+            deployLock.unlock()
         }
-        return deployPlan(spec)
     }
 
+    /** Caller holds [deployLock]. */
     private fun deployPlan(spec: HostedSpec): SplitPlanOutcome {
         tearDownActiveProcess()
 
@@ -849,7 +923,8 @@ class AnchorProcessSupervisor(
     }
 
     /**
-     * Executes an inference prompt against the supervised `llama-server` child process.
+     * Executes a raw prompt against the supervised `llama-server` child process, with no chat
+     * template applied. Chat requests go through [chat].
      *
      * If [expectedPlanVersion] is provided and does not match the current plan's version,
      * returns [SplitInferenceOutcome.PlanChanged] (HTTP 409 `plan_changed`) before touching
@@ -860,6 +935,63 @@ class AnchorProcessSupervisor(
         expectedPlanVersion: Long? = null,
         maxTokens: Int = 128,
         temperature: Double = 0.8,
+    ): SplitInferenceOutcome = post(
+        path = "/completion",
+        expectedPlanVersion = expectedPlanVersion,
+        body = buildJsonObject {
+            put("prompt", prompt)
+            put("n_predict", maxTokens)
+            put("temperature", temperature)
+        }.toString(),
+    ) { json, plan ->
+        SplitInferenceOutcome.Success(json["content"]?.jsonPrimitive?.content.orEmpty(), plan)
+    }
+
+    /**
+     * Runs a chat request on the split model. The turns go to `llama-server` with their roles, and
+     * it renders them with the model's own chat template (RFC-0022), exactly as a model loaded in
+     * this process would be. Joining the contents into one string, as this path once did, gives an
+     * instruction-tuned model a prompt it was never trained on.
+     *
+     * The same plan-version rule as [invoke] applies.
+     */
+    fun chat(
+        messages: List<SplitChatMessage>,
+        expectedPlanVersion: Long? = null,
+        maxTokens: Int? = null,
+        temperature: Double? = null,
+        topP: Double? = null,
+    ): SplitInferenceOutcome = post(
+        path = "/v1/chat/completions",
+        expectedPlanVersion = expectedPlanVersion,
+        body = buildJsonObject {
+            put("messages", kotlinx.serialization.json.JsonArray(messages.map { m ->
+                buildJsonObject { put("role", m.role); put("content", m.content) }
+            }))
+            if (maxTokens != null) put("max_tokens", maxTokens)
+            if (temperature != null) put("temperature", temperature)
+            if (topP != null) put("top_p", topP)
+            put("stream", false)
+        }.toString(),
+    ) { json, plan ->
+        val choice = (json["choices"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.jsonObject
+        val usage = json["usage"] as? kotlinx.serialization.json.JsonObject
+        fun count(name: String) = (usage?.get(name) as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+        SplitInferenceOutcome.Success(
+            text = ((choice?.get("message") as? kotlinx.serialization.json.JsonObject)?.get("content") as? JsonPrimitive)
+                ?.takeIf { it.isString }?.content.orEmpty(),
+            plan = plan,
+            promptTokens = count("prompt_tokens"),
+            completionTokens = count("completion_tokens"),
+            finishReason = (choice?.get("finish_reason") as? JsonPrimitive)?.takeIf { it.isString }?.content ?: "stop",
+        )
+    }
+
+    private fun post(
+        path: String,
+        expectedPlanVersion: Long?,
+        body: String,
+        parse: (kotlinx.serialization.json.JsonObject, SplitPlan) -> SplitInferenceOutcome,
     ): SplitInferenceOutcome {
         val (plan, proc, key) = synchronized(lock) {
             val p = currentPlan
@@ -877,7 +1009,7 @@ class AnchorProcessSupervisor(
         }
 
         return try {
-            val conn = URL("http://127.0.0.1:${proc.port}/completion").openConnection() as HttpURLConnection
+            val conn = URL("http://127.0.0.1:${proc.port}$path").openConnection() as HttpURLConnection
             try {
                 conn.requestMethod = "POST"
                 conn.doOutput = true
@@ -885,19 +1017,28 @@ class AnchorProcessSupervisor(
                 conn.readTimeout = 120_000
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Authorization", "Bearer $key")
-                val body = buildJsonObject {
-                    put("prompt", prompt)
-                    put("n_predict", maxTokens)
-                    put("temperature", temperature)
-                }.toString()
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                if (conn.responseCode == 200) {
-                    val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val content = Json.parseToJsonElement(text).jsonObject["content"]?.jsonPrimitive?.content.orEmpty()
-                    SplitInferenceOutcome.Success(content, plan)
-                } else {
-                    handleFailureAndRestart()
-                    SplitInferenceOutcome.Unavailable("Anchor llama-server failed during generation (HTTP ${conn.responseCode})")
+                val status = conn.responseCode
+                when {
+                    status == 200 -> {
+                        val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        parse(Json.parseToJsonElement(text).jsonObject, plan)
+                    }
+                    // The server judged this one request and is still serving. Restarting the
+                    // split for it would unload a healthy model from every helper because one
+                    // caller sent a prompt longer than the context.
+                    status in 400..499 && status != 401 && status != 403 -> {
+                        val detail = runCatching {
+                            val err = Json.parseToJsonElement(conn.errorStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
+                                .jsonObject["error"]
+                            ((err as? kotlinx.serialization.json.JsonObject)?.get("message") as? JsonPrimitive)?.content
+                        }.getOrNull()
+                        SplitInferenceOutcome.Rejected(status, detail ?: "llama-server refused the request (HTTP $status)")
+                    }
+                    else -> {
+                        if (!proc.isAlive) handleFailureAndRestart()
+                        SplitInferenceOutcome.Unavailable("Anchor llama-server failed during generation (HTTP $status)")
+                    }
                 }
             } finally {
                 conn.disconnect()
@@ -914,7 +1055,17 @@ class AnchorProcessSupervisor(
             monitorJob = scope.launch(Dispatchers.IO) {
                 while (isActive) {
                     delay(100)
-                    val plan = currentPlan ?: continue
+                    val plan = currentPlan
+                    if (plan == null) {
+                        // The model is hosted but not running: the last deployment was refused,
+                        // typically because a helper was away. RFC-0105 asks for a re-plan with
+                        // the members there are, and members come back, so keep trying, spaced out.
+                        val hosted = synchronized(lock) { hostedSpec } != null
+                        if (hosted && !deployLock.isLocked && System.currentTimeMillis() >= nextRecoveryAtMillis) {
+                            handleFailureAndRestart()
+                        }
+                        continue
+                    }
                     val proc = synchronized(lock) { llamaProcess }
                     val peerStates = node.peers.value.associateBy { it.nodeId }
                     val helperLost = plan.helpers.any { h ->
@@ -934,15 +1085,19 @@ class AnchorProcessSupervisor(
     }
 
     private fun handleFailureAndRestart() {
-        if (!reconnecting.compareAndSet(false, true)) return
+        if (!deployLock.tryLock()) return
         try {
             val spec = synchronized(lock) { hostedSpec }
             tearDownActiveProcess()
-            if (spec != null) {
-                deployPlan(spec)
+            if (spec == null) return
+            if (deployPlan(spec) is SplitPlanOutcome.Planned) {
+                recoveryBackoffMillis = RECOVERY_BACKOFF_MIN_MILLIS
+            } else {
+                nextRecoveryAtMillis = System.currentTimeMillis() + recoveryBackoffMillis
+                recoveryBackoffMillis = (recoveryBackoffMillis * 2).coerceAtMost(RECOVERY_BACKOFF_MAX_MILLIS)
             }
         } finally {
-            reconnecting.set(false)
+            deployLock.unlock()
         }
     }
 
@@ -970,5 +1125,10 @@ class AnchorProcessSupervisor(
             monitorJob = null
         }
         tearDownActiveProcess()
+    }
+
+    companion object {
+        const val RECOVERY_BACKOFF_MIN_MILLIS = 1_000L
+        const val RECOVERY_BACKOFF_MAX_MILLIS = 30_000L
     }
 }
