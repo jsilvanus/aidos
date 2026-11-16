@@ -99,6 +99,12 @@ files:
   - engine/vision/src/jvmTest/kotlin/dev/aidos/vision/VisionPackageTest.kt
   - engine/voice/src/commonMain/kotlin/dev/aidos/voice/VoiceProviders.kt
   - engine/voice/src/jvmTest/kotlin/dev/aidos/voice/VoiceProvidersTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerMultipartTranscriptionTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerTranscriptionTest.kt
+  - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClientTest.kt
+  - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
   - docs/stt.md
   - scripts/stt/fetch-whisper.mjs
   - scripts/vision/fetch-smolvlm.mjs

@@ -43,6 +43,7 @@ import fi.italeino.aidos.engine.inference.VirtualModelRouter
 import fi.italeino.aidos.engine.inference.placementOf
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import io.ktor.http.*
+import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.*
 import dev.aidos.aidin.AGENT_ENDPOINT_PREFIX
 import fi.italeino.aidos.engine.lan.ExternalDeviceGrants
@@ -126,6 +127,14 @@ data class EngineApiPolicy(
      */
     val maxTranscriptionRequestBytes: Long
         get() = maxOf(maxRequestBytes, (maxAudioBytes.toLong() + 2) / 3 * 4 + 64 * 1024)
+
+    /**
+     * Body limit for a multipart `/v1/audio/transcriptions` upload. The `file` part is capped at
+     * [maxAudioBytes] itself (the same audio as the JSON form, with no base64 overhead); this is that
+     * plus room for the other fields.
+     */
+    val maxTranscriptionUploadBytes: Long
+        get() = maxAudioBytes.toLong() + 64 * 1024
 }
 
 class EngineRequestTimeoutException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
@@ -1582,7 +1591,17 @@ class EngineHttpServer(
     private suspend fun handleTranscriptions(call: ApplicationCall) {
         ensureAidinAttached()
         val locality = resolveLocality(call) ?: return
-        val request = receiveBoundedJson<TranscriptionRequest>(call, policy.maxTranscriptionRequestBytes) ?: return
+        // RFC-0117 amendment: the same route takes OpenAI-style multipart or the JSON form, chosen by Content-Type.
+        // Both end as the same request below, so auth, locality, admission and delegation are shared.
+        val multipart = if (call.request.contentType().match(ContentType.MultiPart.FormData)) {
+            receiveTranscriptionMultipart(call) ?: return
+        } else {
+            null
+        }
+        val request = multipart?.request
+            ?: receiveBoundedJson<TranscriptionRequest>(call, policy.maxTranscriptionRequestBytes)
+            ?: return
+        val responseFormat = multipart?.responseFormat
         val sensitivePrompts = listOfNotNull(request.prompt?.takeIf { it.length >= 4 })
 
         if (request.model.isBlank()) {
@@ -1593,7 +1612,7 @@ class EngineHttpServer(
             return
         }
 
-        val audioBytes = try {
+        val audioBytes = multipart?.audioBytes ?: try {
             Base64.getDecoder().decode(request.file)
         } catch (_: IllegalArgumentException) {
             call.respond(
@@ -1626,7 +1645,7 @@ class EngineHttpServer(
                     val (usedRoute, resp) = first.getOrThrow()
                     call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                     call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
-                    call.respond(resp)
+                    respondTranscription(call, resp, responseFormat)
                     return
                 }
                 val err = first.exceptionOrNull()!!
@@ -1638,7 +1657,7 @@ class EngineHttpServer(
                         val (usedRoute, resp) = second.getOrThrow()
                         call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                         call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
-                        call.respond(resp)
+                        respondTranscription(call, resp, responseFormat)
                         return
                     }
                     respondClassifiedError(call, second.exceptionOrNull(), sensitivePrompts)
@@ -1681,9 +1700,146 @@ class EngineHttpServer(
                 respondClassifiedError(call, failure, sensitivePrompts)
                 return
             }
-            call.respond(TranscriptionResponse(text = result.getOrThrow()))
+            respondTranscription(call, TranscriptionResponse(text = result.getOrThrow()), responseFormat)
         } catch (e: Exception) {
             respondClassifiedError(call, e, sensitivePrompts)
+        }
+    }
+
+    /** A parsed multipart upload: the request both forms share, the decoded audio, and the response format. */
+    private class TranscriptionUpload(
+        val request: TranscriptionRequest,
+        val audioBytes: ByteArray,
+        val responseFormat: String,
+    )
+
+    /**
+     * Reads `multipart/form-data` for `/v1/audio/transcriptions` (RFC-0117 amendment). The `file` part is
+     * counted while it streams in and stops with 413 at [EngineApiPolicy.maxAudioBytes], never after the
+     * fact. Only WAV is accepted, detected by its RIFF/WAVE header. Returns null after answering the error.
+     */
+    private suspend fun receiveTranscriptionMultipart(call: ApplicationCall): TranscriptionUpload? {
+        val audioLimit = policy.maxAudioBytes.toLong()
+        val declaredLength = call.request.contentLength()
+        if (declaredLength != null && declaredLength > policy.maxTranscriptionUploadBytes) {
+            respondTranscriptionError(call, HttpStatusCode.PayloadTooLarge, "Audio file exceeds maximum limit of $audioLimit bytes", "file", "request_too_large")
+            return null
+        }
+
+        var audio: ByteArray? = null
+        var model: String? = null
+        var language: String? = null
+        var prompt: String? = null
+        var responseFormat = "json"
+        try {
+            val parts = call.receiveMultipart()
+            while (true) {
+                val part = parts.readPart() ?: break
+                try {
+                    when {
+                        part is PartData.FileItem && part.name == "file" -> {
+                            if (audio != null) {
+                                respondTranscriptionError(call, HttpStatusCode.BadRequest, "Only one file part is accepted", "file", "invalid_request")
+                                return null
+                            }
+                            audio = readCappedAudio(part.provider(), audioLimit) ?: run {
+                                respondTranscriptionError(call, HttpStatusCode.PayloadTooLarge, "Audio file exceeds maximum limit of $audioLimit bytes", "file", "request_too_large")
+                                return null
+                            }
+                        }
+                        part is PartData.FormItem -> when (part.name) {
+                            "model" -> model = part.value
+                            "language" -> language = part.value.takeIf { it.isNotBlank() }
+                            "prompt" -> prompt = part.value.takeIf { it.isNotEmpty() }
+                            "response_format" -> responseFormat = part.value.ifBlank { "json" }
+                        }
+                    }
+                } finally {
+                    part.dispose()
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            respondTranscriptionError(call, HttpStatusCode.BadRequest, "Malformed multipart request body", "file", "invalid_request")
+            return null
+        }
+
+        if (model.isNullOrBlank()) {
+            respondTranscriptionError(call, HttpStatusCode.BadRequest, "model must not be blank", "model", "invalid_request")
+            return null
+        }
+        val audioBytes = audio ?: run {
+            respondTranscriptionError(call, HttpStatusCode.BadRequest, "file is required: send the WAV bytes as a multipart file part", "file", "invalid_request")
+            return null
+        }
+        when (responseFormat) {
+            "json", "text" -> Unit
+            "verbose_json", "srt", "vtt" -> {
+                respondTranscriptionError(call, HttpStatusCode.BadRequest, "response_format $responseFormat needs timestamps, which are not available; use json or text", "response_format", "invalid_request")
+                return null
+            }
+            else -> {
+                respondTranscriptionError(call, HttpStatusCode.BadRequest, "response_format must be json or text", "response_format", "invalid_request")
+                return null
+            }
+        }
+        if (!isWavHeader(audioBytes)) {
+            respondTranscriptionError(
+                call,
+                HttpStatusCode.BadRequest,
+                "Unsupported audio encoding: send WAV. Accepted: WAV (RIFF/WAVE, 8/16/24/32-bit PCM or 32-bit float, any channel count and rate)",
+                "file",
+                "invalid_audio",
+            )
+            return null
+        }
+        return TranscriptionUpload(
+            request = TranscriptionRequest(
+                file = Base64.getEncoder().encodeToString(audioBytes),
+                model = model,
+                language = language,
+                prompt = prompt,
+                response_format = responseFormat,
+            ),
+            audioBytes = audioBytes,
+            responseFormat = responseFormat,
+        )
+    }
+
+    /** Reads a `file` part into memory, or returns null as soon as it passes [limit] bytes. */
+    private suspend fun readCappedAudio(channel: ByteReadChannel, limit: Long): ByteArray? {
+        val out = ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        var total = 0L
+        while (!channel.isClosedForRead) {
+            val read = channel.readAvailable(chunk, 0, chunk.size)
+            if (read <= 0) break
+            total += read
+            if (total > limit) return null
+            out.write(chunk, 0, read)
+        }
+        return out.toByteArray()
+    }
+
+    /** RFC-0117: WAV is recognised by its RIFF container header and WAVE form type. */
+    private fun isWavHeader(bytes: ByteArray): Boolean =
+        bytes.size >= 12 &&
+            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'A'.code.toByte() &&
+            bytes[10] == 'V'.code.toByte() && bytes[11] == 'E'.code.toByte()
+
+    private suspend fun respondTranscriptionError(call: ApplicationCall, status: HttpStatusCode, message: String, param: String, code: String) {
+        call.respond(status, ErrorResponse(ErrorDetail(message, "invalid_request_error", param = param, code = code)))
+    }
+
+    /** `text` answers the bare transcript for multipart requests; every other case keeps the JSON body. */
+    private suspend fun respondTranscription(call: ApplicationCall, response: TranscriptionResponse, responseFormat: String?) {
+        if (responseFormat == "text") {
+            call.respondText(response.text, ContentType.Text.Plain)
+        } else {
+            call.respond(response)
         }
     }
 
