@@ -17,7 +17,7 @@ Local models are only useful when they answer fast enough. On a desktop with a d
 
 Three facts about the current code make this more than a build flag:
 
-1. **The GPU setting exists but does nothing.** `ModelRunSettings.gpuLayers` is stored per model, shown in the model detail card, and passed to `ModelParameters.setGpuLayers` by both `LlamaCppAdapter` (desktop) and `AndroidLlamaCppAdapter` **[code]**. The native libraries it reaches are CPU builds: the `de.kherud:llama:4.2.0` jar ships CPU natives for Linux, macOS and Windows, and the only GPU build published for that version is a `cuda12-linux-x86-64` classifier jar **[sourced]**. The Android `libjllama.so` checked in under `engine/androidapp/src/androidMain/jniLibs/arm64-v8a` is a 5 MB library with no GPU backend **[unverified: no build recipe is recorded in the repository]**. A user who sets GPU layers today gets no error and no speed-up.
+1. **The GPU setting exists but does nothing.** `ModelRunSettings.gpuLayers` is stored per model, shown in the model detail card, and passed to `ModelParameters.setGpuLayers` by both `LlamaCppAdapter` (desktop) and `AndroidLlamaCppAdapter` **[code]**. The native libraries it reaches are CPU builds: the `de.kherud:llama:4.2.0` jar ships CPU natives for Linux, macOS and Windows, and the only GPU build published for that version is a `cuda12-linux-x86-64` classifier jar **[sourced]**. The Android `libjllama.so` checked in under `engine/androidapp/src/androidMain/jniLibs/arm64-v8a` is byte-identical (same SHA-256) to the CPU library inside that jar **[code]**. A user who sets GPU layers today gets no error and no speed-up.
 2. **ONNX models never ask for an accelerator.** `OrtWhisperGraphs`, `OrtVisionRunner` and `OrtDecisionRunner` create `OrtSession.SessionOptions` with an optimisation level and a thread count and nothing else **[code]**. RFC-0117 lists "GPU or NNAPI execution providers" as a non-goal.
 3. **The Engine does not know what hardware it has.** `DeviceProfile.hasAccelerator` is hard-coded `false` on both hosts, and `thermalHeadroom` is a placeholder **[code]**.
 
@@ -48,7 +48,7 @@ A note on vocabulary, because the question that started this RFC was "phones do 
 | Runtime | Host | Accelerator used today | What blocks acceleration |
 |---|---|---|---|
 | llama.cpp (chat, embeddings) | Desktop JVM | none | CPU-only native library in the binding's jar **[sourced]** |
-| llama.cpp | Android | none | CPU-only `libjllama.so` **[unverified]** |
+| llama.cpp | Android | none | CPU-only `libjllama.so`, the binding's prebuilt **[code]** |
 | llama.cpp child processes (RFC-0105 split) | Desktop | none | `llama-rpc-native.yml` builds `llama-server` without a GPU backend; the supervisor already passes `--n-gpu-layers` **[code]** |
 | ONNX Runtime 1.22.0 (decisions, STT, vision) | Desktop JVM | none | artifact `onnxruntime` is CPU only; no provider is registered **[code]** **[sourced]** |
 | ONNX Runtime 1.22.0 | Android | none | no provider is registered **[code]** |
@@ -160,15 +160,20 @@ Loading a model with preference `P`:
 
 ### 4. llama.cpp natives
 
-**[decision]** The Engine builds its own llama.cpp JNI library from one pinned llama.cpp commit in CI, next to the existing `llama-rpc-native` workflow, and loads it through `de.kherud.llama.lib.path`. This is the same conclusion `plans/inference-backend-study.md` reached for split inference: one pinned tag, our own build of the JNI library, `llama-server` and `ggml-rpc-server`. The binding's own jar natives remain the fallback when our build is absent.
+There are two ways to get GPU-enabled natives, and the first step of this work is a short spike that chooses between them.
 
-**Desktop, phase 1: Vulkan.** One build per OS (Windows x64, Linux x64) with `GGML_VULKAN`, CPU variants included. It covers NVIDIA, AMD and Intel with one binary and needs no vendor toolkit, which is what goal 4 asks for. **[decision]** Vulkan before CUDA: it is the only option that gives every desktop GPU owner acceleration from the installer alone.
+- **Route A, a maintained binding with published GPU natives.** `net.ladenthin:llama` 6.0.0, a fork of the binding the Engine uses, publishes classifier jars on Maven Central for `vulkan-windows-x86-64`, `vulkan-linux-x86-64`, `cuda13-windows-x86-64`, `cuda13-linux-x86-64`, `metal-macos-aarch64`, `cpu-android-aarch64` and `opencl-android-aarch64` **[sourced]**. It would give every phase below without a native build of our own. The cost is a migration: a different Java package, a stated minimum Android API of 28 against the Engine's 26 **[unverified]**, one maintainer, and behaviour that must be re-tested. `docs/model-formats-and-runtimes.md` reaches the same fork from another direction (projector and reranking support).
+- **Route B, our own build.** The Engine builds the JNI library from one pinned llama.cpp commit in CI, next to the existing `llama-rpc-native` workflow, and loads it through `de.kherud.llama.lib.path`. This matches what `plans/inference-backend-study.md` concluded for split inference (one pinned tag for the JNI library, `llama-server` and `ggml-rpc-server`), and keeps the binding's jar natives as the fallback. The cost is owning native builds for every OS and backend, against a binding whose Java side has not been released since June 2025.
+
+**[decision]** Try route A first on the Windows desktop and one phone. If the migration is clean, use it; if not, take route B. The rest of this section holds for both.
+
+**Desktop, phase 1: Vulkan.** One Vulkan native per OS (Windows x64, Linux x64), with the CPU path included. It covers NVIDIA, AMD and Intel with one binary and needs no vendor toolkit, which is what goal 4 asks for. **[decision]** Vulkan before CUDA: it is the only option that gives every desktop GPU owner acceleration from the installer alone.
 
 **Desktop, later: CUDA native pack.** NVIDIA owners can install an optional pack built with `GGML_CUDA`. It is larger and NVIDIA-only, so it is a download, not part of the installer. With `GGML_BACKEND_DL` the pack is one more backend library beside the Vulkan one, and the ladder prefers CUDA when both are present.
 
 **macOS.** Confirm whether the shipped native uses Metal. If it does, only the inventory and report need work.
 
-**Android.** A `libjllama.so` built with `GGML_OPENCL` for arm64, used only when the inventory shows a supported Adreno GPU. `libOpenCL.so` is a vendor library: on Android 12 and later the manifest must declare it with `uses-native-library` (not required) for the app to load it **[unverified]**. Every other phone keeps the CPU path. Vulkan on Android is not attempted until upstream reports it sound.
+**Android.** An OpenCL build of `libjllama.so` for arm64, used only when the inventory shows a supported Adreno GPU. `libOpenCL.so` is a vendor library: on Android 12 and later the manifest must declare it with `uses-native-library` (not required) for the app to load it **[unverified]**. Every other phone keeps the CPU path. Vulkan on Android is not attempted until upstream reports it sound.
 
 **Child processes (RFC-0105).** The split supervisors already pass `--n-gpu-layers`. Once `llama-server` is built with the same backends, the same selection logic supplies the value.
 
@@ -233,7 +238,7 @@ No canonical DDL changes. New persistent state, all in the Engine's own preferen
 The smallest version that makes a real difference and proves the design on both hosts:
 
 1. The vocabulary, inventory, selection ladder, verdict cache and crash guard as pure Kotlin with unit tests against fake inventories.
-2. Desktop llama.cpp on Vulkan: CI builds the JNI library for Windows x64 and Linux x64 from the pinned commit; the desktop Engine loads it; `AUTO` offloads as many layers as fit; the report shows in the model card and in the API.
+2. Desktop llama.cpp on Vulkan: the binding spike decides where the Windows x64 and Linux x64 natives come from; the desktop Engine loads them; `AUTO` offloads as many layers as fit; the report shows in the model card and in the API.
 3. `engine devices` and `engine bench`.
 4. Memory admission split into host and device bytes.
 5. Android ONNX phase 1: XNNPACK and NNAPI on the Whisper encoder with fallback, measured on one physical phone, with the numbers recorded in `docs/stt.md`.
@@ -251,7 +256,7 @@ Done when: on a Windows desktop with a GPU, a GGUF chat model loads with `AUTO`,
 
 1. Which GPU does the main desktop have, and which phone is the reference device? The SoC decides whether QNN or NNAPI is the path that matters, and whether the Adreno OpenCL backend applies at all.
 2. Should the installer ship the Vulkan natives, or should even those be a download? This RFC proposes shipping them.
-3. Build our own JNI library against the `de.kherud` binding, or move to a fork that already publishes CUDA and Vulkan natives? The `net.ladenthin:llama` fork is reported to publish such classifiers **[unverified]**. Our own build keeps one pinned llama.cpp for local and split inference and is what this RFC proposes.
+3. Move to the `net.ladenthin:llama` fork, which already publishes Vulkan, CUDA and Android OpenCL natives, or build our own JNI library against the current binding? This RFC proposes a spike on the fork first. Moving may require raising the Android minimum API from 26 to 28.
 4. Is a refusal ever right for an explicit `GPU` request, for example for an app that needs a latency guarantee? This RFC proposes always falling back.
 5. Is an NPU Whisper encoder worth a second, quantised package variant per model, given that fine-tunes from `liturgos-auditor` would need the same export and calibration step?
 
@@ -260,7 +265,7 @@ Done when: on a Windows desktop with a GPU, a GGUF chat model loads with `AUTO`,
 Read 2026-11-16:
 
 - llama.cpp build documentation and OpenCL backend documentation (`docs/build.md`, `docs/backend/OPENCL.md` in `ggml-org/llama.cpp`).
-- `kherud/java-llama.cpp` README, and the Maven Central directory for `de.kherud:llama:4.2.0`.
+- `kherud/java-llama.cpp` README, and the Maven Central directories for `de.kherud:llama:4.2.0` and `net.ladenthin:llama:6.0.0`.
 - ONNX Runtime documentation: Java getting started, Java API `OrtSession.SessionOptions`, and the NNAPI, QNN and DirectML execution provider pages.
 - Maven Central metadata for `com.microsoft.onnxruntime` artifacts.
 - Android NNAPI migration guide (deprecation in Android 15).
