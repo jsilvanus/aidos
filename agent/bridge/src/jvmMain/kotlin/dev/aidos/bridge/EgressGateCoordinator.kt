@@ -63,6 +63,12 @@ data class EgressGrant(
     val issuedAt: Instant,
     val expiresAt: Instant,
     val signature: String, // HMAC-SHA256 signature
+    /**
+     * The channel and project the approved message belongs to. Signed with the rest, so a grant
+     * approved for one channel cannot carry the same text to the same name over another.
+     */
+    val channel: String = "",
+    val projectId: String = "",
 )
 
 /**
@@ -118,11 +124,30 @@ class EgressGateCoordinator(
     private val hmacSecretKey: ByteArray = generateSecretKey(),
     private val clock: () -> Instant = { Clock.System.now() },
 ) {
-    private val parkedMessages = mutableMapOf<String, ParkedOutboundMessage>()
-    private val usedGrantTokens = mutableSetOf<String>()
-    private val transmittedMessages = mutableListOf<TransmissionResult.Transmitted>()
+    // Every public function is @Synchronized: the agent loop, the approval path and the UI's
+    // queue listing reach this object from different threads, and "is the grant used?" followed
+    // by "mark it used" must be one step or two concurrent sends both pass the single-use check.
+    private val parkedMessages = LinkedHashMap<String, ParkedOutboundMessage>()
+
+    /** Used grants by expiry. A grant past its expiry is refused on that ground alone, so it need not be remembered. */
+    private val usedGrantTokens = HashMap<String, Instant>()
+    private val transmittedMessages = ArrayDeque<TransmissionResult.Transmitted>()
+
+    /** A long-running daemon must not keep every message it ever handled (the payload is in each entry). */
+    private fun prune(now: Instant) {
+        usedGrantTokens.values.removeIf { it < now }
+        while (transmittedMessages.size > MAX_TRANSMITTED_LOG) transmittedMessages.removeFirst()
+        if (parkedMessages.size > MAX_SETTLED_MESSAGES) {
+            // Oldest settled entries go first; a message still awaiting a decision is never dropped.
+            val settled = parkedMessages.values.filter { it.status != ParkedMessageStatus.PARKED && it.status != ParkedMessageStatus.APPROVED }
+            settled.take(parkedMessages.size - MAX_SETTLED_MESSAGES).forEach { parkedMessages.remove(it.id) }
+        }
+    }
 
     companion object {
+        const val MAX_TRANSMITTED_LOG = 256
+        const val MAX_SETTLED_MESSAGES = 1024
+
         fun generateSecretKey(): ByteArray {
             val key = ByteArray(32)
             SecureRandom().nextBytes(key)
@@ -142,6 +167,7 @@ class EgressGateCoordinator(
      * If the originating project has zero-egress policy (e.g. personal / LIFE),
      * automatically halts and parks the message for human approval.
      */
+    @Synchronized
     fun interceptAndPark(request: OutboundMessageRequest): ParkResult {
         if (!policyResolver.isEgressAirGapped(request.projectId, request.projectType)) {
             return ParkResult.AllowedDirectly(request)
@@ -153,7 +179,10 @@ class EgressGateCoordinator(
             status = ParkedMessageStatus.PARKED,
             createdAt = clock(),
         )
+        // Re-inserted, not updated in place, so insertion order stays "oldest decision first" for prune.
+        parkedMessages.remove(request.id)
         parkedMessages[request.id] = parked
+        prune(parked.createdAt)
 
         return ParkResult.Parked(
             parkedMessage = parked,
@@ -165,6 +194,7 @@ class EgressGateCoordinator(
     /**
      * Lists currently parked messages awaiting human approval.
      */
+    @Synchronized
     fun getPendingApprovals(projectId: String? = null): List<ParkedOutboundMessage> {
         return parkedMessages.values
             .filter { it.status == ParkedMessageStatus.PARKED }
@@ -175,6 +205,7 @@ class EgressGateCoordinator(
     /**
      * Retrieves a parked message by ID.
      */
+    @Synchronized
     fun getParkedMessage(messageId: String): ParkedOutboundMessage? = parkedMessages[messageId]
 
     /**
@@ -182,6 +213,7 @@ class EgressGateCoordinator(
      *
      * Zero bytes leave the device. No declassification grant is issued.
      */
+    @Synchronized
     fun reject(messageId: String, reason: String = "Rejected by user"): ParkedOutboundMessage {
         val existing = parkedMessages[messageId]
             ?: throw IllegalArgumentException("No parked message with ID '$messageId' found.")
@@ -202,6 +234,7 @@ class EgressGateCoordinator(
     /**
      * Approves a parked message and issues a single-use cryptographic declassification grant.
      */
+    @Synchronized
     fun approve(
         messageId: String,
         approverUserId: String = "user",
@@ -224,6 +257,9 @@ class EgressGateCoordinator(
             payloadHash = payloadHash,
             recipient = existing.request.recipient,
             expiresAtMs = expiresAt.toEpochMilliseconds(),
+            messageId = messageId,
+            channel = existing.request.channel,
+            projectId = existing.request.projectId,
         )
 
         val updated = existing.copy(
@@ -241,6 +277,8 @@ class EgressGateCoordinator(
             issuedAt = now,
             expiresAt = expiresAt,
             signature = signature,
+            channel = existing.request.channel,
+            projectId = existing.request.projectId,
         )
     }
 
@@ -252,6 +290,7 @@ class EgressGateCoordinator(
      * - Rejects if grant is expired, altered, reused, or signature invalid.
      * - Transmits once verified and marks the grant as used (single-use guarantee).
      */
+    @Synchronized
     fun transmit(
         request: OutboundMessageRequest,
         grant: EgressGrant? = null,
@@ -284,6 +323,9 @@ class EgressGateCoordinator(
                 payloadHash = grant.payloadHash,
                 recipient = grant.recipient,
                 expiresAtMs = grant.expiresAt.toEpochMilliseconds(),
+                messageId = grant.messageId,
+                channel = grant.channel,
+                projectId = grant.projectId,
             )
             if (!MessageDigest.isEqual(expectedSig.toByteArray(), grant.signature.toByteArray())) {
                 return TransmissionResult.Rejected("Invalid cryptographic signature on declassification grant.")
@@ -304,8 +346,18 @@ class EgressGateCoordinator(
                 )
             }
 
+            // 6. The grant is for one message on one channel in one project. Without this, text
+            // approved for one channel could be sent to the same name over another, or a grant
+            // could be spent on a different message that happens to carry the same text.
+            if (request.id != grant.messageId || request.channel != grant.channel || request.projectId != grant.projectId) {
+                return TransmissionResult.Rejected(
+                    "Grant mismatch: the grant was approved for a different message, channel or project.",
+                )
+            }
+
             // Mark grant as used so it cannot be replayed.
-            usedGrantTokens.add(grant.tokenId)
+            usedGrantTokens[grant.tokenId] = grant.expiresAt
+            prune(now)
 
             // Update parked message state if tracked.
             val parked = parkedMessages[request.id]
@@ -322,10 +374,12 @@ class EgressGateCoordinator(
             payload = request.payload,
             deliveredAt = clock(),
         )
-        transmittedMessages.add(transmitted)
+        transmittedMessages.addLast(transmitted)
+        while (transmittedMessages.size > MAX_TRANSMITTED_LOG) transmittedMessages.removeFirst()
         return transmitted
     }
 
+    @Synchronized
     fun getTransmittedMessages(): List<TransmissionResult.Transmitted> = transmittedMessages.toList()
 
     private fun computeHmac(
@@ -333,12 +387,21 @@ class EgressGateCoordinator(
         payloadHash: String,
         recipient: String,
         expiresAtMs: Long,
+        messageId: String,
+        channel: String,
+        projectId: String,
     ): String {
         val mac = Mac.getInstance("HmacSHA256")
         val secretKeySpec = SecretKeySpec(hmacSecretKey, "HmacSHA256")
         mac.init(secretKeySpec)
-        val dataToSign = "$tokenId:$payloadHash:$recipient:$expiresAtMs"
-        val bytes = mac.doFinal(dataToSign.toByteArray(Charsets.UTF_8))
+        // Each field is length-prefixed: joined with a separator, a recipient containing the
+        // separator could shift text between fields and still produce the same signed string.
+        for (field in listOf(tokenId, messageId, projectId, channel, recipient, payloadHash, expiresAtMs.toString())) {
+            val b = field.toByteArray(Charsets.UTF_8)
+            mac.update(java.nio.ByteBuffer.allocate(4).putInt(b.size).array())
+            mac.update(b)
+        }
+        val bytes = mac.doFinal()
         return bytes.joinToString("") { "%02x".format(it) }
     }
 }
