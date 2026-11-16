@@ -1,6 +1,6 @@
 package dev.aidos.modelruntime
 
-import de.kherud.llama.LlamaModel
+import net.ladenthin.llama.LlamaModel
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ToolCall

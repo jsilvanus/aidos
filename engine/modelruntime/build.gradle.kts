@@ -22,16 +22,24 @@ kotlin {
                 // For file hashing and path operations
                 implementation("commons-codec:commons-codec:1.16.0")
 
-                // llama.cpp Java binding for local inference (RFC-0022, M21). The coordinate this
-                // pointed at (`de.kherud:llama-java:0.3.2`) never existed on any repository this
-                // build can reach (confirmed against Maven Central's own index: the real artifact
-                // is `de.kherud:llama`, versioned from 1.0.0, with no `0.3.2` release ever
-                // published) -- `LlamaCppAdapter.kt` was written against a fictional API shape
-                // (wrong package, wrong method names) that happened to resemble a real one.
-                // Keep JVM and Android on the same current llama.cpp binding. This gives desktop
-                // inference the same GGUF compatibility and request-oriented streaming API as
-                // the Android engine, rather than freezing desktop on the older 2.x native core.
-                implementation("de.kherud:llama:4.2.0")
+                // llama.cpp Java binding for local inference (RFC-0022, RFC-0128): the maintained
+                // net.ladenthin fork of de.kherud's binding (no release since June 2025). Desktop and
+                // Android share its API; Android takes it as the `llama-android` AAR instead.
+                implementation("net.ladenthin:llama:6.0.0")
+                // The binding's signatures carry checker-framework type annotations; Kotlin needs
+                // their classes on the compile classpath to read them (its POM does not expose them).
+                compileOnly("org.checkerframework:checker-qual:4.3.1")
+                // Since 6.0.0 the binding jar carries no natives; each platform comes as a
+                // classifier jar. CPU for every desktop target, Vulkan for Windows and Linux x64.
+                // A GPU jar holds only its backend module and is used on top of the CPU one. It is
+                // on the classpath unused unless a driver is present; pick or exclude backends at
+                // run time with -Dnet.ladenthin.llama.backend=cpu|vulkan (RFC-0128).
+                runtimeOnly("net.ladenthin:llama:6.0.0:cpu-windows-x86-64")
+                runtimeOnly("net.ladenthin:llama:6.0.0:cpu-linux-x86-64")
+                runtimeOnly("net.ladenthin:llama:6.0.0:cpu-linux-aarch64")
+                runtimeOnly("net.ladenthin:llama:6.0.0:metal-macos-aarch64")
+                runtimeOnly("net.ladenthin:llama:6.0.0:vulkan-windows-x86-64")
+                runtimeOnly("net.ladenthin:llama:6.0.0:vulkan-linux-x86-64")
             }
         }
 

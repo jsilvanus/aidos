@@ -1,9 +1,10 @@
 package dev.aidos.modelruntime
 
-import de.kherud.llama.InferenceParameters
-import de.kherud.llama.LlamaIterator
-import de.kherud.llama.LlamaModel
-import de.kherud.llama.ModelParameters
+import net.ladenthin.llama.parameters.InferenceParameters
+import net.ladenthin.llama.LlamaIterator
+import net.ladenthin.llama.LlamaModel
+import net.ladenthin.llama.args.LoadMode
+import net.ladenthin.llama.parameters.ModelParameters
 import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelRef
@@ -47,7 +48,7 @@ class LlamaCppAdapter(
     private val chatTemplateOverride: String? = null,
 ) : CancellableModelAdapter, EmbeddingModelAdapter, TokenCountingAdapter {
     override val providerId = "llama.cpp"
-    override val modelVersion = "java-llama.cpp-4.2.0"
+    override val modelVersion = "java-llama.cpp-6.0.0"
     override val contextWindow = contextSize
     override val isLocal = true
 
@@ -91,7 +92,7 @@ class LlamaCppAdapter(
             .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
             .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
-            .let { if (settings.useMmap == false) it.disableMmap() else it }
+            .let { if (settings.useMmap == false) it.setLoadMode(LoadMode.NONE) else it }
             .let { if (embeddingMode) it.enableEmbedding() else it }
             .let { if (chatTemplateOverride != null) it.setChatTemplate(chatTemplateOverride) else it }
 
@@ -192,14 +193,14 @@ class LlamaCppAdapter(
                 // What this request asked for wins over the model's settings (RFC-0022 amendment, point 9).
                 val sampling = currentCoroutineContext()[SamplingOverride]
                 val parameters = InferenceParameters(prompt)
-                    .setNPredict(request.maxOutputTokens)
-                    .setTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
-                    .setTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
-                    .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                    .withNPredict(request.maxOutputTokens)
+                    .withTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                    .withTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                    .withTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
                     // Each turn of a conversation repeats the turns before it. Keeping the evaluated
                     // prefix means only the new text is processed, not the whole history again.
-                    .setCachePrompt(true)
-                    .let { if (grammar != null) it.setGrammar(grammar) else it }
+                    .withCachePrompt(true)
+                    .let { if (grammar != null) it.withGrammar(grammar) else it }
                 val tokens = model.generate(parameters).iterator()
                 var tokenCount = 0
                 var stoppedOnSequence = false

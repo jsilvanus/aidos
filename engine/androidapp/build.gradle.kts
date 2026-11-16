@@ -25,10 +25,11 @@ kotlin {
                 implementation(project(":downloads"))
                 implementation(project(":models"))
                 implementation(project(":voice"))
-                // Android uses the current binding. It brings the Android native artifacts and
-                // the request-oriented API used by AndroidLlamaCppAdapter; :modelruntime keeps
-                // its older JVM-only binding isolated in its own source set.
-                implementation("de.kherud:llama:4.2.0")
+                // The maintained llama.cpp binding as its Android AAR: Java API, arm64-v8a and
+                // x86_64 natives (ggml CPU modules per ARM level), consumer R8 rules. Its manifest
+                // requires minSdk 28, which is why this app's minSdk is 28. For Adreno GPUs the
+                // `llama-android-opencl` AAR can be added (RFC-0128).
+                implementation("net.ladenthin:llama-android:6.0.0")
                 implementation("androidx.compose.ui:ui:1.7.5")
                 implementation("androidx.compose.material3:material3:1.3.1")
                 implementation("androidx.compose.material:material-icons-extended:1.7.5")
@@ -66,7 +67,7 @@ android {
 
     defaultConfig {
         applicationId = "fi.italeino.aidos.engine"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -84,15 +85,11 @@ android {
         aidl = true
     }
 
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/androidMain/jniLibs")
-        }
-    }
-
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            // ggml opens its CPU backend modules (libggml-cpu-*.so) by scanning the native library
+            // directory, so the libraries must be extracted at install time, not mapped from the APK.
+            useLegacyPackaging = true
             keepDebugSymbols += "**/*.so"
         }
         resources {
@@ -111,4 +108,11 @@ android {
             )
         }
     }
+}
+
+// :modelruntime (JVM) brings the desktop `net.ladenthin:llama` jar and its per-platform natives jars
+// through the classpath. The llama-android AAR already contains the same classes and the Android
+// natives, so the desktop module, classifiers included, must stay out of the APK.
+configurations.configureEach {
+    exclude(group = "net.ladenthin", module = "llama")
 }

@@ -3,9 +3,9 @@ plugins {
     id("com.android.library")
 }
 
-// RFC-0125: the vision capability (image + text in, text out). llama.cpp's Java binding (de.kherud:llama
-// 4.2.0, the newest published) is built without libmtmd, so a GGUF + mmproj pair cannot be driven from
-// the JVM or Android hosts. Vision therefore runs on the ONNX Runtime both hosts already ship for decision
+// RFC-0125: the vision capability (image + text in, text out). The llama.cpp binding the Engine now ships
+// (net.ladenthin:llama 6.0.0) includes libmtmd, so a GGUF + mmproj pair can be driven from both hosts
+// once the projector is wired in; until then vision runs on the ONNX Runtime both hosts already ship for decision
 // models: SmolVLM-256M-Instruct as its three exported graphs (vision encoder, token embedding, merged
 // decoder with KV cache). Same ai.onnxruntime Java API on both platforms, only the artifact differs.
 kotlin {

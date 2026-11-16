@@ -1,9 +1,10 @@
 package fi.italeino.aidos.engine.inference
 
-import de.kherud.llama.InferenceParameters
-import de.kherud.llama.LlamaIterator
-import de.kherud.llama.LlamaModel
-import de.kherud.llama.ModelParameters
+import net.ladenthin.llama.parameters.InferenceParameters
+import net.ladenthin.llama.LlamaIterator
+import net.ladenthin.llama.LlamaModel
+import net.ladenthin.llama.args.LoadMode
+import net.ladenthin.llama.parameters.ModelParameters
 import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.modelruntime.LlamaChatPrompt
@@ -40,13 +41,22 @@ class AndroidLlamaCppAdapter(
     private val chatTemplate: String? = null,
 ) : CancellableModelAdapter, EmbeddingModelAdapter, TokenCountingAdapter, AutoCloseable {
     override val providerId: String = "llama.cpp.android"
-    override val modelVersion: String = "java-llama.cpp-4.2.0"
+    override val modelVersion: String = "java-llama.cpp-6.0.0"
     override val isLocal: Boolean = true
 
     private val model: LlamaModel
     private val inferenceLock = Any()
     private val generationMutex = Mutex()
     @Volatile private var activeIterator: LlamaIterator? = null
+
+    /**
+     * Set by [cancelCurrentInference]; the token loop polls it after every token and cancels the
+     * native task itself. Cancelling from another thread while the loop is parked inside the
+     * binding's blocking receive makes it drop the task's result queue, so that read never
+     * returns: the generating thread leaks and `close()` frees the model under it (the desktop
+     * adapter measured this on a real GGUF, PR #140).
+     */
+    @Volatile private var cancelRequested = false
     @Volatile private var closed = false
 
     init {
@@ -59,7 +69,7 @@ class AndroidLlamaCppAdapter(
                 .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
                 .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
                 .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
-            if (settings.useMmap == false) parameters = parameters.disableMmap()
+            if (settings.useMmap == false) parameters = parameters.setLoadMode(LoadMode.NONE)
             if (embeddingMode) parameters = parameters.enableEmbedding()
             return parameters
         }
@@ -137,23 +147,25 @@ class AndroidLlamaCppAdapter(
                 // What this request asked for wins over the model's settings (RFC-0022 amendment, point 9).
                 val sampling = currentCoroutineContext()[SamplingOverride]
                 var parameters = InferenceParameters(prompt)
-                    .setNPredict(request.maxOutputTokens)
-                    .setTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
-                    .setTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
-                    .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                    .withNPredict(request.maxOutputTokens)
+                    .withTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                    .withTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                    .withTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
                     // A conversation repeats its earlier turns: keep the evaluated prefix.
-                    .setCachePrompt(true)
-                if (grammar != null) parameters = parameters.setGrammar(grammar)
+                    .withCachePrompt(true)
+                if (grammar != null) parameters = parameters.withGrammar(grammar)
                 val output = StringBuilder()
                 var tokenCount = 0
                 // `generate` is lazy: emitting as the iterator advances keeps the UI and the
                 // loopback SSE endpoint genuinely token-streaming rather than buffering a native
                 // completion first. `maxOutputTokens` remains the authoritative output bound.
                 val iterator = model.generate(parameters).iterator()
+                cancelRequested = false
                 synchronized(inferenceLock) { activeIterator = iterator }
                 try {
-                    // `closed` is checked per token so close() does not wait out a long answer.
-                    while (!closed && tokenCount < request.maxOutputTokens && iterator.hasNext()) {
+                    // `closed` and `cancelRequested` are checked per token so close() and a stop
+                    // request do not wait out a long answer.
+                    while (!closed && !cancelRequested && tokenCount < request.maxOutputTokens && iterator.hasNext()) {
                         val token = iterator.next()
                         tokenCount++
                         output.append(token.text)
@@ -207,8 +219,9 @@ class AndroidLlamaCppAdapter(
     }
 
     override fun cancelCurrentInference() {
+        // Only a flag: the generating loop owns the native task and cancels it (see cancelRequested).
         synchronized(inferenceLock) {
-            activeIterator?.cancel()
+            if (activeIterator != null) cancelRequested = true
         }
     }
 
