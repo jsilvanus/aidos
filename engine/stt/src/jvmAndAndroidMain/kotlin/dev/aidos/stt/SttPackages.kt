@@ -11,6 +11,8 @@ import java.security.MessageDigest
  * the decorators only add delegation to their host's own [dev.aidos.modelruntime.InferenceBackend].
  */
 class SttPackages(private val modelsDir: File) {
+    private fun vadFor(dir: File): File? = WhisperPackage.vadFile(dir) ?: SileroPackage.shared(modelsDir)
+
     private val live = HashMap<String, SttModelAdapterImpl>()
 
     /** The package directory for [modelId], or null. The id becomes a path component, so anything that could leave [modelsDir] is refused. */
@@ -61,7 +63,7 @@ class SttPackages(private val modelsDir: File) {
             ?: return Result.failure(IllegalStateException("MODEL_NOT_INSTALLED: $modelId"))
         live[modelId]?.let { return Result.success(it) }
         return try {
-            val adapter = SttModelAdapterImpl(WhisperPackage.open(modelId, dir), WhisperPackage.readGenerationConfig(dir).maxTargetPositions)
+            val adapter = SttModelAdapterImpl(WhisperPackage.open(modelId, dir, vadFor(dir)), WhisperPackage.readGenerationConfig(dir).maxTargetPositions)
             live[modelId] = adapter
             Result.success(adapter)
         } catch (e: Exception) {

@@ -882,6 +882,9 @@ files:
   - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/OrtWhisperGraphs.kt
   - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/SttPackages.kt
   - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/WhisperPackage.kt
+  - engine/stt/src/commonMain/kotlin/dev/aidos/stt/SpeechVad.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/OrtSileroGraph.kt
+  - engine/stt/src/jvmAndAndroidMain/kotlin/dev/aidos/stt/SileroPackage.kt
   - engine/stt/src/jvmMain/kotlin/dev/aidos/stt/OnnxSttBackend.kt
   - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/SttPackagesTest.kt
   - engine/stt/src/jvmTest/kotlin/dev/aidos/stt/WavDecoderTest.kt

@@ -33,14 +33,17 @@ class WhisperGenerationConfig(
 /**
  * Whisper transcription: 30 s windows to log-mel, encoder once per window, greedy decoder with the
  * forced `<|startoftranscript|><|lang|><|transcribe|><|notimestamps|>` prefix. Audio over 30 s is cut at
- * the quietest point near the end of each window; there are no timestamps and no overlap, so a word
- * straddling a cut can still be split (long dictation should be sent in utterance-sized pieces).
+ * the quietest point near the end of each window, or, with a [SpeechVad], windows are packed from whole
+ * speech segments and never begin or end inside a pause. There are no timestamps and no overlap, so a word
+ * straddling a cut can still be split when one unbroken stretch of speech runs past 30 s.
  */
 class WhisperSttModel(
     override val modelId: String,
     private val tokenizer: WhisperTokenizer,
     private val graphs: WhisperGraphs,
     private val config: WhisperGenerationConfig = WhisperGenerationConfig(),
+    /** When set, utterances are cut at silences found by this VAD instead of at the quietest point near 30 s. */
+    private val vad: SpeechVad? = null,
 ) : SttModel {
     private val features = WhisperFeatures(graphs.melBins)
 
@@ -56,7 +59,7 @@ class WhisperSttModel(
 
         var language = explicit
         val parts = ArrayList<String>()
-        for ((from, to) in windows(samples)) {
+        for ((from, to) in if (vad != null) vadWindows(vad, samples) else windows(samples)) {
             if (to - from < WhisperFeatures.SAMPLE_RATE / 10 || rms(samples, from, to) < SILENCE_RMS) continue
             graphs.encode(features.logMel(samples, from, to)).use { encoded ->
                 val lang = language ?: detectLanguage(encoded).also { language = it }
@@ -123,13 +126,32 @@ class WhisperSttModel(
         return null
     }
 
-    /** `[from, to)` sample windows of at most 30 s; a cut goes to the quietest 100 ms in the last 5 s of a full window. */
-    private fun windows(s: FloatArray): List<Pair<Int, Int>> {
+    /**
+     * Windows of at most 30 s made of whole speech segments: consecutive segments share a window while the span
+     * from the first start to the last end fits, so the model sees natural pauses inside a window and never a cut
+     * in one. Silence between windows is dropped; one segment longer than 30 s falls back to [windows]' cut.
+     */
+    private fun vadWindows(vad: SpeechVad, s: FloatArray): List<Pair<Int, Int>> {
         val out = ArrayList<Pair<Int, Int>>()
-        var from = 0
+        var from = -1
+        var to = -1
+        for (seg in vad.segments(s)) {
+            if (from >= 0 && seg.end - from <= WhisperFeatures.CHUNK_SAMPLES) { to = seg.end; continue }
+            if (from >= 0) out += windows(s, from, to)
+            from = seg.start
+            to = seg.end
+        }
+        if (from >= 0) out += windows(s, from, to)
+        return out
+    }
+
+    /** `[from, to)` sample windows of at most 30 s; a cut goes to the quietest 100 ms in the last 5 s of a full window. */
+    private fun windows(s: FloatArray, start: Int = 0, end: Int = s.size): List<Pair<Int, Int>> {
+        val out = ArrayList<Pair<Int, Int>>()
+        var from = start
         val max = WhisperFeatures.CHUNK_SAMPLES
-        while (from < s.size) {
-            if (s.size - from <= max) { out += from to s.size; break }
+        while (from < end) {
+            if (end - from <= max) { out += from to end; break }
             val lo = from + max - 5 * WhisperFeatures.SAMPLE_RATE
             val step = WhisperFeatures.SAMPLE_RATE / 10
             var cut = from + max
@@ -152,7 +174,10 @@ class WhisperSttModel(
         return sqrt(acc / max(1, to - from)).toFloat()
     }
 
-    override fun close() = graphs.close()
+    override fun close() {
+        graphs.close()
+        (vad as? AutoCloseable)?.close()
+    }
 
     private companion object {
         /** Below this a window is treated as silence; Whisper invents text ("Thank you.") for pure silence. */
