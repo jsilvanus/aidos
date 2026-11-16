@@ -156,7 +156,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
         }
         if (!file.exists()) {
             return Result.failure(
-                IllegalStateException("MODEL_NOT_INSTALLED: $modelId")
+                ModelNotInstalledException(modelId)
             )
         }
 

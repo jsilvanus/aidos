@@ -605,6 +605,15 @@ class EngineHttpServerHardeningTest {
         assertEquals(HttpStatusCode.ServiceUnavailable, memStatus)
         assertEquals("insufficient_memory", memDetail.code)
 
+        // Typed failures are classified by type, whatever their message says.
+        assertEquals("model_not_installed", server.classifyError(dev.aidos.modelruntime.ModelNotInstalledException("foo")).second.code)
+        assertEquals("insufficient_memory", server.classifyError(dev.aidos.modelruntime.InsufficientMemoryException("need 4GB")).second.code)
+        assertEquals("queue_saturated", server.classifyError(dev.aidos.modelruntime.ResidentModelsBusyException("all in use")).second.code)
+        assertEquals(
+            "model_integrity_mismatch",
+            server.classifyError(dev.aidos.modelruntime.DigestMismatchException("llama_x", "a", "b")).second.code,
+        )
+
         val (nativeStatus, nativeDetail) = server.classifyError(UnsatisfiedLinkError("dlopen failed: /data/app/libjllama.so not found"))
         assertEquals(HttpStatusCode.InternalServerError, nativeStatus)
         assertEquals("native_failure", nativeDetail.code)

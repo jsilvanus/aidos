@@ -159,7 +159,7 @@ class GlobalModelRuntime(
             if (artifactPath == null) {
                 if (descriptor == null || installedList.none { it.id == modelId }) {
                     return@withLock Result.failure(
-                        IllegalStateException("Model $modelId is not installed")
+                        ModelNotInstalledException(modelId, "Model $modelId is not installed")
                     )
                 }
 
@@ -183,7 +183,7 @@ class GlobalModelRuntime(
             if (memoryAdmissionCheck != null) {
                 val admission = memoryAdmissionCheck.invoke(modelId, descriptor)
                 if (admission.isFailure) {
-                    val error = admission.exceptionOrNull() ?: IllegalStateException("INSUFFICIENT_MEMORY: admission check failed")
+                    val error = admission.exceptionOrNull() ?: InsufficientMemoryException("admission check failed")
                     return@withLock Result.failure(error)
                 }
             }
@@ -201,7 +201,7 @@ class GlobalModelRuntime(
                     backend.unload(evictCandidate.key)
                 } else {
                     return@withLock Result.failure(
-                        IllegalStateException("ENGINE_BUSY: Cannot evict resident models; active requests in progress")
+                        ResidentModelsBusyException("Cannot evict resident models; active requests in progress")
                     )
                 }
             }
@@ -214,7 +214,7 @@ class GlobalModelRuntime(
             if (residentBudgetBytes != null && residentEstimate != null) {
                 if (estimate > residentBudgetBytes) {
                     return@withLock Result.failure(
-                        IllegalStateException("INSUFFICIENT_MEMORY: $modelId needs ~$estimate bytes resident, budget is $residentBudgetBytes")
+                        InsufficientMemoryException("$modelId needs ~$estimate bytes resident, budget is $residentBudgetBytes")
                     )
                 }
                 while (loadedModels.values.sumOf { it.residentBytes } + estimate > residentBudgetBytes) {
@@ -223,7 +223,7 @@ class GlobalModelRuntime(
                         .filter { !isModelActive(it.key) }
                     val victim = inactiveSorted.firstOrNull { it.key !in warmPinnedModels } ?: inactiveSorted.firstOrNull()
                         ?: return@withLock Result.failure(
-                            IllegalStateException("ENGINE_BUSY: Cannot free enough memory for $modelId; active requests in progress")
+                            ResidentModelsBusyException("Cannot free enough memory for $modelId; active requests in progress")
                         )
                     // A victim that became active since the list was made is skipped on the next pass.
                     if (retireIfIdle(victim.key)) backend.unload(victim.key)

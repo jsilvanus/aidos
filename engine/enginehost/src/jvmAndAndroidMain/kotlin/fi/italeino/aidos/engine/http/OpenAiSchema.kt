@@ -163,7 +163,9 @@ data class ChatCompletionChunk(
     val `object`: String = "chat.completion.chunk",
     val created: Long,
     val model: String,
-    val choices: List<ChunkChoice>
+    val choices: List<ChunkChoice>,
+    /** Set on the last chunk of a stream only; null on the ones before it. */
+    val usage: TokenUsage? = null,
 )
 
 @Serializable

@@ -45,7 +45,7 @@ class LlamaCppAdapter(
      * or a wrong one. Null (the default) uses the model's own.
      */
     private val chatTemplateOverride: String? = null,
-) : CancellableModelAdapter, EmbeddingModelAdapter {
+) : CancellableModelAdapter, EmbeddingModelAdapter, TokenCountingAdapter {
     override val providerId = "llama.cpp"
     override val modelVersion = "java-llama.cpp-4.2.0"
     override val contextWindow = contextSize
@@ -113,6 +113,10 @@ class LlamaCppAdapter(
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
+
+    /** What /v1/embeddings reports as usage: the tokenizer's own count, or null when it cannot say. */
+    override fun countTokens(text: String): Int? =
+        if (closed) null else runCatching { model.encode(text).size }.getOrNull()
 
     /** Mirrors AndroidLlamaCppAdapter.embed so both hosts serve /v1/embeddings (RFC-0022). */
     override suspend fun embed(text: String): Result<FloatArray> = try {
