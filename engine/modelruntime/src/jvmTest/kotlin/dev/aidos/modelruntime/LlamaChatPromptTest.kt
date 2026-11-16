@@ -195,4 +195,34 @@ class LlamaChatPromptTest {
             adapter.close()
         }
     }
+
+    @Test
+    fun adapter_closeDuringAGenerationStopsItAndFreesTheModelOnlyAfterwards() {
+        // Unloading a model mid-answer used to free the native model while llama.cpp was still
+        // reading it. The whole JVM dies when that goes wrong, which is what this test would show.
+        val adapter = adapter(null)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val deltas = java.util.concurrent.atomic.AtomicInteger()
+        val long = request(listOf(user("a"))).copy(maxOutputTokens = 400)
+        val worker = kotlin.concurrent.thread {
+            kotlinx.coroutines.runBlocking {
+                adapter.invokeStreaming(long).collect {
+                    if (it is ModelStreamEvent.Delta) {
+                        deltas.incrementAndGet()
+                        started.countDown()
+                        kotlinx.coroutines.delay(5) // a reader slower than the model, as a UI is
+                    }
+                }
+            }
+        }
+        assertTrue(started.await(60, java.util.concurrent.TimeUnit.SECONDS), "generation never started")
+
+        adapter.close()
+
+        worker.join(10_000)
+        assertFalse(worker.isAlive, "the generation did not end after close()")
+        assertTrue(deltas.get() < 400, "close() did not stop the generation: ${deltas.get()} tokens")
+        val after = kotlinx.coroutines.runBlocking { adapter.invoke(request(listOf(user("a")))) }
+        assertTrue(after.exceptionOrNull()?.message.orEmpty().contains("unloaded"), "got: $after")
+    }
 }

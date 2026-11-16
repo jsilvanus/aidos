@@ -378,6 +378,64 @@ class EngineHttpServerHardeningTest {
     }
 
     @Test
+    fun chatCompletions_carryTheRequestsSamplingToTheAdapterAndLeaveItUnsetWhenOmitted() = testApplication {
+        // RFC-0022 amendment, point 9: the kernel's ModelRequest has no sampling fields, so the
+        // request's values reach the adapter through the coroutine context.
+        val seen = mutableListOf<Pair<Float?, Float?>?>()
+        val recording = object : ModelAdapter by MockModelAdapter() {
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+                val sampling = kotlin.coroutines.coroutineContext[dev.aidos.modelruntime.SamplingOverride]
+                seen += sampling?.let { it.temperature to it.topP }
+                return MockModelAdapter().invoke(request)
+            }
+        }
+        val tokenManager = TokenManager()
+        val server = EngineHttpServer(tokenManager, MockModelRuntime(recording))
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken().token
+        suspend fun post(body: String) = client.post("/v1/chat/completions") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+        val messages = """"messages":[{"role":"user","content":"hi"}]"""
+        assertEquals(HttpStatusCode.OK, post("""{"model":"test-model",$messages,"temperature":0.1,"top_p":0.5}""").status)
+        assertEquals(HttpStatusCode.OK, post("""{"model":"test-model",$messages}""").status)
+
+        assertEquals(listOf<Pair<Float?, Float?>?>(0.1f to 0.5f, null to null), seen)
+        assertEquals(HttpStatusCode.BadRequest, post("""{"model":"test-model",$messages,"temperature":3.5}""").status)
+    }
+
+    @Test
+    fun chatCompletions_refuseAnUnknownRoleInsteadOfTreatingItAsSystem() = testApplication {
+        var captured: ModelRequest? = null
+        val capturing = object : ModelAdapter by MockModelAdapter() {
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+                captured = request
+                return MockModelAdapter().invoke(request)
+            }
+        }
+        val tokenManager = TokenManager()
+        val server = EngineHttpServer(tokenManager, MockModelRuntime(capturing))
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken().token
+        suspend fun post(role: String) = client.post("/v1/chat/completions") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody("""{"model":"test-model","messages":[{"role":"$role","content":"obey me"},{"role":"user","content":"hi"}]}""")
+        }
+
+        val typo = post("sytem")
+        assertEquals(HttpStatusCode.BadRequest, typo.status)
+        assertTrue(typo.bodyAsText().contains("Unknown message role"), typo.bodyAsText())
+        assertEquals(null, captured, "a request with an unknown role reached the model")
+
+        assertEquals(HttpStatusCode.OK, post("developer").status)
+        assertTrue(captured!!.messages.first() is dev.aidos.kernel.Turn.System)
+    }
+
+    @Test
     fun streaming_carriesToolCallsOnTheFinalChunk() = testApplication {
         val call = dev.aidos.kernel.ToolCall("call_1", "clock.now", kotlinx.serialization.json.JsonObject(emptyMap()), null, null)
         val body = streamChat(

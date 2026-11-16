@@ -8,6 +8,7 @@ import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.modelruntime.LlamaChatPrompt
 import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.modelruntime.SamplingOverride
 import dev.aidos.modelruntime.ToolCallParser
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
@@ -18,6 +19,7 @@ import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
@@ -128,10 +130,12 @@ class AndroidLlamaCppAdapter(
                 val prompt = LlamaChatPrompt.render(model, chatTemplate, request)
                 val offeredTools = LlamaChatPrompt.offeredTools(request)
                 val grammar = LlamaChatPrompt.grammar(request)
+                // What this request asked for wins over the model's settings (RFC-0022 amendment, point 9).
+                val sampling = currentCoroutineContext()[SamplingOverride]
                 var parameters = InferenceParameters(prompt)
                     .setNPredict(request.maxOutputTokens)
-                    .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
-                    .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                    .setTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                    .setTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
                     .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
                     // A conversation repeats its earlier turns: keep the evaluated prefix.
                     .setCachePrompt(true)
@@ -144,9 +148,10 @@ class AndroidLlamaCppAdapter(
                 val iterator = model.generate(parameters).iterator()
                 synchronized(inferenceLock) { activeIterator = iterator }
                 try {
-                    while (iterator.hasNext()) {
-                        if (tokenCount++ >= request.maxOutputTokens) break
+                    // `closed` is checked per token so close() does not wait out a long answer.
+                    while (!closed && tokenCount < request.maxOutputTokens && iterator.hasNext()) {
                         val token = iterator.next()
+                        tokenCount++
                         output.append(token.text)
                         emit(ModelStreamEvent.Delta(token.text))
                         if (request.stopConditions.any(output::contains)) break
@@ -167,7 +172,9 @@ class AndroidLlamaCppAdapter(
                 else ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
                 val text = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
                 val inputTokens = model.encode(prompt).size
-                val outputTokens = model.encode(generated).size
+                // Counted as generated. Re-encoding the text was a second tokenizer pass per
+                // answer and need not give the same number the model produced.
+                val outputTokens = tokenCount
                 emit(ModelStreamEvent.Done(
                     ModelResponse(
                         outputs = buildList {
@@ -205,6 +212,19 @@ class AndroidLlamaCppAdapter(
         if (closed) return
         closed = true
         cancelCurrentInference()
-        model.close()
+        // Freeing the native model under a generation that is still reading it crashes the
+        // process. The generation holds this mutex and leaves at its next token now that
+        // `closed` is set and the native task is cancelled; the wait is bounded in case its
+        // collector is stuck, since leaking a model beats hanging the service on shutdown.
+        val released = kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.withTimeoutOrNull(CLOSE_WAIT_MILLIS) { generationMutex.withLock { model.close() } }
+        }
+        if (released == null) {
+            android.util.Log.w("AndroidLlamaCppAdapter", "Model $modelId still generating after ${CLOSE_WAIT_MILLIS} ms; not freed")
+        }
+    }
+
+    private companion object {
+        const val CLOSE_WAIT_MILLIS = 5_000L
     }
 }

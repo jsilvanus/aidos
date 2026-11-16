@@ -14,8 +14,13 @@ import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
@@ -55,6 +60,8 @@ class LlamaCppAdapter(
 
     @Volatile
     private var closed: Boolean = false
+
+    private val generationMutex = Mutex()
 
     /** The generation in progress, so [cancelCurrentInference] (timeout, model close) can stop the native work. */
     @Volatile
@@ -162,90 +169,103 @@ class LlamaCppAdapter(
             return@flow
         }
 
-        try {
-            val prompt = renderPrompt(request)
-            val offeredTools = LlamaChatPrompt.offeredTools(request)
-            // Non-null only when the caller requires a call (RFC-0021 constrained decoding).
-            val grammar = LlamaChatPrompt.grammar(request)
-
-            val output = StringBuilder()
-            val parameters = InferenceParameters(prompt)
-                .setNPredict(request.maxOutputTokens)
-                .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
-                .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
-                .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
-                // Each turn of a conversation repeats the turns before it. Keeping the evaluated
-                // prefix means only the new text is processed, not the whole history again.
-                .setCachePrompt(true)
-                .let { if (grammar != null) it.setGrammar(grammar) else it }
-            val tokens = model.generate(parameters).iterator()
-            var tokenCount = 0
-            var stoppedOnSequence = false
-            val longestStop = request.stopConditions.maxOfOrNull { it.length } ?: 0
-
-            cancelRequested = false
-            activeIterator = tokens
+        // One generation at a time: the model has one slot, and close() takes this lock so it
+        // never frees the native model under a generation that is still reading it.
+        generationMutex.withLock {
+            if (closed) {
+                emit(ModelStreamEvent.Failed(
+                    IllegalStateException("Model $modelId was unloaded; reload before invoking again")
+                ))
+                return@withLock
+            }
             try {
-                while (tokens.hasNext() && tokenCount < request.maxOutputTokens && !cancelRequested) {
-                    val token = tokens.next()
-                    output.append(token.text)
-                    tokenCount++
-                    emit(ModelStreamEvent.Delta(token.text))
+                val prompt = renderPrompt(request)
+                val offeredTools = LlamaChatPrompt.offeredTools(request)
+                // Non-null only when the caller requires a call (RFC-0021 constrained decoding).
+                val grammar = LlamaChatPrompt.grammar(request)
 
-                    if (longestStop > 0 && endsWithStop(output, token.text.length, longestStop, request.stopConditions)) {
-                        stoppedOnSequence = true
-                        break
+                val output = StringBuilder()
+                // What this request asked for wins over the model's settings (RFC-0022 amendment, point 9).
+                val sampling = currentCoroutineContext()[SamplingOverride]
+                val parameters = InferenceParameters(prompt)
+                    .setNPredict(request.maxOutputTokens)
+                    .setTemperature(sampling?.temperature ?: settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
+                    .setTopP(sampling?.topP ?: settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
+                    .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                    // Each turn of a conversation repeats the turns before it. Keeping the evaluated
+                    // prefix means only the new text is processed, not the whole history again.
+                    .setCachePrompt(true)
+                    .let { if (grammar != null) it.setGrammar(grammar) else it }
+                val tokens = model.generate(parameters).iterator()
+                var tokenCount = 0
+                var stoppedOnSequence = false
+                val longestStop = request.stopConditions.maxOfOrNull { it.length } ?: 0
+
+                cancelRequested = false
+                activeIterator = tokens
+                try {
+                    // Checked before hasNext(), which blocks in native code until the next token.
+                    while (!closed && !cancelRequested && tokenCount < request.maxOutputTokens && tokens.hasNext()) {
+                        val token = tokens.next()
+                        output.append(token.text)
+                        tokenCount++
+                        emit(ModelStreamEvent.Delta(token.text))
+
+                        if (longestStop > 0 && endsWithStop(output, token.text.length, longestStop, request.stopConditions)) {
+                            stoppedOnSequence = true
+                            break
+                        }
                     }
+                } finally {
+                    if (activeIterator === tokens) activeIterator = null
+                    // The iterator only releases its native task when it reads the model's own stop.
+                    // Leaving the loop any other way (token cap, stop sequence, the collector going
+                    // away) would otherwise keep llama.cpp generating up to n_predict for nobody,
+                    // holding the model's only slot, and leak the task.
+                    if (tokens.hasNext()) runCatching { tokens.cancel() }
                 }
-            } finally {
-                if (activeIterator === tokens) activeIterator = null
-                // The iterator only releases its native task when it reads the model's own stop.
-                // Leaving the loop any other way (token cap, stop sequence, the collector going
-                // away) would otherwise keep llama.cpp generating up to n_predict for nobody,
-                // holding the model's only slot, and leak the task.
-                if (tokens.hasNext()) runCatching { tokens.cancel() }
-            }
 
-            val generated = output.toString()
-            val toolCalls = if (offeredTools.isNotEmpty()) {
-                ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
-            } else {
-                emptyList()
-            }
-            val finalText = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
+                val generated = output.toString()
+                val toolCalls = if (offeredTools.isNotEmpty()) {
+                    ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
+                } else {
+                    emptyList()
+                }
+                val finalText = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
 
-            val stopReason = when {
-                tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                stoppedOnSequence -> StopReason.STOP_SEQUENCE
-                toolCalls.isNotEmpty() -> StopReason.TOOL_USE
-                else -> StopReason.END_TURN
-            }
+                val stopReason = when {
+                    tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
+                    stoppedOnSequence -> StopReason.STOP_SEQUENCE
+                    toolCalls.isNotEmpty() -> StopReason.TOOL_USE
+                    else -> StopReason.END_TURN
+                }
 
-            // Counted, not estimated: a word-count estimate reported 1 token for "oooooooo"
-            // and made the self-test's tokens/s meaningless for anything without spaces.
-            val inputTokens = runCatching { model.encode(prompt).size }.getOrElse { estimateTokens(prompt) }
-            val outputTokens = tokenCount
-            val usage = Usage(
-                inputTokens = inputTokens,
-                outputTokens = outputTokens,
-                totalTokens = inputTokens + outputTokens,
-            )
-
-            val outputs = buildList {
-                if (finalText.isNotEmpty()) add(TextOutput(finalText))
-                toolCalls.forEach { add(ToolCallOutput(it)) }
-            }
-
-            emit(ModelStreamEvent.Done(
-                ModelResponse(
-                    outputs = outputs,
-                    stopReason = stopReason,
-                    usage = usage,
-                    model = ModelRef(modelId, modelVersion),
+                // Counted, not estimated: a word-count estimate reported 1 token for "oooooooo"
+                // and made the self-test's tokens/s meaningless for anything without spaces.
+                val inputTokens = runCatching { model.encode(prompt).size }.getOrElse { estimateTokens(prompt) }
+                val outputTokens = tokenCount
+                val usage = Usage(
+                    inputTokens = inputTokens,
+                    outputTokens = outputTokens,
+                    totalTokens = inputTokens + outputTokens,
                 )
-            ))
-        } catch (e: Exception) {
-            emit(ModelStreamEvent.Failed(e))
+
+                val outputs = buildList {
+                    if (finalText.isNotEmpty()) add(TextOutput(finalText))
+                    toolCalls.forEach { add(ToolCallOutput(it)) }
+                }
+
+                emit(ModelStreamEvent.Done(
+                    ModelResponse(
+                        outputs = outputs,
+                        stopReason = stopReason,
+                        usage = usage,
+                        model = ModelRef(modelId, modelVersion),
+                    )
+                ))
+            } catch (e: Exception) {
+                emit(ModelStreamEvent.Failed(e))
+            }
         }
     }
 
@@ -277,17 +297,26 @@ class LlamaCppAdapter(
         if (closed) return
         closed = true
         cancelCurrentInference()
-        // Free the model only once the generating thread has left native code.
-        val deadline = System.nanoTime() + CLOSE_WAIT_NANOS
-        while (activeIterator != null && System.nanoTime() < deadline) Thread.sleep(10)
-        try {
-            model.close()
-        } catch (e: Exception) {
-            System.err.println("Error closing llama.cpp model: ${e.message}")
+        // The generation leaves at its next token now that `closed` and the cancel flag are set;
+        // it releases the native task itself (cancelling from this thread leaks the generator). The wait is bounded in case its collector is stuck: leaking a model beats
+        // hanging shutdown, and freeing it under a running generation crashes the process.
+        val released = runBlocking {
+            withTimeoutOrNull(CLOSE_WAIT_MILLIS) {
+                generationMutex.withLock {
+                    try {
+                        model.close()
+                    } catch (e: Exception) {
+                        System.err.println("Error closing llama.cpp model: ${e.message}")
+                    }
+                }
+            }
+        }
+        if (released == null) {
+            System.err.println("Model $modelId still generating after $CLOSE_WAIT_MILLIS ms; not freed")
         }
     }
 
     private companion object {
-        const val CLOSE_WAIT_NANOS = 10_000_000_000L
+        const val CLOSE_WAIT_MILLIS = 10_000L
     }
 }
