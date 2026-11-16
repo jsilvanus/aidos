@@ -68,4 +68,19 @@ class SttPackagesTest {
         assertNull(pk.digest("w"))
         assertFalse(pk.delete("w"))
     }
+
+    @Test
+    fun findsAVadInThePackageOrTheSharedDirectory() {
+        val root = dir()
+        val own = install(root, "w", "tokenizer.json", "encoder_model.onnx", "decoder_model.onnx")
+        assertNull(WhisperPackage.vadFile(own))
+        assertNull(SileroPackage.shared(root))
+        File(root, "silero-vad").mkdirs()
+        val shared = File(root, "silero-vad/silero_vad.onnx").also { it.writeText("x") }
+        assertEquals(shared, SileroPackage.shared(root))
+        // The shared directory is not itself a Whisper package.
+        assertEquals(listOf("w"), SttPackages(root).descriptors().map { it.id })
+        val mine = File(own, "silero_vad.onnx").also { it.writeText("x") }
+        assertEquals(mine, WhisperPackage.vadFile(own))
+    }
 }

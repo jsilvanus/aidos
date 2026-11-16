@@ -11,8 +11,8 @@ only for non-STT models. Wire shape is unchanged (sdk/CONTRACT.md): JSON with a 
 (`"fi"`) and `prompt` (spelling/vocabulary hint, e.g. liturgical terms), response `{ "text": "..." }`.
 
 `file` is a WAV: 8/16/24/32-bit PCM or float, any channel count and sample rate (Engine resamples to 16 kHz mono). Anything else is
-HTTP 400 on `file`. Audio over 30 s is cut into windows at the quietest point near each boundary; there are no timestamps and no
-overlap, so send utterance-sized pieces. Pure silence returns an empty string rather than the invented text Whisper produces for it.
+HTTP 400 on `file`. Audio over 30 s is cut into windows at the quietest point near each boundary, or, with Silero VAD installed
+(below), at silences; there are no timestamps and no overlap, so send utterance-sized pieces. Pure silence returns an empty string rather than the invented text Whisper produces for it.
 
 ## Why ONNX Runtime Whisper, not faster-whisper or whisper.cpp
 
@@ -55,10 +55,31 @@ files, and the installer downloads them into a directory, all-or-nothing. The An
 Finnish therefore wants small or larger (tiny mangles word boundaries); large-v3-turbo is perfect on this clip but too big for most phones. Tiny and base are for
 smoke tests. The Android path has not been timed on a device.
 
+## Voice activity detection (Silero VAD)
+
+With a Silero VAD graph present, `WhisperSttModel` finds the speech first (`SileroVad`: 512-sample frames at 16 kHz, hysteresis, 250 ms
+minimum speech, 500 ms minimum silence, 200 ms padding) and packs whole speech segments into windows of at most 30 s. Windows begin and
+end in pauses, silence between windows is never sent to the decoder, and pure silence or noise yields an empty string without running
+Whisper. Only one unbroken stretch of speech over 30 s still gets the old quietest-point cut. Without the graph nothing changes.
+
+Install the graph (v5, MIT, ~2 MB) once for all Whisper models, or beside one package; the loader looks for `silero_vad.onnx` in the
+package directory first, then in `<models dir>/silero-vad/`:
+
+```
+node scripts/stt/fetch-silero-vad.mjs ~/.aidos/models/silero-vad
+```
+
+The same ONNX Runtime serves it on desktop and Android (`OrtSileroGraph` in `jvmAndAndroidMain`); no new native dependency. The graph is the
+v5 one (`input`, `state`, `sr`); a v4 graph is refused at load. Tests: `SileroVadTest` and `WhisperSttModelVadTest` (scripted, always run);
+`SileroRealModelTest` runs the real graph when `AIDOS_VAD_MODEL` points at `silero_vad.onnx`. Not done: the Android model screen and the desktop
+installer do not fetch it yet, and VAD parameters are not settable from the API.
+
 ## Using liturgos-auditor's fine-tunes
 
-faster-whisper/CTranslate2 weights cannot be loaded here. Export the Hugging Face checkpoint the fine-tune started from instead
-(not run here yet): `optimum-cli export onnx --model <hf-checkpoint> --task automatic-speech-recognition-with-past out/`, optionally
+faster-whisper/CTranslate2 weights cannot be loaded here. liturgos-auditor writes the package for you:
+`auditor-stt export-onnx --model <run dir> --out <dir> --merge-lora --quantize int8` (jsilvanus/liturgos-auditor, `docs/training-pipeline.md` §3.5b),
+and `auditor-stt eval --backend onnx` compares its WER with the CT2 export. Copy the output directory into the models directory.
+By hand: `optimum-cli export onnx --model <hf-checkpoint> --task automatic-speech-recognition-with-past out/`, optionally
 quantize, then copy `encoder_model*.onnx`, `decoder_model_merged*.onnx` and the tokenizer files into a package directory. Fine-tunes
 that change the vocabulary are fine; `tokenizer.json` and the added-token ids are read from the package, nothing is hardcoded.
 

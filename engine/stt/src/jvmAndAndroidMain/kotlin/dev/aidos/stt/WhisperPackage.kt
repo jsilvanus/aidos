@@ -61,14 +61,23 @@ object WhisperPackage {
     private fun json(f: File): JsonObject? =
         if (f.isFile) runCatching { Json.parseToJsonElement(f.readText()).jsonObject }.getOrNull() else null
 
-    /** Opens the package at [dir] on ONNX Runtime. The caller owns (and must close) the returned model. */
-    fun open(modelId: String, dir: File): WhisperSttModel {
+    /** The Silero VAD graph a package carries, or null. A shared one lives in [SttPackages.SHARED_VAD_DIR]. */
+    fun vadFile(dir: File): File? = File(dir, SileroPackage.FILE).takeIf { it.isFile }
+
+    /**
+     * Opens the package at [dir] on ONNX Runtime. The caller owns (and must close) the returned model.
+     * With a [vadFile] (Silero VAD, see [SileroPackage]) utterances are segmented by speech detection.
+     */
+    fun open(modelId: String, dir: File, vadFile: File? = vadFile(dir)): WhisperSttModel {
         require(isPackage(dir)) { "not a Whisper model package: ${dir.path} (needs encoder_model*.onnx, decoder_model*.onnx, $TOKENIZER)" }
         val tokenizer = WhisperTokenizer.fromJson(File(dir, TOKENIZER).readText())
         val graphs = OrtWhisperGraphs(encoderFile(dir)!!, decoderFile(dir)!!, melBins(dir))
+        var vad: SileroVad? = null
         return try {
-            WhisperSttModel(modelId, tokenizer, graphs, readGenerationConfig(dir))
+            vad = vadFile?.let { SileroVad(OrtSileroGraph(it)) }
+            WhisperSttModel(modelId, tokenizer, graphs, readGenerationConfig(dir), vad)
         } catch (e: Throwable) {
+            vad?.close()
             graphs.close()
             throw e
         }
