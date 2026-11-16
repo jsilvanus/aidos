@@ -7,14 +7,15 @@ import dev.aidos.kernel.ModelRuntime
 import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.security.MessageDigest
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -59,7 +60,7 @@ class InferenceRequestManager(
     private val maxParallelRequests: Int = maxConcurrentRequests,
     private val parallelHeadroom: () -> Boolean = { false },
 ) {
-    private val capacity = Semaphore(maxOf(maxConcurrentRequests, maxParallelRequests))
+    private val waiters = ArrayDeque<CompletableDeferred<Unit>>()
     private val stateMutex = Mutex()
     private val modelLocks = mutableMapOf<String, Mutex>()
     private val activeByModel = mutableMapOf<String, Int>()
@@ -68,6 +69,9 @@ class InferenceRequestManager(
     private val deletingModels = mutableSetOf<String>()
     private val activeAdapters = mutableMapOf<String, CancellableModelAdapter>()
     private val requestJobsByModel = mutableMapOf<String, MutableSet<Job>>()
+
+    // A snapshot of admittedByModel's keys, replaced under stateMutex and read without it.
+    @Volatile private var busyModels: Set<String> = emptySet()
 
     private var queueDepth = 0
     private var runningRequests = 0
@@ -269,6 +273,13 @@ class InferenceRequestManager(
         }
     }
 
+    /**
+     * Whether a request for [modelId] is queued, loading or running, without suspending. This is
+     * what the model runtime asks before it evicts or idles out a model (RFC-0022), from inside
+     * its own locks, so it must not wait on this manager's lock.
+     */
+    fun isModelBusy(modelId: String): Boolean = modelId in busyModels
+
     suspend fun isModelActive(modelId: String): Boolean = stateMutex.withLock {
         (activeByModel[modelId] ?: 0) > 0 || (admittedByModel[modelId] ?: 0) > 0
     }
@@ -320,25 +331,40 @@ class InferenceRequestManager(
             queueDepth++
             totalRequests++
             admittedByModel[modelId] = (admittedByModel[modelId] ?: 0) + 1
+            busyModels = admittedByModel.keys.toSet()
             requestJobsByModel.getOrPut(modelId) { mutableSetOf() }.add(requestJob)
             Result.success(Unit)
         }
         if (admitted.isFailure) return admitted
+        // The turn is taken under the same lock that counts running requests, so two waiters can
+        // never both see a free slot, and waiters are served in arrival order.
+        val turn = CompletableDeferred<Unit>()
+        withBookkeepingLock {
+            waiters.addLast(turn)
+            grantTurns()
+        }
         return try {
             updateState(InferenceRequestState.QUEUED)
-            // Serialized unless the working set has headroom for another concurrent request.
-            while (!withBookkeepingLock { runningRequests < maxConcurrentRequests || parallelHeadroom() }) delay(PARALLEL_POLL_MILLIS)
-            capacity.acquire()
-            // Once the permit is held, this must not be cancelled: the catch below would
-            // then undo the queue slot but never release the permit.
-            withBookkeepingLock {
-                queueDepth--
-                runningRequests++
+            if (maxParallelRequests > maxConcurrentRequests) {
+                // Memory headroom can appear without any request finishing (a model was unloaded),
+                // so a waiter for a parallel slot looks again now and then. Serialized engines
+                // never take this branch and are woken only by a release.
+                while (withTimeoutOrNull(HEADROOM_RECHECK_MILLIS) { turn.await() } == null) {
+                    withBookkeepingLock { grantTurns() }
+                }
+            } else {
+                turn.await()
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             withBookkeepingLock {
-                queueDepth = (queueDepth - 1).coerceAtLeast(0)
+                if (waiters.remove(turn)) {
+                    queueDepth = (queueDepth - 1).coerceAtLeast(0)
+                } else {
+                    // The turn was granted in the same instant the request was cancelled: hand it on.
+                    runningRequests = (runningRequests - 1).coerceAtLeast(0)
+                    grantTurns()
+                }
                 decrementAdmitted(modelId)
                 cancelledRequests++
                 requestJobsByModel[modelId]?.remove(requestJob)
@@ -348,19 +374,32 @@ class InferenceRequestManager(
         }
     }
 
+    /** Starts as many waiting requests, oldest first, as the limits allow. Caller holds [stateMutex]. */
+    private fun grantTurns() {
+        while (waiters.isNotEmpty() &&
+            (runningRequests < maxConcurrentRequests || (runningRequests < maxParallelRequests && parallelHeadroom()))
+        ) {
+            val next = waiters.removeFirst()
+            queueDepth = (queueDepth - 1).coerceAtLeast(0)
+            runningRequests++
+            next.complete(Unit)
+        }
+    }
+
     private suspend fun releaseAdmissionSlot(modelId: String, requestJob: Job) {
         withBookkeepingLock {
             runningRequests = (runningRequests - 1).coerceAtLeast(0)
             decrementAdmitted(modelId)
             requestJobsByModel[modelId]?.remove(requestJob)
             if (requestJobsByModel[modelId].isNullOrEmpty()) requestJobsByModel.remove(modelId)
+            grantTurns()
         }
-        capacity.release()
     }
 
     private fun decrementAdmitted(modelId: String) {
         val next = ((admittedByModel[modelId] ?: 0) - 1).coerceAtLeast(0)
         if (next == 0) admittedByModel.remove(modelId) else admittedByModel[modelId] = next
+        busyModels = admittedByModel.keys.toSet()
     }
 
     private suspend fun markActive(modelId: String, delta: Int, adapter: ModelAdapter) {
@@ -401,7 +440,7 @@ class InferenceRequestManager(
     // there and skip the counter update -- leaving runningRequests > 0 and making
     // shutdownAndDrain time out. NonCancellable guarantees the release always happens.
     private companion object {
-        const val PARALLEL_POLL_MILLIS = 10L
+        const val HEADROOM_RECHECK_MILLIS = 50L
     }
 
     private suspend fun <T> withBookkeepingLock(action: () -> T): T =

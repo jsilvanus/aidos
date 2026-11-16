@@ -281,6 +281,8 @@ class DesktopEngineHost(
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
             // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0125 D45), Whisper speech-to-text
             // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
+            // The runtime is built before the request manager that knows which models are in use.
+            var requestManager: InferenceRequestManager? = null
             val runtime = GlobalModelRuntime(
                 // HTTP providers (e.g. a local Ollama) from providers.json; read per call, so editing it needs no restart.
                 CatalogAwareInferenceBackend(
@@ -292,6 +294,8 @@ class DesktopEngineHost(
                     catalogManager = catalogManager,
                 ),
                 runSettings = runSettings,
+                // RFC-0022: a model with a queued or running request is never evicted to make room.
+                isModelActive = { id -> requestManager?.isModelBusy(id) == true },
                 // RFC-0022: memory-based admission -- keep resident models within ~80% of physical RAM.
                 residentBudgetBytes = (DesktopDevice.totalMemoryBytes() * 0.8).toLong(),
                 residentEstimate = { d, s ->
@@ -310,6 +314,7 @@ class DesktopEngineHost(
                 maxParallelRequests = 2,
                 parallelHeadroom = { DesktopDevice.profile().let { it.availableRamBytes > it.totalRamBytes * 0.3 } },
             )
+            requestManager = manager
             lateinit var server: EngineHttpServer
             val initialPrefs = runCatching {
                 val prefsFile = File(stateDir, "preferences.json")

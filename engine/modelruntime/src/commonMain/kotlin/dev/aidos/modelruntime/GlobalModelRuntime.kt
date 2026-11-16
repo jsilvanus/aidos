@@ -11,7 +11,9 @@ import kotlinx.coroutines.sync.withLock
  *
  * Invariants enforced here:
  * - Weights are user-scope, not per-project. This runtime is a singleton per process.
- * - Loading is globally serialized through a single admission queue.
+ * - Loading is globally serialized through a single admission queue. A model that is already
+ *   resident is returned without joining that queue, so a request for a loaded model never waits
+ *   behind another model's multi-second load.
  * - Digest is verified before a normal model-id load is returned.
  * - LRU context eviction bounds simultaneously resident models while protecting active requests
  *   and warm fallback candidates (RFC-0105).
@@ -40,13 +42,44 @@ class GlobalModelRuntime(
     @Volatile private var loadedModels: Map<String, LoadedModel> = emptyMap()
     @Volatile private var warmPinnedModels: Set<String> = emptySet()
 
-    private data class LoadedModel(
+    private class LoadedModel(
         val adapter: ModelAdapter,
         val loadedAtMillis: Long,
         val settings: ModelRunSettings,
-        val lastAccessedAtMillis: Long = loadedAtMillis,
         val residentBytes: Long = 0L,
-    )
+    ) {
+        // Mutable so a cache hit can record the access without rewriting the map: a write to the
+        // map outside the admission queue could put back an entry that an eviction just removed.
+        @Volatile var lastAccessedAtMillis: Long = loadedAtMillis
+    }
+
+    // Held only for the instant it takes to hand out a resident adapter or to take a model out
+    // of the map, never across a load or an unload. It makes "is it in use? then remove it" one
+    // step against the fast path in [load], so a request cannot be handed an adapter that an
+    // eviction has already decided to free.
+    private val residentLock = Mutex()
+
+    private suspend fun residentAdapter(modelId: String): ModelAdapter? = residentLock.withLock {
+        loadedModels[modelId]?.let {
+            it.lastAccessedAtMillis = nowMillis()
+            it.adapter
+        }
+    }
+
+    /** Takes an idle [modelId] out of the resident map; false when it is in use or [alsoRequire] fails. */
+    private suspend fun retireIfIdle(modelId: String, alsoRequire: (LoadedModel) -> Boolean = { true }): Boolean =
+        residentLock.withLock {
+            val model = loadedModels[modelId] ?: return@withLock false
+            if (isModelActive(modelId) || !alsoRequire(model)) return@withLock false
+            loadedModels = loadedModels - modelId
+            true
+        }
+
+    private suspend fun retire(modelId: String): Boolean = residentLock.withLock {
+        val present = loadedModels.containsKey(modelId)
+        loadedModels = loadedModels - modelId
+        present
+    }
 
     override suspend fun catalog(): List<ModelDescriptor> = backend.catalog()
 
@@ -93,15 +126,10 @@ class GlobalModelRuntime(
                 .map { it.key }
 
             modelsToUnload.forEach { modelId ->
-                val latest = loadedModels[modelId] ?: return@forEach
-                val latestNow = nowMillis()
-                if (latestNow - latest.lastAccessedAtMillis > idleTimeoutMillis &&
-                    !isModelActive(modelId) &&
-                    modelId !in warmPinnedModels
-                ) {
-                    loadedModels = loadedModels - modelId
-                    backend.unload(modelId)
+                val stillIdle = retireIfIdle(modelId) {
+                    nowMillis() - it.lastAccessedAtMillis > idleTimeoutMillis && modelId !in warmPinnedModels
                 }
+                if (stillIdle) backend.unload(modelId)
             }
         }
     }
@@ -118,12 +146,11 @@ class GlobalModelRuntime(
      * logical id would reject a valid catalog entry before the backend gets the exact path.
      */
     suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> {
+        // Fast path, outside the queue: the queue is held for the whole of another model's load.
+        residentAdapter(modelId)?.let { return Result.success(it) }
         return admissionQueue.withLock {
-            loadedModels[modelId]?.let {
-                val updated = it.copy(lastAccessedAtMillis = nowMillis())
-                loadedModels = loadedModels + (modelId to updated)
-                return@withLock Result.success(it.adapter)
-            }
+            // Checked again: the model may have been loaded while this call waited its turn.
+            residentAdapter(modelId)?.let { return@withLock Result.success(it) }
 
             val installedList = backend.installed()
             val descriptor = installedList.find { it.id == modelId }
@@ -170,10 +197,8 @@ class GlobalModelRuntime(
                 val evictCandidate = inactiveSorted.firstOrNull { it.key !in warmPinnedModels }
                     ?: inactiveSorted.firstOrNull()
 
-                if (evictCandidate != null) {
-                    val evictId = evictCandidate.key
-                    loadedModels = loadedModels - evictId
-                    backend.unload(evictId)
+                if (evictCandidate != null && retireIfIdle(evictCandidate.key)) {
+                    backend.unload(evictCandidate.key)
                 } else {
                     return@withLock Result.failure(
                         IllegalStateException("ENGINE_BUSY: Cannot evict resident models; active requests in progress")
@@ -200,15 +225,15 @@ class GlobalModelRuntime(
                         ?: return@withLock Result.failure(
                             IllegalStateException("ENGINE_BUSY: Cannot free enough memory for $modelId; active requests in progress")
                         )
-                    loadedModels = loadedModels - victim.key
-                    backend.unload(victim.key)
+                    // A victim that became active since the list was made is skipped on the next pass.
+                    if (retireIfIdle(victim.key)) backend.unload(victim.key)
                 }
             }
             val adapter = backend.load(modelId, artifactPath, settings).getOrElse { err ->
                 return@withLock Result.failure(err)
             }
             val now = nowMillis()
-            loadedModels = loadedModels + (modelId to LoadedModel(adapter, now, settings, now, estimate))
+            residentLock.withLock { loadedModels = loadedModels + (modelId to LoadedModel(adapter, now, settings, estimate)) }
             Result.success(adapter)
         }
     }
@@ -216,7 +241,7 @@ class GlobalModelRuntime(
     override suspend fun unload(modelId: String) {
         admissionQueue.withLock {
             warmPinnedModels = warmPinnedModels - modelId
-            loadedModels = loadedModels - modelId
+            retire(modelId)
             backend.unload(modelId)
         }
     }
@@ -234,10 +259,7 @@ class GlobalModelRuntime(
     override suspend fun delete(modelId: String) {
         admissionQueue.withLock {
             warmPinnedModels = warmPinnedModels - modelId
-            if (loadedModels.containsKey(modelId)) {
-                loadedModels = loadedModels - modelId
-                backend.unload(modelId)
-            }
+            if (retire(modelId)) backend.unload(modelId)
             backend.delete(modelId)
         }
     }

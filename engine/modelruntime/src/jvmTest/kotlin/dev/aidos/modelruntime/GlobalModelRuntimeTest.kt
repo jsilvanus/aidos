@@ -312,19 +312,79 @@ class GlobalModelRuntimeTest {
         val sweepJob = launch { runtime.checkAndUnloadIdleModels() }
         unloadM1Started.await()
 
-        // Concurrent load("m2") must wait on admissionQueue instead of mutating loadedModels unlocked.
+        // A request for the resident m2 arrives while the sweep is busy unloading m1. It is
+        // answered at once, and its access keeps the sweep from unloading m2 under it.
         val acquireJob = async { runtime.load("m2") }
         runCurrent()
-        assertFalse(acquireJob.isCompleted, "load must serialize behind admissionQueue during idle sweep")
+        assertTrue(acquireJob.isCompleted, "a resident model must not wait behind another model's unload")
 
         allowUnloadM1Finish.complete(Unit)
         sweepJob.join()
-        val acquireResult = acquireJob.await()
 
-        assertTrue(acquireResult.isSuccess)
-        assertTrue("m2" in runtime.loaded(), "acquired model must remain resident after sweep finishes")
+        assertTrue(acquireJob.await().isSuccess)
+        assertTrue("m2" in runtime.loaded(), "the model just handed out must stay resident")
         assertFalse("m1" in runtime.loaded())
-        assertEquals(2, m2Loads)
+        assertEquals(1, m2Loads)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a resident model is handed out while another model is still loading`() = runTest {
+        val slowLoadStarted = CompletableDeferred<Unit>()
+        val finishSlowLoad = CompletableDeferred<Unit>()
+        val models = listOf(descriptor("fast"), descriptor("slow"))
+        val backend = object : InferenceBackend {
+            override suspend fun catalog() = models
+            override suspend fun installed() = models
+            override suspend fun computeDigest(modelId: String) = ""
+            override suspend fun delete(modelId: String) {}
+            override suspend fun load(modelId: String): Result<ModelAdapter> {
+                if (modelId == "slow") {
+                    slowLoadStarted.complete(Unit)
+                    finishSlowLoad.await()
+                }
+                return Result.success(fakeAdapter)
+            }
+            override suspend fun unload(modelId: String) {}
+        }
+        val runtime = GlobalModelRuntime(backend)
+        runtime.load("fast").getOrThrow()
+
+        val slow = async { runtime.load("slow") }
+        slowLoadStarted.await()
+        val hit = async { runtime.load("fast") }
+        val second = async { runtime.load("slow") }
+        runCurrent()
+
+        assertTrue(hit.isCompleted, "a loaded model waited behind another model's load")
+        assertFalse(second.isCompleted, "the same model must not be loaded twice at once")
+        finishSlowLoad.complete(Unit)
+        assertTrue(slow.await().isSuccess)
+        assertTrue(second.await().isSuccess)
+    }
+
+    @Test
+    fun `eviction skips a model that became active after the candidates were listed`() = runTest {
+        var active = emptySet<String>()
+        val unloaded = mutableListOf<String>()
+        val models = listOf(descriptor("a"), descriptor("b"), descriptor("c"))
+        val backend = object : InferenceBackend {
+            override suspend fun catalog() = models
+            override suspend fun installed() = models
+            override suspend fun computeDigest(modelId: String) = ""
+            override suspend fun delete(modelId: String) {}
+            override suspend fun load(modelId: String): Result<ModelAdapter> = Result.success(fakeAdapter)
+            override suspend fun unload(modelId: String) { unloaded += modelId }
+        }
+        val runtime = GlobalModelRuntime(backend, maxResidentModels = 2, isModelActive = { it in active })
+        runtime.load("a").getOrThrow()
+        runtime.load("b").getOrThrow()
+        active = setOf("a", "b")
+
+        val refused = runtime.load("c")
+
+        assertTrue(refused.exceptionOrNull()?.message.orEmpty().startsWith("ENGINE_BUSY"))
+        assertTrue(unloaded.isEmpty(), "an active model was unloaded: $unloaded")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
