@@ -282,6 +282,67 @@ class InferenceRequestManagerTest {
         }
     }
 
+    @Test
+    fun execute_servesWaitingRequestsInArrivalOrderAndNeverMoreThanTheLimitAtOnce() = runTest {
+        // Waiters used to poll and then race for a permit: with room for two parallel requests
+        // but no memory headroom, several could pass the check together and run at once, in any order.
+        val gates = List(4) { CompletableDeferred<Unit>() }
+        val order = mutableListOf<Int>()
+        var running = 0
+        var mostAtOnce = 0
+        val manager = InferenceRequestManager(
+            FakeRuntime(BlockingAdapter(CompletableDeferred(Unit))),
+            maxConcurrentRequests = 1,
+            maxParallelRequests = 3,
+            parallelHeadroom = { false },
+        )
+        coroutineScope {
+            val jobs = gates.mapIndexed { index, gate ->
+                async {
+                    manager.execute("test-model") {
+                        order += index
+                        running++
+                        mostAtOnce = maxOf(mostAtOnce, running)
+                        gate.await()
+                        running--
+                    }
+                }.also { delay(10) }
+            }
+            assertEquals(3, manager.snapshotMetrics().queueDepth)
+            assertTrue(manager.isModelBusy("test-model"))
+            // Released newest first: the order of service must still be the order of arrival.
+            gates.reversed().forEach { it.complete(Unit) }
+            jobs.forEach { assertTrue(it.await().isSuccess) }
+        }
+        assertEquals(listOf(0, 1, 2, 3), order)
+        assertEquals(1, mostAtOnce)
+        assertFalse(manager.isModelBusy("test-model"))
+        assertEquals(0, manager.snapshotMetrics().queueDepth)
+        assertEquals(0, manager.snapshotMetrics().runningRequests)
+    }
+
+    @Test
+    fun execute_aCancelledWaiterGivesUpItsPlaceWithoutBlockingTheOnesBehindIt() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val manager = InferenceRequestManager(FakeRuntime(BlockingAdapter(CompletableDeferred(Unit))))
+        coroutineScope {
+            val first = async { manager.execute("test-model") { gate.await() } }
+            delay(10)
+            val second = async { manager.execute("test-model") { } }
+            delay(10)
+            val third = async { manager.execute("test-model") { "ran" } }
+            delay(10)
+            second.cancel()
+            gate.complete(Unit)
+            assertTrue(first.await().isSuccess)
+            assertEquals("ran", third.await().getOrThrow())
+        }
+        val metrics = manager.snapshotMetrics()
+        assertEquals(0, metrics.queueDepth)
+        assertEquals(0, metrics.runningRequests)
+        assertEquals(1, metrics.cancelledRequests)
+    }
+
     private fun dummyRequest() = ModelRequest(
         messages = emptyList(),
         tools = emptyList(),
