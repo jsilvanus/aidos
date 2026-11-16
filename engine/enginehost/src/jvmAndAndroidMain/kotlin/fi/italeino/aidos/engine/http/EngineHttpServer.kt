@@ -91,7 +91,16 @@ data class EngineApiPolicy(
     val maxAudioBytes: Int = 25 * 1024 * 1024,
     /** Per-request timeout in milliseconds covering admission, model load, and execution (default 120s). */
     val requestTimeoutMs: Long = 120_000L,
-)
+) {
+    /**
+     * Body limit for `/v1/audio/transcriptions`. The audio travels base64-encoded inside the JSON
+     * body, so [maxRequestBytes] alone would cap audio at about three quarters of itself (7.5 MiB by
+     * default, some four minutes of 16 kHz PCM) and make [maxAudioBytes] unreachable. This is the
+     * encoded size of [maxAudioBytes] plus room for the other fields, and never below [maxRequestBytes].
+     */
+    val maxTranscriptionRequestBytes: Long
+        get() = maxOf(maxRequestBytes, (maxAudioBytes.toLong() + 2) / 3 * 4 + 64 * 1024)
+}
 
 class EngineRequestTimeoutException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 private val http451UnavailableForLegalReasons = HttpStatusCode(451, "Unavailable For Legal Reasons")
@@ -406,8 +415,11 @@ class EngineHttpServer(
      * Rejects oversized bodies with 413 Payload Too Large and malformed JSON with a sanitized 400
      * Bad Request that never echoes raw payload or prompt text.
      */
-    private suspend inline fun <reified T> receiveBoundedJson(call: ApplicationCall): T? {
-        val bodyText = receiveBoundedBodyText(call) ?: return null
+    private suspend inline fun <reified T> receiveBoundedJson(
+        call: ApplicationCall,
+        maxBytes: Long = policy.maxRequestBytes,
+    ): T? {
+        val bodyText = receiveBoundedBodyText(call, maxBytes) ?: return null
         return try {
             wireJson.decodeFromString<T>(bodyText)
         } catch (_: Exception) {
@@ -425,14 +437,14 @@ class EngineHttpServer(
         }
     }
 
-    private suspend fun receiveBoundedBodyText(call: ApplicationCall): String? {
+    private suspend fun receiveBoundedBodyText(call: ApplicationCall, maxBytes: Long = policy.maxRequestBytes): String? {
         val declaredLength = call.request.contentLength()
-        if (declaredLength != null && declaredLength > policy.maxRequestBytes) {
+        if (declaredLength != null && declaredLength > maxBytes) {
             call.respond(
                 HttpStatusCode.PayloadTooLarge,
                 ErrorResponse(
                     ErrorDetail(
-                        message = "Request body exceeds maximum size limit of ${policy.maxRequestBytes} bytes",
+                        message = "Request body exceeds maximum size limit of $maxBytes bytes",
                         type = "invalid_request_error",
                         code = "request_too_large"
                     )
@@ -442,7 +454,6 @@ class EngineHttpServer(
         }
 
         val channel = call.receiveChannel()
-        val maxBytes = policy.maxRequestBytes
         val out = ByteArrayOutputStream(declaredLength?.coerceIn(0L, 65_536L)?.toInt() ?: 4096)
         val chunk = ByteArray(8192)
         var totalRead = 0L
@@ -1443,7 +1454,7 @@ class EngineHttpServer(
     private suspend fun handleTranscriptions(call: ApplicationCall) {
         ensureAidinAttached()
         val locality = resolveLocality(call) ?: return
-        val request = receiveBoundedJson<TranscriptionRequest>(call) ?: return
+        val request = receiveBoundedJson<TranscriptionRequest>(call, policy.maxTranscriptionRequestBytes) ?: return
         val sensitivePrompts = listOfNotNull(request.prompt?.takeIf { it.length >= 4 })
 
         if (request.model.isBlank()) {
