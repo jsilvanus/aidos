@@ -381,6 +381,7 @@ Before reviewing any PR:
 5. **Is error handling present?** — What happens when things go wrong?
 6. **Are permissions checked?** — RFC-0003 compliance.
 7. **Is it documented?** — Code comments link to RFCs where relevant, and each affected RFC's `## Implementation Files` YAML list is updated.
+8. **Does it change the threat model?** — If it touches a trust boundary, a listener, a credential or token, a permission or taint mapping, a model loader, or a tool that runs code, `docs/threat-model.md` is updated in the same PR.
 
 ## License
 

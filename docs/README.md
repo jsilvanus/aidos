@@ -22,6 +22,10 @@ An index into the three levels of plan: RFC-0099 for the phases and their ration
 [the MVP roadmap](./mvp-roadmap.md) for the ordered work breakdown, and
 [`PIPELINE.md`](../PIPELINE.md) for live progress.
 
+### [Threat model](./threat-model.md)
+
+Who can attack Aidos, through which path, which control stops them, and which risks are knowingly open. Each control names its code and its test.
+
 ### [Decisions](./decisions.md)
 
 Why the architecture is this and not something else, what each choice forecloses, and what it
