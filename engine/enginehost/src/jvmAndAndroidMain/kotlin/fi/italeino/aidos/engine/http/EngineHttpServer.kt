@@ -52,8 +52,15 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -89,8 +96,19 @@ data class EngineApiPolicy(
     val maxEmbeddingInputChars: Int = 64_000,
     /** Maximum decoded audio size in bytes for a transcription request (default 25 MiB). */
     val maxAudioBytes: Int = 25 * 1024 * 1024,
-    /** Per-request timeout in milliseconds covering admission, model load, and execution (default 120s). */
+    /**
+     * Per-request timeout in milliseconds (default 120s). For a request answered in one piece it
+     * covers admission, model load and execution. For a streamed request it covers admission and
+     * model load only: once tokens flow, [streamIdleTimeoutMs] governs instead.
+     */
     val requestTimeoutMs: Long = 120_000L,
+    /**
+     * Longest silence allowed inside a streamed response, in milliseconds (default 120s; 0 or less
+     * disables). A stream that is still producing tokens is healthy however long it runs: at
+     * phone speeds the default 2048 tokens take longer than [requestTimeoutMs], and a total limit
+     * cut such answers off mid-sentence. What marks a stalled generation is silence.
+     */
+    val streamIdleTimeoutMs: Long = 120_000L,
 ) {
     /**
      * Body limit for `/v1/audio/transcriptions`. The audio travels base64-encoded inside the JSON
@@ -500,11 +518,37 @@ class EngineHttpServer(
     private suspend fun <T> executeManaged(
         modelId: String,
         locality: Locality,
+        /** True when [block] streams its answer and applies [EngineApiPolicy.streamIdleTimeoutMs] itself. */
+        streaming: Boolean = false,
         block: suspend (ModelAdapter, Placement) -> T,
     ): Result<T> {
         val timeoutMs = policy.requestTimeoutMs
         if (timeoutMs <= 0L) {
             return inferenceManager.execute(modelId, locality, block)
+        }
+        if (streaming) {
+            // The limit runs until the model is admitted and loaded, which is when [block] starts.
+            return coroutineScope {
+                val started = CompletableDeferred<Unit>()
+                val work = async {
+                    inferenceManager.execute(modelId, locality) { adapter, placement ->
+                        started.complete(Unit)
+                        block(adapter, placement)
+                    }
+                }
+                val begun = withTimeoutOrNull(timeoutMs.milliseconds) {
+                    select<Unit> {
+                        started.onAwait { }
+                        work.onJoin { }
+                    }
+                }
+                if (begun == null) {
+                    work.cancelAndJoin()
+                    Result.failure(EngineRequestTimeoutException("Inference request timed out after ${timeoutMs}ms waiting for the model"))
+                } else {
+                    work.await()
+                }
+            }
         }
         return try {
             val outcome = withTimeout(timeoutMs.milliseconds) {
@@ -696,7 +740,7 @@ class EngineHttpServer(
             }
 
             if (request.stream) {
-                val streamResult = executeManaged(request.model, locality) { adapter, placement ->
+                val streamResult = executeManaged(request.model, locality, streaming = true) { adapter, placement ->
                     call.response.header(PLACEMENT_HEADER, placement.wire)
                     call.response.header(ROUTE_HEADER, "local")
                     streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
@@ -842,7 +886,7 @@ class EngineHttpServer(
             val primary = routes.first()
             when (primary) {
                 is ResolvedCandidateRoute.LocalModel -> {
-                    val streamResult = executeManaged(primary.modelId, locality) { adapter, _ ->
+                    val streamResult = executeManaged(primary.modelId, locality, streaming = true) { adapter, _ ->
                         call.response.header(PLACEMENT_HEADER, primary.placement.wire)
                         call.response.header(ROUTE_HEADER, primary.routeHeader)
                         streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
@@ -1110,37 +1154,73 @@ class EngineHttpServer(
         call.response.header(HttpHeaders.Connection, "keep-alive")
 
         call.respondBytesWriter(status = HttpStatusCode.OK) {
+            val idleMs = policy.streamIdleTimeoutMs
             try {
-                adapter.invokeStreaming(modelRequest).collect { event ->
-                    when (event) {
-                        is ModelStreamEvent.Delta -> {
-                            val chunk = ChatCompletionChunk(
-                                id = completionId,
-                                created = System.currentTimeMillis() / 1000,
-                                model = modelId,
-                                choices = listOf(ChunkChoice(0, ChunkDelta(content = event.text), null))
-                            )
-                            writeStringUtf8("data: ${wireJson.encodeToString(chunk)}\n\n")
-                            flush()
+                coroutineScope {
+                    // Events arrive through a channel so that the wait for each one can be bounded.
+                    val events = produce { adapter.invokeStreaming(modelRequest).collect { send(it) } }
+                    while (true) {
+                        val next = if (idleMs > 0L) {
+                            withTimeoutOrNull(idleMs.milliseconds) { events.receiveCatching() }
+                        } else {
+                            events.receiveCatching()
                         }
-                        is ModelStreamEvent.Done -> {
-                            val finalChunk = ChatCompletionChunk(
-                                id = completionId,
-                                created = System.currentTimeMillis() / 1000,
-                                model = modelId,
-                                choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), event.response.stopReason?.name?.lowercase()))
-                            )
-                            writeStringUtf8("data: ${wireJson.encodeToString(finalChunk)}\n\n")
+                        if (next == null) {
+                            // Silence, not length, is what marks a stalled generation.
+                            if (adapter is CancellableModelAdapter) adapter.cancelCurrentInference()
+                            events.cancel()
+                            throw EngineRequestTimeoutException("Inference stream produced nothing for ${idleMs}ms")
                         }
-                        is ModelStreamEvent.Failed -> {
-                            val (_, detail) = classifyError(event.error, sensitivePrompts)
-                            writeStringUtf8(
-                                "data: ${wireJson.encodeToString(ErrorResponse(detail))}\n\n"
-                            )
+                        val event = next.getOrNull() ?: run {
+                            next.exceptionOrNull()?.let { throw it }
+                            return@coroutineScope
+                        }
+                        when (event) {
+                            is ModelStreamEvent.Delta -> {
+                                val chunk = ChatCompletionChunk(
+                                    id = completionId,
+                                    created = System.currentTimeMillis() / 1000,
+                                    model = modelId,
+                                    choices = listOf(ChunkChoice(0, ChunkDelta(content = event.text), null))
+                                )
+                                writeStringUtf8("data: ${wireJson.encodeToString(chunk)}\n\n")
+                                flush()
+                            }
+                            is ModelStreamEvent.Done -> {
+                                // Tool calls are only known once generation ends; they ride on the final chunk.
+                                val toolCalls = event.response.outputs.filterIsInstance<ToolCallOutput>().map { tc ->
+                                    ToolCall(id = tc.call.callId, function = ToolFunctionCall(tc.call.toolName, tc.call.arguments.toString()))
+                                }
+                                val finalChunk = ChatCompletionChunk(
+                                    id = completionId,
+                                    created = System.currentTimeMillis() / 1000,
+                                    model = modelId,
+                                    choices = listOf(
+                                        ChunkChoice(
+                                            0,
+                                            ChunkDelta(content = "", tool_calls = toolCalls.ifEmpty { null }),
+                                            event.response.stopReason?.name?.lowercase(),
+                                        )
+                                    )
+                                )
+                                writeStringUtf8("data: ${wireJson.encodeToString(finalChunk)}\n\n")
+                            }
+                            is ModelStreamEvent.Failed -> {
+                                val (_, detail) = classifyError(event.error, sensitivePrompts)
+                                writeStringUtf8(
+                                    "data: ${wireJson.encodeToString(ErrorResponse(detail))}\n\n"
+                                )
+                            }
                         }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
+                val detail = ErrorDetail("Inference request timed out", "timeout_error", code = "request_timeout")
+                writeStringUtf8("data: ${wireJson.encodeToString(ErrorResponse(detail))}\n\n")
+                writeStringUtf8("data: [DONE]\n\n")
+                flush()
+                throw e
+            } catch (e: EngineRequestTimeoutException) {
                 val detail = ErrorDetail("Inference request timed out", "timeout_error", code = "request_timeout")
                 writeStringUtf8("data: ${wireJson.encodeToString(ErrorResponse(detail))}\n\n")
                 writeStringUtf8("data: [DONE]\n\n")

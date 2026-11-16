@@ -305,6 +305,90 @@ class EngineHttpServerHardeningTest {
     // 2. Timeout Policy & Native Cancellation Propagation
     // -------------------------------------------------------------------------
 
+    /** Emits [tokens] deltas [gapMs] apart, then stalls for [stallMs] before finishing with [outputs]. */
+    private fun streamingAdapter(
+        tokens: Int,
+        gapMs: Long,
+        stallMs: Long = 0,
+        cancelCalled: AtomicInteger = AtomicInteger(0),
+        outputs: List<dev.aidos.kernel.ModelOutput> = listOf(TextOutput("done")),
+    ) = object : CancellableModelAdapter {
+        override val providerId = "test"
+        override val modelId = "test-model"
+        override val modelVersion = "1.0"
+        override val contextWindow = 2048
+        override val isLocal = true
+        override fun supportsNativeToolCalls() = false
+        override suspend fun invoke(request: ModelRequest): Result<ModelResponse> = error("streaming only")
+        override suspend fun invokeStreaming(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+            repeat(tokens) {
+                delay(gapMs)
+                emit(ModelStreamEvent.Delta("t$it "))
+            }
+            delay(stallMs)
+            emit(ModelStreamEvent.Done(ModelResponse(outputs, StopReason.END_TURN, Usage(1, tokens, tokens + 1), ModelRef(modelId, modelVersion))))
+        }
+        override fun cancelCurrentInference() {
+            cancelCalled.incrementAndGet()
+        }
+    }
+
+    private suspend fun ApplicationTestBuilder.streamChat(adapter: ModelAdapter, policy: EngineApiPolicy): String {
+        val tokenManager = TokenManager()
+        val runtime = MockModelRuntime(adapter)
+        val server = EngineHttpServer(tokenManager, runtime, InferenceRequestManager(runtime), policy = policy)
+        application { server.installInto(this) }
+        return client.post("/v1/chat/completions") {
+            bearerAuth(tokenManager.generateNewToken().token)
+            contentType(ContentType.Application.Json)
+            setBody(
+                hardeningJson.encodeToString(
+                    ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage("user", "go")), stream = true)
+                )
+            )
+        }.bodyAsText()
+    }
+
+    @Test
+    fun timeoutPolicy_doesNotCutAStreamThatIsStillProducingTokens() = testApplication {
+        // 10 tokens 40 ms apart run for 400 ms: well past the 150 ms request limit, never silent
+        // for 150 ms. The request limit used to cover the whole stream and cut it off.
+        val body = streamChat(
+            streamingAdapter(tokens = 10, gapMs = 40),
+            EngineApiPolicy(requestTimeoutMs = 150L, streamIdleTimeoutMs = 150L),
+        )
+
+        assertTrue(body.contains("t9 "), body)
+        assertFalse(body.contains("request_timeout"), body)
+        assertTrue(body.trim().endsWith("data: [DONE]"))
+    }
+
+    @Test
+    fun timeoutPolicy_endsAStreamThatGoesSilentAndCancelsTheGeneration() = testApplication {
+        val cancelCalled = AtomicInteger(0)
+        val body = streamChat(
+            streamingAdapter(tokens = 2, gapMs = 10, stallMs = 5_000, cancelCalled = cancelCalled),
+            EngineApiPolicy(requestTimeoutMs = 5_000L, streamIdleTimeoutMs = 150L),
+        )
+
+        assertTrue(body.contains("t1 "), body)
+        assertTrue(body.contains("\"code\":\"request_timeout\""), body)
+        assertTrue(body.trim().endsWith("data: [DONE]"))
+        assertEquals(1, cancelCalled.get())
+    }
+
+    @Test
+    fun streaming_carriesToolCallsOnTheFinalChunk() = testApplication {
+        val call = dev.aidos.kernel.ToolCall("call_1", "clock.now", kotlinx.serialization.json.JsonObject(emptyMap()), null, null)
+        val body = streamChat(
+            streamingAdapter(tokens = 1, gapMs = 1, outputs = listOf(dev.aidos.kernel.ToolCallOutput(call))),
+            EngineApiPolicy(),
+        )
+
+        assertTrue(body.contains("\"tool_calls\":[{\"id\":\"call_1\""), body)
+        assertTrue(body.contains("\"name\":\"clock.now\""), body)
+    }
+
     @Test
     fun timeoutPolicy_cancelsStalledInferenceReturns504AndFreesAdmissionSlot() = testApplication {
         val cancelCalled = AtomicInteger(0)
