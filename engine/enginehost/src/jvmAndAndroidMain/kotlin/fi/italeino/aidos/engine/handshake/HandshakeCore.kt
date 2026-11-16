@@ -78,17 +78,35 @@ class HandshakeCore(
     /**
      * @param callerPackage the package Binder identified for the calling UID, or null if it could
      *   not be resolved — which is denied, never guessed at.
+     * @param signerSha256 SHA-256 of the caller's signing certificate, or null on a host that has
+     *   none to read. RFC-0103 (amendment 2026-11-16): the approval belongs to the app that was
+     *   approved, so the same package name under a different signer is asked for again.
      * @throws IllegalStateException if the caller is approved but the HTTP server has no bound port.
      */
-    suspend fun handshake(callerPackage: String?): HandshakeReply {
+    suspend fun handshake(callerPackage: String?, signerSha256: String? = null): HandshakeReply {
         if (callerPackage == null) return HandshakeReply(HandshakeWire.STATUS_DENIED)
 
         val existing = store.getApproval(callerPackage)
         if (existing == null) {
             val displayName = resolveDisplayName(callerPackage)
             store.recordFirstHandshake(callerPackage, displayName)
+            if (signerSha256 != null) store.pinSigner(callerPackage, signerSha256, resetApproval = false)
             onFirstRequest(callerPackage, displayName)
             return HandshakeReply(HandshakeWire.STATUS_PENDING_APPROVAL)
+        }
+        val pinned = existing.signerSha256
+        when {
+            // A record from before the pin takes the signer it is first seen with.
+            pinned == null && signerSha256 != null -> store.pinSigner(callerPackage, signerSha256, resetApproval = false)
+            pinned != null && signerSha256 == null -> return HandshakeReply(HandshakeWire.STATUS_DENIED)
+            pinned != null && pinned != signerSha256 -> {
+                // Another app has taken the name. It gets nothing the first one was given.
+                tokenManager.revoke(callerPackage)
+                if (existing.status == AppApprovalStatus.DENIED) return HandshakeReply(HandshakeWire.STATUS_DENIED)
+                store.pinSigner(callerPackage, signerSha256!!, resetApproval = true)
+                onFirstRequest(callerPackage, resolveDisplayName(callerPackage))
+                return HandshakeReply(HandshakeWire.STATUS_PENDING_APPROVAL)
+            }
         }
         store.recordHandshakeAttempt(callerPackage)
 
