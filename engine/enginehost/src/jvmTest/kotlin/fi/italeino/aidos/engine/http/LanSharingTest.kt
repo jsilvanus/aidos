@@ -149,15 +149,34 @@ class LanSharingTest {
     }
 
     @Test
-    fun `pairing codes expire, and wrong guesses burn them`() {
+    fun `pairing codes expire, and wrong guesses lock out the address that made them, not the code`() {
         val codes = PairingCodes(grants, now = { clock.get() }, codeLifetimeSeconds = 60, maxAttempts = 3)
         val expiring = codes.start("a", 3600)
         clock.set(clock.get().plusSeconds(61))
         assertNull(codes.redeem(expiring))
 
-        val guessed = codes.start("b", 3600)
-        repeat(3) { assertNull(codes.redeem("00000000")) }
-        assertNull(codes.redeem(guessed)) // burned by the failed guesses
+        val code = codes.start("b", 3600)
+        repeat(3) { assertNull(codes.redeem("00000000", source = "10.0.0.66")) }
+        // The guesser is refused from now on, even with the right code...
+        assertNull(codes.redeem(code, source = "10.0.0.66"))
+        // ...but it could not cancel the pairing: the user's own device still gets in.
+        assertEquals("b", codes.redeem(code, source = "10.0.0.7")?.grant?.label)
+        // And the lock-out ends with its minute.
+        val later = codes.start("c", 3600)
+        clock.set(clock.get().plusSeconds(61))
+        val fresh = codes.start("d", 3600)
+        assertNull(codes.redeem(later, source = "10.0.0.66"), "expired meanwhile")
+        assertEquals("d", codes.redeem(fresh, source = "10.0.0.66")?.grant?.label)
+    }
+
+    @Test
+    fun `wrong guesses from many addresses together are capped`() {
+        val codes = PairingCodes(grants, now = { clock.get() })
+        val code = codes.start("tablet", 3600)
+        repeat(30) { assertNull(codes.redeem("00000000", source = "10.0.1.$it")) }
+        assertNull(codes.redeem(code, source = "10.0.0.7"), "the cap holds for everyone until the minute passes")
+        clock.set(clock.get().plusSeconds(61))
+        assertEquals("tablet", codes.redeem(code, source = "10.0.0.7")?.grant?.label)
     }
 
     @Test
