@@ -60,6 +60,17 @@ class LlamaCppAdapter(
     @Volatile
     private var activeIterator: LlamaIterator? = null
 
+    /**
+     * Set by [cancelCurrentInference]; the token loop polls it after every token and stops itself.
+     *
+     * The loop must be the one to cancel the native task. Cancelling from another thread while the
+     * loop is parked inside `receiveCompletion` makes the binding drop the task's result queue, so
+     * that blocked read never returns: the generating thread leaks forever (measured on a real
+     * 3B GGUF) and `close()` frees the model under it.
+     */
+    @Volatile
+    private var cancelRequested: Boolean = false
+
     private fun loadModel(
         modelPath: File,
         contextSize: Int,
@@ -172,9 +183,10 @@ class LlamaCppAdapter(
             var stoppedOnSequence = false
             val longestStop = request.stopConditions.maxOfOrNull { it.length } ?: 0
 
+            cancelRequested = false
             activeIterator = tokens
             try {
-                while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
+                while (tokens.hasNext() && tokenCount < request.maxOutputTokens && !cancelRequested) {
                     val token = tokens.next()
                     output.append(token.text)
                     tokenCount++
@@ -250,8 +262,12 @@ class LlamaCppAdapter(
         return stopSequences.any { it.isNotEmpty() && output.indexOf(it, from) >= 0 }
     }
 
+    /**
+     * Ask the running generation to stop. Takes effect after the token in flight (or, during prompt
+     * prefill, at the first token); the generating thread releases the native task itself.
+     */
     override fun cancelCurrentInference() {
-        activeIterator?.let { runCatching { it.cancel() } }
+        if (activeIterator != null) cancelRequested = true
     }
 
     private fun estimateTokens(text: String): Int =
@@ -261,10 +277,17 @@ class LlamaCppAdapter(
         if (closed) return
         closed = true
         cancelCurrentInference()
+        // Free the model only once the generating thread has left native code.
+        val deadline = System.nanoTime() + CLOSE_WAIT_NANOS
+        while (activeIterator != null && System.nanoTime() < deadline) Thread.sleep(10)
         try {
             model.close()
         } catch (e: Exception) {
             System.err.println("Error closing llama.cpp model: ${e.message}")
         }
+    }
+
+    private companion object {
+        const val CLOSE_WAIT_NANOS = 10_000_000_000L
     }
 }

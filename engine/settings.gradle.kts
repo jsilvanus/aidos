@@ -83,6 +83,9 @@ include(":voice")
 include(":enginehost")
 include(":engineui")
 include(":androidapp")
-include(":cli")
+// Engine-only CLI. Not ":cli": that name is the agent CLI (../agent/cli, included above), so
+// `:cli:run` used to launch the agent CLI and the engine CLI was unreachable.
+include(":engine-cli")
+project(":engine-cli").projectDir = file("cli")
 include(":agenthost")
 include(":desktopapp")

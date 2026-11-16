@@ -60,7 +60,8 @@ class EngineCliTest {
 
         assertTrue(result.isSuccess)
         assertEquals(2, result.getOrThrow().size)
-        assertEquals(4, runtime.requests.last().messages.size)
+        // first user turn, its reply, second user turn: the second reply is not yet part of any request.
+        assertEquals(3, runtime.requests.last().messages.size)
         assertTrue(runtime.loaded().isEmpty())
     }
 
