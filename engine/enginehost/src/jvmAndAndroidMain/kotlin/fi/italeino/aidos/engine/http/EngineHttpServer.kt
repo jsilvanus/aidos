@@ -53,12 +53,14 @@ import io.ktor.server.routing.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.produce
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
@@ -121,6 +123,9 @@ data class EngineApiPolicy(
 }
 
 class EngineRequestTimeoutException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/** The split model's `llama-server` refused this one request (for example, longer than its context); the model is still up. */
+class SplitRequestRejectedException(message: String) : RuntimeException(message)
 private val http451UnavailableForLegalReasons = HttpStatusCode(451, "Unavailable For Legal Reasons")
 
 private val wireJson = Json {
@@ -953,21 +958,11 @@ class EngineHttpServer(
             is ResolvedCandidateRoute.LocalSplitAnchor -> {
                 val node = aidinNode() ?: throw ModelUnavailableException(route.modelId)
                 val anchor = node.activeAnchorSupervisor ?: throw ModelUnavailableException(route.modelId)
-                val promptText = request.messages.joinToString("\n") { it.content.orEmpty() }
-                when (val outcome = anchor.invoke(promptText, route.planVersion)) {
-                    is SplitInferenceOutcome.Success -> {
-                        val msg = ChatMessage(role = "assistant", content = outcome.text)
-                        val resp = ChatCompletionResponse(
-                            id = "chatcmpl-${UUID.randomUUID()}",
-                            created = System.currentTimeMillis() / 1000,
-                            model = request.model,
-                            choices = listOf(Choice(0, msg, "stop")),
-                            usage = TokenUsage(0, 0, 0),
-                        )
-                        route to resp
-                    }
+                when (val outcome = splitChat(anchor, request, route.planVersion)) {
+                    is SplitInferenceOutcome.Success -> route to splitChatResponse(outcome, request.model)
                     is SplitInferenceOutcome.PlanChanged -> throw PlanChangedException("Split plan version changed")
                     is SplitInferenceOutcome.Unavailable -> throw ModelUnavailableException(route.modelId, outcome.reason)
+                    is SplitInferenceOutcome.Rejected -> throw SplitRequestRejectedException(outcome.reason)
                 }
             }
             is ResolvedCandidateRoute.PeerDelegation -> {
@@ -991,6 +986,34 @@ class EngineHttpServer(
         }
     }
 
+    /**
+     * Runs [request] on the split model this Engine anchors. The turns keep their roles so
+     * `llama-server` renders them with the model's chat template (RFC-0022), and the request's own
+     * limits and sampling apply. The call blocks on the child process, so it leaves the request
+     * thread.
+     */
+    private suspend fun splitChat(
+        anchor: dev.aidos.aidin.AnchorProcessSupervisor,
+        request: ChatCompletionRequest,
+        planVersion: Long?,
+    ): SplitInferenceOutcome = withContext(Dispatchers.IO) {
+        anchor.chat(
+            messages = request.messages.map { dev.aidos.aidin.SplitChatMessage(it.role, it.content.orEmpty()) },
+            expectedPlanVersion = planVersion,
+            maxTokens = request.max_tokens,
+            temperature = request.temperature.toDouble(),
+            topP = request.top_p.toDouble(),
+        )
+    }
+
+    private fun splitChatResponse(outcome: SplitInferenceOutcome.Success, model: String) = ChatCompletionResponse(
+        id = "chatcmpl-${UUID.randomUUID()}",
+        created = System.currentTimeMillis() / 1000,
+        model = model,
+        choices = listOf(Choice(0, ChatMessage(role = "assistant", content = outcome.text), outcome.finishReason)),
+        usage = TokenUsage(outcome.promptTokens, outcome.completionTokens, outcome.promptTokens + outcome.completionTokens),
+    )
+
     private suspend fun streamLocalSplitAnchor(
         call: ApplicationCall,
         route: ResolvedCandidateRoute.LocalSplitAnchor,
@@ -1003,13 +1026,12 @@ class EngineHttpServer(
             respondClassifiedError(call, ModelUnavailableException(route.modelId), sensitivePrompts)
             return
         }
-        val promptText = request.messages.joinToString("\n") { it.content.orEmpty() }
         val completionId = "chatcmpl-${UUID.randomUUID()}"
         call.response.header(HttpHeaders.ContentType, ContentType.Text.EventStream.toString())
         call.response.header(HttpHeaders.CacheControl, "no-cache")
         call.response.header(HttpHeaders.Connection, "keep-alive")
         call.respondBytesWriter(status = HttpStatusCode.OK) {
-            when (val outcome = anchor.invoke(promptText, route.planVersion)) {
+            when (val outcome = splitChat(anchor, request, route.planVersion)) {
                 is SplitInferenceOutcome.Success -> {
                     val chunk = ChatCompletionChunk(
                         id = completionId,
@@ -1022,9 +1044,16 @@ class EngineHttpServer(
                         id = completionId,
                         created = System.currentTimeMillis() / 1000,
                         model = request.model,
-                        choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), "stop")),
+                        choices = listOf(ChunkChoice(0, ChunkDelta(content = ""), outcome.finishReason)),
                     )
                     writeStringUtf8("data: ${wireJson.encodeToString(doneChunk)}\n\n")
+                    writeStringUtf8("data: [DONE]\n\n")
+                    flush()
+                }
+                is SplitInferenceOutcome.Rejected -> {
+                    // The request was refused, the helpers are fine: not a peer_lost, and not retryable.
+                    val error = ErrorResponse(ErrorDetail(outcome.reason, "invalid_request_error", code = "invalid_request"))
+                    writeStringUtf8("data: ${wireJson.encodeToString(error)}\n\n")
                     writeStringUtf8("data: [DONE]\n\n")
                     flush()
                 }
@@ -1835,23 +1864,15 @@ class EngineHttpServer(
         val anchor = aidinNode()?.activeAnchorSupervisor
         val plan = anchor?.activePlan
         if (anchor != null && plan != null && plan.modelId == chatReq.model) {
-            val promptText = chatReq.messages.joinToString("\n") { it.content.orEmpty() }
-            return when (val outcome = anchor.invoke(promptText, request.planVersion)) {
+            return when (val outcome = splitChat(anchor, chatReq, request.planVersion)) {
                 is SplitInferenceOutcome.Success -> {
-                    val msg = ChatMessage(role = "assistant", content = outcome.text)
-                    val resp = ChatCompletionResponse(
-                        id = "chatcmpl-${UUID.randomUUID()}",
-                        created = System.currentTimeMillis() / 1000,
-                        model = chatReq.model,
-                        choices = listOf(Choice(0, msg, "stop")),
-                        usage = TokenUsage(0, 0, 0),
-                    )
+                    val resp = splitChatResponse(outcome, chatReq.model)
                     if (request.stream || chatReq.stream) {
                         val chunk = ChatCompletionChunk(
                             id = resp.id,
                             created = resp.created,
                             model = chatReq.model,
-                            choices = listOf(ChunkChoice(0, ChunkDelta(content = outcome.text), "stop")),
+                            choices = listOf(ChunkChoice(0, ChunkDelta(content = outcome.text), outcome.finishReason)),
                         )
                         emitStream(LinkMessage.DelegateStreamEvent(request.requestId, wireJson.encodeToString(chunk), done = true))
                     }
@@ -1861,6 +1882,11 @@ class EngineHttpServer(
                     requestId = request.requestId,
                     status = 409,
                     bodyJson = wireJson.encodeToString(ErrorResponse(ErrorDetail("Split plan changed during request", "plan_changed", code = "plan_changed"))),
+                )
+                is SplitInferenceOutcome.Rejected -> LinkMessage.DelegateResponse(
+                    requestId = request.requestId,
+                    status = 400,
+                    bodyJson = wireJson.encodeToString(ErrorResponse(ErrorDetail(outcome.reason, "invalid_request_error", code = "invalid_request"))),
                 )
                 is SplitInferenceOutcome.Unavailable -> LinkMessage.DelegateResponse(
                     requestId = request.requestId,
@@ -2099,6 +2125,12 @@ class EngineHttpServer(
                     sanitizeErrorMessage(rawMessage, "Peer is busy; retry later", sensitivePrompts),
                     "peer_busy",
                     code = "peer_busy"
+                )
+            error is SplitRequestRejectedException -> HttpStatusCode.BadRequest to
+                ErrorDetail(
+                    sanitizeErrorMessage(rawMessage, "The model refused the request", sensitivePrompts),
+                    "invalid_request_error",
+                    code = "invalid_request"
                 )
             error is PlanChangedException -> HttpStatusCode.Conflict to
                 ErrorDetail(

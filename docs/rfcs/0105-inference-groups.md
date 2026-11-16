@@ -378,8 +378,10 @@ files:
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/NativeSplitInferenceTest.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/PeerLinkTest.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/PeerTrackerTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitChatAndRecoveryTest.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitHostingTest.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitInferenceTest.kt
+  - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/SplitPlannerCapacityTest.kt
   - engine/aidin/src/jvmTest/kotlin/dev/aidos/aidin/TrustStoreTest.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsScreen.kt
