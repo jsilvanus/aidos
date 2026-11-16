@@ -314,6 +314,7 @@ files:
   - agent/http/src/jvmMain/kotlin/dev/aidos/http/EgressClient.kt
   - agent/http/src/jvmMain/kotlin/dev/aidos/http/EgressSecurityPolicy.kt
   - agent/http/src/jvmMain/kotlin/dev/aidos/http/HttpTool.kt
+  - agent/http/src/jvmTest/kotlin/dev/aidos/http/EgressPinningTest.kt
   - agent/http/src/jvmTest/kotlin/dev/aidos/http/EgressSecurityPolicyTest.kt
   - agent/http/src/jvmTest/kotlin/dev/aidos/http/HttpToolTest.kt
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
