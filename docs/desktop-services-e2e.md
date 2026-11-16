@@ -30,6 +30,8 @@ gradlew.bat :desktopapp:run --args="--daemon"
 
 `~/.aidos/engine.json` should say `READY` with the running process's pid. In a second terminal start the window the normal way: it must show **no second Engine** (the Status tab says the Engine is running on the port in `engine.json`), and Sharing, Peers, Tunnels, Models, Agents and the model detail screen all work. Close the window: the Engine keeps running. Stop it with Ctrl+C in the first terminal, or from the tray (step 3).
 
+**Admin token (per start, loopback only).** Note the `token` in `engine.json`, stop the Engine, start it again: the file now holds a different token, and `curl -H "Authorization: Bearer <old token>" http://127.0.0.1:<port>/v1/admin/status` answers 401 while the new one answers 200. With the window or tray still open across the restart, they must keep working without being restarted (they re-read the file once on a 401). After a clean stop `engine.json` is gone. On Windows, check that only your user has access to the file (`icacls %USERPROFILE%\.aidos\engine.json`).
+
 ## 2. The tray, by hand
 
 ```
