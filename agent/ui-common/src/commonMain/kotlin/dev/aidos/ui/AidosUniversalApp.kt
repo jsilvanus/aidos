@@ -41,6 +41,7 @@ import dev.aidos.ui.frontdoors.inbox.ActionInboxScreen
 import dev.aidos.ui.frontdoors.projects.ProjectHubPresenter
 import dev.aidos.ui.frontdoors.projects.ProjectHubScreen
 import dev.aidos.ui.layout.NavigationDestination
+import dev.aidos.ui.layout.ViewModeCatalog
 import dev.aidos.ui.layout.ResponsiveScaffold
 import dev.aidos.ui.palette.CommandItemKind
 import dev.aidos.ui.palette.CommandPaletteModal
@@ -77,23 +78,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-
-private data class ViewModeEntry(val id: String, val label: String)
-
-private val ALL_VIEW_MODES = listOf(
-    ViewModeEntry("inbox", "Inbox"),
-    ViewModeEntry("outliner", "Outliner"),
-    ViewModeEntry("pipeline", "Relay River"),
-    ViewModeEntry("metro", "Metro Map"),
-    ViewModeEntry("kanban", "Cartridge Dock"),
-    ViewModeEntry("radar", "Radial Radar"),
-    ViewModeEntry("breadboard", "Breadboard"),
-    ViewModeEntry("canvas", "Mind-Map ZUI"),
-    ViewModeEntry("timeline", "Timeline"),
-    ViewModeEntry("livingdoc", "Living Doc"),
-    ViewModeEntry("gates", "Gates"),
-    ViewModeEntry("projects", "Projects"),
-)
 
 /**
  * Universal Adaptive Application Root (RFC-0106, RFC-0111, RFC-0112).
@@ -195,7 +179,7 @@ fun AidosUniversalApp(
 
     val commandPalettePresenter = remember {
         CommandPalettePresenter(
-            allCommands = ALL_VIEW_MODES.map { mode ->
+            allCommands = ViewModeCatalog.all.map { mode ->
                 PaletteItem("nav-${mode.id}", mode.label, "Switch to ${mode.label}", CommandItemKind.COMMAND) {
                     selectedDestinationId = mode.id
                 }
@@ -239,16 +223,13 @@ fun AidosUniversalApp(
         )
     }
 
-    val destinations = listOf(
-        NavigationDestination("inbox", "Inbox", { Text("📥") }),
-        NavigationDestination("outliner", "Outliner", { Text("🌳") }),
-        NavigationDestination("canvas", "Canvas", { Text("🌌") }),
-        NavigationDestination("livingdoc", "Document", { Text("📝") }),
-        NavigationDestination("projects", "Projects", { Text("💼") }),
-    )
+    // RFC-0124: which views are primary navigation depends on the form factor (ViewModeCatalog).
+    fun destinationsFor(formFactor: dev.aidos.ui.layout.FormFactor) =
+        ViewModeCatalog.primary(formFactor).map { NavigationDestination(it.id, it.label, { Text(it.icon) }) }
 
     ResponsiveScaffold(
-        destinations = destinations,
+        destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
+        destinationsFor = ::destinationsFor,
         selectedDestinationId = selectedDestinationId,
         onDestinationSelected = { id -> selectedDestinationId = id },
         topBar = {
@@ -330,7 +311,7 @@ fun AidosUniversalApp(
                 horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
                 contentPadding = PaddingValues(horizontal = SpacingTokens.xs),
             ) {
-                items(ALL_VIEW_MODES, key = { it.id }) { mode ->
+                items(ViewModeCatalog.offered(formFactor), key = { it.id }) { mode ->
                     val isSelected = selectedDestinationId == mode.id
                     Box(
                         modifier = Modifier

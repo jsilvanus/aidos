@@ -4,7 +4,7 @@ Status: **Implemented** 2026-11-15
 Non-MVP Work: **None**
 Phase: **3 (UX & Multi-Surface)**
 Depends on: **0010 (Projects), 0019 (Execution Graph), 0024 (Resource Graph), 0050 (Mobile Architecture), 0051 (Desktop Architecture), 0052 (Runtime API), 0103 (Aidos Engine), 0106 (Desktop Generative UI), 0109 (Capture Device Protocol), 0110 (Dual-Mode Intent Graph)**
-Related: **0008 (Agent Loop), 0012 (Intent Graph — superseded), 0025 (Prompt Assembly), 0049 (Platform Capability Profiles), 0057 (Glanceable and Hands-Free)**
+Related: **0008 (Agent Loop), 0012 (Intent Graph — superseded), 0025 (Prompt Assembly), 0049 (Platform Capability Profiles), 0057 (Glanceable and Hands-Free)**, **0124 (unified UI, owns the view matrix)**
 
 ## Abstract
 

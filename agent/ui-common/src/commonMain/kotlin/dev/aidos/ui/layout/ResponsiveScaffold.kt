@@ -44,6 +44,7 @@ fun navigationTypeForFormFactor(formFactor: FormFactor): ScaffoldNavigationType 
 @Composable
 fun ResponsiveScaffold(
     destinations: List<NavigationDestination>,
+    destinationsFor: ((FormFactor) -> List<NavigationDestination>)? = null,
     selectedDestinationId: String,
     onDestinationSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -55,6 +56,8 @@ fun ResponsiveScaffold(
         val widthDp = maxWidth.value
         val formFactor = computeFormFactor(widthDp)
         val navType = navigationTypeForFormFactor(formFactor)
+        // RFC-0124: a form factor may offer a different set of primary views (the phone drops the canvas).
+        val destinations = destinationsFor?.invoke(formFactor) ?: destinations
 
         Box(modifier = Modifier.fillMaxSize()) {
             when (navType) {
