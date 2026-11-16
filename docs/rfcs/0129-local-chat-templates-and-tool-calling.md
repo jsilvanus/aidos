@@ -91,6 +91,27 @@ A request's `temperature` and `top_p` override the per-model run settings for th
 
 `LlamaChatPrompt` holds sections 1 to 6 and is used by `LlamaCppAdapter` (desktop) and `AndroidLlamaCppAdapter`. The two hosts cannot differ in how a request becomes a prompt. The Android adapter previously refused requests with tools; it no longer does.
 
+### 10. Thinking blocks
+
+Some local models write private reasoning before the reply, between markers. A reply may open with such a block: optional whitespace, an opening marker, any text, a closing marker. The known marker pairs are listed in `ThinkingFilter`:
+
+| Opening | Closing (any one of these) |
+|---|---|
+| `<\|channel>thought` (Gemma 4) | `<channel\|>`, `<\|channel\|>` |
+| `<think>` (Qwen, DeepSeek style) | `</think>` |
+
+The closing variants of the Gemma pair are not all confirmed against a live model; each listed variant is tested, and a variant that a real model is seen to use is the one to keep.
+
+The block is removed before anything else reads the reply:
+- It is not streamed (no `Delta` carries it), not in the returned text, not given to `ToolCallParser`, and it cannot complete a stop sequence.
+- Only a block at the very start of the reply is removed. The same markers later in the reply are ordinary text.
+- If the reply ends before the closing marker (token limit, cancel), the streamed and returned text is empty and the stop reason is unchanged.
+- Usage still counts every generated token, thinking included.
+- Under a grammar (a forced tool call) no thinking block can occur; the filter still runs and does nothing.
+- The thinking text is not exposed. The kernel is frozen, `ModelStreamEvent` has no reasoning event, and API v1 gets no field for it. Exposing it as `reasoning_content` is post-MVP work (0129.7).
+- The binding's own `reasoning_format` setting (net.ladenthin:llama 6.0.0) is left at its default. It documents only `<think>` tags on the chat path and is not used for the raw generation path. It may allow a simpler design later (0129.7).
+- Not covered: the split path through llama-server (RFC-0105), which has its own handling.
+
 ## Security
 
 The tool list, descriptions and schemas are placed in the system message. They come from tool descriptors the runtime already fences (RFC-0025), not from model output. Calls parsed from model output are untrusted input: they are validated against the offered tool set here and against the tool's schema and the caller's capabilities in the broker (RFC-0030, RFC-0018). A heuristic call keeps `rawText` for the audit trail. Prompt text is not logged by the fallback notice; only the reason is.
@@ -159,4 +180,9 @@ post_mvp:
     status: todo
     phase: P1
     done_when: "docs/android-fgs-device-test.md has a step that sends a tool request to a loaded model on the reference phone and records the parsed call"
+  - id: "0129.7"
+    title: "Expose thinking text as reasoning_content, or replace the marker filter with the binding's reasoning_format"
+    status: todo
+    phase: P2
+    done_when: "a reply's thinking text is available to callers through a versioned API change (not in API v1), or the marker list in ThinkingFilter is replaced by a binding setting proven on the raw generate() path with a real model, with tests"
 ```
