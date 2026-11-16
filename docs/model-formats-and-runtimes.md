@@ -27,7 +27,7 @@ Asked by the owner on 2026-11-16. Facts read from the Hugging Face API that day.
   1. **Desktop, no Engine change:** run a current `llama-server` with a GPU build and add it as an OpenAI-compatible provider marked local. Chat works today through `engine/providers`; images do not, because the adapter drops image blocks.
   2. **Both hosts, the real fix:** move to a llama.cpp binding built on a 2026 llama.cpp (the `net.ladenthin:llama` fork, or our own build). This is the binding decision in C.3 item 5 and the spike in RFC-0128. It also brings the projector, so Gemma 4 can take images and audio.
   3. **Later:** LiteRT-LM with the `.litertlm` files, which is where phone GPU and NPU support for Gemma is strongest.
-- Fit on the reference hardware: on the desktop's RTX 2060 with 6 GB, E2B fits fully on the GPU, E4B is borderline once the context cache is added, and 12B needs partial offload. On the OnePlus 8, E2B on the CPU is the realistic size.
+- Fit on the reference hardware: on the desktop's RTX 2060 class card with 8 GB of dedicated video memory, E2B and E4B fit fully on the GPU, and 12B (6.98 GB) is borderline once the context cache is added. This assumes the memory is free: other programs were holding 5 of the 8 GB when the owner read the figure. On the OnePlus 8, E2B on the CPU is the realistic size.
 
 ## Part A. What the repository does today (verified in code)
 
