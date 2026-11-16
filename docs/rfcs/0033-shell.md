@@ -174,13 +174,6 @@ Not included:
 - **Resource limits**: CPU, memory quotas.
 - **Pipeline support**: Full shell syntax.
 
-## Open Questions
-
-- Should dangerous commands be blocked (blacklist)?
-- Should shell output size be limited to prevent memory issues?
-- Should interactive commands be supported?
-- Should environment variables be accessible (with permission)?
-
 ## Implementation Files
 
 ```yaml
@@ -226,5 +219,11 @@ post_mvp:
     status: todo
   - id: "0033.6"
     title: "signal handling"
+    status: todo
+  - id: "0033.7"
+    title: "Cap shell output size to bound memory"
+    status: todo
+  - id: "0033.8"
+    title: "Expose environment variables to commands when the user grants permission"
     status: todo
 ```

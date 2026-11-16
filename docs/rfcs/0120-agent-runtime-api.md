@@ -67,11 +67,6 @@ The loop may run on a peer Engine (D52, RFC-0107): the origin remains the front 
 
 Built on the desktop host with route tests, the run reaper, the tool-approval queue and routed (peer) runs: all routes above, the grant, locality, engine-side tools, peer endpoints. Not built: serving on the Android host, streaming, persistence across restart, per-agent identity.
 
-## Open Questions
-
-- ~~Freeze.~~ Decided by the owner 2026-11-15: the documented core is frozen as agent API v1 under D63. The worker, guardian and routing-config fields on the wire (`role`, `parentSessionId`, `workerBrief`, `taintApprovalPolicy`, `enforcedLocality` and the `AgentRunSummaryDto` extras) are experimental and outside the freeze.
-- D48 is now settled.
-
 ## Implementation Files
 
 ```yaml

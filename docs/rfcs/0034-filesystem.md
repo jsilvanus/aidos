@@ -476,15 +476,6 @@ Write validation:
   editing a file outside Aidos, which is reconciliation (RFC-0053), not conflict detection.
 - **Search indexing** — RFC-0015's concern, not this tool's.
 
-## Open Questions
-
-- Should file permissions be mutable, or always `0644`? Mutable permissions are an escalation
-  surface for very little benefit.
-- Very large files: streaming reads versus refusing above a threshold. RFC-0045's budgets should
-  decide it with a number.
-- Trash before permanent deletion. Attractive given `delete` is irreversible, and it is a second
-  storage cost on the device with the least of it.
-
 ## Implementation Files
 
 ```yaml
@@ -521,5 +512,8 @@ post_mvp:
     status: todo
   - id: "0034.6"
     title: "content validation"
+    status: todo
+  - id: "0034.7"
+    title: "Trash before permanent deletion"
     status: todo
 ```

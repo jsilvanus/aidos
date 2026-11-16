@@ -97,12 +97,6 @@ Not in MVP: see Post-MVP Work.
 
 See the checklist below. Order of value: persistent memory bridge (needs RFC-0026 rules decided), MLS group encryption and device pairing, in-process embedding in the Aidos build, then federation and the web client.
 
-## Open Questions
-
-- ~~Delegation scope.~~ Settled by the owner 2026-11-15: the agent endpoint's `delegationScope` is an RFC-0018 capability the Engine issues, so there is one place to revoke and one audit trail. Amp's signed registry record names the capability; it does not carry authority of its own.
-- Which Amp tools are safe to expose over MCP to a non-Aidos agent? The roadmap defers the external MCP disclosure policy (`answer_from_context`, `request_progressive_disclosure`) for review.
-- ~~Message-send egress.~~ Resolved with RFC-0113 (see "Sending on the person's behalf"): it is an egress, gated per project type.
-
 ## Implementation Files
 
 ```yaml
@@ -179,4 +173,7 @@ post_mvp:
     title: "Delete amp-ui's duplicate mesh components and consume dev.aidos.tcr.mesh and generative"
     status: todo
     phase: P2
+  - id: "0116.14"
+    title: "Owner decision: which Amp tools are safe to expose over MCP (answer_from_context, request_progressive_disclosure)"
+    status: todo
 ```

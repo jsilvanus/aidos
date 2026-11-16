@@ -18,6 +18,8 @@ kotlin {
         val jvmMain by getting {
             dependencies {
                 implementation(project(":cookbook"))
+                // ModelQuarantine (RFC-0022).
+                implementation(project(":downloads"))
 
                 // For file hashing and path operations
                 implementation("commons-codec:commons-codec:1.16.0")

@@ -137,6 +137,51 @@ class PermissionFlowTest {
     }
 
     @Test
+    fun anotherAppUnderTheSameName_inheritsNothingAndIsAskedForAgain() = testApplication {
+        // RFC-0103 amendment 2026-11-16: uninstall an approved app, install another under its
+        // package name, and the newcomer used to get the token, the agent grant and all.
+        val rig = Rig()
+        application { rig.server.installInto(this) }
+        rig.core.handshake(dictator, "signer-a")
+        rig.store.approveApp(dictator)
+        rig.store.setAgentAllowed(dictator, true)
+        val live = rig.core.handshake(dictator, "signer-a")
+        assertEquals(HandshakeWire.STATUS_APPROVED, live.status)
+
+        val impostor = rig.core.handshake(dictator, "signer-b")
+
+        assertEquals(HandshakeWire.STATUS_PENDING_APPROVAL, impostor.status)
+        assertEquals("", impostor.token)
+        assertEquals(HttpStatusCode.Unauthorized, statusOf(live.token), "the first app's token must not outlive it")
+        val record = rig.store.getApproval(dictator)!!
+        assertEquals(AppApprovalStatus.PENDING, record.status)
+        assertEquals(false, record.agentAllowed)
+        assertEquals("signer-b", record.signerSha256)
+        assertEquals(2, rig.notified.size, "the user is asked about the new app")
+
+        // A caller whose signer cannot be read is not waved through either.
+        rig.store.approveApp(dictator)
+        assertEquals(HandshakeWire.STATUS_DENIED, rig.core.handshake(dictator, null).status)
+        assertEquals(HandshakeWire.STATUS_APPROVED, rig.core.handshake(dictator, "signer-b").status)
+    }
+
+    @Test
+    fun aRecordFromBeforeThePin_takesTheSignerItIsNextSeenWith_andADenialStaysADenial() = testApplication {
+        val rig = Rig()
+        application { rig.server.installInto(this) }
+        rig.core.handshake(dictator)
+        rig.store.approveApp(dictator)
+
+        assertEquals(HandshakeWire.STATUS_APPROVED, rig.core.handshake(dictator, "signer-a").status)
+        assertEquals("signer-a", rig.store.getApproval(dictator)!!.signerSha256)
+
+        rig.store.denyApp(dictator)
+        assertEquals(HandshakeWire.STATUS_DENIED, rig.core.handshake(dictator, "signer-b").status)
+        assertEquals(AppApprovalStatus.DENIED, rig.store.getApproval(dictator)!!.status)
+        assertEquals(1, rig.notified.size)
+    }
+
+    @Test
     fun denyingAnApprovedApp_alsoCutsItsLiveSession() = testApplication {
         val rig = Rig()
         application { rig.server.installInto(this) }

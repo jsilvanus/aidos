@@ -71,7 +71,13 @@ data class AppApprovalRecord(
     val lastLocalityRefusalAt: String? = null,
 
     /** Latest locality refusal code (`placement_local|cluster|remote`), for audit/debug visibility. */
-    val lastLocalityRefusalCode: String? = null
+    val lastLocalityRefusalCode: String? = null,
+
+    /**
+     * RFC-0103 (amendment 2026-11-16): SHA-256 of the signing certificate of the app this decision
+     * was made for. Null on hosts with no signer to read (desktop) and on records from before the pin.
+     */
+    val signerSha256: String? = null,
 )
 
 /**
@@ -138,6 +144,13 @@ interface AppApprovalStore {
      * Update lastSeenAt and attemptCount on subsequent handshake attempts.
      */
     suspend fun recordHandshakeAttempt(packageName: String): AppApprovalRecord?
+
+    /**
+     * RFC-0103 (amendment 2026-11-16): records [signerSha256] as the signer of [packageName].
+     * With [resetApproval] the record also returns to PENDING with the agent grant cleared, because
+     * a different app now holds the name; a DENIED record keeps its status. Returns null for an unknown app.
+     */
+    suspend fun pinSigner(packageName: String, signerSha256: String, resetApproval: Boolean): AppApprovalRecord?
     
     /**
      * Update request count for an approved app (for metrics/analytics).
@@ -171,3 +184,13 @@ interface AppApprovalStore {
      */
     suspend fun clear()
 }
+
+/** The record [pinSigner][AppApprovalStore.pinSigner] leaves behind; shared so every store applies the same rule. */
+fun AppApprovalRecord.withSigner(signerSha256: String, resetApproval: Boolean): AppApprovalRecord =
+    if (resetApproval && status != AppApprovalStatus.DENIED) {
+        copy(signerSha256 = signerSha256, status = AppApprovalStatus.PENDING, decidedAt = null, agentAllowed = false)
+    } else if (resetApproval) {
+        this
+    } else {
+        copy(signerSha256 = signerSha256)
+    }

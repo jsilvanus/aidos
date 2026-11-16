@@ -168,14 +168,6 @@ recurring sessions need, and those are post-MVP.
   usually do. Cheap to get wrong in a way that costs battery.
 - **Cross-project scheduling**, once more than one project can be open at once.
 
-## Open Questions
-
-- Should a subscription declare *"I only need deterministic work"*, so the Scheduler can wake it
-  confidently in the background rather than inferring the answer from its handler?
-- When a wake is deferred on MOBILE and the same event class fires forty more times before the
-  user opens the app, is the session woken once with a summary or once per event? Coalescing is
-  the general answer; the deferred case needs it first.
-
 ## Implementation Files
 
 ```yaml
@@ -207,5 +199,8 @@ post_mvp:
     status: todo
   - id: "0005.4"
     title: "priority/deadline scheduling"
+    status: todo
+  - id: "0005.5"
+    title: "Subscription declares deterministic-only work so the Scheduler can wake it in the background"
     status: todo
 ```

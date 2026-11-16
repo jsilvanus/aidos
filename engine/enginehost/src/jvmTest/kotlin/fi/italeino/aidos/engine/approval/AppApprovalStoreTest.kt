@@ -101,6 +101,9 @@ class AppApprovalStoreTest {
             return updated
         }
         
+        override suspend fun pinSigner(packageName: String, signerSha256: String, resetApproval: Boolean): AppApprovalRecord? =
+            getApproval(packageName)
+
         override suspend fun updateRequestCount(packageName: String, increment: Int): AppApprovalRecord? {
             val current = records[packageName] ?: return null
             val updated = current.copy(requestCount = current.requestCount + increment)

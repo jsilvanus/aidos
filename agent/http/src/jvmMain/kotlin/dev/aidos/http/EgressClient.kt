@@ -12,6 +12,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 /**
  * Immutable audit record for outbound network calls (RFC-0042).
@@ -87,7 +90,7 @@ class DefaultEgressClient(
     private val recordSink: (EgressRecord) -> Unit = {},
 ) : EgressClient {
 
-    private val auditLog = mutableListOf<EgressRecord>()
+    private val auditLog = ArrayDeque<EgressRecord>()
 
     override fun getAuditRecords(): List<EgressRecord> = synchronized(auditLog) {
         auditLog.toList()
@@ -129,27 +132,32 @@ class DefaultEgressClient(
             val initial = validation as EgressValidationResult.Allowed
             var current = initial
             var redirectsFollowed = 0
+            // What is sent on this hop. A redirect may change all three (see [afterRedirect]).
+            var method = request.method.uppercase()
+            var headers = request.headers
+            var body = request.body
+            // The timeout covers the whole exchange. HttpRequest.timeout ends when the response
+            // headers arrive, so a server that then trickled or stalled the body held the call forever.
+            val deadlineMillis = startTime + request.timeoutSeconds * 1000
             while (true) {
                 try {
+                    val remainingMillis = (deadlineMillis - System.currentTimeMillis()).coerceAtLeast(1)
                     val reqBuilder = HttpRequest.newBuilder()
                         .uri(current.uri)
-                        .timeout(Duration.ofSeconds(request.timeoutSeconds))
+                        .timeout(Duration.ofMillis(remainingMillis))
 
-                    request.headers.forEach { (k, v) -> reqBuilder.setHeader(k, v) }
+                    headers.forEach { (k, v) -> reqBuilder.setHeader(k, v) }
 
-                    val publisher = if (request.body != null) {
-                        HttpRequest.BodyPublishers.ofByteArray(request.body)
-                    } else {
-                        HttpRequest.BodyPublishers.noBody()
-                    }
+                    val publisher = body?.let { HttpRequest.BodyPublishers.ofByteArray(it) }
+                        ?: HttpRequest.BodyPublishers.noBody()
 
-                    when (request.method.uppercase()) {
+                    when (method) {
                         "GET" -> reqBuilder.GET()
                         "HEAD" -> reqBuilder.method("HEAD", HttpRequest.BodyPublishers.noBody())
                         "POST" -> reqBuilder.POST(publisher)
                         "PUT" -> reqBuilder.PUT(publisher)
                         "DELETE" -> reqBuilder.DELETE()
-                        else -> reqBuilder.method(request.method.uppercase(), publisher)
+                        else -> reqBuilder.method(method, publisher)
                     }
 
                     val httpResponse = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofInputStream())
@@ -203,12 +211,23 @@ class DefaultEgressClient(
                         null
                     }
                     if (redirectTarget != null) {
+                        val next = afterRedirect(httpResponse.statusCode(), current.uri, redirectTarget.uri, method, headers, body)
+                        method = next.method
+                        headers = next.headers
+                        body = next.body
                         current = redirectTarget
                         continue
                     }
 
                     val maxBytes = effectiveScope.maxResponseBytes.coerceAtLeast(0L)
                     httpResponse.body().use { bodyStream ->
+                        // A blocked read cannot be interrupted, but closing the stream ends it.
+                        val watchdog = bodyDeadline.schedule(
+                            { runCatching { bodyStream.close() } },
+                            (deadlineMillis - System.currentTimeMillis()).coerceAtLeast(1),
+                            TimeUnit.MILLISECONDS,
+                        )
+                        try {
                         val contentLength = httpResponse.headers().firstValue("Content-Length").orElse(null)?.toLongOrNull()
                         if (contentLength != null && contentLength > maxBytes) {
                             record(
@@ -269,6 +288,9 @@ class DefaultEgressClient(
                                 record = record
                             )
                         )
+                        } finally {
+                            watchdog.cancel(false)
+                        }
                     }
                 } catch (e: Exception) {
                     record(
@@ -317,9 +339,57 @@ class DefaultEgressClient(
             outcome = outcome,
             costUnits = request.costUnits,
         )
-        synchronized(auditLog) { auditLog.add(record) }
+        // The durable trail is [recordSink]; this is a recent-history view and must not grow for the
+        // life of the process.
+        synchronized(auditLog) {
+            auditLog.addLast(record)
+            while (auditLog.size > MAX_RECENT_RECORDS) auditLog.removeFirst()
+        }
         runCatching { recordSink(record) }
         return record
+    }
+
+    private class Hop(val method: String, val headers: Map<String, String>, val body: ByteArray?)
+
+    /**
+     * What the next hop of a redirect carries (RFC-0042 point 4: a redirect target is a new destination).
+     *
+     * - 303, and 301/302 answering anything but GET or HEAD, are re-fetched with GET and no body,
+     *   as browsers do. 307 and 308 repeat the request as it was.
+     * - A hop to another origin (scheme, host or port) loses the headers that carry the caller's
+     *   credentials. They were issued for the first destination; the same request, token and all,
+     *   used to be replayed to wherever it pointed.
+     */
+    private fun afterRedirect(
+        status: Int,
+        from: URI,
+        to: URI,
+        method: String,
+        headers: Map<String, String>,
+        body: ByteArray?,
+    ): Hop {
+        val becomesGet = status == 303 || ((status == 301 || status == 302) && method != "GET" && method != "HEAD")
+        var nextHeaders = headers
+        if (becomesGet) nextHeaders = nextHeaders.filterKeys { it.lowercase() !in BODY_HEADERS }
+        if (!sameOrigin(from, to)) nextHeaders = nextHeaders.filterKeys { it.lowercase() !in CREDENTIAL_HEADERS }
+        return Hop(if (becomesGet) "GET" else method, nextHeaders, if (becomesGet) null else body)
+    }
+
+    private fun sameOrigin(a: URI, b: URI): Boolean =
+        a.scheme.equals(b.scheme, ignoreCase = true) && a.host.equals(b.host, ignoreCase = true) && effectivePort(a) == effectivePort(b)
+
+    private fun effectivePort(uri: URI): Int =
+        if (uri.port != -1) uri.port else if (uri.scheme.equals("https", ignoreCase = true)) 443 else 80
+
+    private companion object {
+        const val MAX_RECENT_RECORDS = 1000
+        val CREDENTIAL_HEADERS = setOf("authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-auth-token")
+        val BODY_HEADERS = setOf("content-type", "content-length", "content-encoding")
+
+        /** Closes response bodies that outlive their request's deadline. One daemon thread for the process. */
+        val bodyDeadline: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "egress-body-deadline").apply { isDaemon = true }
+        }
     }
 
     private class BoundedReadResult(

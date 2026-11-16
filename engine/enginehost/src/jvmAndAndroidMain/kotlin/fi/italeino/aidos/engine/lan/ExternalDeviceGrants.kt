@@ -142,8 +142,13 @@ class ExternalDeviceGrants(
  * Short-lived, single-use numeric bootstrap codes for SDK pairing (RFC-0126 Mode A).
  *
  * A code is only ever exchanged for a grant's credential; it is never itself accepted as a
- * bearer credential. Wrong guesses burn the code after [maxAttempts] so an eight-digit space
- * cannot be walked.
+ * bearer credential. Wrong guesses are counted against the address they came from: after
+ * [maxAttempts] in a minute that address is refused, right code or not, and a cap on wrong
+ * guesses from all addresses together bounds what many addresses can try. With both, a code's
+ * five minutes allow at most a few hundred guesses at an eight-digit space.
+ *
+ * Wrong guesses used to be charged to every outstanding code instead, so any device on the
+ * network could cancel a pairing the user had just started by sending five bad codes.
  */
 class PairingCodes(
     private val grants: ExternalDeviceGrants,
@@ -151,10 +156,12 @@ class PairingCodes(
     private val codeLifetimeSeconds: Long = 300,
     private val maxAttempts: Int = 5,
 ) {
-    private data class Pending(val label: String, val grantLifetimeSeconds: Long, val expiresAt: Instant, var attempts: Int = 0)
+    private data class Pending(val label: String, val grantLifetimeSeconds: Long, val expiresAt: Instant)
+    private class Failures(var windowStart: Instant, var count: Int = 0)
 
     private val random = SecureRandom()
     private val pending = ConcurrentHashMap<String, Pending>()
+    private val failuresBySource = HashMap<String, Failures>()
     private var globalFailures = 0
     private var globalWindowStart: Instant = now()
 
@@ -168,31 +175,39 @@ class PairingCodes(
         return code
     }
 
-    /** Exchanges [code] for a credential. Single use; null on any failure (unknown, expired, used, throttled). */
+    /**
+     * Exchanges [code] for a credential. Single use; null on any failure (unknown, expired, used,
+     * throttled). [source] is the address the attempt came from; attempts without one share a bucket.
+     */
     @Synchronized
-    fun redeem(code: String): IssuedExternalDevice? {
+    fun redeem(code: String, source: String = UNKNOWN_SOURCE): IssuedExternalDevice? {
         sweep()
         val t = now()
-        if (t.isAfter(globalWindowStart.plusSeconds(60))) { globalWindowStart = t; globalFailures = 0 }
+        if (t.isAfter(globalWindowStart.plusSeconds(WINDOW_SECONDS))) { globalWindowStart = t; globalFailures = 0 }
+        val mine = failuresBySource[source]
+        if (mine != null && mine.count >= maxAttempts) return null
         if (globalFailures >= GLOBAL_FAILURES_PER_MINUTE) return null
-        val p = pending[code]
+        val p = pending.remove(code)
         if (p == null) {
             globalFailures++
-            // Every outstanding code absorbs a share of the guess, so a scan cannot target one for free.
-            pending.values.forEach { it.attempts++ }
-            pending.entries.removeIf { it.value.attempts >= maxAttempts }
+            if (mine != null) mine.count++
+            else if (failuresBySource.size < MAX_TRACKED_SOURCES) failuresBySource[source] = Failures(t, 1)
             return null
         }
-        pending.remove(code)
         return grants.issue(p.label, t.plusSeconds(p.grantLifetimeSeconds))
     }
 
     private fun sweep() {
         val t = now()
-        pending.entries.removeIf { it.value.expiresAt.isBefore(t) || it.value.attempts >= maxAttempts }
+        pending.entries.removeIf { it.value.expiresAt.isBefore(t) }
+        failuresBySource.entries.removeIf { t.isAfter(it.value.windowStart.plusSeconds(WINDOW_SECONDS)) }
     }
 
     private companion object {
         const val GLOBAL_FAILURES_PER_MINUTE = 30
+        const val WINDOW_SECONDS = 60L
+        // Bounded so a flood of addresses cannot grow the table; the global cap covers the overflow.
+        const val MAX_TRACKED_SOURCES = 1024
+        const val UNKNOWN_SOURCE = "?"
     }
 }

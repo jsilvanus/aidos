@@ -119,6 +119,25 @@ class GlobalModelRuntimeTest {
     }
 
     @Test
+    fun `digest mismatch asks the backend to quarantine not delete`() = runTest {
+        val calls = mutableListOf<Triple<String, String, String>>()
+        val inner = fakeBackend(
+            models = listOf(descriptor("test-7b", digest = "expected-hash")),
+            digestFor = { "wrong-hash" },
+        )
+        val backend = object : InferenceBackend by inner {
+            override suspend fun quarantine(modelId: String, expectedDigest: String, actualDigest: String) {
+                calls += Triple(modelId, expectedDigest, actualDigest)
+                inner.delete(modelId) // stands in for moving the file out of the store
+            }
+        }
+        val result = GlobalModelRuntime(backend).load("test-7b")
+        assertIs<DigestMismatchException>(result.exceptionOrNull())
+        assertEquals(listOf(Triple("test-7b", "expected-hash", "wrong-hash")), calls)
+        assertTrue(backend.installed().isEmpty())
+    }
+
+    @Test
     fun `digest match allows load`() = runTest {
         val correctDigest = "sha256:abc123"
         val backend = fakeBackend(

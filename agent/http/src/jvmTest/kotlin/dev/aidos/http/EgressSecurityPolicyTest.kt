@@ -428,4 +428,116 @@ class EgressSecurityPolicyTest {
         assertIs<EgressValidationResult.Allowed>(policy.validateDestination("https://123example.com/v1", scope = scope))
         assertIs<EgressValidationResult.Allowed>(policy.validateDestination("https://api.example.com/v1", scope = scope))
     }
+
+    private fun localScope(vararg ports: Int) = CapabilityScope.Network(
+        allowedHosts = listOf("127.0.0.1"),
+        allowedPorts = ports.toList(),
+        allowPrivateAddresses = true,
+    )
+
+    @Test
+    fun `a redirect to another origin carries no credentials, and a redirected POST becomes a GET`() = runBlocking {
+        val seen = mutableListOf<String>()
+        val landing = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        landing.createContext("/landing") { exchange ->
+            val sentBody = exchange.requestBody.readBytes().size
+            seen += exchange.requestMethod + " auth=" + exchange.requestHeaders.getFirst("Authorization") +
+                " key=" + exchange.requestHeaders.getFirst("X-Api-Key") + " trace=" + exchange.requestHeaders.getFirst("X-Trace") + " body=" + sentBody
+            exchange.sendResponseHeaders(200, 2)
+            exchange.responseBody.use { it.write("ok".toByteArray()) }
+        }
+        landing.start()
+        val first = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        first.createContext("/away") { exchange ->
+            exchange.responseHeaders.add("Location", "http://127.0.0.1:${landing.address.port}/landing")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        first.createContext("/stay") { exchange ->
+            exchange.responseHeaders.add("Location", "/kept")
+            exchange.sendResponseHeaders(307, -1)
+            exchange.close()
+        }
+        first.createContext("/kept") { exchange ->
+            val sentBody = exchange.requestBody.readBytes().size
+            seen += exchange.requestMethod + " auth=" + exchange.requestHeaders.getFirst("Authorization") + " body=" + sentBody
+            exchange.sendResponseHeaders(200, 2)
+            exchange.responseBody.use { it.write("ok".toByteArray()) }
+        }
+        first.start()
+        try {
+            val client = DefaultEgressClient(policy = policy)
+            val scope = localScope(first.address.port, landing.address.port)
+            fun post(path: String) = EgressRequest(
+                capabilityId = CapabilityId("cap-redirect"),
+                url = "http://127.0.0.1:${first.address.port}$path",
+                method = "POST",
+                headers = mapOf("Authorization" to "Bearer s3cret", "X-Api-Key" to "k", "X-Trace" to "t"),
+                body = "payload".toByteArray(),
+            )
+
+            assertEquals(200, client.request(post("/away"), scope).getOrThrow().statusCode)
+            assertEquals("GET auth=null key=null trace=t body=0", seen.single())
+
+            seen.clear()
+            assertEquals(200, client.request(post("/stay"), scope).getOrThrow().statusCode)
+            assertEquals("POST auth=Bearer s3cret body=7", seen.single(), "a same-origin 307 repeats the request as it was")
+        } finally {
+            first.stop(0)
+            landing.stop(0)
+        }
+    }
+
+    @Test
+    fun `a response body that stalls ends with the request's timeout`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.executor = java.util.concurrent.Executors.newCachedThreadPool()
+        server.createContext("/stall") { exchange ->
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.write("begin".toByteArray())
+            exchange.responseBody.flush()
+            release.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            runCatching { exchange.close() }
+        }
+        server.start()
+        try {
+            val client = DefaultEgressClient(policy = policy)
+            val started = System.currentTimeMillis()
+            val result = client.request(
+                EgressRequest(CapabilityId("cap-stall"), "http://127.0.0.1:${server.address.port}/stall", timeoutSeconds = 1),
+                localScope(server.address.port),
+            )
+            val took = System.currentTimeMillis() - started
+            assertTrue(result.isFailure, "a stalled body was reported as a success")
+            assertTrue(took < 10_000, "the stalled body held the call for $took ms")
+            assertEquals(EgressOutcome.FAILED, client.getAuditRecords().last().outcome)
+        } finally {
+            release.countDown()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `the in-memory audit view keeps the most recent records only`() = runBlocking {
+        val sunk = java.util.concurrent.atomic.AtomicInteger()
+        val client = DefaultEgressClient(policy = policy, recordSink = { sunk.incrementAndGet() })
+        repeat(1100) { client.request(EgressRequest(CapabilityId("cap-$it"), "ftp://denied.example/$it")) }
+        val recent = client.getAuditRecords()
+        assertEquals(1000, recent.size)
+        assertEquals("cap-1099", recent.last().capabilityId)
+        assertEquals(1100, sunk.get(), "every record still reaches the durable sink")
+    }
+
+    @Test
+    fun `shared address space is private, so a grant for private addresses can reach a tailnet`() {
+        val tailnet = "http://100.101.102.103/"
+        val denied = policy.validateDestination(tailnet, scope = CapabilityScope.Network(allowedHosts = listOf("100.101.102.103"), allowedPorts = listOf(80)))
+        assertIs<EgressValidationResult.Denied>(denied)
+        val allowed = policy.validateDestination(
+            tailnet,
+            scope = CapabilityScope.Network(allowedHosts = listOf("100.101.102.103"), allowedPorts = listOf(80), allowPrivateAddresses = true),
+        )
+        assertEquals(AddressClass.PRIVATE, assertIs<EgressValidationResult.Allowed>(allowed).addressClass)
+    }
 }

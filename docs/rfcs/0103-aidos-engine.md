@@ -268,6 +268,27 @@ F-Droid signed, or re-signed after installation. This brings Aidos Engine in lin
 users expect OS permissions to work: an explicit approval decision, persistent across restarts,
 revokable at any time on the settings screen.
 
+**Amendment 2026-11-16: the approval belongs to the app that was approved, not to its name.**
+A package name is unique on a device only while the app is installed. After the user removes an
+approved app, any other app may be installed under the same name, and it used to inherit the
+approval, the agent grant and the locality limit without the user being asked. The approval record
+therefore also holds the SHA-256 of the caller's signing certificate, taken from `PackageManager`
+at the handshake:
+
+- A first handshake records the signer with the pending request. A record made before this
+  amendment has none and takes the signer of the next handshake.
+- A handshake from the same package name with a different signer is a different app. Its token is
+  dropped, the record returns to pending with the agent grant cleared and the new signer recorded,
+  and the user is asked again, as for a first request. A denied record stays denied.
+- A caller whose signer cannot be read is denied when the record holds one.
+- When one UID holds several packages (a shared user id), the record is kept under the first
+  package name in sorted order, so the same caller always maps to the same record.
+
+This is not the signature matching rejected above: nothing is compared with Engine's own
+certificate, and an app signed by anyone can still be approved. It only ties the user's decision
+to the signer they made it for, so an F-Droid build that replaces a developer build is asked for
+once more, which is the intended result.
+
 ### Version and capability contract
 
 Two mechanisms, doing different jobs:

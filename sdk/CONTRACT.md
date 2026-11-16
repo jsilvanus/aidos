@@ -112,6 +112,14 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 - `val lastError: EngineError?` on `AidosEngineClient` (additive default method, `null`). Reports the
   most recent classified error (§2.7) from Engine (`insufficient_memory`, `request_timeout`,
   `locality_violation`, etc.) along with `userActionableMessage()`, avoiding opaque `null` results.
+  It is best effort and shared by every call on the client: a success does not clear it, and with
+  concurrent calls it may belong to another call.
+- `requestResult`, `chatCompletionResult`, `embeddingsResult`, `transcribeResult`, `decideResult`
+  (additive default methods): the same calls returning `Result<T>`, failing with `EngineApiException`
+  carrying that call's own `EngineError`. The nullable methods are built on them.
+- `capabilities()` refreshes the model list live from `GET /v1/models` every 5 seconds when the
+  handshake advertised `models`, falling back to the handshake snapshot if the fetch fails. The
+  endpoint list always comes from the handshake (Engine has no live endpoint list).
 - `EngineApiException`: thrown on HTTP non-2xx failure or mid-stream SSE error payload during
   `streamChatCompletion`, carrying status code and structured `EngineError`.
 
