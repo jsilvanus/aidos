@@ -377,6 +377,81 @@ class BlindedBridgeTest {
     }
 
     @Test
+    fun testEgressGrantIsBoundToItsMessageChannelAndProject() {
+        // RFC-0113 §4.3: the grant is for the exact message the person saw on the card.
+        val coordinator = EgressGateCoordinator()
+        val approved = OutboundMessageRequest(
+            id = "msg-life-010",
+            projectId = "life-a",
+            projectType = "personal",
+            channel = "SMS",
+            recipient = "Alice",
+            payload = "Running late.",
+        )
+        coordinator.interceptAndPark(approved)
+        val grant = coordinator.approve("msg-life-010")
+
+        for (other in listOf(
+            approved.copy(channel = "Email"),
+            approved.copy(projectId = "life-b"),
+            approved.copy(id = "msg-life-011"),
+        )) {
+            val result = coordinator.transmit(other, grant)
+            assertTrue(result is TransmissionResult.Rejected, "accepted: $other")
+            assertTrue(result.reason.contains("Grant mismatch"))
+        }
+        // Rewriting the grant to match does not help: those fields are signed.
+        val forged = coordinator.transmit(approved.copy(channel = "Email"), grant.copy(channel = "Email"))
+        assertTrue(forged is TransmissionResult.Rejected)
+        assertTrue(forged.reason.contains("Invalid cryptographic signature"))
+
+        assertEquals(0, coordinator.getTransmittedMessages().size)
+        assertTrue(coordinator.transmit(approved, grant) is TransmissionResult.Transmitted)
+    }
+
+    @Test
+    fun testEgressGrantIsSpentOnceUnderConcurrentSends() {
+        val coordinator = EgressGateCoordinator()
+        val message = OutboundMessageRequest(
+            id = "msg-life-012", projectId = "life-a", projectType = "personal",
+            channel = "SMS", recipient = "Alice", payload = "Once only.",
+        )
+        repeat(50) {
+            coordinator.interceptAndPark(message)
+            val grant = coordinator.approve(message.id)
+            val start = java.util.concurrent.CountDownLatch(1)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+            try {
+                val sent = (0 until 8).map {
+                    pool.submit<TransmissionResult> { start.await(); coordinator.transmit(message, grant) }
+                }.also { start.countDown() }.map { it.get() }
+                assertEquals(1, sent.count { it is TransmissionResult.Transmitted })
+            } finally {
+                pool.shutdownNow()
+            }
+        }
+    }
+
+    @Test
+    fun testEgressGateDoesNotGrowWithoutBound() {
+        val coordinator = EgressGateCoordinator()
+        val total = EgressGateCoordinator.MAX_SETTLED_MESSAGES + 200
+        repeat(total) { n ->
+            val message = OutboundMessageRequest(
+                id = "msg-$n", projectId = "life-a", projectType = "personal",
+                channel = "SMS", recipient = "Alice", payload = "Message $n",
+            )
+            coordinator.interceptAndPark(message)
+            if (n == 0) return@repeat // left waiting for a decision for the whole test
+            assertTrue(coordinator.transmit(message, coordinator.approve(message.id)) is TransmissionResult.Transmitted)
+        }
+        assertEquals(EgressGateCoordinator.MAX_TRANSMITTED_LOG, coordinator.getTransmittedMessages().size)
+        assertNull(coordinator.getParkedMessage("msg-1"), "an old settled message is dropped")
+        assertEquals(ParkedMessageStatus.PARKED, coordinator.getParkedMessage("msg-0")?.status, "a pending one never is")
+        assertNotNull(coordinator.getParkedMessage("msg-${total - 1}"))
+    }
+
+    @Test
     fun testEgressGatingExpiredGrantRejected() {
         var currentTime = Instant.parse("2026-11-14T12:00:00Z")
         val coordinator = EgressGateCoordinator(clock = { currentTime })
