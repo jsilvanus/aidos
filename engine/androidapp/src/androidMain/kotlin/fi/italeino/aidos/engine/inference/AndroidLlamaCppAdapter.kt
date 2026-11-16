@@ -5,17 +5,18 @@ import de.kherud.llama.LlamaIterator
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.CancellableModelAdapter
-import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EmbeddingModelAdapter
+import dev.aidos.modelruntime.LlamaChatPrompt
 import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.modelruntime.ToolCallParser
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
+import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
-import dev.aidos.kernel.Turn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -32,6 +33,8 @@ class AndroidLlamaCppAdapter(
     private val threads: Int = 4,
     private val embeddingMode: Boolean = false,
     private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
+    /** The chat template the GGUF declares, or null for a model with no notion of chat roles. */
+    private val chatTemplate: String? = null,
 ) : CancellableModelAdapter, EmbeddingModelAdapter, AutoCloseable {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
@@ -44,17 +47,27 @@ class AndroidLlamaCppAdapter(
     @Volatile private var closed = false
 
     init {
-        var parameters = ModelParameters()
-            .setModel(modelFile.absolutePath)
-            .setCtxSize(contextWindow)
-            .setThreads(threads)
-            .setThreadsBatch(threads)
-            .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
-            .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
-            .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
-        if (settings.useMmap == false) parameters = parameters.disableMmap()
-        if (embeddingMode) parameters = parameters.enableEmbedding()
-        model = LlamaModel(parameters)
+        fun parameters(): ModelParameters {
+            var parameters = ModelParameters()
+                .setModel(modelFile.absolutePath)
+                .setCtxSize(contextWindow)
+                .setThreads(threads)
+                .setThreadsBatch(threads)
+                .setBatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+                .setUbatchSize(settings.batchSize ?: ModelRunSettings.DEFAULT_BATCH)
+                .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
+            if (settings.useMmap == false) parameters = parameters.disableMmap()
+            if (embeddingMode) parameters = parameters.enableEmbedding()
+            return parameters
+        }
+        // llama.cpp only evaluates a model's real chat template with its Jinja engine on (see
+        // LlamaChatPrompt). A template the engine cannot parse must not stop the model loading.
+        val withJinja = if (chatTemplate != null && !embeddingMode) {
+            runCatching { LlamaModel(parameters().enableJinja()) }.getOrNull()
+        } else {
+            null
+        }
+        model = withJinja ?: LlamaModel(parameters())
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
@@ -103,11 +116,6 @@ class AndroidLlamaCppAdapter(
             emit(ModelStreamEvent.Failed(UnsupportedOperationException("Embedding model cannot perform chat generation")))
             return@flow
         }
-        if (request.tools.isNotEmpty()) {
-            emit(ModelStreamEvent.Failed(UnsupportedOperationException("Android llama.cpp tool calling is not enabled yet")))
-            return@flow
-        }
-
         generationMutex.withLock {
             if (closed) {
                 emit(ModelStreamEvent.Failed(IllegalStateException("Model $modelId is unloaded")))
@@ -115,12 +123,19 @@ class AndroidLlamaCppAdapter(
             }
 
             try {
-                val prompt = formatPrompt(request.messages)
-                val parameters = InferenceParameters(prompt)
+                // RFC-0021: the model's own chat template, tools described and parsed as the
+                // desktop adapter does it. Both hosts share LlamaChatPrompt so they cannot drift.
+                val prompt = LlamaChatPrompt.render(model, chatTemplate, request)
+                val offeredTools = LlamaChatPrompt.offeredTools(request)
+                val grammar = LlamaChatPrompt.grammar(request)
+                var parameters = InferenceParameters(prompt)
                     .setNPredict(request.maxOutputTokens)
                     .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
                     .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
                     .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                    // A conversation repeats its earlier turns: keep the evaluated prefix.
+                    .setCachePrompt(true)
+                if (grammar != null) parameters = parameters.setGrammar(grammar)
                 val output = StringBuilder()
                 var tokenCount = 0
                 // `generate` is lazy: emitting as the iterator advances keeps the UI and the
@@ -147,15 +162,22 @@ class AndroidLlamaCppAdapter(
                     }
                 }
 
-                val text = output.toString()
+                val generated = output.toString()
+                val toolCalls = if (offeredTools.isEmpty()) emptyList()
+                else ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
+                val text = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
                 val inputTokens = model.encode(prompt).size
-                val outputTokens = model.encode(text).size
+                val outputTokens = model.encode(generated).size
                 emit(ModelStreamEvent.Done(
                     ModelResponse(
-                        outputs = if (text.isEmpty()) emptyList() else listOf(TextOutput(text)),
+                        outputs = buildList {
+                            if (text.isNotEmpty()) add(TextOutput(text))
+                            toolCalls.forEach { add(ToolCallOutput(it)) }
+                        },
                         stopReason = when {
                             outputTokens >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                            request.stopConditions.any(text::contains) -> StopReason.STOP_SEQUENCE
+                            request.stopConditions.any(generated::contains) -> StopReason.STOP_SEQUENCE
+                            toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                             else -> StopReason.END_TURN
                         },
                         usage = Usage(inputTokens, outputTokens, inputTokens + outputTokens),
@@ -184,24 +206,5 @@ class AndroidLlamaCppAdapter(
         closed = true
         cancelCurrentInference()
         model.close()
-    }
-
-    private fun formatPrompt(turns: List<Turn>): String = buildString {
-        turns.forEach { turn ->
-            when (turn) {
-                is Turn.System -> append(turn.content).append("\n\n")
-                is Turn.User -> append("User: ").append(turn.content.joinToString("") { render(it) }).append("\n")
-                is Turn.Assistant -> append("Assistant: ").append(turn.text ?: "").append("\n")
-                is Turn.ToolResult -> append("Tool result: ").append(turn.result.content.joinToString("") { render(it) }).append("\n")
-            }
-        }
-        append("Assistant:")
-    }
-
-    private fun render(block: ContentBlock): String = when (block) {
-        is ContentBlock.Text -> block.text
-        is ContentBlock.Image -> "[Image: ${block.mimeType}]"
-        is ContentBlock.Audio -> "[Audio: ${block.mimeType}]"
-        is ContentBlock.ResourceRef -> "[Resource: ${block.nodeId}]"
     }
 }
