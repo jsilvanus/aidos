@@ -28,7 +28,7 @@ Every RFC whose header says `Non-MVP Work: **Remaining**` MUST carry a `## Post-
 
 ### Accepted is not implemented
 
-Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code. As of 2026-11-16 the corpus has 88 RFCs: 71 Implemented, 9 Accepted (0000, 0001 and 0099 are documents with nothing to build; 0106, 0118 and 0124 are partially built; 0115 is in progress; 0043 is unscheduled), 2 Draft (0060, 0109), 4 Superseded (0012, 0013, 0014, 0051) and 3 Archived reviews (0100 to 0102). Update STATUS.md when an RFC's implementation changes, and these counts with it.
+Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code. As of 2026-11-16 the corpus has 89 RFCs: 71 Implemented, 9 Accepted (0000, 0001 and 0099 are documents with nothing to build; 0106, 0118 and 0124 are partially built; 0115 is in progress; 0043 is unscheduled), 3 Draft (0060, 0109, 0128), 4 Superseded (0012, 0013, 0014, 0051) and 3 Archived reviews (0100 to 0102). Update STATUS.md when an RFC's implementation changes, and these counts with it.
 
 ### One number, one RFC
 

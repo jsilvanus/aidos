@@ -93,6 +93,7 @@ Not audited: RFC-0000 Vision, 0001 Principles, 0099 Roadmap (documents, not impl
 | 0060 Plugin SDK | Draft | Unscheduled (with 0043); MCP is the extension mechanism for now. |
 | 0115 Desktop Background Services | Accepted, in progress | In progress (audited 2026-11-15; 81 files tracked in the RFC): decisions D55 to D61 accepted; stage 1 (Agent-runtime attach) under way, including the tray check, install `--dry-run`, the desktop Tools pane wired to the real MCP broker (registration, vault secrets, catalog, adoption) and adopted MCP tools fed into the Engine agent loop with per-call approval. Stage 2 (Engine as a background service) and a run on a real desktop install not done. |
 | 0109 Capture Device Protocol (ACP) | Draft | Planning only; no code. Open BLE protocol for voice buttons (the AI cube), user-configured button bindings and trust, modular Engine receiving side. |
+| 0128 Hardware Acceleration | Draft | Planning only; no code (2026-11-16). Desktop GPU and mobile GPU/NPU for llama.cpp and ONNX Runtime: device inventory, per-model Auto/CPU/GPU/NPU preference, verified fallback with a crash guard, own llama.cpp native builds, ONNX execution providers. Today every model runs on the CPU and `gpuLayers` reaches CPU-only natives. |
 | 0100, 0101, 0102 | Archived | Architecture reviews, informational. |
 
 ## RFC-0036 requirement map
