@@ -168,7 +168,7 @@ class TrayControls(
 
     suspend fun current(): ApprovalsControl? {
         val sources = mutableListOf<ApprovalsControl>()
-        engine()?.let { sources += HttpApprovalsControl(it.baseUrl, it.token) }
+        engine()?.let { sources += HttpApprovalsControl(it.baseUrl, it.token, reloadToken = EngineAttach::reloadToken) }
         val a = agent ?: probeAgent()?.let { AgentApprovalsControl(it) }.also { agent = it }
         if (a != null) sources += FailureDropping(a) { agent = null }
         return if (sources.isEmpty()) null else CompositeApprovals(sources)

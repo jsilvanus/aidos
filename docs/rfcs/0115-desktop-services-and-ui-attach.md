@@ -179,6 +179,12 @@ files:
   - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpLanControl.kt
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/AdminRoutes.kt
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/TokenManager.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/AdminAuth.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/AdminTokenLoopbackTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/control/AdminAuthTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentsControl.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHostTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalLanControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineAttach.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingModel.kt

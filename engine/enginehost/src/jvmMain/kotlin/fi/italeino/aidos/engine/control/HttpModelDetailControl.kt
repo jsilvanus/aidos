@@ -14,15 +14,17 @@ import java.time.Duration
 /** [ModelDetailControl] over a running Engine's loopback admin API (`/v1/admin/model-detail/...?model=<id>`). */
 class HttpModelDetailControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : ModelDetailControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun call(method: String, action: String, modelId: String, body: String? = null, timeoutSeconds: Long = 60): HttpResponse<String> = withContext(Dispatchers.IO) {
         val b = HttpRequest.newBuilder(URI("$baseUrl/v1/admin/model-detail/$action?model=" + URLEncoder.encode(modelId, Charsets.UTF_8)))
-            .timeout(Duration.ofSeconds(timeoutSeconds)).header("Authorization", "Bearer $token").header("Content-Type", "application/json")
-        val r = client.send(if (method == "GET") b.GET().build() else b.method(method, HttpRequest.BodyPublishers.ofString(body ?: "{}")).build(), HttpResponse.BodyHandlers.ofString())
+            .timeout(Duration.ofSeconds(timeoutSeconds)).header("Authorization", "Bearer ${auth.token}").header("Content-Type", "application/json")
+        val r = auth.send(client, if (method == "GET") b.GET().build() else b.method(method, HttpRequest.BodyPublishers.ofString(body ?: "{}")).build())
         if (r.statusCode() !in 200..299) {
             val msg = Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(r.body())?.groupValues?.get(1)?.replace("\\\"", "\"")
             throw EngineControlException(r.statusCode(), msg ?: "Engine answered ${r.statusCode()}")

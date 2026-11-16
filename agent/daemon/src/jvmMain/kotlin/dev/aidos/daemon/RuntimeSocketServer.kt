@@ -202,7 +202,7 @@ class RuntimeSocketServer(
         val interactive = hello?.get("interactive")?.jsonPrimitive?.boolean ?: false
         val clientMinApi = hello?.get("minApiVersion")?.jsonPrimitive?.intOrNull ?: 1
 
-        if (presentedToken != connectionToken) {
+        if (presentedToken == null || !java.security.MessageDigest.isEqual(presentedToken.toByteArray(), connectionToken.toByteArray())) {
             writeLine(output, buildJsonObject { put("ok", false); put("error", "unauthorized") })
             return null
         }
