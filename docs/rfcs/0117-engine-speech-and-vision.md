@@ -63,7 +63,7 @@ Goal: the Engine can speak. A model of kind `tts` loads and `POST /v1/audio/spee
 
 **Phonemizer.** Piper's current code (`piper1-gpl`) embeds espeak-ng, which is GPL-3.0-or-later. Shipping it in an EUPL-1.2 app is possible (the EUPL lists GPL-3.0 as compatible) but makes every binary distribution GPL-bound and adds a native library per ABI. Finnish spelling is close to phonemic, so the recommended route is a pure-Kotlin Finnish grapheme-to-phoneme rule table that emits the same IPA symbols the voice's `phoneme_id_map` expects. espeak-ng is used only as a golden reference in tests run on the developer's machine, never shipped.
 
-**Recommendation.** Piper `fi_FI-harri-medium` for Finnish, with a pure-Kotlin Finnish phonemizer and no espeak-ng in the shipped Engine. English is a later voice from a permissively licensed package. Open licence question before shipping: the `lessac` base checkpoint's training-data licence.
+**Recommendation.** Piper `fi_FI-harri-medium` for Finnish, with a pure-Kotlin Finnish phonemizer and no espeak-ng in the shipped Engine. English uses a Piper English voice with a CMU Pronouncing Dictionary lookup (BSD-2-Clause data, copyright notice shipped with it) and a Kotlin letter-to-sound fallback for words outside the dictionary. A user-installed espeak-ng (GPL-3.0 or later, never bundled) is an optional, post-MVP quality fallback (0117.11). Open licence question before shipping: the `lessac` base checkpoint's training-data licence.
 
 **Package layout (proposed).** A directory package: `<voice>.onnx` (VITS graph), `<voice>.onnx.json` (sample rate, `phoneme_id_map`, `num_speakers`, inference scales, `espeak.voice` field kept for reference only), and `MODEL_CARD`. `ModelPackage.detectPiper` picks the files; the installer downloads all of them or none, as for STT.
 
@@ -175,4 +175,8 @@ post_mvp:
     title: "Text-to-speech: Piper Finnish voice package, pure-Kotlin Finnish phonemizer, POST /v1/audio/speech (amendment stage 2, after the owner picks the model)"
     status: todo
     phase: P1
+  - id: "0117.11"
+    title: "Text-to-speech fallback: detect a user-installed espeak-ng (GPL-3.0 or later, not shipped) for English quality; never bundled"
+    status: todo
+    phase: P2
 ```
