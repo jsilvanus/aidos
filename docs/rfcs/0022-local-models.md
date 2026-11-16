@@ -440,9 +440,14 @@ Added after the 2026-11-16 code review found that both llama.cpp adapters wrote 
 8. **Desktop and Android share one implementation** (`LlamaChatPrompt`), so the two hosts cannot
    differ in how a request becomes a prompt.
 
-Not covered: per-request sampling parameters. `ModelRequest` (kernel, frozen at G0) carries no
-temperature or top-p, so the Engine applies the per-model run settings and ignores the values a
-client sends. Changing that needs a kernel contract change and is left open.
+9. **Per-request sampling.** A request's `temperature` and `top_p`, when the client sends them,
+   apply to that request; values the client leaves out fall back to the per-model run settings.
+   `ModelRequest` (kernel, frozen at G0) has no fields for them, so the Engine carries them beside
+   the request as a coroutine context element (`SamplingOverride`) that the llama adapters read.
+   No kernel contract changes.
+10. **Unknown roles are refused.** A message whose role is not `system`, `developer`, `user`,
+    `assistant` or `tool` is a 400. It is never treated as a system turn: a typo must not gain
+    system authority. `developer` is read as `system`.
 
 ## Implementation Files
 
