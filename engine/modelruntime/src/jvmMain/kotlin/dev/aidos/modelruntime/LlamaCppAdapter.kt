@@ -189,7 +189,8 @@ class LlamaCppAdapter(
                 // Non-null only when the caller requires a call (RFC-0021 constrained decoding).
                 val grammar = LlamaChatPrompt.grammar(request)
 
-                val output = StringBuilder()
+                // Thinking blocks are removed here, before anything streams or parses (RFC-0129 section 10).
+                val reply = ReplyAssembler(request.stopConditions)
                 // What this request asked for wins over the model's settings (RFC-0022 amendment, point 9).
                 val sampling = currentCoroutineContext()[SamplingOverride]
                 val parameters = InferenceParameters(prompt)
@@ -203,8 +204,6 @@ class LlamaCppAdapter(
                     .let { if (grammar != null) it.withGrammar(grammar) else it }
                 val tokens = model.generate(parameters).iterator()
                 var tokenCount = 0
-                var stoppedOnSequence = false
-                val longestStop = request.stopConditions.maxOfOrNull { it.length } ?: 0
 
                 cancelRequested = false
                 activeIterator = tokens
@@ -212,14 +211,12 @@ class LlamaCppAdapter(
                     // Checked before hasNext(), which blocks in native code until the next token.
                     while (!closed && !cancelRequested && tokenCount < request.maxOutputTokens && tokens.hasNext()) {
                         val token = tokens.next()
-                        output.append(token.text)
                         tokenCount++
-                        emit(ModelStreamEvent.Delta(token.text))
+                        // Thinking tokens count toward usage but are never shown.
+                        val shown = reply.accept(token.text)
+                        if (shown.isNotEmpty()) emit(ModelStreamEvent.Delta(shown))
 
-                        if (longestStop > 0 && endsWithStop(output, token.text.length, longestStop, request.stopConditions)) {
-                            stoppedOnSequence = true
-                            break
-                        }
+                        if (reply.stoppedOnSequence) break
                     }
                 } finally {
                     if (activeIterator === tokens) activeIterator = null
@@ -230,7 +227,9 @@ class LlamaCppAdapter(
                     if (tokens.hasNext()) runCatching { tokens.cancel() }
                 }
 
-                val generated = output.toString()
+                val tail = reply.finish()
+                if (tail.isNotEmpty()) emit(ModelStreamEvent.Delta(tail))
+                val generated = reply.text
                 val toolCalls = if (offeredTools.isNotEmpty()) {
                     ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
                 } else {
@@ -240,7 +239,7 @@ class LlamaCppAdapter(
 
                 val stopReason = when {
                     tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                    stoppedOnSequence -> StopReason.STOP_SEQUENCE
+                    reply.stoppedOnSequence -> StopReason.STOP_SEQUENCE
                     toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                     else -> StopReason.END_TURN
                 }
@@ -276,16 +275,6 @@ class LlamaCppAdapter(
 
     /** The exact prompt text [request] is run with: the model's chat template applied, tools described. */
     internal fun renderPrompt(request: ModelRequest): String = LlamaChatPrompt.render(model, chatTemplate, request)
-
-    /**
-     * Whether a stop sequence was completed by the token just appended. Only the tail that the
-     * new token can have changed is searched, so a long generation does not rescan (or copy) the
-     * whole output for every token.
-     */
-    private fun endsWithStop(output: StringBuilder, appended: Int, longestStop: Int, stopSequences: List<String>): Boolean {
-        val from = (output.length - appended - longestStop + 1).coerceAtLeast(0)
-        return stopSequences.any { it.isNotEmpty() && output.indexOf(it, from) >= 0 }
-    }
 
     /**
      * Ask the running generation to stop. Takes effect after the token in flight (or, during prompt

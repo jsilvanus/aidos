@@ -9,6 +9,7 @@ import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.modelruntime.LlamaChatPrompt
 import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.modelruntime.ReplyAssembler
 import dev.aidos.modelruntime.SamplingOverride
 import dev.aidos.modelruntime.TokenCountingAdapter
 import dev.aidos.modelruntime.ToolCallParser
@@ -154,7 +155,8 @@ class AndroidLlamaCppAdapter(
                     // A conversation repeats its earlier turns: keep the evaluated prefix.
                     .withCachePrompt(true)
                 if (grammar != null) parameters = parameters.withGrammar(grammar)
-                val output = StringBuilder()
+                // Thinking blocks are removed here, before anything streams or parses (RFC-0129 section 10).
+                val reply = ReplyAssembler(request.stopConditions)
                 var tokenCount = 0
                 // `generate` is lazy: emitting as the iterator advances keeps the UI and the
                 // loopback SSE endpoint genuinely token-streaming rather than buffering a native
@@ -168,9 +170,10 @@ class AndroidLlamaCppAdapter(
                     while (!closed && !cancelRequested && tokenCount < request.maxOutputTokens && iterator.hasNext()) {
                         val token = iterator.next()
                         tokenCount++
-                        output.append(token.text)
-                        emit(ModelStreamEvent.Delta(token.text))
-                        if (request.stopConditions.any(output::contains)) break
+                        // Thinking tokens count toward usage but are never shown.
+                        val shown = reply.accept(token.text)
+                        if (shown.isNotEmpty()) emit(ModelStreamEvent.Delta(shown))
+                        if (reply.stoppedOnSequence) break
                     }
                 } finally {
                     synchronized(inferenceLock) {
@@ -183,7 +186,9 @@ class AndroidLlamaCppAdapter(
                     }
                 }
 
-                val generated = output.toString()
+                val tail = reply.finish()
+                if (tail.isNotEmpty()) emit(ModelStreamEvent.Delta(tail))
+                val generated = reply.text
                 val toolCalls = if (offeredTools.isEmpty()) emptyList()
                 else ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
                 val text = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
@@ -199,7 +204,7 @@ class AndroidLlamaCppAdapter(
                         },
                         stopReason = when {
                             outputTokens >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                            request.stopConditions.any(generated::contains) -> StopReason.STOP_SEQUENCE
+                            reply.stoppedOnSequence -> StopReason.STOP_SEQUENCE
                             toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                             else -> StopReason.END_TURN
                         },
