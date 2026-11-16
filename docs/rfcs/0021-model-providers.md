@@ -257,15 +257,6 @@ the envelope was worth having.
 - **A published provider SPI**, if and only if the plugin host lands (D18) and someone actually
   wants to write one. It wraps `ModelAdapter`; it does not become it.
 
-## Open Questions
-
-- Should a provider be able to declare "my tool-calling is native but unreliable", so routing can
-  prefer constrained decoding even where a native path exists? Some models advertise the
-  capability and use it badly, and the failure is silent.
-- Where should redaction sit — in the broker before the adapter, or in the adapter? Broker is
-  cleaner and provider-agnostic; adapter is the only place that knows the wire format well enough
-  to redact structured fields rather than text.
-
 ## Implementation Files
 
 ```yaml
@@ -322,5 +313,11 @@ post_mvp:
     status: todo
   - id: "0021.4"
     title: "published provider SPI"
+    status: todo
+  - id: "0021.5"
+    title: "Provider declares its tool-calling is native but unreliable, so routing can prefer constrained decoding"
+    status: todo
+  - id: "0021.6"
+    title: "Owner decision: redaction placement (broker before adapter, or inside the adapter for structured fields)"
     status: todo
 ```

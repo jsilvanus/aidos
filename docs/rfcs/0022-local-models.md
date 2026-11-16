@@ -401,17 +401,6 @@ M21, and it gates G3.
 - **Fine-tuned adapters** (LoRA) applied at load time, once there is a reason more specific than
   that it is possible.
 
-## Open Questions
-
-- Should `RUNS_TIGHT` be offered at all by default, or only behind an explicit "show models that
-  may be unstable"? It is the band where the app gets killed, and a user who does not understand
-  the verdict will blame Aidos rather than the model.
-- Does the cookbook need to model *concurrent* load — an LLM and an embedding model resident
-  together during indexing — or is serializing them through the admission queue sufficient?
-- How should a model that runs well on one device and badly on another be presented, once
-  measurements exist across devices? Aggregating them would be misleading; showing only the
-  local measurement discards useful information.
-
 ## Amendment 2026-11-16: prompt formatting and tool calling
 
 Added after the 2026-11-16 code review found that both llama.cpp adapters wrote prompts as
@@ -538,5 +527,14 @@ post_mvp:
     status: todo
   - id: "0022.3"
     title: "on-device G3/M21 budget validation"
+    status: todo
+  - id: "0022.4"
+    title: "Owner decision: whether RUNS_TIGHT models are offered by default or only behind an explicit opt-in"
+    status: todo
+  - id: "0022.5"
+    title: "Model concurrent residency of an LLM and an embedding model during indexing (admission queue serializes them today)"
+    status: todo
+  - id: "0022.6"
+    title: "Present per-device model measurements without aggregating them across devices"
     status: todo
 ```

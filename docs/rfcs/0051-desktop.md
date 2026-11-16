@@ -565,17 +565,6 @@ Theme engine:
   - Icon customization
 ```
 
-## Open Questions
-
-- Should desktop app have a plugin architecture in MVP?
-- Should remote runtime support multiplexing (multiple clients)?
-- How should desktop handle conflicts with mobile edits?
-- Should desktop support SSH tunneling to remote runtime?
-- Should there be offline-first desktop mode (local runtime only)?
-- How should very large projects handle UI responsiveness?
-- Should desktop support custom views/dashboards?
-- Should there be a "dev mode" with enhanced debugging?
-
 ## Implementation Files
 
 ```yaml

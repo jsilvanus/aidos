@@ -279,15 +279,6 @@ model attestation (identity proposal §4); allowing a specific remote provider r
 | Lost or stolen company phone | 30-day certificates, revocation list, per-device Stop |
 | Battery, heat, user annoyance | Charging-only default, thermal draining, visible notification with Stop |
 
-## Open questions
-
-- Certificate validity and renewal defaults for groups (30 days proposed).
-- Whether the group signing key may live on more than one admin device, and how it is backed up.
-- Whether `aidos:chat` candidate lists are configured per Engine only, or also pushed by a group
-  admin to members.
-- How node keys relate to the Aidos installation identity once the identity proposal becomes an RFC
-  (this RFC keeps them separate keys; they may later be bound by a signed statement).
-
 ## Phase 3 Testing (Layer Split Implementation)
 
 ### Test Coverage
@@ -426,5 +417,17 @@ post_mvp:
     status: todo
   - id: "0105.7"
     title: "model attestation"
+    status: todo
+  - id: "0105.8"
+    title: "Owner decision: group certificate validity and renewal (30 days proposed)"
+    status: todo
+  - id: "0105.9"
+    title: "Owner decision: whether the group signing key may live on more than one admin device, and how it is backed up"
+    status: todo
+  - id: "0105.10"
+    title: "Owner decision: whether aidos:chat candidate lists are per Engine only or pushed by a group admin"
+    status: todo
+  - id: "0105.11"
+    title: "Bind node keys to the installation identity with a signed statement once the identity RFC exists"
     status: todo
 ```

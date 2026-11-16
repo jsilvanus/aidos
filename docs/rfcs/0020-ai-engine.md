@@ -605,16 +605,6 @@ Session sees reasoning unfold
 Interactive refinement possible
 ```
 
-## Open Questions
-
-- Should the AI Engine support model ensembles (multiple models voting on answer)?
-- How should the engine handle model failures gracefully (fallback to alternative)?
-- Should there be a "trusted models" concept (models that have been validated for this project)?
-- How should the engine handle models that are computationally expensive (warn before use)?
-- Should the engine support batching multiple requests to the same model for efficiency?
-- How should inference caching work (cache model outputs for identical inputs)?
-- Should sessions be able to specify model preferences (faster but less accurate vs. slower but more accurate)?
-
 ## Implementation Files
 
 ```yaml
@@ -697,5 +687,20 @@ post_mvp:
       - engine/stt/src/commonMain/kotlin/dev/aidos/stt/WhisperSttModel.kt
   - id: "0020.7"
     title: "streaming"
+    status: todo
+  - id: "0020.8"
+    title: "Fall back to an alternative model when a model fails"
+    status: todo
+  - id: "0020.9"
+    title: "Owner decision: trusted-models concept (models validated for a project)"
+    status: todo
+  - id: "0020.10"
+    title: "Warn before running computationally expensive models"
+    status: todo
+  - id: "0020.11"
+    title: "Batch requests to the same model for efficiency"
+    status: todo
+  - id: "0020.12"
+    title: "Cache inference output for identical inputs"
     status: todo
 ```
