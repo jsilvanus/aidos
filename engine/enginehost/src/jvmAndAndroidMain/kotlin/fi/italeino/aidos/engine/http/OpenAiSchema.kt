@@ -14,9 +14,10 @@ import kotlinx.serialization.json.JsonObject
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
-    val temperature: Float = 0.7f,
+    /** Null when the client did not send it: the model's own run settings then apply (RFC-0022). */
+    val temperature: Float? = null,
     val max_tokens: Int? = null,
-    val top_p: Float = 1.0f,
+    val top_p: Float? = null,
     val stream: Boolean = false,
     val tool_choice: String? = null,
     val tools: List<ToolDefinition>? = null

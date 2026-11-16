@@ -7,6 +7,7 @@ import dev.aidos.aidin.RouteInfo
 import dev.aidos.aidin.RouteQueryRequest
 import dev.aidos.aidin.SplitInferenceOutcome
 import dev.aidos.aidin.TrustDomain
+import dev.aidos.modelruntime.SamplingOverride
 import dev.aidos.decisions.DecisionModelAdapter
 import dev.aidos.decisions.DecisionRequestException
 import dev.aidos.decisions.DecisionWire
@@ -721,14 +722,14 @@ class EngineHttpServer(
                 return
             }
         }
-        if (request.temperature.isNaN() || request.temperature !in 0.0f..2.0f) {
+        if (request.temperature != null && (request.temperature.isNaN() || request.temperature !in 0.0f..2.0f)) {
             call.respond(
                 HttpStatusCode.BadRequest,
                 ErrorResponse(ErrorDetail("temperature must be between 0.0 and 2.0", "invalid_request_error", param = "temperature", code = "invalid_request"))
             )
             return
         }
-        if (request.top_p.isNaN() || request.top_p !in 0.0f..1.0f) {
+        if (request.top_p != null && (request.top_p.isNaN() || request.top_p !in 0.0f..1.0f)) {
             call.respond(
                 HttpStatusCode.BadRequest,
                 ErrorResponse(ErrorDetail("top_p must be between 0.0 and 1.0", "invalid_request_error", param = "top_p", code = "invalid_request"))
@@ -737,37 +738,40 @@ class EngineHttpServer(
         }
 
         try {
-            val modelRequest = buildModelRequest(request)
+            // The request's own sampling travels beside the frozen ModelRequest (RFC-0022 amendment, point 9).
+            withContext(SamplingOverride(request.temperature, request.top_p)) {
+                val modelRequest = buildModelRequest(request)
 
-            if (virtualModelRouter.isVirtualModelId(request.model)) {
-                handleVirtualChatCompletions(call, request, modelRequest, locality, sensitivePrompts)
-                return
-            }
+                if (virtualModelRouter.isVirtualModelId(request.model)) {
+                    handleVirtualChatCompletions(call, request, modelRequest, locality, sensitivePrompts)
+                    return@withContext
+                }
 
-            if (request.stream) {
-                val streamResult = executeManaged(request.model, locality, streaming = true) { adapter, placement ->
+                if (request.stream) {
+                    val streamResult = executeManaged(request.model, locality, streaming = true) { adapter, placement ->
+                        call.response.header(PLACEMENT_HEADER, placement.wire)
+                        call.response.header(ROUTE_HEADER, "local")
+                        streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
+                    }
+                    if (streamResult.isFailure && !call.response.isCommitted) {
+                        respondClassifiedError(call, streamResult.exceptionOrNull(), sensitivePrompts)
+                    }
+                    return@withContext
+                }
+
+                val inferenceResult = executeManaged(request.model, locality) { adapter, placement ->
                     call.response.header(PLACEMENT_HEADER, placement.wire)
                     call.response.header(ROUTE_HEADER, "local")
-                    streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
+                    adapter.invoke(modelRequest).getOrThrow()
                 }
-                if (streamResult.isFailure && !call.response.isCommitted) {
-                    respondClassifiedError(call, streamResult.exceptionOrNull(), sensitivePrompts)
+                if (inferenceResult.isFailure) {
+                    respondClassifiedError(call, inferenceResult.exceptionOrNull(), sensitivePrompts)
+                    return@withContext
                 }
-                return
-            }
 
-            val inferenceResult = executeManaged(request.model, locality) { adapter, placement ->
-                call.response.header(PLACEMENT_HEADER, placement.wire)
-                call.response.header(ROUTE_HEADER, "local")
-                adapter.invoke(modelRequest).getOrThrow()
+                val chatResponse = toChatCompletionResponse(inferenceResult.getOrThrow(), request.model)
+                call.respond(chatResponse)
             }
-            if (inferenceResult.isFailure) {
-                respondClassifiedError(call, inferenceResult.exceptionOrNull(), sensitivePrompts)
-                return
-            }
-
-            val chatResponse = toChatCompletionResponse(inferenceResult.getOrThrow(), request.model)
-            call.respond(chatResponse)
         } catch (e: IllegalArgumentException) {
             call.respond(
                 HttpStatusCode.BadRequest,
@@ -787,7 +791,8 @@ class EngineHttpServer(
     private fun buildModelRequest(request: ChatCompletionRequest): ModelRequest {
         val turns = request.messages.map { msg ->
             when (msg.role) {
-                "system" -> Turn.System(msg.content ?: "")
+                // `developer` is what newer OpenAI clients call the system role.
+                "system", "developer" -> Turn.System(msg.content ?: "")
                 "user" -> Turn.User(
                     listOf<ContentBlock>(ContentBlock.Text(msg.content ?: "")) + msg.images.orEmpty().map(::decodeImage),
                     TrustLevel.TRUSTED,
@@ -812,7 +817,10 @@ class EngineHttpServer(
                         trustLevel = TrustLevel.TRUSTED
                     )
                 )
-                else -> Turn.System(msg.content ?: "")
+                // Never a system turn: a typo in a role must not gain system authority (RFC-0022 amendment, point 10).
+                else -> throw IllegalArgumentException(
+                    "Unknown message role '${msg.role.take(32)}'; expected system, developer, user, assistant or tool"
+                )
             }
         }
 
@@ -1001,8 +1009,8 @@ class EngineHttpServer(
             messages = request.messages.map { dev.aidos.aidin.SplitChatMessage(it.role, it.content.orEmpty()) },
             expectedPlanVersion = planVersion,
             maxTokens = request.max_tokens,
-            temperature = request.temperature.toDouble(),
-            topP = request.top_p.toDouble(),
+            temperature = request.temperature?.toDouble(),
+            topP = request.top_p?.toDouble(),
         )
     }
 
@@ -1912,6 +1920,18 @@ class EngineHttpServer(
                 bodyJson = wireJson.encodeToString(ErrorResponse(ErrorDetail(sanitizeErrorMessage(e.message, "Invalid chat request"), "invalid_request_error", code = "invalid_request"))),
             )
         }
+        return withContext(SamplingOverride(chatReq.temperature, chatReq.top_p)) {
+            runDelegatedChat(request, chatReq, modelRequest, peerLocality, emitStream)
+        }
+    }
+
+    private suspend fun runDelegatedChat(
+        request: LinkMessage.DelegateRequest,
+        chatReq: ChatCompletionRequest,
+        modelRequest: ModelRequest,
+        peerLocality: Locality,
+        emitStream: suspend (LinkMessage.DelegateStreamEvent) -> Unit,
+    ): LinkMessage.DelegateResponse {
 
         // Peer execution never delegates to another peer; execute against local modelRuntime only.
         val localExecLocality = peerLocality.strictest(Locality.LOCAL_ONLY)
