@@ -1,7 +1,6 @@
 package dev.aidos.aidin
 
 import kotlinx.serialization.Serializable
-import kotlin.math.roundToInt
 
 /**
  * RFC-0105 "Contribution policy (hard limits, per device)".
@@ -209,78 +208,74 @@ object SplitModelPlanner {
                 .thenBy { it.nodeId.value }
         )
 
-        // Pick the fewest helpers needed to cover totalRequiredBytes (at least 1 helper for a split plan).
+        // A layer is the unit that moves between nodes, so budgets count in whole layers: a node
+        // holds floor(budget / bytes per layer). Sizing by bytes alone planned shares no node could
+        // hold (the helper then refused the plan, or the anchor silently ran over its own budget).
+        val bytesPerLayer = ((totalRequiredBytes + blockCount - 1) / blockCount).coerceAtLeast(1L)
+        fun layerCapacity(budgetBytes: Long): Int = (budgetBytes / bytesPerLayer).coerceAtMost(blockCount.toLong()).toInt()
+        val anchorCapacity = layerCapacity(anchorRamBudgetBytes)
+
+        // Pick the fewest helpers that hold the layers the anchor cannot (at least one: this is a split plan).
         val selected = mutableListOf<HelperCandidate>()
-        var accumulatedRam = anchorRamBudgetBytes
+        var capacity = anchorCapacity
         for (candidate in eligible) {
-            if (selected.isNotEmpty() && accumulatedRam >= totalRequiredBytes) break
+            if (selected.isNotEmpty() && capacity >= blockCount) break
+            val helperCapacity = layerCapacity(candidate.heartbeat.contributionRamBytes)
+            if (helperCapacity == 0) continue // cannot hold even one layer of this model
             selected += candidate
-            accumulatedRam += candidate.heartbeat.contributionRamBytes
+            capacity += helperCapacity
         }
 
         if (selected.isEmpty()) {
-            return SplitPlanOutcome.Refused("No eligible helper nodes with matching build '$llamaCppBuildId' in $domain")
-        }
-        if (accumulatedRam < totalRequiredBytes) {
             return SplitPlanOutcome.Refused(
-                "Insufficient group RAM: required $totalRequiredBytes bytes, offered $accumulatedRam bytes across anchor + ${selected.size} helper(s)"
+                if (eligible.isEmpty()) "No eligible helper nodes with matching build '$llamaCppBuildId' in $domain"
+                else "No eligible helper offers the $bytesPerLayer bytes one layer of this model needs"
             )
         }
-        if (selected.size + 1 > blockCount) {
+        if (capacity < blockCount) {
+            val offered = anchorRamBudgetBytes + selected.sumOf { it.heartbeat.contributionRamBytes }
             return SplitPlanOutcome.Refused(
-                "Model has only $blockCount layer(s), fewer than the ${selected.size + 1} nodes required to fit it"
+                "Insufficient group RAM: required $totalRequiredBytes bytes ($blockCount layers of $bytesPerLayer), " +
+                    "offered $offered bytes holding $capacity layers across anchor + ${selected.size} helper(s)"
+            )
+        }
+        if (selected.size > blockCount) {
+            return SplitPlanOutcome.Refused(
+                "Model has only $blockCount layer(s), fewer than the ${selected.size} helpers required to fit it"
             )
         }
 
-        // Cap each helper's used RAM to what is needed while keeping proportional shares.
-        val participantBudgets = selected.map { it.heartbeat.contributionRamBytes } + anchorRamBudgetBytes
-        val budgetSum = participantBudgets.sum().toDouble()
-        val rawWeights = participantBudgets.map { (it.toDouble() / budgetSum).toFloat() }
-
-        // Assign contiguous layer ranges [layerStart, layerEndExclusive) to each helper, then the anchor.
-        val participantCount = selected.size + 1
-        val layerCounts = IntArray(participantCount) { 1 }
-        var remainingLayers = blockCount - participantCount
-        if (remainingLayers > 0) {
-            val extraByWeight = rawWeights.map { (it * remainingLayers).roundToInt() }.toIntArray()
-            var assignedExtra = extraByWeight.sum()
-            for (i in 0 until participantCount) {
-                layerCounts[i] += extraByWeight[i]
-            }
-            // Adjust rounding residue on the largest-budget participant so sum == blockCount.
-            var idx = 0
-            while (assignedExtra < remainingLayers) {
-                layerCounts[idx % participantCount]++
-                assignedExtra++
-                idx++
-            }
-            while (assignedExtra > remainingLayers) {
-                val target = (0 until participantCount).firstOrNull { layerCounts[it] > 1 } ?: break
-                layerCounts[target]--
-                assignedExtra--
-            }
+        // Layers in proportion to budget, never past a node's capacity. Helpers come first in the
+        // layer order and each holds at least one layer; the anchor may hold none.
+        val budgets = selected.map { it.heartbeat.contributionRamBytes } + anchorRamBudgetBytes
+        val capacities = selected.map { layerCapacity(it.heartbeat.contributionRamBytes) } + anchorCapacity
+        val layerCounts = IntArray(budgets.size) { if (it < selected.size) 1 else 0 }
+        repeat(blockCount - selected.size) {
+            // The next layer goes to the node that is furthest below its proportional share.
+            val next = layerCounts.indices
+                .filter { layerCounts[it] < capacities[it] }
+                .minByOrNull { layerCounts[it].toDouble() / budgets[it].toDouble() }
+                ?: return SplitPlanOutcome.Refused("Insufficient group RAM: layers do not fit the offered budgets")
+            layerCounts[next]++
         }
 
         var cursor = 0
         val helperShares = selected.mapIndexed { index, candidate ->
             val count = layerCounts[index]
             val start = cursor
-            val end = cursor + count
-            cursor = end
-            val fraction = count.toDouble() / blockCount.toDouble()
-            val allocatedBytes = ((totalRequiredBytes * fraction).toLong()).coerceAtLeast(1L)
+            cursor += count
             HelperShare(
                 nodeId = candidate.nodeId,
                 layerStart = start,
-                layerEndExclusive = end,
-                allocatedRamBytes = allocatedBytes,
+                layerEndExclusive = cursor,
+                allocatedRamBytes = count * bytesPerLayer,
                 tensorSplitWeight = count.toFloat() / blockCount.toFloat(),
             )
         }
         val anchorStart = cursor
         val anchorEnd = blockCount
-        val anchorCount = (anchorEnd - anchorStart).coerceAtLeast(1)
-        val anchorAllocatedBytes = (totalRequiredBytes - helperShares.sumOf { it.allocatedRamBytes }).coerceAtLeast(1L)
+        val anchorCount = anchorEnd - anchorStart
+        val anchorAllocatedBytes = anchorCount * bytesPerLayer
 
         val tensorSplitArg = (helperShares.map { it.layerCount } + anchorCount).joinToString(",")
 
@@ -295,7 +290,7 @@ object SplitModelPlanner {
                 helpers = helperShares,
                 anchorLayerStart = anchorStart,
                 anchorLayerEndExclusive = anchorEnd,
-                anchorAllocatedRamBytes = anchorAllocatedBytes.coerceAtMost(anchorRamBudgetBytes),
+                anchorAllocatedRamBytes = anchorAllocatedBytes,
                 tensorSplitArg = tensorSplitArg,
                 contextLength = contextLength,
                 llamaCppBuildId = llamaCppBuildId,
