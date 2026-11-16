@@ -1,6 +1,9 @@
 package fi.italeino.aidos.sdk.client
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -717,6 +720,20 @@ internal class EngineClientImpl(
                     }
                 }
             }
+        } catch (e: java.net.ConnectException) {
+            // Nothing is listening on the port from the last handshake: Engine restarted, and its
+            // port is ephemeral (RFC-0103: "never assumed stable across Engine restarts"). A 401
+            // can never arrive from a port that is gone, so this is the same reconnect case.
+            if (allowReauth && handshakeMutex.withLock { doHandshakeLocked() }) {
+                executeRaw(endpoint, method, body, allowReauth = false)
+            } else {
+                lastError = EngineError(
+                    message = e.message ?: "Engine is not reachable",
+                    type = "io_error",
+                    code = "connection_failed"
+                )
+                null
+            }
         } catch (e: IOException) {
             lastError = EngineError(
                 message = e.message ?: "Network error connecting to Engine",
@@ -779,13 +796,41 @@ internal class EngineClientImpl(
     }
 
     override fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatCompletionChunk> = flow {
+        // One reconnect, as for [request]: a stale token (401) or a port nothing listens on any
+        // more both mean Engine restarted since the last handshake (RFC-0103).
+        var mayReconnect = true
+        while (true) {
+            val reconnect = streamOnce(request, mayReconnect)
+            if (!reconnect) return@flow
+            mayReconnect = false
+            if (!handshakeMutex.withLock { doHandshakeLocked() }) {
+                val err = EngineError(
+                    message = "Engine restarted and re-handshake failed",
+                    type = "auth_error",
+                    code = "unauthorized",
+                    statusCode = 401
+                )
+                lastError = err
+                throw EngineApiException(401, err)
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * One attempt at the stream. Returns true when nothing was emitted and the caller should
+     * re-handshake and try again; only possible while [mayReconnect].
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ChatCompletionChunk>.streamOnce(
+        request: ChatCompletionRequest,
+        mayReconnect: Boolean,
+    ): Boolean {
         val current = handshakeResult ?: run {
             lastError = EngineError(
                 message = "Engine is not initialized or unavailable ($availabilityState)",
                 type = "availability_error",
                 code = "engine_unavailable"
             )
-            return@flow
+            return false
         }
         if (!localityEnforceable(current)) {
             lastError = EngineError(
@@ -793,7 +838,7 @@ internal class EngineClientImpl(
                 type = "locality_error",
                 code = "locality_unsupported"
             )
-            return@flow
+            return false
         }
         val streamingRequest = if (request.stream) request else request.copy(stream = true)
         val httpRequest = Request.Builder()
@@ -804,8 +849,13 @@ internal class EngineClientImpl(
             .withVersions(current)
             .build()
 
+        val call = httpClient.newCall(httpRequest)
+        // The read below blocks, so cancelling the collector would not otherwise reach it: the
+        // connection stayed open and Engine kept generating for a reader that had left.
+        val onCancel = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
         try {
-            httpClient.newCall(httpRequest).execute().use { response ->
+            call.execute().use { response ->
+                if (response.code == 401 && mayReconnect) return true
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string()
                     val err = parseErrorDetail(errorBody, response.code)
@@ -840,7 +890,14 @@ internal class EngineClientImpl(
                     emit(engineJson.decodeFromString<ChatCompletionChunk>(payload))
                 }
             }
+        } catch (e: java.net.ConnectException) {
+            if (mayReconnect) return true
+            val err = EngineError(message = e.message ?: "Engine is not reachable", type = "io_error", code = "connection_failed")
+            lastError = err
+            throw EngineApiException(503, err, e)
         } catch (e: IOException) {
+            // A read that failed because the collector was cancelled is a cancellation, not an error.
+            currentCoroutineContext().ensureActive()
             val err = EngineError(
                 message = e.message ?: "Connection error during streaming",
                 type = "io_error",
@@ -848,8 +905,11 @@ internal class EngineClientImpl(
             )
             lastError = err
             throw EngineApiException(503, err, e)
+        } finally {
+            onCancel?.dispose()
         }
-    }.flowOn(Dispatchers.IO)
+        return false
+    }
 
     override suspend fun embeddings(request: EmbeddingsRequest): EmbeddingsResponse? {
         val responseBody = executeRaw(

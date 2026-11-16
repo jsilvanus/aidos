@@ -213,6 +213,101 @@ class AidosEngineClientTest {
         assertEquals("Bearer fresh-token", server.takeRequest().getHeader("Authorization"))
     }
 
+    /** A port nothing listens on: what the old handshake points at after Engine restarts. */
+    private fun deadPort(): Int = java.net.ServerSocket(0).use { it.localPort }
+
+    @Test
+    fun request_whenThePortIsGone_reHandshakesAndReachesTheRestartedEngine() = runTest {
+        // RFC-0103: the port is ephemeral and changes on restart. No 401 can come from a port
+        // that is closed, so connection-refused has to trigger the same re-handshake.
+        server.enqueue(MockResponse().setBody("{}"))
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer {
+                HandshakeOutcome.Approved(approvedResponse(port = server.port, token = "fresh-token"))
+            }
+        )
+        client.setHandshakeResult(approvedResponse(port = deadPort(), token = "stale-token"))
+
+        assertEquals("{}", client.request("chat/completions"))
+        assertEquals("Bearer fresh-token", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun request_whenThePortIsGoneAndEngineIsStillDown_failsAfterOneRetry() = runTest {
+        var handshakes = 0
+        val dead = deadPort()
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer {
+                handshakes++
+                HandshakeOutcome.Approved(approvedResponse(port = dead))
+            }
+        )
+        client.setHandshakeResult(approvedResponse(port = dead))
+
+        assertNull(client.request("chat/completions"))
+        assertEquals(1, handshakes)
+        assertEquals("connection_failed", client.lastError?.code)
+    }
+
+    private val oneChunkStream = MockResponse()
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+            "data: {\"id\":\"1\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+        )
+    private val streamRequest =
+        ChatCompletionRequest(model = "m", messages = listOf(ChatMessage(role = "user", content = "hi")))
+
+    @Test
+    fun streamChatCompletion_on401_reHandshakesOnceAndStreams() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(oneChunkStream)
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer {
+                HandshakeOutcome.Approved(approvedResponse(port = server.port, token = "fresh-token"))
+            }
+        )
+        client.setHandshakeResult(approvedResponse(port = server.port, token = "stale-token"))
+
+        val chunks = client.streamChatCompletion(streamRequest).toList()
+
+        assertEquals(listOf("Hi"), chunks.map { it.choices.single().delta.content })
+        assertEquals("Bearer stale-token", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer fresh-token", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun streamChatCompletion_whenThePortIsGone_reHandshakesAndStreams() = runTest {
+        server.enqueue(oneChunkStream)
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer {
+                HandshakeOutcome.Approved(approvedResponse(port = server.port))
+            }
+        )
+        client.setHandshakeResult(approvedResponse(port = deadPort()))
+
+        val chunks = client.streamChatCompletion(streamRequest).toList()
+
+        assertEquals(listOf("Hi"), chunks.map { it.choices.single().delta.content })
+    }
+
+    @Test
+    fun streamChatCompletion_asecond401IsAnErrorNotALoop() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401))
+        val client = EngineClientImpl(
+            handshakePerformer = HandshakePerformer {
+                HandshakeOutcome.Approved(approvedResponse(port = server.port))
+            }
+        )
+        client.setHandshakeResult(approvedResponse(port = server.port))
+
+        val error = runCatching { client.streamChatCompletion(streamRequest).toList() }.exceptionOrNull()
+
+        assertTrue(error is EngineApiException)
+        assertEquals(2, server.requestCount)
+    }
+
     @Test
     fun streamChatCompletion_emitsChunksAndStopsAtDone() = runTest {
         server.enqueue(
