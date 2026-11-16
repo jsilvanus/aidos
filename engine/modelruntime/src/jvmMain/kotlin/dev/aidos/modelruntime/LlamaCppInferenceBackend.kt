@@ -3,7 +3,6 @@ package dev.aidos.modelruntime
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
-import org.apache.commons.codec.digest.DigestUtils
 import java.io.File
 
 /**
@@ -70,12 +69,28 @@ class LlamaCppInferenceBackend : InferenceBackend {
         ),
     )
 
+    /**
+     * Descriptors already built for a file, valid while its length and modification time are
+     * unchanged. Building one parses the GGUF header (including the tokenizer vocabulary) and
+     * hashes the whole file; `installed()` runs several times per inference request, so without
+     * this every request re-read every installed model.
+     */
+    private class CachedDescriptor(val length: Long, val lastModified: Long, val descriptor: ModelDescriptor)
+    private val descriptorCache = java.util.concurrent.ConcurrentHashMap<String, CachedDescriptor>()
+
     /** Models installed on this device (from ~/.aidos/models/). */
     override suspend fun installed(): List<ModelDescriptor> {
         if (!modelsDir.exists()) return emptyList()
 
-        return modelsDir.listFiles()?.mapNotNull { file ->
+        val seen = HashSet<String>()
+        val result = modelsDir.listFiles()?.mapNotNull { file ->
             if (!file.isFile || !file.name.endsWith(".gguf")) return@mapNotNull null
+            seen += file.name
+            val length = file.length()
+            val lastModified = file.lastModified()
+            descriptorCache[file.name]
+                ?.takeIf { it.length == length && it.lastModified == lastModified }
+                ?.let { return@mapNotNull it.descriptor }
 
             val metadata = GgufLoader.loadMetadata(file) ?: return@mapNotNull null
             val digest = computeDigest(file.nameWithoutExtension)
@@ -87,29 +102,26 @@ class LlamaCppInferenceBackend : InferenceBackend {
                 providerId = "local",
                 isLocal = true,
                 contextWindow = metadata.contextWindow,
-                sizeBytes = file.length(),
+                sizeBytes = length,
                 digest = digest,
                 // /v1/models reports this; without it an installed GGUF showed format=null while an
                 // installed ONNX package showed "onnx".
                 format = "gguf",
                 quantization = metadata.quantization.takeIf { it.isNotBlank() && it != "unknown" },
-            )
+            ).also { descriptorCache[file.name] = CachedDescriptor(length, lastModified, it) }
         } ?: emptyList()
+        descriptorCache.keys.retainAll(seen)
+        return result
     }
 
-    /** Compute SHA-256 digest of a model file. */
-    override suspend fun computeDigest(modelId: String): String {
-        val file = modelFile(modelId)
-        return if (file.exists()) {
-            file.inputStream().use { DigestUtils.sha256Hex(it) }
-        } else {
-            ""
-        }
-    }
+    /** SHA-256 digest of a model file; cached per file version, see [ModelFileDigests]. */
+    override suspend fun computeDigest(modelId: String): String = ModelFileDigests.sha256(modelFile(modelId))
 
     /** Delete a model from installed_models. */
     override suspend fun delete(modelId: String) {
-        modelFile(modelId).delete()
+        val file = modelFile(modelId)
+        file.delete()
+        ModelFileDigests.invalidate(file)
     }
 
     /** Tracks live adapters so unload can actually free the native handle. */

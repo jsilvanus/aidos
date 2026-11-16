@@ -469,6 +469,8 @@ files:
   - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/HuggingFaceClientTest.kt
   - engine/huggingface/src/jvmTest/kotlin/dev/aidos/huggingface/ModelArtifactTest.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackend.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/ModelFileDigests.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelFileDigestsTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GgufRot13FixtureTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelRunSettingsTest.kt
   - engine/models/src/commonMain/kotlin/dev/aidos/models/DatabaseModelCatalogManager.kt

@@ -87,7 +87,6 @@ import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.time.Instant
 
 /**
@@ -1018,15 +1017,5 @@ private fun parseJsonStringMap(raw: String): Map<String, String> = try {
 
 private fun canonicalOrAbsolute(file: File): File = runCatching { file.canonicalFile }.getOrDefault(file.absoluteFile)
 
-private fun sha256File(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    val buffer = ByteArray(8192)
-    file.inputStream().use { input ->
-        while (true) {
-            val read = input.read(buffer)
-            if (read <= 0) break
-            digest.update(buffer, 0, read)
-        }
-    }
-    return digest.digest().joinToString("") { "%02x".format(it) }
-}
+/** Cached per file version: `installed()` and `computeDigest()` run on every request. See [dev.aidos.modelruntime.ModelFileDigests]. */
+private fun sha256File(file: File): String = dev.aidos.modelruntime.ModelFileDigests.sha256(file)
