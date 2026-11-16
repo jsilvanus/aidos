@@ -172,6 +172,8 @@ class AndroidLlamaCppInferenceBackend(
                 threads = settings.threads ?: threads,
                 embeddingMode = catalog.kind == ModelKind.EMBEDDING,
                 settings = settings,
+                // RFC-0021: prompts are rendered with the template the GGUF declares.
+                chatTemplate = dev.aidos.modelruntime.GgufLoader.loadMetadata(file)?.chatTemplate,
             )
             liveAdapters[modelId]?.close()
             liveAdapters[modelId] = adapter

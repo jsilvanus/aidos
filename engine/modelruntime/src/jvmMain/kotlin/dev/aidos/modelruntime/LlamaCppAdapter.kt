@@ -5,7 +5,6 @@ import de.kherud.llama.LlamaIterator
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
 import dev.aidos.kernel.CancellableModelAdapter
-import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
@@ -13,10 +12,8 @@ import dev.aidos.kernel.ModelResponse
 import dev.aidos.kernel.ModelStreamEvent
 import dev.aidos.kernel.StopReason
 import dev.aidos.kernel.TextOutput
-import dev.aidos.kernel.ToolCall
 import dev.aidos.kernel.ToolCallOutput
 import dev.aidos.kernel.Usage
-import dev.aidos.kernel.Turn
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.io.File
@@ -25,8 +22,8 @@ import java.io.File
  * Real llama.cpp-based inference adapter (RFC-0022, M21/M22).
  *
  * Uses llama-cpp-java JNI bindings to load and run GGUF models locally.
- * Supports constrained decoding via GBNF grammars for tool-calling
- * (RFC-0021 constrained decoding, RFC-0008 agent loop).
+ * Prompts are rendered with the model's own chat template, and tools are offered and parsed as
+ * [LlamaChatPrompt] describes (RFC-0021 constrained decoding, RFC-0008 agent loop).
  */
 class LlamaCppAdapter(
     override val modelId: String,
@@ -38,11 +35,19 @@ class LlamaCppAdapter(
     private val embeddingMode: Boolean = false,
     /** Batch size, GPU layers and sampling come from here; context and threads arrive resolved above. */
     private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
+    /**
+     * A chat template to use instead of the one in the GGUF, for a model whose file carries none
+     * or a wrong one. Null (the default) uses the model's own.
+     */
+    private val chatTemplateOverride: String? = null,
 ) : CancellableModelAdapter, EmbeddingModelAdapter {
     override val providerId = "llama.cpp"
     override val modelVersion = "java-llama.cpp-4.2.0"
     override val contextWindow = contextSize
     override val isLocal = true
+
+    /** The template prompts are rendered with; null means the model has no notion of chat roles. */
+    private val chatTemplate: String? = chatTemplateOverride ?: metadata.chatTemplate
 
     private val loadStartNanos: Long = System.nanoTime()
     private val model: LlamaModel = loadModel(modelFile, contextSize, threads)
@@ -60,7 +65,7 @@ class LlamaCppAdapter(
         contextSize: Int,
         threads: Int,
     ): LlamaModel {
-        val params = ModelParameters()
+        fun parameters() = ModelParameters()
             .setModel(modelPath.absolutePath)
             .setCtxSize(contextSize)
             .setThreads(threads)
@@ -70,9 +75,20 @@ class LlamaCppAdapter(
             .setGpuLayers(settings.gpuLayers ?: ModelRunSettings.DEFAULT_GPU_LAYERS)
             .let { if (settings.useMmap == false) it.disableMmap() else it }
             .let { if (embeddingMode) it.enableEmbedding() else it }
+            .let { if (chatTemplateOverride != null) it.setChatTemplate(chatTemplateOverride) else it }
 
+        // llama.cpp only evaluates a model's real chat template with its Jinja engine on; without
+        // it, it guesses among a few built-in formats and falls back to ChatML for the rest.
+        if (chatTemplate != null && !embeddingMode) {
+            try {
+                return LlamaModel(parameters().enableJinja())
+            } catch (e: Exception) {
+                // A template the engine cannot parse must not stop the model from loading.
+                System.err.println("Model $modelId: chat template not usable with Jinja (${e.message}); loading without")
+            }
+        }
         return try {
-            LlamaModel(params)
+            LlamaModel(parameters())
         } catch (e: Exception) {
             throw IllegalStateException("Failed to load model $modelId from ${modelPath.absolutePath}", e)
         }
@@ -136,11 +152,10 @@ class LlamaCppAdapter(
         }
 
         try {
-            val prompt = formatPrompt(request.messages)
-
-            if (request.tools.isNotEmpty()) {
-                compileToolGrammar(request.tools)
-            }
+            val prompt = renderPrompt(request)
+            val offeredTools = LlamaChatPrompt.offeredTools(request)
+            // Non-null only when the caller requires a call (RFC-0021 constrained decoding).
+            val grammar = LlamaChatPrompt.grammar(request)
 
             val output = StringBuilder()
             val parameters = InferenceParameters(prompt)
@@ -148,6 +163,10 @@ class LlamaCppAdapter(
                 .setTemperature(settings.temperature ?: ModelRunSettings.DEFAULT_TEMPERATURE)
                 .setTopP(settings.topP ?: ModelRunSettings.DEFAULT_TOP_P)
                 .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
+                // Each turn of a conversation repeats the turns before it. Keeping the evaluated
+                // prefix means only the new text is processed, not the whole history again.
+                .setCachePrompt(true)
+                .let { if (grammar != null) it.setGrammar(grammar) else it }
             val tokens = model.generate(parameters).iterator()
             var tokenCount = 0
             var stoppedOnSequence = false
@@ -175,12 +194,13 @@ class LlamaCppAdapter(
                 if (tokens.hasNext()) runCatching { tokens.cancel() }
             }
 
-            val finalText = output.toString()
-            val toolCalls = if (request.tools.isNotEmpty()) {
-                extractToolCalls(finalText, request.tools)
+            val generated = output.toString()
+            val toolCalls = if (offeredTools.isNotEmpty()) {
+                ToolCallParser.parse(generated, offeredTools, isConstrained = grammar != null)
             } else {
                 emptyList()
             }
+            val finalText = LlamaChatPrompt.textWithoutCalls(generated, toolCalls, constrained = grammar != null)
 
             val stopReason = when {
                 tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
@@ -217,77 +237,8 @@ class LlamaCppAdapter(
         }
     }
 
-    /**
-     * A model that declares no chat template has no notion of roles, so framing
-     * its input as a `User:`/`Assistant:` dialogue feeds it text that is not part
-     * of the request and biases — or with a base completion model, wholly
-     * determines — what it predicts next. Such models get their content verbatim.
-     *
-     * The role-labelled form below is not a real chat template either; it is a
-     * placeholder until per-model templates are applied (the template string is
-     * now carried on [GgufMetadata.chatTemplate] for that work).
-     */
-    private fun formatPrompt(turns: List<Turn>): String =
-        if (metadata.chatTemplate == null) rawPrompt(turns) else chatPrompt(turns)
-
-    /** Content only, in order, with nothing the caller did not supply. */
-    private fun rawPrompt(turns: List<Turn>): String {
-        val prompt = StringBuilder()
-        for (turn in turns) {
-            when (turn) {
-                is Turn.System -> prompt.append(turn.content)
-                is Turn.User -> turn.content.forEach { prompt.append(renderBlock(it)) }
-                is Turn.Assistant -> turn.text?.let { prompt.append(it) }
-                is Turn.ToolResult -> turn.result.content.forEach { prompt.append(renderBlock(it)) }
-            }
-        }
-        return prompt.toString()
-    }
-
-    private fun renderBlock(block: ContentBlock): String = when (block) {
-        is ContentBlock.Text -> block.text
-        is ContentBlock.Image -> "[Image: ${block.mimeType}]"
-        is ContentBlock.Audio -> "[Audio: ${block.mimeType}]"
-        is ContentBlock.ResourceRef -> "[Resource: ${block.nodeId}, ${block.sizeBytes} bytes]"
-    }
-
-    private fun chatPrompt(turns: List<Turn>): String {
-        val prompt = StringBuilder()
-
-        for (turn in turns) {
-            when (turn) {
-                is Turn.System -> {
-                    prompt.append(turn.content).append("\n\n")
-                }
-                is Turn.User -> {
-                    prompt.append("User: ")
-                    for (block in turn.content) prompt.append(renderBlock(block))
-                    prompt.append("\n")
-                }
-                is Turn.Assistant -> {
-                    prompt.append("Assistant: ")
-                    turn.text?.let { prompt.append(it) }
-                    prompt.append("\n")
-                }
-                is Turn.ToolResult -> {
-                    prompt.append("Tool result: ")
-                    for (block in turn.result.content) prompt.append(renderBlock(block))
-                    prompt.append("\n")
-                }
-            }
-        }
-
-        prompt.append("Assistant:")
-        return prompt.toString()
-    }
-
-    private fun compileToolGrammar(tools: List<dev.aidos.kernel.ToolDescriptor>): String? =
-        GbnfGrammarCompiler.compile(tools)
-
-    private fun extractToolCalls(
-        output: String,
-        tools: List<dev.aidos.kernel.ToolDescriptor>,
-    ): List<ToolCall> = ToolCallParser.parse(output, tools, isConstrained = false)
+    /** The exact prompt text [request] is run with: the model's chat template applied, tools described. */
+    internal fun renderPrompt(request: ModelRequest): String = LlamaChatPrompt.render(model, chatTemplate, request)
 
     /**
      * Whether a stop sequence was completed by the token just appended. Only the tail that the
