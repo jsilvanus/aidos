@@ -12,7 +12,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
-import java.security.MessageDigest
 
 /**
  * Android inference backend. Model identity and expected digests come from the persistent model
@@ -258,19 +257,12 @@ class AndroidLlamaCppInferenceBackend(
             ?: exact
     }
 
-    private fun sha256(file: File): String {
-        if (!file.isFile) return ""
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    /**
+     * Cached per file version. [reconcileInstalledState] runs on every `catalog()` and `installed()`
+     * call, several times per inference request; hashing each installed model every time cost
+     * seconds per request and pushed the loaded model out of the page cache.
+     */
+    private fun sha256(file: File): String = dev.aidos.modelruntime.ModelFileDigests.sha256(file)
 
     private companion object {
         const val DEFAULT_CONTEXT = 4096
