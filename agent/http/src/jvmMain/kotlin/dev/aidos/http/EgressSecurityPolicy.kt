@@ -382,8 +382,11 @@ class EgressSecurityPolicy(
             if (b0 == 172 && (b1 in 16..31)) return AddressClass.PRIVATE
             // 192.168.0.0/16
             if (b0 == 192 && b1 == 168) return AddressClass.PRIVATE
-            // Carrier-grade NAT: 100.64.0.0/10
-            if (b0 == 100 && (b1 in 64..127)) return AddressClass.RESERVED
+            // Shared address space, 100.64.0.0/10 (RFC 6598): carrier-grade NAT, and the range
+            // overlay networks such as Tailscale hand out. It is not publicly routable, so it is
+            // private: refused by default, reachable under a grant that allows private addresses.
+            // As "reserved" it could not be reached under any grant.
+            if (b0 == 100 && (b1 in 64..127)) return AddressClass.PRIVATE
             // 0.0.0.0/8, 224.0.0.0/4 multicast, or 240.0.0.0/4 reserved
             if (b0 == 0 || b0 >= 224) return AddressClass.RESERVED
             return AddressClass.PUBLIC

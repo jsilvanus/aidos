@@ -61,7 +61,13 @@ import java.util.Base64
  * long-lived connection per `events.subscribe` call. Every connection starts with a handshake
  * (RFC-0052 Authentication): the client presents the daemon's minted connection token, and
  * whether it is `user_interactive` (attached to a TTY) — commands in [Methods.REQUIRES_INTERACTIVE]
- * refuse otherwise, so a script cannot approve authority on the user's behalf (RFC-0055).
+ * refuse otherwise, so a script that says what it is cannot approve authority on the user's
+ * behalf (RFC-0055).
+ *
+ * The flag is the client's own statement and the daemon cannot check it: a Unix socket tells it
+ * nothing about the peer's terminal. It stops honest tools from approving by accident. It is not
+ * a boundary against a program running as the user, which can read the token file and claim to
+ * be interactive; the boundary there is the token file's owner-only permissions.
  *
  * **Scope (M10):** dispatches exactly the methods [Methods] names — project/session/capability
  * commands, the event stream, and runtime info. See `Wire.kt`'s doc comment for what is
@@ -202,7 +208,12 @@ class RuntimeSocketServer(
         val interactive = hello?.get("interactive")?.jsonPrimitive?.boolean ?: false
         val clientMinApi = hello?.get("minApiVersion")?.jsonPrimitive?.intOrNull ?: 1
 
-        if (presentedToken == null || !java.security.MessageDigest.isEqual(presentedToken.toByteArray(), connectionToken.toByteArray())) {
+        // Compared in constant time, so the answer's timing says nothing about how much of a guess was right.
+        val tokenMatches = presentedToken != null && java.security.MessageDigest.isEqual(
+            presentedToken.toByteArray(Charsets.UTF_8),
+            connectionToken.toByteArray(Charsets.UTF_8),
+        )
+        if (!tokenMatches) {
             writeLine(output, buildJsonObject { put("ok", false); put("error", "unauthorized") })
             return null
         }

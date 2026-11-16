@@ -1,5 +1,6 @@
 package fi.italeino.aidos.sdk.client
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -9,6 +10,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -554,5 +556,162 @@ class AidosEngineClientTest {
     @Test
     fun sdkVersion_defaultsToThePublishedBuildVersion() {
         assertTrue(SDK_VERSION.isNotBlank())
+    }
+
+    // --- Per-call errors (plan 2, finding A) -----------------------------------------------
+
+    private val okChat = """{"id":"c1","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"""
+
+    private fun routedServer(vararg routes: Pair<String, MockResponse>) {
+        val byPath = routes.toMap()
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse =
+                byPath[request.path] ?: MockResponse().setResponseCode(404)
+        }
+    }
+
+    @Test
+    fun concurrentFailingAndSucceedingCalls_eachGetTheirOwnResult() = kotlinx.coroutines.runBlocking {
+        routedServer(
+            "/v1/embeddings" to MockResponse().setResponseCode(503)
+                .setBody("""{"error":{"message":"RAM","type":"insufficient_memory","code":"insufficient_memory"}}"""),
+            "/v1/chat/completions" to MockResponse().setBody(okChat),
+        )
+        val client = clientPointedAtServer()
+
+        val results = (1..20).map { i ->
+            this.async(kotlinx.coroutines.Dispatchers.Default) {
+                if (i % 2 == 0) client.embeddingsResult(EmbeddingsRequest("m", listOf("x"))).map { null }
+                else client.chatCompletionResult(hi).map { null }
+            }
+        }.map { it.await() }
+
+        results.forEachIndexed { idx, r ->
+            if ((idx + 1) % 2 == 0) {
+                val e = r.exceptionOrNull() as EngineApiException
+                assertEquals("insufficient_memory", e.error.code)
+                assertEquals(503, e.statusCode)
+            } else {
+                assertTrue(r.isSuccess)
+            }
+        }
+    }
+
+    @Test
+    fun aSuccess_doesNotClearAnErrorFromAnotherCall() = runTest {
+        routedServer(
+            "/v1/embeddings" to MockResponse().setResponseCode(503)
+                .setBody("""{"error":{"message":"RAM","type":"insufficient_memory","code":"insufficient_memory"}}"""),
+            "/v1/chat/completions" to MockResponse().setBody(okChat),
+        )
+        val client = clientPointedAtServer()
+
+        assertNull(client.embeddings(EmbeddingsRequest("m", listOf("x"))))
+        assertNotNull(client.chatCompletion(hi))
+
+        assertEquals("insufficient_memory", client.lastError?.code)
+    }
+
+    @Test
+    fun unavailableEngine_failsTheResultWithAnAvailabilityError() = runTest {
+        val client = EngineClientImpl()
+
+        val e = client.chatCompletionResult(hi).exceptionOrNull() as EngineApiException
+
+        assertEquals("engine_unavailable", e.error.code)
+        assertEquals("engine_unavailable", client.lastError?.code)
+    }
+
+    @Test
+    fun unreadableResponse_failsTheResultAndNullableForm() = runTest {
+        routedServer("/v1/chat/completions" to MockResponse().setBody("not json"))
+        val client = clientPointedAtServer()
+
+        assertEquals("invalid_response", (client.chatCompletionResult(hi).exceptionOrNull() as EngineApiException).error.code)
+        assertNull(client.chatCompletion(hi))
+    }
+
+    @Test
+    fun requestResult_returnsTheBodyOrTheErrorOfThatCall() = runTest {
+        routedServer(
+            "/v1/ok" to MockResponse().setBody("{}"),
+            "/v1/bad" to MockResponse().setResponseCode(400).setBody("""{"error":{"message":"m","type":"t","code":"bad"}}"""),
+        )
+        val client = clientPointedAtServer()
+
+        assertEquals("{}", client.requestResult("ok", "GET").getOrNull())
+        assertEquals("bad", (client.requestResult("bad", "GET").exceptionOrNull() as EngineApiException).error.code)
+    }
+
+    // --- Live capabilities (plan 2, finding B) ---------------------------------------------
+
+    private fun clientWithModelsEndpoint(): EngineClientImpl = EngineClientImpl().apply {
+        setHandshakeResult(
+            approvedResponse(port = server.port).copy(
+                capabilities = CapabilitiesResponse(
+                    endpoints = listOf("models", "chat.completions"),
+                    models = listOf(ModelInfoResponse(id = "old", kind = "llm"))
+                )
+            )
+        )
+    }
+
+    @Test
+    fun capabilities_reflectModelsChangedAfterTheHandshake() = runTest {
+        routedServer(
+            "/v1/models" to MockResponse().setBody(
+                """{"object":"list","data":[{"id":"new","kind":"embedding","context_window":512,"quantization":"q8","installed":true,"loaded":false,"capabilities":["embeddings"],"placement":"local"}]}"""
+            )
+        )
+        val client = clientWithModelsEndpoint()
+
+        val caps = client.capabilities()
+
+        assertEquals(listOf("new"), caps.models.map { it.id })
+        assertEquals("embedding", caps.models.single().kind)
+        assertEquals(512, caps.models.single().contextWindow)
+        assertEquals("local", caps.models.single().placement)
+        // Endpoints have no live source: they stay those of the handshake.
+        assertEquals(listOf("models", "chat.completions"), caps.endpoints)
+        assertTrue(client.supportsEndpoint("models"))
+        assertNull(client.lastError)
+    }
+
+    @Test
+    fun capabilities_fallBackToTheHandshakeWhenTheFetchFails() = runTest {
+        routedServer("/v1/models" to MockResponse().setResponseCode(500).setBody("boom"))
+        val client = clientWithModelsEndpoint()
+
+        val caps = client.capabilities()
+
+        assertEquals(listOf("old"), caps.models.map { it.id })
+        // A background refresh must not overwrite the error of a caller's own call.
+        assertNull(client.lastError)
+    }
+
+    @Test
+    fun capabilities_areCachedAndRefreshedOnReHandshake() = runTest {
+        routedServer("/v1/models" to MockResponse().setBody("""{"data":[{"id":"a","kind":"llm"}]}"""))
+        val client = clientWithModelsEndpoint()
+
+        client.capabilities()
+        client.capabilities()
+        assertEquals(1, server.requestCount)
+
+        client.setHandshakeResult(
+            approvedResponse(port = server.port).copy(
+                capabilities = CapabilitiesResponse(listOf("models"), emptyList())
+            )
+        )
+        client.capabilities()
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun capabilities_withoutAModelsEndpointUseTheSnapshot() = runTest {
+        val client = clientPointedAtServer()
+
+        assertEquals(listOf("m1"), client.capabilities().models.map { it.id })
+        assertEquals(0, server.requestCount)
     }
 }

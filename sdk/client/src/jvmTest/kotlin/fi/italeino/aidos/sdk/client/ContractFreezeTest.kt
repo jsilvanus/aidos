@@ -42,10 +42,13 @@ class ContractFreezeTest {
     fun clientInterfaceMethodsAreFrozen() {
         assertEquals(
             listOf(
-                "apiVersion", "availability", "capabilities", "chatCompletion", "close", "decide", "embeddings", "engineVersion", "getLastError", "getLocality",
-                "initialize", "isAvailable", "request", "streamChatCompletion", "supportsEndpoint", "transcribe"
+                "apiVersion", "availability", "capabilities", "chatCompletion", "chatCompletionResult", "close", "decide", "decideResult",
+                "embeddings", "embeddingsResult", "engineVersion", "getLastError", "getLocality",
+                "initialize", "isAvailable", "request", "requestResult", "streamChatCompletion", "supportsEndpoint",
+                "transcribe", "transcribeResult"
             ),
-            AidosEngineClient::class.java.methods.map { it.name }.filter { !it.contains("$") }.distinct().sorted()
+            // `...Result` methods return kotlin.Result, so the JVM appends a "-<hash>" mangling suffix.
+            AidosEngineClient::class.java.methods.map { it.name.substringBefore('-') }.filter { !it.contains("$") }.distinct().sorted()
         )
     }
 

@@ -158,6 +158,9 @@ class EncryptedAppApprovalStore(context: Context) : AppApprovalStore {
             )
         }
 
+    override suspend fun pinSigner(packageName: String, signerSha256: String, resetApproval: Boolean): AppApprovalRecord? =
+        update(packageName) { it.withSigner(signerSha256, resetApproval) }
+
     override suspend fun updateRequestCount(packageName: String, increment: Int): AppApprovalRecord? =
         update(packageName) { current ->
             current.copy(requestCount = current.requestCount + increment)

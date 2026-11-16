@@ -1,5 +1,7 @@
 package dev.aidos.vault
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
@@ -61,6 +63,13 @@ class SqliteSecretsVault(
     private val lock = Any()
     private inline fun <T> locked(block: () -> T): T = synchronized(lock, block)
 
+    /**
+     * [locked], on the IO dispatcher. JDBC and the keystore block, and the callers are coroutines
+     * on whatever dispatcher the agent loop runs on; a monitor is still enough because the block
+     * itself never suspends.
+     */
+    private suspend fun <T> lockedIo(block: () -> T): T = withContext(Dispatchers.IO) { locked(block) }
+
     private val conn: Connection
 
     init {
@@ -102,16 +111,19 @@ class SqliteSecretsVault(
         val sql = SqliteSecretsVault::class.java.getResourceAsStream("/vault.sql")
             ?.bufferedReader()?.readText()
             ?: error("vault.sql not found on classpath")
-        // SQLite executescript doesn't exist in JDBC; split on semicolons.
-        for (stmt in sql.split(";")) {
-            val trimmed = stmt.trim()
-            if (trimmed.isNotEmpty() && !trimmed.startsWith("--") && !trimmed.startsWith("PRAGMA")) {
-                try { conn.createStatement().use { it.execute(trimmed) } } catch (_: Exception) {}
+        for (statement in schemaStatements(sql)) {
+            try {
+                conn.createStatement().use { it.execute(statement) }
+            } catch (e: java.sql.SQLException) {
+                // Reopening an existing vault finds its tables there. Anything else (a locked or
+                // corrupt file, a statement that does not parse) must stop the vault from opening:
+                // swallowing it left a vault that failed later, on the first secret.
+                if (e.message?.contains("already exists") != true) throw e
             }
         }
     }
 
-    override suspend fun store(name: String, kind: SecretKind, value: CharArray): SecretId = locked {
+    override suspend fun store(name: String, kind: SecretKind, value: CharArray): SecretId = lockedIo {
         val id = UUID.randomUUID().toString()
         val (ciphertext, nonce) = encrypt(id, value)
         val now = Clock.System.now().toString()
@@ -132,7 +144,7 @@ class SqliteSecretsVault(
         id
     }
 
-    override suspend fun rotate(id: SecretId, newValue: CharArray): Unit = locked {
+    override suspend fun rotate(id: SecretId, newValue: CharArray): Unit = lockedIo {
         val (name, old) = conn.prepareStatement("SELECT name,ciphertext,nonce FROM secrets WHERE id=?").use { st ->
             st.setString(1, id)
             st.executeQuery().use { rs ->
@@ -160,7 +172,7 @@ class SqliteSecretsVault(
         newValue.fill('\u0000')
     }
 
-    override suspend fun delete(id: SecretId): Unit = locked {
+    override suspend fun delete(id: SecretId): Unit = lockedIo {
         conn.prepareStatement("DELETE FROM secrets WHERE id=?").use { stmt ->
             stmt.setString(1, id)
             stmt.executeUpdate()
@@ -168,7 +180,7 @@ class SqliteSecretsVault(
         redactor?.unregister(id)
     }
 
-    override suspend fun resolve(id: SecretId): Result<CharArray> = runCatching { locked {
+    override suspend fun resolve(id: SecretId): Result<CharArray> = runCatching { lockedIo {
         val e = readEntry(id)
         // A secret with an allow-list is for named consumers only; the runtime's anonymous
         // resolve() must not be a way around it.
@@ -176,7 +188,7 @@ class SqliteSecretsVault(
         load(e)
     } }
 
-    override suspend fun resolveFor(id: SecretId, request: SecretRequest): Result<CharArray> = runCatching { locked {
+    override suspend fun resolveFor(id: SecretId, request: SecretRequest): Result<CharArray> = runCatching { lockedIo {
         val e = readEntry(id)
         if (request.tainted) error("secrets.denied_tainted: a Run that read untrusted content cannot resolve secrets")
         if (e.allowedConsumers.isNotEmpty() && request.consumer.key !in e.allowedConsumers) {
@@ -187,11 +199,11 @@ class SqliteSecretsVault(
         value
     } }
 
-    override suspend fun setExpiry(id: SecretId, expiresAt: Instant?): Unit = locked {
+    override suspend fun setExpiry(id: SecretId, expiresAt: Instant?): Unit = lockedIo {
         update("UPDATE secrets SET expires_at=? WHERE id=?", expiresAt?.toString(), id)
     }
 
-    override suspend fun setAllowedConsumers(id: SecretId, consumers: List<ConsumerRef>): Unit = locked {
+    override suspend fun setAllowedConsumers(id: SecretId, consumers: List<ConsumerRef>): Unit = lockedIo {
         update("UPDATE secrets SET allowed_consumers_json=? WHERE id=?", Json.encodeToString(consumers.map { it.key }), id)
     }
 
@@ -225,7 +237,7 @@ class SqliteSecretsVault(
         return value
     }
 
-    override suspend fun get(id: SecretId): Result<SecretEntry> = runCatching { locked {
+    override suspend fun get(id: SecretId): Result<SecretEntry> = runCatching { lockedIo {
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets WHERE id=?"
         ).use { stmt ->
@@ -237,7 +249,7 @@ class SqliteSecretsVault(
         }
     } }
 
-    override suspend fun getByName(name: String): Result<SecretEntry> = runCatching { locked {
+    override suspend fun getByName(name: String): Result<SecretEntry> = runCatching { lockedIo {
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets WHERE name=?"
         ).use { stmt ->
@@ -249,7 +261,7 @@ class SqliteSecretsVault(
         }
     } }
 
-    override suspend fun list(): List<SecretEntry> = locked {
+    override suspend fun list(): List<SecretEntry> = lockedIo {
         val results = mutableListOf<SecretEntry>()
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets"
@@ -312,6 +324,19 @@ class SqliteSecretsVault(
         }
 
         fun keyFromBytes(bytes: ByteArray): SecretKey = SecretKeySpec(bytes, "AES")
+
+        /**
+         * The statements of a schema file, without comments and PRAGMAs (those are set on the
+         * connection). JDBC has no executescript. Comments are removed before splitting: a
+         * statement that followed a comment used to be taken for a comment and skipped, which is
+         * how `migration_history` was never created.
+         */
+        internal fun schemaStatements(sql: String): List<String> =
+            sql.lineSequence()
+                .map { line -> line.substringBefore("--") }
+                .joinToString("\n")
+                .split(";")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("PRAGMA", ignoreCase = true) }
     }
 }
-
