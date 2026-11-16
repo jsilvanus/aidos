@@ -97,10 +97,13 @@ class InferenceRequestManager(
     ): Result<T> {
         // RFC-0103: Check license acceptance before queuing/loading the model.
         // This must happen before admission to avoid taking a queue slot for a refused request.
-        val licenseCheck = checkLicenseAcceptance(modelId)
+        // The descriptor is looked up once and shared by the licence and locality checks: each
+        // lookup lists the installed models and the catalog, which is not free on any host.
+        val described = if (licenseStore != null || locality != Locality.ANY) describe(modelId) else null
+        val licenseCheck = checkLicenseAcceptance(described)
         if (licenseCheck.isFailure) return Result.failure(licenseCheck.exceptionOrNull()!!)
 
-        val descriptor = if (locality == Locality.ANY) null else describe(modelId)
+        val descriptor = if (locality == Locality.ANY) null else described
         if (descriptor != null) {
             val declared = placementOf(descriptor)
             if (!locality.permits(declared)) return Result.failure(LocalityViolationException(modelId, locality, declared))
@@ -116,7 +119,7 @@ class InferenceRequestManager(
                 updateState(InferenceRequestState.FAILED)
                 return Result.failure(it)
             }
-            val placement = placementOf(descriptor ?: describe(modelId), adapter)
+            val placement = placementOf(described ?: describe(modelId), adapter)
             if (!locality.permits(placement)) {
                 updateState(InferenceRequestState.FAILED)
                 return Result.failure(LocalityViolationException(modelId, locality, placement))
@@ -144,9 +147,14 @@ class InferenceRequestManager(
 
     /** Enforces [licenseStore] when present and the model carries license metadata. */
     private suspend fun checkLicenseAcceptance(modelId: String): Result<Unit> {
+        if (licenseStore == null) return Result.success(Unit)
+        return checkLicenseAcceptance(describe(modelId))
+    }
+
+    private suspend fun checkLicenseAcceptance(described: ModelDescriptor?): Result<Unit> {
         val store = licenseStore ?: return Result.success(Unit)
         // Missing models continue to modelRuntime.load() so callers get the canonical "not installed" 404 error.
-        val descriptor = describe(modelId) ?: return Result.success(Unit)
+        val descriptor = described ?: return Result.success(Unit)
         val licenseText = descriptor.metadata["license_text"] ?: descriptor.metadata["license"] ?: ""
         val licenseDigest = descriptor.metadata["license_digest"]
             ?: descriptor.metadata["license_text_digest"]

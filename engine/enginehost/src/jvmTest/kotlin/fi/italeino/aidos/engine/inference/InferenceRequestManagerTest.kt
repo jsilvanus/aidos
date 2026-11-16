@@ -503,6 +503,30 @@ class InferenceRequestManagerTest {
     }
 
     @Test
+    fun execute_readsTheModelDescriptorOncePerRequest() = runTest {
+        // RFC-0103 / RFC-0104: the licence check and the placement check both need the descriptor.
+        // Listing models is not free (a backend stats and may hash every installed file), so one
+        // request must not list them twice.
+        val licenseStore = InMemoryLicenseAcceptanceStore()
+        licenseStore.accept("test-model", "1.0", "sha256-abc123")
+        val counting = CountingRuntime(FakeRuntime(CountingAdapter()))
+        val manager = InferenceRequestManager(
+            counting,
+            maxConcurrentRequests = 1,
+            maxQueuedRequests = 4,
+            licenseStore = licenseStore,
+        )
+
+        val result = manager.execute("test-model", Locality.LOCAL_ONLY) { adapter, _ ->
+            adapter.invoke(dummyRequest()).getOrThrow()
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, counting.installedCalls)
+        assertEquals(1, counting.catalogCalls)
+    }
+
+    @Test
     fun openModel_rejectsWhenLicenseNotAccepted() = runTest {
         val licenseStore = InMemoryLicenseAcceptanceStore()
         val runtime = FakeRuntime(CountingAdapter())
@@ -773,5 +797,22 @@ private class InterruptibleAdapter : CancellableModelAdapter {
     override fun cancelCurrentInference() {
         cancelCalls++
         cancelled.complete(Unit)
+    }
+}
+
+private class CountingRuntime(private val inner: ModelRuntime) : ModelRuntime by inner {
+    var installedCalls = 0
+        private set
+    var catalogCalls = 0
+        private set
+
+    override suspend fun installed(): List<ModelDescriptor> {
+        installedCalls++
+        return inner.installed()
+    }
+
+    override suspend fun catalog(): List<ModelDescriptor> {
+        catalogCalls++
+        return inner.catalog()
     }
 }
