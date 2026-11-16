@@ -147,6 +147,14 @@ class ExternalDeviceGrants(
  * guesses from all addresses together bounds what many addresses can try. With both, a code's
  * five minutes allow at most a few hundred guesses at an eight-digit space.
  *
+ * The all-addresses bound slows, it does not refuse. Once [GLOBAL_FAILURES_PER_MINUTE] wrong
+ * guesses have landed in a minute, further attempts are spaced [SLOW_SPACING_SECONDS] apart and
+ * wait for their turn (up to [MAX_WAIT_SECONDS]). It used to refuse everything for the rest of the
+ * minute, so six addresses guessing five times each blocked the pairing the user had just started;
+ * now the right code still redeems, a little later. The rate guessers get is the same, so the bound
+ * on guesses is only slightly looser (at most 30 more a minute). A flood that outlasts the wait
+ * ceiling is still refused: nothing here can make a flood harmless, only stop it from being free.
+ *
  * Wrong guesses used to be charged to every outstanding code instead, so any device on the
  * network could cancel a pairing the user had just started by sending five bad codes.
  */
@@ -155,6 +163,8 @@ class PairingCodes(
     private val now: () -> Instant = { Instant.now() },
     private val codeLifetimeSeconds: Long = 300,
     private val maxAttempts: Int = 5,
+    /** How a throttled attempt waits for its turn. Tests replace it with one that moves their clock. */
+    private val pause: suspend (millis: Long) -> Unit = { kotlinx.coroutines.delay(it) },
 ) {
     private data class Pending(val label: String, val grantLifetimeSeconds: Long, val expiresAt: Instant)
     private class Failures(var windowStart: Instant, var count: Int = 0)
@@ -164,6 +174,7 @@ class PairingCodes(
     private val failuresBySource = HashMap<String, Failures>()
     private var globalFailures = 0
     private var globalWindowStart: Instant = now()
+    private var nextSlot: Instant = now()
 
     /** Starts pairing for a device the user is adding; returns the code to show them. */
     @Synchronized
@@ -178,15 +189,38 @@ class PairingCodes(
     /**
      * Exchanges [code] for a credential. Single use; null on any failure (unknown, expired, used,
      * throttled). [source] is the address the attempt came from; attempts without one share a bucket.
+     * Under a many-address flood the attempt first waits for its turn (see the class comment).
      */
+    suspend fun redeem(code: String, source: String = UNKNOWN_SOURCE): IssuedExternalDevice? {
+        val waitMillis = reserveTurn(source) ?: return null
+        if (waitMillis > 0) pause(waitMillis)
+        return attempt(code, source)
+    }
+
+    /** Null when this attempt is refused outright; otherwise how long it waits before it is evaluated. */
     @Synchronized
-    fun redeem(code: String, source: String = UNKNOWN_SOURCE): IssuedExternalDevice? {
+    private fun reserveTurn(source: String): Long? {
         sweep()
         val t = now()
-        if (t.isAfter(globalWindowStart.plusSeconds(WINDOW_SECONDS))) { globalWindowStart = t; globalFailures = 0 }
+        resetGlobalWindow(t)
         val mine = failuresBySource[source]
         if (mine != null && mine.count >= maxAttempts) return null
-        if (globalFailures >= GLOBAL_FAILURES_PER_MINUTE) return null
+        if (globalFailures < GLOBAL_FAILURES_PER_MINUTE) return 0
+        val slot = if (nextSlot.isAfter(t)) nextSlot else t
+        val wait = java.time.Duration.between(t, slot)
+        if (wait.seconds >= MAX_WAIT_SECONDS) return null
+        nextSlot = slot.plusSeconds(SLOW_SPACING_SECONDS)
+        return wait.toMillis()
+    }
+
+    @Synchronized
+    private fun attempt(code: String, source: String): IssuedExternalDevice? {
+        sweep()
+        val t = now()
+        resetGlobalWindow(t)
+        val mine = failuresBySource[source]
+        // Locked out while it waited.
+        if (mine != null && mine.count >= maxAttempts) return null
         val p = pending.remove(code)
         if (p == null) {
             globalFailures++
@@ -195,6 +229,10 @@ class PairingCodes(
             return null
         }
         return grants.issue(p.label, t.plusSeconds(p.grantLifetimeSeconds))
+    }
+
+    private fun resetGlobalWindow(t: Instant) {
+        if (t.isAfter(globalWindowStart.plusSeconds(WINDOW_SECONDS))) { globalWindowStart = t; globalFailures = 0 }
     }
 
     private fun sweep() {
@@ -206,6 +244,8 @@ class PairingCodes(
     private companion object {
         const val GLOBAL_FAILURES_PER_MINUTE = 30
         const val WINDOW_SECONDS = 60L
+        const val SLOW_SPACING_SECONDS = 2L
+        const val MAX_WAIT_SECONDS = 10L
         // Bounded so a flood of addresses cannot grow the table; the global cap covers the overflow.
         const val MAX_TRACKED_SOURCES = 1024
         const val UNKNOWN_SOURCE = "?"

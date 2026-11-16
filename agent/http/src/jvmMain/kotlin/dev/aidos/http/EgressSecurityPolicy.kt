@@ -178,42 +178,7 @@ class EgressSecurityPolicy(
             if (addrClass != AddressClass.PUBLIC) {
                 overallClass = addrClass
             }
-
-            // Loopback check
-            if (addrClass == AddressClass.LOOPBACK && !scope.allowPrivateAddresses) {
-                return EgressValidationResult.Denied(
-                    reason = "SSRF blocked: host '$host' resolves to loopback address ${addr.hostAddress}",
-                    outcome = EgressOutcome.BLOCKED_POST_DNS,
-                    addressClass = AddressClass.LOOPBACK
-                )
-            }
-
-            // Link-local check (catches AWS/GCP/Azure 169.254.169.254 instance metadata)
-            if (addrClass == AddressClass.LINK_LOCAL) {
-                return EgressValidationResult.Denied(
-                    reason = "SSRF blocked: host '$host' resolves to link-local address ${addr.hostAddress} (RFC-0042 cloud metadata defense)",
-                    outcome = EgressOutcome.BLOCKED_POST_DNS,
-                    addressClass = AddressClass.LINK_LOCAL
-                )
-            }
-
-            // Private network check (RFC-1918)
-            if (addrClass == AddressClass.PRIVATE && !scope.allowPrivateAddresses) {
-                return EgressValidationResult.Denied(
-                    reason = "SSRF blocked: host '$host' resolves to private network address ${addr.hostAddress} (RFC-1918)",
-                    outcome = EgressOutcome.BLOCKED_POST_DNS,
-                    addressClass = AddressClass.PRIVATE
-                )
-            }
-
-            // Reserved / Multicast
-            if (addrClass == AddressClass.RESERVED) {
-                return EgressValidationResult.Denied(
-                    reason = "SSRF blocked: host '$host' resolves to reserved/multicast address ${addr.hostAddress}",
-                    outcome = EgressOutcome.BLOCKED_POST_DNS,
-                    addressClass = AddressClass.RESERVED
-                )
-            }
+            addressDenial(host, addr, scope)?.let { return it }
         }
 
         return EgressValidationResult.Allowed(
@@ -221,6 +186,45 @@ class EgressSecurityPolicy(
             resolvedAddresses = resolvedAddresses,
             addressClass = overallClass
         )
+    }
+
+    /**
+     * RFC-0042 point 3: re-checks the address a socket actually connected to. The client dials only
+     * the addresses [validateDestination] returned, so this is the second line: it must hold even if
+     * a transport resolves or fails over on its own. Returns null when the address is acceptable.
+     */
+    fun addressDenial(host: String, addr: InetAddress, scope: CapabilityScope.Network): EgressValidationResult.Denied? {
+        val addrClass = classifyAddress(addr)
+        if (addrClass == AddressClass.LOOPBACK && !scope.allowPrivateAddresses) {
+            return EgressValidationResult.Denied(
+                reason = "SSRF blocked: host '$host' resolves to loopback address ${addr.hostAddress}",
+                outcome = EgressOutcome.BLOCKED_POST_DNS,
+                addressClass = AddressClass.LOOPBACK
+            )
+        }
+        // Link-local check (catches AWS/GCP/Azure 169.254.169.254 instance metadata)
+        if (addrClass == AddressClass.LINK_LOCAL) {
+            return EgressValidationResult.Denied(
+                reason = "SSRF blocked: host '$host' resolves to link-local address ${addr.hostAddress} (RFC-0042 cloud metadata defense)",
+                outcome = EgressOutcome.BLOCKED_POST_DNS,
+                addressClass = AddressClass.LINK_LOCAL
+            )
+        }
+        if (addrClass == AddressClass.PRIVATE && !scope.allowPrivateAddresses) {
+            return EgressValidationResult.Denied(
+                reason = "SSRF blocked: host '$host' resolves to private network address ${addr.hostAddress} (RFC-1918)",
+                outcome = EgressOutcome.BLOCKED_POST_DNS,
+                addressClass = AddressClass.PRIVATE
+            )
+        }
+        if (addrClass == AddressClass.RESERVED) {
+            return EgressValidationResult.Denied(
+                reason = "SSRF blocked: host '$host' resolves to reserved/multicast address ${addr.hostAddress}",
+                outcome = EgressOutcome.BLOCKED_POST_DNS,
+                addressClass = AddressClass.RESERVED
+            )
+        }
+        return null
     }
 
     /**
