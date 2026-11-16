@@ -54,6 +54,18 @@ class TokenManager {
     }
 
     /**
+     * A token for [subject] that lives exactly as long as this manager (RFC-0115: the desktop admin token is minted
+     * per service start). It has no expiry date; it ends when the process does or when [clearTokens] runs.
+     */
+    fun generateProcessToken(subject: String): TokenInfo {
+        val bytes = ByteArray(32)
+        random.nextBytes(bytes)
+        val info = TokenInfo(Hex.encodeHexString(bytes), Instant.now(), Instant.MAX, subject)
+        tokens[subject] = info
+        return info
+    }
+
+    /**
      * Validate a bearer token from an HTTP Authorization header.
      * Returns the token if valid; null if invalid, expired, or no token issued yet.
      */

@@ -44,7 +44,7 @@ class TrayActions(
 
     /** True when the Engine's or the Agent daemon's vault is waiting for its passphrase (a machine-wide service starts locked, D56). */
     fun vaultLocked(): Boolean {
-        val engine = running()?.let { e -> runCatching { kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).status().locked } }.getOrDefault(false) } ?: false
+        val engine = running()?.let { e -> runCatching { kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token, reloadToken = fi.italeino.aidos.engine.desktop.EngineAttach::reloadToken).status().locked } }.getOrDefault(false) } ?: false
         val agent = agentClient()?.let { c -> runCatching { c.vaultStatus().second }.getOrDefault(false) } ?: false
         return engine || agent
     }
@@ -63,7 +63,7 @@ class TrayActions(
         try {
             engine?.let { e ->
                 try {
-                    kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token).unlock(passphrase.copyOf()) }
+                    kotlinx.coroutines.runBlocking { fi.italeino.aidos.engine.control.HttpVaultControl(e.baseUrl, e.token, reloadToken = fi.italeino.aidos.engine.desktop.EngineAttach::reloadToken).unlock(passphrase.copyOf()) }
                 } catch (ex: fi.italeino.aidos.engine.control.EngineControlException) { note("Engine", ex.message ?: "refused") }
                 catch (ex: Exception) { note("Engine", "could not be reached") }
             }

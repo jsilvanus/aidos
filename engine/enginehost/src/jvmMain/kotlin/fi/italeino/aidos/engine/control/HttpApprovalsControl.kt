@@ -14,13 +14,15 @@ import java.time.Duration
 /** [ApprovalsControl] over a running Engine's loopback admin API (`/v1/admin/approvals`). */
 class HttpApprovalsControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : ApprovalsControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun send(req: HttpRequest.Builder): HttpResponse<String> = withContext(Dispatchers.IO) {
-        client.send(req.timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer $token").build(), HttpResponse.BodyHandlers.ofString())
+        auth.send(client, req.timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer ${auth.token}").build())
     }
 
     override suspend fun pending(): List<PendingApproval> {

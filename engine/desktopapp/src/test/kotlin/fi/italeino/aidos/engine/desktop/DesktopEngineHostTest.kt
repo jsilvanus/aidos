@@ -19,6 +19,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -41,6 +42,35 @@ class DesktopEngineHostTest {
     fun cleanUp() {
         runBlocking { host.close() }
         root.deleteRecursively()
+    }
+
+    @Test
+    fun theAdminTokenIsNewAtEveryStartTheOldOneIsDeadAndTheFileIsOwnerOnly() = runBlocking {
+        fun tokenInFile() = Regex("\"token\":\\s*\"([^\"]+)\"").find(discoveryFile.readText())!!.groupValues[1]
+        fun status(port: Int, token: String) = HttpClient.newHttpClient().send(
+            HttpRequest.newBuilder(URI("http://127.0.0.1:$port/v1/admin/status")).header("Authorization", "Bearer $token").GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        ).statusCode()
+
+        // An old long-lived token left in the file is simply overwritten by the first start.
+        discoveryFile.writeText("""{"status":"READY","token":"legacy-365-day-token"}""")
+        host.start()
+        assertEquals(EngineState.READY, host.state.value, "start failed: ${host.lastError.value}")
+        val first = tokenInFile()
+        assertNotEquals("legacy-365-day-token", first)
+        assertEquals(64, first.length)
+        assertEquals(200, status(assertNotNull(host.boundPort.value), first))
+        assertTrue(dev.aidos.api.socket.OwnerOnlyFiles.isOwnerOnly(discoveryFile.toPath()))
+
+        host.stop()
+        assertFalse(discoveryFile.exists(), "engine.json is deleted on clean shutdown")
+        host.start()
+        assertEquals(EngineState.READY, host.state.value, "restart failed: ${host.lastError.value}")
+        val second = tokenInFile()
+        assertNotEquals(first, second)
+        val port = assertNotNull(host.boundPort.value)
+        assertEquals(401, status(port, first), "the previous run's token must stop working")
+        assertEquals(200, status(port, second))
     }
 
     @Test

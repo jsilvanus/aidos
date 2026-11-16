@@ -19,22 +19,24 @@ class EngineControlException(val httpStatus: Int, message: String) : Exception(m
  */
 class HttpLanControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : LanControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun call(method: String, path: String, body: String? = null): String = withContext(Dispatchers.IO) {
         val b = HttpRequest.newBuilder(URI("$baseUrl$path"))
             .timeout(Duration.ofSeconds(20))
-            .header("Authorization", "Bearer $token")
+            .header("Authorization", "Bearer ${auth.token}")
             .header("Content-Type", "application/json")
         val req = when (method) {
             "GET" -> b.GET()
             "DELETE" -> b.DELETE()
             else -> b.method(method, HttpRequest.BodyPublishers.ofString(body ?: "{}"))
         }.build()
-        val r = client.send(req, HttpResponse.BodyHandlers.ofString())
+        val r = auth.send(client, req)
         if (r.statusCode() !in 200..299) throw EngineControlException(r.statusCode(), errorMessage(r.body()) ?: "Engine answered ${r.statusCode()}")
         r.body()
     }

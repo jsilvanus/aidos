@@ -95,7 +95,8 @@ Closing the window leaves the services running, so something must still show tha
 
 ### Security
 
-- The admin token is the existing `engine.json` token; it is not new authority. On Windows the file gets an owner-only ACL (`AclFileAttributeView`), and a failure to set it is an error, not a `runCatching` (finding 4).
+- **The admin token is minted at every service start and works from loopback only (owner decision, 2026-11-16).** Each start generates a new random token (at least 256 bits, `SecureRandom`), keeps only that one valid for the life of the process (no 365-day lifetime), and overwrites `engine.json` with it, atomically (temp file in the same directory, then rename) and owner-only. The previous run's token stops working; an old long-lived token left in the file is simply overwritten at first start, so there is nothing to migrate. The file is deleted on clean shutdown. The server accepts the admin token only when the TCP peer address (`call.request.local.remoteAddress`, never `X-Forwarded-For` or another header) is loopback; from any other address it gets the same 401 as an unknown token. Clients (app, tray, CLIs) read `engine.json` at each use, or re-read it once on a 401 and retry once, so a service restart needs no UI restart. Tokens are compared in constant time. App tokens, LAN device credentials and peer tokens are not touched. The Agent runtime's socket token already was per-start (minted by `RuntimeSocketServer`, deleted on stop) and is reached only through a Unix socket in an owner-only directory, so it only gains the atomic write and the constant-time compare. Administering an Engine from another machine is not a use of this token; it would need its own credential.
+- The admin token is still the user's own authority, not new authority: it is the `engine.json` token. On Windows the file gets an owner-only ACL (`AclFileAttributeView`), and a failure to set it is an error, not a `runCatching` (finding 4).
 - `/v1/admin/` is refused on the LAN listener and on any request arriving through the AIDIN remote ingress.
 - The service process is the vault's only opener while it runs; the app asks it rather than opening the vault itself.
 - Closing the window no longer closes the door: the LAN, remote-access and tunnel switches therefore stay as the user left them, and the app shows plainly that the Engine is running in the background.
@@ -178,6 +179,12 @@ files:
   - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/HttpLanControl.kt
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/AdminRoutes.kt
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/TokenManager.kt
+  - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/control/AdminAuth.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/AdminTokenLoopbackTest.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/control/AdminAuthTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/AgentsControl.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHostTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/LocalLanControl.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/EngineAttach.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingModel.kt

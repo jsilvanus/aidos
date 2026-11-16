@@ -218,6 +218,12 @@ class EngineHttpServer(
     /** Admin route groups a host adds from modules this one cannot depend on (the agent runtime); loopback only, given the admin subjects. */
     private val adminExtraRoutes: (Route.(adminSubjects: Set<String>) -> Unit)? = null,
     private val adminSubjects: Set<String> = setOf(TokenManager.ENGINE_SUBJECT),
+    /**
+     * RFC-0115 (per-start admin token): whether the connection's real peer is this machine. An admin subject's token
+     * is refused (same 401 as an unknown token) from anywhere else. Overridable for tests; the default reads the
+     * socket's peer address, never a forwarded header.
+     */
+    private val isLoopbackPeer: (ApplicationCall) -> Boolean = ::peerIsLoopback,
     /** RFC-0115 / D59: the pending-approvals feed behind the tray, served at `/v1/admin/approvals` (loopback only, admin only). */
     private val approvalsControl: fi.italeino.aidos.engine.control.ApprovalsControl? = null,
     /** RFC-0115 / D59: lets the tray stop a headless Engine (`POST /v1/admin/shutdown`, loopback and admin only). Null on an Engine that lives in a window. */
@@ -348,6 +354,8 @@ class EngineHttpServer(
                     val info = tokenManager.authenticate(tokenCredential.token)
                     when {
                         info == null -> null
+                        // RFC-0115: the admin token (the Engine's own and the desktop's localhost client) works from loopback only.
+                        info.subject in adminSubjects && !isLoopbackPeer(this) -> null
                         info.subject != TokenManager.ENGINE_SUBJECT &&
                             isSubjectApproved?.invoke(info.subject) == false -> null
                         else -> {
@@ -2372,4 +2380,18 @@ internal fun decodeImage(entry: String): ContentBlock.Image {
         else -> "application/octet-stream"
     }
     return ContentBlock.Image(mime, bytes)
+}
+
+/**
+ * True when the TCP peer of [call] is a loopback address. Uses the socket's own peer address
+ * (`local.remoteAddress`), never `X-Forwarded-For` or any other header a client could set (RFC-0115).
+ */
+internal fun peerIsLoopback(call: ApplicationCall): Boolean = isLoopbackAddress(call.request.local.remoteAddress)
+
+internal fun isLoopbackAddress(raw: String): Boolean {
+    val a = raw.trim().removePrefix("[").removeSuffix("]").substringBefore('%')
+    if (a.equals("localhost", ignoreCase = true)) return true
+    // Only IP literals are parsed: anything else (a host name) is not trusted, and no DNS lookup happens here.
+    val literal = a.contains(':') || Regex("""\d{1,3}(\.\d{1,3}){3}""").matches(a)
+    return literal && runCatching { java.net.InetAddress.getByName(a).isLoopbackAddress }.getOrDefault(false)
 }
