@@ -186,6 +186,20 @@ class EgressSecurityPolicyTest {
     }
 
     @Test
+    fun `rejects https to http downgrade redirect on the same host`() {
+        for (redirects in listOf(RedirectPolicy.SAME_HOST_ONLY, RedirectPolicy.ANY_ALLOWED_HOST)) {
+            val scope = CapabilityScope.Network(allowedHosts = listOf("example.com"), followRedirects = redirects)
+            val result = policy.validateRedirect(
+                fromUrl = "https://example.com/login",
+                toLocation = "http://example.com/login",
+                scope = scope
+            )
+            assertIs<EgressValidationResult.Denied>(result)
+            assertEquals(EgressOutcome.BLOCKED_REDIRECT, result.outcome)
+        }
+    }
+
+    @Test
     fun `HttpTool blocks SSRF attempts to 169_254_169_254 with security violation`() = runBlocking {
         val client = DefaultEgressClient(policy = policy)
         HttpTool.egressClient = client

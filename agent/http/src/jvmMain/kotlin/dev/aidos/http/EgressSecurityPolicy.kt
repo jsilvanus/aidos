@@ -234,6 +234,16 @@ class EgressSecurityPolicy(
         val fromUri = URI.create(fromUrl)
         val targetUri = fromUri.resolve(toLocation)
 
+        // The redirected request is re-sent with the original headers and body (credentials
+        // included), so a redirect may never move it from TLS to cleartext. The host check
+        // below does not catch this: the downgrade keeps the same host.
+        if (fromUri.scheme.equals("https", ignoreCase = true) && !targetUri.scheme.equals("https", ignoreCase = true)) {
+            return EgressValidationResult.Denied(
+                reason = "Redirect from https to ${targetUri.scheme} blocked: it would resend the request in cleartext",
+                outcome = EgressOutcome.BLOCKED_REDIRECT
+            )
+        }
+
         when (scope.followRedirects) {
             RedirectPolicy.NONE -> {
                 return EgressValidationResult.Denied(
