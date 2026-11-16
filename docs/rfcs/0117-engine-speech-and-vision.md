@@ -25,7 +25,7 @@ Dictator needs transcription from the Engine, and liturgical dictation in Finnis
 - Streaming or partial transcripts, word timestamps, diarisation.
 - GPU or NNAPI execution providers.
 - Loading CTranslate2 (faster-whisper) weights.
-- Text-to-speech engines in the Engine (the `voice` module only defines provider interfaces).
+- Speaking models in the Engine are not built yet; see "Text-to-speech" below for the proposed amendment. The `voice` module defines the provider interfaces only.
 
 ## Design
 
@@ -44,6 +44,34 @@ A chat message may carry `images`: base64 image bytes or `data:image/...;base64,
 ### Packages
 
 A package is a flat directory laid out like an `onnx-community/*` repository: encoder and decoder graphs at one precision (int8 preferred, then int8, fp32, fp16), tokenizer and config files. `ModelPackage.detectWhisper` and the vision/decision equivalents pick the files; the installer downloads all of them or none. The desktop app installs from the Hugging Face browser; Android has no in-app package install yet (scripts `scripts/stt/fetch-whisper.mjs` and `scripts/vision/fetch-smolvlm.mjs` fetch a package for copying).
+
+### Text-to-speech (amendment, proposed, not built)
+
+Status of this section: proposed 2026-11-16. The model choice is the owner's decision. Nothing here is implemented; the Implementation Files list does not change until stage 2.
+
+Goal: the Engine can speak. A model of kind `tts` loads and `POST /v1/audio/speech` returns audio. Finnish must work first; English should work too. The Android app keeps the system TTS (`AndroidDeviceTtsEngine`) until a later decision.
+
+**Candidates compared (licence facts from model cards and repository pages, checked 2026-11-16):**
+
+| Candidate | Finnish | Weights licence | Phonemizer | Notes |
+|---|---|---|---|---|
+| Piper `fi_FI-harri-medium` (VITS, ONNX, 22.05 kHz, one speaker, about 63 MB) | Yes | Model card: dataset is a Kaggle Finnish single-speaker set under CC0. Fine-tuned from the English `lessac` medium voice; that base's training-data licence is not yet checked | Expects espeak-ng phoneme ids (see below) | Recommended, see below |
+| Piper `fi_FI` other voices | Yes | Check per voice card | As above | Not compared in depth |
+| MMS-TTS Finnish (`facebook/mms-tts-fin`, VITS) | Yes | The MMS TTS family is listed as CC-BY-NC 4.0 (non-commercial). The Finnish card itself was not found, so this is unconfirmed for that checkpoint | Not needed (character input) | Excluded if the Engine is ever used commercially or in a paid church setting |
+| Kokoro ONNX | No evidence of Finnish in any source found | Apache-2.0 per common reports (not re-checked) | Espeak-based in common builds | Excluded: no Finnish |
+| Supertonic 3 (ONNX, 99M) | Listed as one of 31 languages in its release notes; the Finnish code was not confirmed | OpenRAIL-M (use restrictions, attribution, redistribution duties); SDK code MIT | Own text front end | Fallback candidate; needs legal read of OpenRAIL-M Attachment A |
+
+**Phonemizer.** Piper's current code (`piper1-gpl`) embeds espeak-ng, which is GPL-3.0-or-later. Shipping it in an EUPL-1.2 app is possible (the EUPL lists GPL-3.0 as compatible) but makes every binary distribution GPL-bound and adds a native library per ABI. Finnish spelling is close to phonemic, so the recommended route is a pure-Kotlin Finnish grapheme-to-phoneme rule table that emits the same IPA symbols the voice's `phoneme_id_map` expects. espeak-ng is used only as a golden reference in tests run on the developer's machine, never shipped.
+
+**Recommendation.** Piper `fi_FI-harri-medium` for Finnish, with a pure-Kotlin Finnish phonemizer and no espeak-ng in the shipped Engine. English is a later voice from a permissively licensed package. Open licence question before shipping: the `lessac` base checkpoint's training-data licence.
+
+**Package layout (proposed).** A directory package: `<voice>.onnx` (VITS graph), `<voice>.onnx.json` (sample rate, `phoneme_id_map`, `num_speakers`, inference scales, `espeak.voice` field kept for reference only), and `MODEL_CARD`. `ModelPackage.detectPiper` picks the files; the installer downloads all of them or none, as for STT.
+
+**Route (proposed).** `POST /v1/audio/speech`, OpenAI-shaped JSON `{model, input, voice?, response_format?, speed?}`. Output `audio/wav` (16-bit PCM) by default; `pcm` also allowed; other formats are HTTP 400 with a clear message. Input limit 4000 characters; longer text is split at sentence ends. The request goes through the request manager and the same auth, locality and admission rules as the other inference routes. A `tts` model on chat routes is refused with a helpful error, as for STT. Capability string `audio.speech`.
+
+**Limits and non-goals.** No streaming audio, no SSML, no voice cloning, no emotion controls, no speaker selection beyond the voices in the package, no Android in-app package install in this amendment.
+
+**Measurements not yet taken.** CPU real-time factor and memory on the desktop JVM and on a reference phone (OnePlus 8) are stage 2 work and must be measured before the Finnish recommendation is final.
 
 ### Voice providers
 
@@ -143,4 +171,8 @@ post_mvp:
   - id: "0117.9"
     title: "Measure Whisper small on a mid-range Android phone; decide whether a smaller Finnish fine-tune is needed"
     status: todo
+  - id: "0117.10"
+    title: "Text-to-speech: Piper Finnish voice package, pure-Kotlin Finnish phonemizer, POST /v1/audio/speech (amendment stage 2, after the owner picks the model)"
+    status: todo
+    phase: P1
 ```
