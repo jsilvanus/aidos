@@ -254,11 +254,22 @@ Done when: on a Windows desktop with a GPU, a GGUF chat model loads with `AUTO`,
 
 ## Open Questions
 
-1. Which GPU does the main desktop have, and which phone is the reference device? The SoC decides whether QNN or NNAPI is the path that matters, and whether the Adreno OpenCL backend applies at all.
+1. Answered by the owner on 2026-11-16: the main desktop has a GeForce RTX 2060 and the reference phone is a OnePlus 8. See "Reference hardware" below.
 2. Should the installer ship the Vulkan natives, or should even those be a download? This RFC proposes shipping them.
 3. Move to the `net.ladenthin:llama` fork, which already publishes Vulkan, CUDA and Android OpenCL natives, or build our own JNI library against the current binding? This RFC proposes a spike on the fork first. Moving may require raising the Android minimum API from 26 to 28.
 4. Is a refusal ever right for an explicit `GPU` request, for example for an app that needs a latency guarantee? This RFC proposes always falling back.
 5. Is an NPU Whisper encoder worth a second, quantised package variant per model, given that fine-tunes from `liturgos-auditor` would need the same export and calibration step?
+
+## Reference hardware
+
+Named by the owner on 2026-11-16. The MVP is measured on these two devices.
+
+| Device | Chip | What it means for this RFC |
+|---|---|---|
+| Desktop (Windows) | NVIDIA GeForce RTX 2060, 6 GB of video memory on the standard card **[known]** (a 12 GB variant exists; which one is **[unverified]**) | Both Vulkan and CUDA apply, so the Vulkan-first order holds and the CUDA pack (0128.1) has a machine to be tested on. With 6 GB, a 7B to 8B model at 4-bit quantisation fits fully; larger models need partial offload, which makes the automatic layer choice and the host/device admission split part of the first test, not an edge case |
+| Phone | OnePlus 8: Snapdragon 865, Adreno 650 GPU, Hexagon 698 NPU **[known]** | The Adreno OpenCL backend of llama.cpp lists Adreno 750 and newer and warns that phone A6x GPUs with older drivers likely do not work **[sourced]**, so GGUF chat models stay on the CPU on this phone and item 0128.4 cannot be validated on it. For ONNX models the order is XNNPACK and NNAPI first, as the MVP says. Whether the QNN provider supports the Snapdragon 865 is **[unverified]**; ONNX Runtime's page names newer chips as tested |
+
+Consequence: on the reference phone, the realistic gain is in STT and vision encoders, not in chat models. That matches the first user (Dictator), and it means a newer Snapdragon phone is needed before the Android GPU path for chat models can be accepted.
 
 ## Sources
 

@@ -17,6 +17,18 @@ A copy of this note is kept in the project files as `plans/model-formats-and-run
 
 The ranked order of work is in C.3 and the questions that need the owner are in C.4.
 
+## Worked example: Gemma 4
+
+Asked by the owner on 2026-11-16. Facts read from the Hugging Face API that day.
+
+- Google publishes Gemma 4 as GGUF itself: `google/gemma-4-E2B-it-qat-q4_0-gguf` (3.35 GB plus a 0.99 GB projector), `google/gemma-4-E4B-it-qat-q4_0-gguf` (5.15 GB plus 0.99 GB) and `google/gemma-4-12B-it-qat-q4_0-gguf` (6.98 GB plus 0.18 GB). Community quantisations exist for every size. The same models exist as `.litertlm` under `litert-community`.
+- The first Gemma 4 repositories were created in March 2026. The Engine's llama.cpp binding was published in June 2025, so its llama.cpp cannot know the Gemma 4 architecture and a load is expected to fail (not tested).
+- Three routes, cheapest first:
+  1. **Desktop, no Engine change:** run a current `llama-server` with a GPU build and add it as an OpenAI-compatible provider marked local. Chat works today through `engine/providers`; images do not, because the adapter drops image blocks.
+  2. **Both hosts, the real fix:** move to a llama.cpp binding built on a 2026 llama.cpp (the `net.ladenthin:llama` fork, or our own build). This is the binding decision in C.3 item 5 and the spike in RFC-0128. It also brings the projector, so Gemma 4 can take images and audio.
+  3. **Later:** LiteRT-LM with the `.litertlm` files, which is where phone GPU and NPU support for Gemma is strongest.
+- Fit on the reference hardware: on the desktop's RTX 2060 with 6 GB, E2B fits fully on the GPU, E4B is borderline once the context cache is added, and 12B needs partial offload. On the OnePlus 8, E2B on the CPU is the realistic size.
+
 ## Part A. What the repository does today (verified in code)
 
 ### A.1 Formats that load and run, by modality and host
@@ -174,7 +186,7 @@ An array framework for Apple silicon (MIT, https://github.com/ml-explore/mlx); t
 - LiteRT is the renamed TensorFlow Lite; files are `.tflite`. Google Maven: `com.google.ai.edge.litert:litert` 2.3.2. Classic use: small vision, audio and classification models on Android. Converters: ai-edge-torch (PyTorch to `.tflite`, Python; not checked in this pass).
 - LiteRT-LM (Apache-2.0, https://github.com/google-ai-edge/LiteRT-LM) is Google's LLM runtime on LiteRT with its own bundle format `.litertlm`. README: Android, iOS, web, desktop, Raspberry Pi; Kotlin API marked stable "for Android and JVM", C++ and Python stable, Swift early preview. Models named: Gemma 3n, Gemma 4 (for example `gemma-4-E4B-it.litertlm`), Llama, Phi-4, Qwen; speech models Qwen3-ASR, Kokoro, Qwen3-TTS. Vision and audio input. Google Maven: `com.google.ai.edge.litertlm:litertlm-android` and `litertlm-jvm`, both at 0.19.1; the Android guide lists Linux, macOS and Windows for the JVM artifact (https://developers.google.com/edge/litert-lm/android). API classes: `Engine`, `EngineConfig`, `Conversation`, `Message`, `Content`, tools; backends `Backend.CPU()`, `Backend.GPU()`, `Backend.NPU(...)`. Version 0.19.0 had a breaking C API change, so the API is still moving. Minimum SDK is not stated on the page.
 - MediaPipe LLM Inference API (`.task` bundles): `com.google.mediapipe:tasks-genai` is still published (0.10.35 on Google Maven). That LiteRT-LM replaces it is the common understanding but neither page read says so (unverified).
-- Model availability: Google publishes Gemma in `.litertlm` under the `litert-community` organisation (unverified in this pass). Gemma weights are under the Gemma terms of use, not an OSI licence, and repos are gated (seen on the EmbeddingGemma card: "License: gemma", login and acceptance required).
+- Model availability: Google publishes Gemma in `.litertlm` under the `litert-community` organisation (unverified in this pass). Gemma weights are under the Gemma terms of use, not an OSI licence, and repos are gated (seen on the EmbeddingGemma card: "License: gemma", login and acceptance required). Gemma 4 is different: the Hugging Face API reports `google/gemma-4-*` and `litert-community/gemma-4-*` as `apache-2.0` and not gated (checked 2026-11-16).
 - Android AICore, Gemini Nano and ML Kit GenAI (https://developer.android.com/ai/gemini-nano): not a format. The model is owned and updated by the system service AICore; apps call ML Kit GenAI APIs. The page lists direct model access (`GenerativeModel`), agent workflows, speech recognition, speech translation, text to speech, image description, summarisation, proofreading, rewriting and an embedding API. Google Maven shows `com.google.mlkit:genai-prompt` 1.0.0-beta5 and `genai-speech-recognition` 1.0.0-alpha2, so these are pre-release. Inference is on device. Constraints: only on supported devices with AICore, ML Kit GenAI additional terms apply, the model and its version are not under the app's control, and Finnish support for the speech APIs was not confirmed (unverified). It needs Google Play services components, which matters for an F-Droid style distribution (the Aidos repo has `fastlane/` and `metadata/` directories that suggest one; unverified intent).
 
 ### B.6 ExecuTorch
