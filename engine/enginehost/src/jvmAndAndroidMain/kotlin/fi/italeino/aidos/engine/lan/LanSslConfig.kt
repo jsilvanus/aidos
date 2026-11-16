@@ -4,7 +4,7 @@ import java.security.KeyStore
 import java.security.MessageDigest
 
 /**
- * The Engine's persistent TLS identity for the LAN listener (RFC-0051). TLS itself is the
+ * The Engine's persistent TLS identity for the LAN listener (RFC-0126). TLS itself is the
  * platform/Ktor stack; Aidos only supplies the key store. [fingerprintSha256] is what a paired
  * device pins, so a different certificate on the same address is detectable.
  */

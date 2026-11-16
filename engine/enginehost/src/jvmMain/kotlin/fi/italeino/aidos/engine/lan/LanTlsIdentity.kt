@@ -8,7 +8,7 @@ import java.net.NetworkInterface
 import java.security.KeyStore
 
 /**
- * RFC-0051: the Engine's persistent LAN TLS identity on JVM hosts.
+ * RFC-0126: the Engine's persistent LAN TLS identity on JVM hosts.
  *
  * The certificate is generated once, stored in [file] (a PKCS12 key store, mode left to the OS
  * account's file permissions) and reused, so the fingerprint a device pinned at pairing stays

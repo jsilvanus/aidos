@@ -82,7 +82,7 @@ data class ModelRequest(
     val stopConditions: List<String> = emptyList(),
 )
 
-/** Generalized RFC-0022 response. Outputs remain ordered and ModelOutput is intentionally open. */
+/** Generalized RFC-0125 response. Outputs remain ordered and ModelOutput is intentionally open. */
 data class ModelResponse(
     val outputs: List<ModelOutput>,
     val stopReason: StopReason?,

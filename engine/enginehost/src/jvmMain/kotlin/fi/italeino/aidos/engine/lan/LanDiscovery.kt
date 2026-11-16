@@ -7,11 +7,11 @@ import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceInfo
 import javax.jmdns.ServiceListener
 
-/** An Engine found on the LAN that offers HTTPS sharing (RFC-0051). Finding it trusts nothing: pairing and the pin do that. */
+/** An Engine found on the LAN that offers HTTPS sharing (RFC-0126). Finding it trusts nothing: pairing and the pin do that. */
 data class LanEngine(val name: String, val host: String, val port: Int, val fingerprintSha256: String?)
 
 /**
- * RFC-0051 "Service discovery": while LAN sharing is on, the Engine announces `_aidos-engine._tcp`
+ * RFC-0126 "Service discovery": while LAN sharing is on, the Engine announces `_aidos-engine._tcp`
  * with its port and the fingerprint of its TLS certificate, so a client can find it without typing an address.
  * The announcement is a convenience, never an authority; an unpaired device learns nothing it can use.
  */

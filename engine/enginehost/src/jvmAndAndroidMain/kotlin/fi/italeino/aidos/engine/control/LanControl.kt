@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * The LAN sharing group of `EngineControl` (RFC-0115, D58, D61): what a UI can do to an Engine's LAN sharing
- * (RFC-0051), whether the Engine runs in the same process (`LocalLanControl`) or as a background service
+ * (RFC-0126), whether the Engine runs in the same process (`LocalLanControl`) or as a background service
  * reached over the loopback admin API (`HttpLanControl`). The interface is the only thing the pane's presenter
  * knows, which is what lets the app attach to a service without changing the pane.
  */

@@ -6,7 +6,7 @@ import ai.onnxruntime.OrtSession
 import java.io.File
 
 /**
- * ONNX Runtime binding for the Laya graph (RFC-0022 D44). Generic tensor execution only: nothing
+ * ONNX Runtime binding for the Laya graph (RFC-0125 D44). Generic tensor execution only: nothing
  * here knows what the logits mean. CPU execution provider; accelerator providers are a host choice.
  */
 class OrtDecisionRunner(modelFile: File, intraOpThreads: Int = 0) : DecisionTensorRunner {

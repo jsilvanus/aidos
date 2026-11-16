@@ -25,9 +25,9 @@ kotlin {
                 api(project(":kernel"))
                 // Aidos SDK client: in-process Engine calls and SDK↔host contract tests.
                 api(project(":client"))
-                // Typed decisions (/v1/systemone); contract + wire format live in :decisions (RFC-0022 D45).
+                // Typed decisions (/v1/systemone); contract + wire format live in :decisions (RFC-0125 D45).
                 api(project(":decisions"))
-                // Vision models (image + text chat); SmolVLM on ONNX Runtime (RFC-0022).
+                // Vision models (image + text chat); SmolVLM on ONNX Runtime (RFC-0125).
                 api(project(":vision"))
                 // Whisper speech-to-text behind /v1/audio/transcriptions; contract lives in :stt.
                 api(project(":stt"))
@@ -52,11 +52,11 @@ kotlin {
         androidMain.get().dependsOn(jvmAndAndroidMain)
         jvmMain.get().dependsOn(jvmAndAndroidMain)
         jvmMain.dependencies {
-            // RFC-0051: self-signed TLS identity for the LAN listener (JVM hosts; Android supplies its own KeyStore).
+            // RFC-0126: self-signed TLS identity for the LAN listener (JVM hosts; Android supplies its own KeyStore).
             implementation("io.ktor:ktor-network-tls-certificates:3.5.2")
             // CIO cannot serve HTTPS, so the TLS-only LAN listener runs on Netty.
             api("io.ktor:ktor-server-netty:3.5.2")
-            // RFC-0051 mDNS announcement of the LAN listener.
+            // RFC-0126 mDNS announcement of the LAN listener.
             implementation("org.jmdns:jmdns:3.6.4")
         }
 

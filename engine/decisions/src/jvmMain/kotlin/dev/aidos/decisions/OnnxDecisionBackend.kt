@@ -7,7 +7,7 @@ import dev.aidos.modelruntime.ModelRunSettings
 import java.io.File
 
 /**
- * Adds decision models to an existing JVM [InferenceBackend] (RFC-0022 D44/D45). A model is a Laya
+ * Adds decision models to an existing JVM [InferenceBackend] (RFC-0125 D44/D45). A model is a Laya
  * package directory `<modelsDir>/<modelId>/` (see [LayaPackage]); every other id is delegated, so
  * llama.cpp behaviour is unchanged. The ONNX backend stays generic: Laya lives in [LayaPackage].
  * The Android host has the same decorator in :androidapp over the same [DecisionPackages].

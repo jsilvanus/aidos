@@ -54,7 +54,7 @@ One persistent service notification, plus approval prompts (new app, new agent g
 ## Security
 
 - Binder's verified UID, not a caller-supplied name, identifies the app. A token is useless once approval is revoked (the next request returns 401).
-- The HTTP server binds loopback only; LAN exposure is a separate, off-by-default desktop feature (RFC-0051 LAN).
+- The HTTP server binds loopback only; LAN exposure is a separate, off-by-default desktop feature (RFC-0126 LAN).
 - Native isolation bounds the damage of a native crash; it is not a sandbox against malicious model files, so packages come from known sources.
 
 ## MVP
@@ -141,7 +141,7 @@ post_mvp:
     status: todo
     phase: P2
   - id: "0118.6"
-    title: "Android listener for LAN sharing (RFC-0051 LAN)"
+    title: "Android listener for LAN sharing (RFC-0126 LAN)"
     status: todo
     phase: P3
   - id: "0118.7"

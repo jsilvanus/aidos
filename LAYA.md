@@ -68,7 +68,7 @@ The exact kernel contract should follow Aidos' existing typed-output architectur
 
 ## Architectural fit
 
-RFC-0022 already defines Aidos as a general inference runtime rather than an LLM wrapper. It defines capability-specific backend interfaces, generic ONNX tensor inference, typed model outputs, and model/runtime lifecycle management.
+RFC-0125 already defines Aidos as a general inference runtime rather than an LLM wrapper. It defines capability-specific backend interfaces, generic ONNX tensor inference, typed model outputs, and model/runtime lifecycle management.
 
 Laya fits naturally above the generic ONNX backend:
 
@@ -209,7 +209,7 @@ For example:
         expected      3.8
         distribution  ...
 
-The exact kernel representation should follow RFC-0022's generalized ModelResponse and typed-output architecture.
+The exact kernel representation should follow RFC-0125's generalized ModelResponse and typed-output architecture.
 
 ## `noul` considerations
 
@@ -252,7 +252,7 @@ This preserves a deterministic authorization/execution boundary.
 
 ## Open questions
 
-- Should typed decisions be a first-class Engine capability in RFC-0022?
+- Should typed decisions be a first-class Engine capability in RFC-0125?
 - What should the generic DecisionRequest/DecisionResult contracts contain?
 - Should `choice`, `noul`, and `score` be explicit kernel types or adapter-level types?
 - How should probability calibration be represented?

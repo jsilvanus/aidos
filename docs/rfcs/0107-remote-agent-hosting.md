@@ -32,7 +32,7 @@ A virtual agent id (working name `aidos:agent`) has an ordered candidate list, l
 Runs are in memory. If the link drops, tool calls time out (today 120 s); the agent host parks the run and the origin resumes by `seq`. Whether the agent host continues or cancels when the origin disappears is open.
 
 ## Not covered
-Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0051); Android agent runtime hosting (D49).
+Model-side delegation (RFC-0105, done); LAN sharing for non-Aidos clients (RFC-0126); Android agent runtime hosting (D49).
 
 ## Phases
 1. Agent adapter through the virtual router (model on a peer, loop local). **Built on the desktop host** (`RoutedModelAdapter`, unit-tested with fakes); a two-Engine run over loopback is not done yet.

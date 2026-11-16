@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 /**
- * Presenter for the LAN sharing pane (RFC-0051). It knows only [LanControl] (RFC-0115, D61): the same pane works
+ * Presenter for the LAN sharing pane (RFC-0126). It knows only [LanControl] (RFC-0115, D61): the same pane works
  * over the in-process Engine ([LocalLanControl]) or a background Engine service (`HttpLanControl`). Every action
  * is one control call followed by a refresh; failures show in the pane.
  */

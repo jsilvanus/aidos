@@ -23,7 +23,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 /**
- * RFC-0110 Gate A inbound prompt-injection screener calling the Engine `/v1/systemone` endpoint
+ * RFC-0127 Gate A inbound prompt-injection screener calling the Engine `/v1/systemone` endpoint
  * (`DecisionWire` contract: `{model, state, questions, min_confidence?}`).
  *
  * Fails safely to `instructionSuspected = false` when [baseUrl] is unreachable, returns a non-2xx

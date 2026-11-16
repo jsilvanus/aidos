@@ -210,7 +210,7 @@ class DesktopEngineHost(
 
     val approvalStore: AppApprovalStore = FileAppApprovalStore(File(stateDir, "approvals.json"))
 
-    /** RFC-0051: opt-in LAN sharing (off by default); devices are approved through [approvalStore]. */
+    /** RFC-0126: opt-in LAN sharing (off by default); devices are approved through [approvalStore]. */
     val lanSharing: DesktopLanSharing = DesktopLanSharing(stateDir, approvalStore)
 
     val licenseAcceptanceStore: LicenseAcceptanceStore = FileLicenseAcceptanceStore(File(stateDir, "licenses.json"))
@@ -279,7 +279,7 @@ class DesktopEngineHost(
             // JVM llama.cpp backend (RFC-0022, M21). It reads its directory from the system
             // property, so point that at ours before constructing it.
             System.setProperty("aidos.models.dir", modelsDir.absolutePath)
-            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0022 D45), Whisper speech-to-text
+            // llama.cpp for GGUF, plus ONNX decision models (Laya packages, RFC-0125 D45), Whisper speech-to-text
             // packages (RFC-0103) and SmolVLM vision packages from the same directory; each decorator claims only its own shape.
             val runtime = GlobalModelRuntime(
                 // HTTP providers (e.g. a local Ollama) from providers.json; read per call, so editing it needs no restart.

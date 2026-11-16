@@ -247,7 +247,7 @@ class EngineService : LifecycleService() {
                 // :modelruntime remains the desktop implementation; both share GlobalModelRuntime.
                 // The persistent catalog is authoritative for model identity, kind and expected
                 // digest; filesDir/models is only the artifact store.
-                // ONNX decision models (typed decisions, RFC-0022 D45) are packages under filesDir/models/<id>/;
+                // ONNX decision models (typed decisions, RFC-0125 D45) are packages under filesDir/models/<id>/;
                 // every other id still goes to llama.cpp.
                 // Whisper speech-to-text (RFC-0103) and SmolVLM vision packages live in the same directory.
                 val onnxModelsDir = java.io.File(filesDir, "models")

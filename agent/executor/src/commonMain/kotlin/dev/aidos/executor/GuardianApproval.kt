@@ -21,14 +21,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-/** RFC-0110 Gate A result returned by [TaintInputScreener]. */
+/** RFC-0127 Gate A result returned by [TaintInputScreener]. */
 data class InputScreeningVerdict(
     val instructionSuspected: Boolean,
     val probability: Double? = null,
     val modelId: String? = null,
 )
 
-/** RFC-0110 Gate A seam: screens untrusted tool outputs for prompt-injection instructions. */
+/** RFC-0127 Gate A seam: screens untrusted tool outputs for prompt-injection instructions. */
 interface TaintInputScreener {
     suspend fun screen(toolName: String, untrustedText: String): InputScreeningVerdict
 }
@@ -39,11 +39,11 @@ object NoopTaintInputScreener : TaintInputScreener {
         InputScreeningVerdict(instructionSuspected = false)
 }
 
-/** RFC-0110 Gate B intent-alignment verdict produced by [GuardianApprovalVerifier]. */
+/** RFC-0127 Gate B intent-alignment verdict produced by [GuardianApprovalVerifier]. */
 enum class GuardianDecision { ALIGNED, UNRELATED, AMBIGUOUS }
 
 /**
- * RFC-0110 Gate B input: strictly bounded to the user's trusted summary and the single candidate
+ * RFC-0127 Gate B input: strictly bounded to the user's trusted summary and the single candidate
  * tool invocation, excluding conversation history, instruction sets, and untrusted tool outputs.
  */
 data class GuardianApprovalRequest(
@@ -54,14 +54,14 @@ data class GuardianApprovalRequest(
     val argumentsJson: String,
 )
 
-/** RFC-0110 Gate B output carrying the fail-closed decision and explanation. */
+/** RFC-0127 Gate B output carrying the fail-closed decision and explanation. */
 data class GuardianVerdict(
     val decision: GuardianDecision,
     val rationale: String,
     val modelId: String? = null,
 )
 
-/** RFC-0110 Gate B seam: verifies whether a sensitive tool call aligns with user intent. */
+/** RFC-0127 Gate B seam: verifies whether a sensitive tool call aligns with user intent. */
 interface GuardianApprovalVerifier {
     suspend fun verify(request: GuardianApprovalRequest): GuardianVerdict
 }
@@ -74,7 +74,7 @@ private object DefaultGuardianExecutionWindow : ExecutionWindow {
 private val guardianJson = Json { ignoreUnknownKeys = true }
 
 /**
- * RFC-0110 Gate B verifier backed by an [InferenceRouter]-selected LLM.
+ * RFC-0127 Gate B verifier backed by an [InferenceRouter]-selected LLM.
  *
  * Executes a single-turn, stateless, zero-tool (`tools = emptyList()`, `ToolChoice.None`) request
  * over a clean `TrustLevel.TRUSTED` [RoutingContext] and fails closed to [GuardianDecision.AMBIGUOUS]
@@ -97,7 +97,7 @@ class LlmGuardianApprovalVerifier(
             profile = profile,
             networkAvailable = networkAvailable(),
             budgetRemaining = budgetRemaining(),
-            // Safe under RFC-0110 Gate B: only userMessageSummary (TRUSTED) and the single
+            // Safe under RFC-0127 Gate B: only userMessageSummary (TRUSTED) and the single
             // candidate tool call enter the prompt — never history or untrusted tool outputs.
             runTaint = TrustLevel.TRUSTED,
             executionWindow = executionWindow(),

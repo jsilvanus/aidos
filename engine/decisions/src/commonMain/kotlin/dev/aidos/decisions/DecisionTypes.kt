@@ -3,7 +3,7 @@ package dev.aidos.decisions
 /**
  * Typed decisions ("System One"): one parallel model pass answers several typed questions about a
  * piece of text, with probabilities instead of generated text. Amends RFC-0022 (see
- * docs/rfcs/0022-inference-backend-architecture.md, "Decision capability").
+ * docs/rfcs/0125-inference-backend-architecture.md, "Decision capability").
  */
 sealed interface DecisionQuestion {
     val instructions: String

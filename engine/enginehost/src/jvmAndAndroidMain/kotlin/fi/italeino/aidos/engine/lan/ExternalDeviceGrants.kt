@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * RFC-0051: one external device's grant to use this Engine over the LAN.
+ * RFC-0126: one external device's grant to use this Engine over the LAN.
  *
  * Only a SHA-256 of the credential is stored, so the file on disk cannot be replayed. Expiry is
  * mandatory. The credential is its own class: a Binder-issued token never authenticates a LAN
@@ -38,7 +38,7 @@ data class ExternalDeviceGrant(
 data class IssuedExternalDevice(val grant: ExternalDeviceGrant, val credential: String)
 
 /**
- * Per-device credentials for LAN access (RFC-0051). Thread-safe; optionally persisted to [file].
+ * Per-device credentials for LAN access (RFC-0126). Thread-safe; optionally persisted to [file].
  *
  * Authorising a request here is only the first of the Engine's checks: the host also requires the
  * device's per-app approval (model use), its agent grant for `/v1/agent`, and its locality limit,
@@ -139,7 +139,7 @@ class ExternalDeviceGrants(
 }
 
 /**
- * Short-lived, single-use numeric bootstrap codes for SDK pairing (RFC-0051 Mode A).
+ * Short-lived, single-use numeric bootstrap codes for SDK pairing (RFC-0126 Mode A).
  *
  * A code is only ever exchanged for a grant's credential; it is never itself accepted as a
  * bearer credential. Wrong guesses burn the code after [maxAttempts] so an eight-digit space

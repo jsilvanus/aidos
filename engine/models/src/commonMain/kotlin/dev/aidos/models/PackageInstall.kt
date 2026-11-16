@@ -5,7 +5,7 @@ import dev.aidos.kernel.ModelKind
 
 /**
  * Install planning for ONNX packages that the desktop and Android hosts both need, so the two
- * Models screens cannot drift apart on what a Hugging Face repo installs as (RFC-0022 D45, RFC-0103).
+ * Models screens cannot drift apart on what a Hugging Face repo installs as (RFC-0125 D45, RFC-0103).
  */
 object PackageInstall {
     /**

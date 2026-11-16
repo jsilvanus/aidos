@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-shot dictation-routing evaluation for Laya (RFC-0022 D45 / Dictator IntentRouter).
+"""Zero-shot dictation-routing evaluation for Laya (RFC-0125 D45 / Dictator IntentRouter).
 
 Utterances are synthetic and hand-labelled by the author (no real recordings, no personal data); they
 estimate feasibility, not production accuracy. Run with the laya ONNX package:

@@ -71,7 +71,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** RFC-0110 Wave 2 (Gate A & Gate B) end-to-end verification in [AgentLoopTaskRunner]. */
+/** RFC-0127 Wave 2 (Gate A & Gate B) end-to-end verification in [AgentLoopTaskRunner]. */
 class GuardianApprovalEndToEndTest {
 
     private val nowIso = "2026-08-10T00:00:00Z"

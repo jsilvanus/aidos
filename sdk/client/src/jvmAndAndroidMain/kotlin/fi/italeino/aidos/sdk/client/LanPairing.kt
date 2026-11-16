@@ -13,7 +13,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
 /**
- * What an Engine shows to pair a device over the LAN (RFC-0051 mode A): its address, a single-use
+ * What an Engine shows to pair a device over the LAN (RFC-0126 mode A): its address, a single-use
  * code, and the SHA-256 fingerprint of its TLS certificate. Carried as
  * `aidos-pair://host:port/code?fp=<hex>`, which is what a QR code holds.
  *
@@ -49,7 +49,7 @@ data class LanCredential(
 class LanPairingException(message: String, val httpStatus: Int? = null) : Exception(message)
 
 /**
- * Client side of RFC-0051 LAN sharing. Nothing here needs the Engine's Android app or any Aidos
+ * Client side of RFC-0126 LAN sharing. Nothing here needs the Engine's Android app or any Aidos
  * type: it is HTTPS with a pinned certificate and a bearer credential, so a generic client can do
  * the same by hand from the manual descriptor.
  */

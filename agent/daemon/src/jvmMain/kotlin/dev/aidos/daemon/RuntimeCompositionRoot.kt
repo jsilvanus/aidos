@@ -156,11 +156,11 @@ class RuntimeCompositionRoot(
     },
     /** RFC-0056: background compaction and storage-pressure maintenance after each driven Run. */
     internal val retention: RetentionMaintenance = RetentionMaintenance(),
-    /** RFC-0110 Gate A: optional override for inbound prompt-injection screening. */
+    /** RFC-0127 Gate A: optional override for inbound prompt-injection screening. */
     private val taintInputScreener: TaintInputScreener? = null,
-    /** RFC-0110 Gate B: optional override for the blind Guardian approval verifier. */
+    /** RFC-0127 Gate B: optional override for the blind Guardian approval verifier. */
     private val guardianVerifier: GuardianApprovalVerifier? = null,
-    /** RFC-0110 Gate A: Engine base URL used to construct [SystemOneTaintInputScreener] when [taintInputScreener] is null. */
+    /** RFC-0127 Gate A: Engine base URL used to construct [SystemOneTaintInputScreener] when [taintInputScreener] is null. */
     private val systemOneBaseUrl: () -> String? = { EngineDiscovery().baseUrl() },
     /** Optional bearer token provider for [SystemOneTaintInputScreener]. */
     private val systemOneBearerToken: () -> String? = { EngineDiscovery().token() },
@@ -1046,7 +1046,7 @@ class RuntimeCompositionRoot(
         }
 
         /**
-         * RFC-0110: resolves `Settings.trustTaintApprovalPolicy` across Run -> Project -> User
+         * RFC-0127: resolves `Settings.trustTaintApprovalPolicy` across Run -> Project -> User
          * -> Default (`MANUAL`) per PREFERENCE scoping.
          */
         internal fun resolveTaintApprovalPolicy(

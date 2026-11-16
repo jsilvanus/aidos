@@ -4,7 +4,7 @@ Status: Accepted for implementation (2026-11-15), in progress: stage 1 (Agent-ru
 
 Decisions: D55 to D61, all accepted.
 
-Related: RFC-0002 (runtime), RFC-0051 (LAN sharing), RFC-0055 (runtime socket and lock), RFC-0103 (Aidos Engine), RFC-0107/0108 (remote agent hosting, remote routes), RFC-0033 (Shell), RFC-0035 (secrets), `docs/TCR_UI_DEVELOPMENT_MANUAL.md`.
+Related: RFC-0002 (runtime), RFC-0126 (LAN sharing), RFC-0055 (runtime socket and lock), RFC-0103 (Aidos Engine), RFC-0107/0108 (remote agent hosting, remote routes), RFC-0033 (Shell), RFC-0035 (secrets), `docs/TCR_UI_DEVELOPMENT_MANUAL.md`.
 
 ## Abstract
 

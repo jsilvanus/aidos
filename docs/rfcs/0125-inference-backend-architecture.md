@@ -1,4 +1,6 @@
-# RFC-0022: Inference Backend Architecture
+# RFC-0125: Inference Backend Architecture
+
+> Renumbered on 2026-11-16: this RFC was published as RFC-0022, a number it shared with [RFC-0022: Local Models](0022-local-models.md). Older commits and notes that say RFC-0022 may mean this document.
 
 **Status:** Implemented 2026-11-15 (decisions D36-D44 settled). Implementation evidence: [STATUS.md](STATUS.md).
 Non-MVP Work: **Remaining** (ExecuTorch, OpenVINO, TensorRT, zero-copy tensor interchange)
@@ -354,16 +356,16 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 
 ```yaml
 post_mvp:
-  - id: "0022.1"
+  - id: "0125.1"
     title: "ExecuTorch"
     status: todo
-  - id: "0022.2"
+  - id: "0125.2"
     title: "OpenVINO"
     status: todo
-  - id: "0022.3"
+  - id: "0125.3"
     title: "TensorRT"
     status: todo
-  - id: "0022.4"
+  - id: "0125.4"
     title: "zero-copy tensor interchange"
     status: todo
 ```

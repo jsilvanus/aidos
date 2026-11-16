@@ -1,8 +1,9 @@
 # RFC-0119: Engine App UI and Desktop Control
 
 Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: Compose panes are not UI-tested; HTTP controls for most panes pending (RFC-0115)).
+Non-MVP Work: **Remaining**
 
-Related: RFC-0115 (desktop services; owns the service split, tray and install), RFC-0103 (Engine), RFC-0051 LAN and RFC-0105/0107/0108 (the features the panes control), RFC-0106 and RFC-0123 (generative UI and the component registry), D58, D59, D61.
+Related: RFC-0115 (desktop services; owns the service split, tray and install), RFC-0103 (Engine), RFC-0126 LAN and RFC-0105/0107/0108 (the features the panes control), RFC-0106 and RFC-0123 (generative UI and the component registry), D58, D59, D61.
 
 ## Abstract
 
@@ -38,7 +39,7 @@ The panes were built one feature at a time and each RFC mentions only its own. T
 | MCP Servers | registered servers, adoption of their tools, vault-backed secrets (RFC-0031) |
 | Groups and Peers | pairing by code or QR, group membership, split hosting (RFC-0105) |
 | Remote | per-peer remote-access switch, SSH tunnels, host keys, setup key (RFC-0108) |
-| Sharing | LAN listener on/off, certificate fingerprint, per-device grants (RFC-0051 LAN) |
+| Sharing | LAN listener on/off, certificate fingerprint, per-device grants (RFC-0126 LAN) |
 | Settings | Engine-wide locality limit, run defaults, background and tray preferences |
 
 ### The control seam

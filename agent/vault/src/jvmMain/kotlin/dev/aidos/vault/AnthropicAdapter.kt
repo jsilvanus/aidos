@@ -203,7 +203,7 @@ class AnthropicAdapter(
             "max_tokens" -> StopReason.MAX_TOKENS
             else         -> StopReason.END_TURN
         }
-        // RFC-0022: one ordered `outputs` list replaces the separate text/toolCalls fields.
+        // RFC-0125: one ordered `outputs` list replaces the separate text/toolCalls fields.
         // Text first, then tool calls, matching the order Anthropic returns its content blocks in
         // -- the ordering is part of the response, not an incidental detail of the old shape.
         return ModelResponse(
