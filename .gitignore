@@ -9,3 +9,7 @@ local.properties
 # Ignore OS files
 Thumbs.db
 .DS_Store
+
+# Local worktrees and dependency checkouts; never part of the repository.
+_wt/
+_deps/
