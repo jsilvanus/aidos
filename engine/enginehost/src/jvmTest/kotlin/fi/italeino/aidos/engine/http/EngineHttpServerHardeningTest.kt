@@ -269,6 +269,38 @@ class EngineHttpServerHardeningTest {
         assertTrue(audioResp.bodyAsText().contains("\"code\":\"request_too_large\""))
     }
 
+    @Test
+    fun transcriptions_acceptAudioUpToTheAudioLimitEvenWhenItsBase64ExceedsTheJsonBodyLimit() = testApplication {
+        // RFC-0103: audio travels base64-encoded in the JSON body. The general body limit used to
+        // apply here too, so audio within maxAudioBytes was refused once its encoding passed it.
+        val policy = EngineApiPolicy(maxRequestBytes = 1024, maxAudioBytes = 4096)
+        val tokenManager = TokenManager()
+        val server = EngineHttpServer(tokenManager, MockModelRuntime(), policy = policy)
+        application { server.installInto(this) }
+        val token = tokenManager.generateNewToken().token
+
+        val withinAudioLimit = Base64.getEncoder().encodeToString(ByteArray(3000) { 1 })
+        assertTrue(withinAudioLimit.length > policy.maxRequestBytes)
+        val accepted = client.post("/v1/audio/transcriptions") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(hardeningJson.encodeToString(TranscriptionRequest(file = withinAudioLimit, model = "test-model")))
+        }
+        assertEquals(HttpStatusCode.OK, accepted.status)
+
+        // The wider limit belongs to transcription alone.
+        val chat = client.post("/v1/chat/completions") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(
+                hardeningJson.encodeToString(
+                    ChatCompletionRequest(model = "test-model", messages = listOf(ChatMessage("user", "x".repeat(3000))))
+                )
+            )
+        }
+        assertEquals(HttpStatusCode.PayloadTooLarge, chat.status)
+    }
+
     // -------------------------------------------------------------------------
     // 2. Timeout Policy & Native Cancellation Propagation
     // -------------------------------------------------------------------------
