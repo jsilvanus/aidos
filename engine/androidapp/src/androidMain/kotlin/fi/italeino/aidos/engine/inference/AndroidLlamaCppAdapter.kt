@@ -139,6 +139,11 @@ class AndroidLlamaCppAdapter(
                 } finally {
                     synchronized(inferenceLock) {
                         if (activeIterator === iterator) activeIterator = null
+                        // The iterator only releases its native task when it reads the model's
+                        // own stop. Leaving the loop any other way (token cap, stop sequence,
+                        // the collector going away) would otherwise keep llama.cpp generating
+                        // up to n_predict for nobody, on a phone, and leak the task.
+                        if (iterator.hasNext()) runCatching { iterator.cancel() }
                     }
                 }
 
