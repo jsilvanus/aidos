@@ -167,7 +167,8 @@ class GlobalModelRuntime(
                 if (catalogDigest != null) {
                     val actualDigest = backend.computeDigest(modelId)
                     if (actualDigest != catalogDigest) {
-                        backend.delete(modelId)
+                        // RFC-0022: moved out of the store (quarantined), not kept and not served.
+                        backend.quarantine(modelId, catalogDigest, actualDigest)
                         return@withLock Result.failure(
                             DigestMismatchException(
                                 modelId = modelId,
@@ -276,6 +277,11 @@ interface InferenceBackend {
     suspend fun computeDigest(modelId: String): String
     suspend fun computeDigest(modelId: String, artifactPath: String?): String = computeDigest(modelId)
     suspend fun delete(modelId: String)
+    /**
+     * Takes a model whose digest did not match out of the store (RFC-0022). Backends that keep
+     * files move them to `quarantine/`; the default deletes, so no backend keeps a mismatched model.
+     */
+    suspend fun quarantine(modelId: String, expectedDigest: String, actualDigest: String) = delete(modelId)
     suspend fun load(modelId: String): Result<ModelAdapter>
     suspend fun load(modelId: String, artifactPath: String?): Result<ModelAdapter> = load(modelId)
     /** [settings] only matter to backends that run llama.cpp; the default ignores them. */
@@ -291,5 +297,5 @@ class DigestMismatchException(
     val actual: String,
 ) : RuntimeException(
     "Digest mismatch for model $modelId: expected $expected but got $actual. " +
-            "Weights have been deleted. Re-install the model."
+            "The file was quarantined and will not be used. Re-install the model."
 )
