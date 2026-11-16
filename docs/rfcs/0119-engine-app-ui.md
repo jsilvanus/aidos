@@ -66,11 +66,6 @@ The Engine panes are implemented in the Trusted Component Registry (`aidos-tcr`,
 
 Built (desktop): Status, Models, Model detail, Connected Apps, Agents, MCP Servers, Groups, Remote and Tunnels, Sharing, with presenters tested on the JVM; the control seam for the listed controls with in-process implementations and the HTTP admin path for status; the tray (RFC-0115). Android has its own Compose screens (RFC-0118). The Compose panes themselves are not UI-tested.
 
-## Open Questions
-
-- Which panes move to HTTP controls first now that Agent-runtime attach is in progress (RFC-0115 stage 1)?
-- Should Android and desktop share the pane Composables in `engineui` fully, or keep platform-specific shells?
-
 ## Implementation Files
 
 ```yaml
@@ -186,4 +181,10 @@ post_mvp:
     title: "Remove the engineui pane copies that duplicate dev.aidos.tcr.engine, agent and mcp"
     status: todo
     phase: P1
+  - id: "0119.7"
+    title: "Move the remaining panes to HTTP controls (RFC-0115 stage 1)"
+    status: todo
+  - id: "0119.8"
+    title: "Owner decision: share pane Composables fully between Android and desktop, or keep platform-specific shells"
+    status: todo
 ```

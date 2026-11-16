@@ -65,13 +65,6 @@ Residual, not covered: same-UID code; a provider reinstalled with the same key i
 
 Built: `binder-core` (protocol, limits, policy, host) and `binder-android` (AIDL, `McpProviderService`, `McpBinderClient`, `ProviderTrust`); the Aidos variant, store constraints, activation and adoption in `mcp-core`/`mcp-broker`; `AndroidBinderConnector` and discovery; Amp's provider with user approval of callers and a cross-app pairing test. Cross-app device tests (10 MiB result, 25 reconnects, provider killed mid-call, refusal, wrong pin) pass on an API 36 emulator; API 28 and 34 run in CI.
 
-## Open Questions
-
-- Where does the library live for consumers: a published artifact or a composite build? Today Aidos and Amp use `mavenLocal`.
-- The signed invocation assertion and model attestation remain proposals (D49).
-- AppFunctions as an additional outbound surface for other apps.
-- D51 should be settled now that two repositories use it.
-
 ## Implementation Files
 
 ```yaml
@@ -120,4 +113,16 @@ post_mvp:
     title: "Signed invocation assertion and model attestation"
     status: todo
     phase: P3
+  - id: "0122.8"
+    title: "Publish the binder library to a registry instead of mavenLocal"
+    status: todo
+  - id: "0122.9"
+    title: "Signed invocation assertion and model attestation (proposals, D49)"
+    status: todo
+  - id: "0122.10"
+    title: "AppFunctions as an additional outbound surface for other apps"
+    status: todo
+  - id: "0122.11"
+    title: "Owner decision: settle D51 now that two repositories use the binder"
+    status: todo
 ```

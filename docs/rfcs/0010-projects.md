@@ -549,13 +549,6 @@ A project might depend on knowledge or artifacts from another project. The Knowl
 
 Clone a project to create a variant. Useful for "what if" exploration: "clone this project and try a different approach".
 
-## Open Questions
-
-- Should projects have access control within multi-user scenarios (future)? Should a user have read-only or read-write access to different projects?
-- How should projects handle naming conflicts when exported and imported? Should there be a global namespace or is per-machine uniqueness sufficient?
-- Should projects support different "levels of encapsulation"? (e.g., some cross-project sharing of knowledge, but not of state)
-- How should the Intent Graph be initialized? Should projects offer templates for common goal structures?
-
 ## Implementation Files
 
 ```yaml
@@ -612,5 +605,14 @@ post_mvp:
     status: todo
   - id: "0010.8"
     title: "cloning"
+    status: todo
+  - id: "0010.9"
+    title: "Multi-user project access control: read-only versus read-write per project"
+    status: todo
+  - id: "0010.10"
+    title: "Owner decision: project naming on export and import (global namespace versus per-machine uniqueness)"
+    status: todo
+  - id: "0010.11"
+    title: "Project encapsulation levels: share knowledge across projects without sharing state"
     status: todo
 ```

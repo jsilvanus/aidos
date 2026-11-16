@@ -63,13 +63,6 @@ Violations of the single-implementation rule found while verifying: Aidos `engin
 
 Not built: a manifest that the generator validates against, versioned component contracts, and the removal of the duplicates above.
 
-## Open Questions
-
-1. ~~Ownership is contradictory.~~ Settled by the owner 2026-11-15: the registry supersedes D46's per-app ownership, and the components migrated there; D46 is amended. What remains is removing the duplicates in Aidos `engineui` and Amp `amp-ui`.
-2. Should the duplicates be deleted now (Aidos engineui panes, Amp amp-ui components) or kept as fallbacks until the registry versions are stable?
-3. Where does the validated component manifest live, and who may add a component?
-4. A sibling-checkout dependency is fragile for contributors; publish the registry as an artifact?
-
 ## Implementation Files
 
 ```yaml
@@ -113,4 +106,13 @@ post_mvp:
     title: "Test coverage for the registry (6 test files for 120 sources); golden or screenshot tests for security components"
     status: todo
     phase: P2
+  - id: "0123.8"
+    title: "Owner decision: delete duplicate panes now, or keep them as fallbacks until registry versions are stable"
+    status: todo
+  - id: "0123.9"
+    title: "Validated component manifest, and who may add a component"
+    status: todo
+  - id: "0123.10"
+    title: "Owner decision: publish the registry as an artifact instead of a sibling checkout"
+    status: todo
 ```

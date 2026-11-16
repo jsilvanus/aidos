@@ -444,16 +444,6 @@ Recent remote queries:
      Data redacted: N/A
 ```
 
-## Open Questions
-
-- Should there be a "privacy score" for remote providers (rating their practices)?
-- How should users handle provider policy changes (if they change terms, notify user)?
-- Should Aidos support provider-specific instruction files (e.g., custom Claude instructions for OpenAI)?
-- How should the engine handle provider API incompatibilities (different input/output formats)?
-- Should there be a "low-bandwidth" mode that always prefers local models?
-- How should tiered model selection work (fast and cheap vs. slow and expensive)?
-- Should users be able to set spending alerts (notify at $X/month)?
-
 ## Implementation Files
 
 ```yaml
@@ -503,5 +493,23 @@ post_mvp:
     done_when: "Settled actual cost is recorded in budget_ledger; no usage report or query surface exists."
   - id: "0023.5"
     title: "audit dashboard"
+    status: todo
+  - id: "0023.6"
+    title: "Privacy rating for remote providers"
+    status: todo
+  - id: "0023.7"
+    title: "Notify the user when a remote provider changes its terms"
+    status: todo
+  - id: "0023.8"
+    title: "Provider-specific instruction files"
+    status: todo
+  - id: "0023.9"
+    title: "Translate provider input and output format differences in adapters"
+    status: todo
+  - id: "0023.10"
+    title: "Low-bandwidth mode that prefers local models"
+    status: todo
+  - id: "0023.11"
+    title: "Spending alerts at a user-set threshold"
     status: todo
 ```

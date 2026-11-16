@@ -59,11 +59,6 @@ A package is a flat directory laid out like an `onnx-community/*` repository: en
 
 Built: the STT route with Whisper on ONNX (JVM tested against transformers' log-mel golden values, scripted-logit decode tests, real-weight tests behind `AIDOS_STT_MODEL_DIR`); the vision path with SmolVLM (unit tests and an opt-in loaded-model test behind `AIDOS_VISION_MODEL_DIR`); package detection and all-or-nothing install on desktop; voice provider interfaces. Not built or not run: everything on a physical Android device.
 
-## Open Questions
-
-- Is Whisper small fast enough on a mid-range phone, or does Android need a smaller Finnish fine-tune?
-- Should vision follow the OpenAI content-part form (`image_url`) instead of the additive `images` field? The additive form is frozen in API v1 (RFC-0121).
-
 ## Implementation Files
 
 ```yaml
@@ -145,4 +140,7 @@ post_mvp:
     title: "Speaker diarisation"
     status: todo
     phase: P3
+  - id: "0117.9"
+    title: "Measure Whisper small on a mid-range Android phone; decide whether a smaller Finnish fine-tune is needed"
+    status: todo
 ```
