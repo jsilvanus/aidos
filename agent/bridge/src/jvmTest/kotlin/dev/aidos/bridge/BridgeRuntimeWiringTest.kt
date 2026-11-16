@@ -76,6 +76,8 @@ class BridgeRuntimeWiringTest {
         chatPolicy: EgressPolicy = EgressPolicy.ALLOW,
         maxQueries: Int = 30,
         withTransport: Boolean = true,
+        dailyBudget: Int = 500,
+        failDelivery: () -> Boolean = { false },
     ): Fixture {
         val life = open()
         val chat = open()
@@ -90,8 +92,16 @@ class BridgeRuntimeWiringTest {
                 auditLogger = ProjectAuditBridgeLogger(drivers, "test-device"),
                 clock = { Instant.parse(now) },
             ),
-            transport = if (withTransport) OutboundMessageTransport { c, r, p -> delivered += Delivered(c, r, p) } else null,
+            transport = if (withTransport) {
+                OutboundMessageTransport { c, r, p ->
+                    if (failDelivery()) error("channel down")
+                    delivered += Delivered(c, r, p)
+                }
+            } else {
+                null
+            },
             maxQueriesPerWindow = maxQueries,
+            maxQueriesPerProjectPerDay = dailyBudget,
             clock = { Instant.parse(now) },
         )
         bridge.policies.register(chatId, chatPolicy)
@@ -222,6 +232,21 @@ class BridgeRuntimeWiringTest {
     }
 
     @Test
+    fun `a project answers a bounded number of blinded queries a day, whoever asks`(): Unit = runBlocking {
+        // RFC-0113 §4.2 point 4: each answer is a bit, and the per-session rate limit resets with the session.
+        val f = fixture(dailyBudget = 2)
+        val cap = grant(f, Permission.BLINDED_QUERY, queryScope)
+        val outcomes = (1..3).map { i ->
+            f.broker.invoke(session, call(cap, BlindedQueryTool.CHECK_AVAILABILITY, args(*window), "c$i"), TrustLevel.TRUSTED).outcome
+        }
+        assertEquals(listOf(ToolOutcome.Ok, ToolOutcome.Ok, ToolOutcome.Denied(DenialReason.BUDGET_EXHAUSTED)), outcomes)
+        assertEquals(2, auditCount(f.life, "BLINDED_QUERY_EXECUTED"), "a query over the budget is not evaluated")
+        // Another actor gets no fresh budget for the same project, and a refusal spends nothing of its own rate.
+        assertEquals(BridgeRuntime.QueryRefusal.BUDGET_EXHAUSTED, f.bridge.admitQuery("another-session", lifeId))
+        assertEquals(null, f.bridge.admitQuery("another-session", "some-other-project"))
+    }
+
+    @Test
     fun `a query about a project that is not open fails instead of guessing`(): Unit = runBlocking {
         val f = fixture()
         val cap = grant(f, Permission.BLINDED_QUERY, CapabilityScope.Bridge(setOf("CheckAvailability"), setOf("ghost")))
@@ -286,6 +311,32 @@ class BridgeRuntimeWiringTest {
         val replay = f.broker.invoke(session, call(cap, MessageSendTool.SEND, args(*send), "c3"), TrustLevel.TRUSTED)
         assertEquals(ToolOutcome.Denied(DenialReason.REQUIRES_APPROVAL), replay.outcome, "a grant is single-use")
         assertEquals(1, f.delivered.size)
+    }
+
+    @Test
+    fun `a message the channel fails to deliver is not recorded as sent, and can be approved again`(): Unit = runBlocking {
+        var down = true
+        val f = fixture(chatType = "personal", chatPolicy = EgressPolicy.NEVER, failDelivery = { down })
+        val cap = grant(f, Permission.MESSAGE_SEND, messageScope)
+        f.broker.invoke(session, call(cap, MessageSendTool.SEND, args(*send)), TrustLevel.TRUSTED)
+        val request = f.bridge.requestFor(chatId, "personal", args(*send))
+        assertNotNull(f.bridge.recordHumanApproval(request))
+
+        val failed = f.broker.invoke(session, call(cap, MessageSendTool.SEND, args(*send), "c2"), TrustLevel.TRUSTED)
+
+        assertTrue(failed.outcome is ToolOutcome.Failed, textOf(failed))
+        assertTrue(f.bridge.coordinator.getTransmittedMessages().isEmpty(), "nothing left the device, but the log said it did")
+        assertEquals(ParkedMessageStatus.DELIVERY_FAILED, f.bridge.coordinator.getParkedMessage(request.id)?.status)
+
+        // The spent grant does not send it later; a new approval does.
+        down = false
+        val retry = f.broker.invoke(session, call(cap, MessageSendTool.SEND, args(*send), "c3"), TrustLevel.TRUSTED)
+        assertEquals(ToolOutcome.Denied(DenialReason.REQUIRES_APPROVAL), retry.outcome)
+        assertNotNull(f.bridge.recordHumanApproval(request))
+        val sent = f.broker.invoke(session, call(cap, MessageSendTool.SEND, args(*send), "c4"), TrustLevel.TRUSTED)
+        assertEquals(ToolOutcome.Ok, sent.outcome, textOf(sent))
+        assertEquals(1, f.delivered.size)
+        assertEquals(1, f.bridge.coordinator.getTransmittedMessages().size)
     }
 
     @Test
