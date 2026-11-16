@@ -1,6 +1,7 @@
 # RFC-0108: AIDIN Remote Routes (reaching a peer from outside the LAN)
 
-Status: Accepted 2026-11-15, partially implemented. Detail: (proposed with D53, 2026-11-10). Partially implemented (2026-11-15): the standalone libraries (phases 1 to 4) are now integrated into the AIDIN node and the desktop Engine (route classes, per-peer remote-access switch enforced at the listener, hint dialing, split refusal, audit, phase 5 continue-then-cancel). Wiring the SSH tunnel manager into the desktop Engine (key page, vault kinds, egress grant), Android integration and UI remain.
+Status: Implemented 2026-11-16 (MVP re-scoped by the owner to the desktop Engine: phases 1 to 3 and 5; phone-side SSH and Android integration are post-MVP).
+Non-MVP Work: **Remaining** (phase 4 phone-side SSH and Android integration, setup-key installer, RTT-fed split planner, QR-carried hints)
 
 Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0051 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
 
@@ -305,6 +306,8 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
 - **SSH tunnels on the desktop (2026-11-15).** `DesktopTunnels` wires `tunnel-manager` into the Engine, with a *Tunnels* tab (`SshTunnelsPane`, presenter `DesktopTunnelsModel`). The tunnel key is an Ed25519 pair whose private half lives in the vault; the pane shows only the restricted `authorized_keys` line (`restrict,port-forwarding,permitlisten=...,command="/bin/false"`), which is kept with the config so it can be shown again after a restart. **No trust on first use:** "Check server" reads the host key fingerprint (a rejecting policy ends the connection right after key exchange, before any login), the user compares and confirms, and only then is it pinned and the tunnel allowed to start (`STRICT_PRE_PINNED`); a later change stops the tunnel in `HostKeyChanged` and the pin is never overwritten. The forward's target is the remote-ingress listener, so a peer arriving through the tunnel is classed `SSH_TUNNEL` and still needs "Allow remote access". Saved, confirmed tunnels start with the Engine. Tested with a fake SSH server (host-key presentation, forward up, changed key, rotation, restart persistence).
 - **Not integrated:** the optional setup-key installer (appending the line to the server's `authorized_keys` for the user), the `SSH_TUNNEL_KEY`, `SSH_COMMAND_KEY` and `SSH_SETUP_KEY` vault kinds (tunnel keys use the generic `SSH_KEY` kind), the RFC-0042 egress grant for the tunnel server; the same screens on Android; Android integration (foreground service, `ConnectivityManager` redial trigger, Keystore vault wiring); route RTT measurement feeding the split planner; QR-carried hints in `PairingInvite`.
 
+- **Update 2026-11-16:** tunnel keys now use `SecretKind.SSH_TUNNEL_KEY` (with `SSH_COMMAND_KEY` and `SSH_SETUP_KEY` added to the vault), and confirming a host key records the egress grant for exactly that `host:port` (`DesktopTunnels`, audited; a tunnel saved before grants existed counts as granted when it already has a pinned key). The remaining items of the bullet above are post-MVP.
+
 ## Implementation Files
 
 ```yaml
@@ -346,4 +349,25 @@ files:
   - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/MinaTransport.kt
   - agent/ssh-tunnel/src/jvmMain/kotlin/fi/italeino/sshtunnel/SshjTransport.kt
   - agent/ssh-tunnel/src/jvmTest/kotlin/fi/italeino/sshtunnel/TransportContract.kt
+```
+
+## Post-MVP Work
+
+```yaml
+post_mvp:
+  - id: "0108.1"
+    title: "Phone-side SSH with the shared tunnel library and the Android Keystore vault (phase 4)"
+    status: todo
+  - id: "0108.2"
+    title: "Android integration: foreground service, ConnectivityManager redial trigger, tunnel screens"
+    status: todo
+  - id: "0108.3"
+    title: "Optional setup-key installer that appends the restricted line to the server's authorized_keys"
+    status: todo
+  - id: "0108.4"
+    title: "Feed measured route RTT into the split planner so a low-RTT direct route can carry a split (splits are refused over non-LAN today)"
+    status: todo
+  - id: "0108.5"
+    title: "QR-carried route hints in PairingInvite"
+    status: todo
 ```

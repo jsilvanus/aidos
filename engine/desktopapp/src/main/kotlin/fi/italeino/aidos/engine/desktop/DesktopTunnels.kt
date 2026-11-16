@@ -42,6 +42,8 @@ data class TunnelView(
     val pinnedHostKey: String?,
     /** A fingerprint seen by [DesktopTunnels.probeHostKey] that is waiting for the user's confirmation. */
     val pendingHostKey: String?,
+    /** The `host:port` the user granted egress to when confirming the host key (RFC-0042), or null before that. */
+    val egressGrantedTo: String? = null,
 )
 
 /**
@@ -80,6 +82,8 @@ class DesktopTunnels(
         val vaultKeyId: String,
         val publicKey: String? = null,
         val pinnedHostKey: String? = null,
+        /** RFC-0042: the one `host:port` this tunnel may dial, recorded when the user confirms the host key. */
+        val egressGrantedTo: String? = null,
     )
 
     @Serializable
@@ -133,6 +137,14 @@ class DesktopTunnels(
     }
     private val manager: TunnelManager get() = managerLazy.value
 
+    /**
+     * The server `host:port` is a scoped egress destination the user grants once (RFC-0042). Confirming its host key is
+     * that grant. A tunnel saved before grants were recorded counts as granted when it already has a pinned key, since
+     * the user confirmed that same server; anything else must be confirmed again.
+     */
+    private fun StoredTunnel.egressGranted(): Boolean =
+        egressGrantedTo?.let { it == "$host:$port" } ?: (pinnedHostKey != null)
+
     private fun StoredTunnel.toConfig() = StoredTunnelConfig(
         id = id, name = name, host = host, port = port, user = user,
         forward = StoredForward.Reverse(serverPort = serverPort, targetPort = targetPort),
@@ -144,6 +156,10 @@ class DesktopTunnels(
         runBlocking {
             for (t in stored.tunnels) {
                 if (t.pinnedHostKey == null) continue
+                if (!t.egressGranted()) {
+                    onAuditLine("tunnel ${t.name}: not started, egress to ${t.host}:${t.port} is not granted")
+                    continue
+                }
                 runCatching { manager.createTunnel(t.toConfig()).also { it.start() } }
                     .onFailure { onAuditLine("tunnel ${t.name}: could not start (${it.message})") }
             }
@@ -204,12 +220,16 @@ class DesktopTunnels(
     fun confirmHostKey(id: String): Unit = runBlocking {
         val fp = pending.remove(id) ?: error("probe the server first, then confirm what it showed")
         storage.pinHostKey(id, fp)
+        val t = stored.tunnels.first { it.id == id }
+        save(stored.copy(tunnels = stored.tunnels.map { if (it.id == id) it.copy(egressGrantedTo = "${t.host}:${t.port}") else it }))
         audit.log(id, "host key pinned: $fp")
+        audit.log(id, "egress granted to ${t.host}:${t.port}")
     }
 
     fun start(id: String): Unit = runBlocking {
         val t = stored.tunnels.firstOrNull { it.id == id } ?: error("no such tunnel")
         check(t.pinnedHostKey != null) { "Confirm the server's host key first." }
+        check(t.egressGranted()) { "Egress to ${t.host}:${t.port} is not granted. Check the server and confirm its host key again." }
         val existing = manager.getTunnel(id) ?: manager.createTunnel(t.toConfig())
         existing.start()
     }
@@ -243,6 +263,7 @@ class DesktopTunnels(
             authorizedKeysLine = t.publicKey?.let { line(t, it) },
             pinnedHostKey = t.pinnedHostKey,
             pendingHostKey = pending[t.id],
+            egressGrantedTo = t.egressGrantedTo?.takeIf { t.egressGranted() },
         )
     }
 

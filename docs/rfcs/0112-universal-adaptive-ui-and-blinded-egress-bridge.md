@@ -2,6 +2,7 @@
 
 **Status:** Implemented 2026-11-15
 Non-MVP Work: **None**
+See also: RFC-0124 (unified UI; owns the per-form-factor view matrix and the Android handheld MVP).
 **Date:** 2026-11-14  
 **Authors:** Aidos Core Architecture Team  
 **Related RFCs:** [RFC-0010](0010-projects.md), [RFC-0027](0027-trust-and-taint.md), [RFC-0042](0042-networking-and-egress.md), [RFC-0047](0047-project-templates-and-project-types.md), [RFC-0050](0050-android.md), [RFC-0051](0051-desktop.md), [RFC-0106](0106-desktop-generative-ui.md), [RFC-0110](0110-dual-mode-intent-graph.md), [RFC-0111](0111-intent-graph-ui-paradigms-and-mobile-topology.md)  

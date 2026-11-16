@@ -6,7 +6,8 @@ import kotlinx.datetime.Instant
 
 typealias SecretId = String
 
-enum class SecretKind { API_KEY, TOKEN, PASSWORD, SSH_KEY, GENERIC }
+// RFC-0108: tunnel, command and setup SSH keys are separate kinds so each can be held to its own consumers.
+enum class SecretKind { API_KEY, TOKEN, PASSWORD, SSH_KEY, SSH_TUNNEL_KEY, SSH_COMMAND_KEY, SSH_SETUP_KEY, GENERIC }
 
 data class SecretEntry(
     val id: SecretId,

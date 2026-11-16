@@ -31,7 +31,7 @@ CREATE TABLE migration_history (
 CREATE TABLE secrets (
     id                     TEXT PRIMARY KEY,
     name                   TEXT NOT NULL UNIQUE,
-    kind                   TEXT NOT NULL,                 -- API_KEY|TOKEN|PASSWORD|SSH_KEY|GENERIC
+    kind                   TEXT NOT NULL,                 -- API_KEY|TOKEN|PASSWORD|SSH_KEY|SSH_TUNNEL_KEY|SSH_COMMAND_KEY|SSH_SETUP_KEY|GENERIC
     ciphertext             BLOB NOT NULL,
     nonce                  BLOB NOT NULL,
     allowed_consumers_json TEXT NOT NULL DEFAULT '[]',
