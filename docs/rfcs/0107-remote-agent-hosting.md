@@ -1,6 +1,7 @@
 # RFC-0107: Remote Agent Hosting over AIDIN
 
-Status: Accepted 2026-11-15, partially implemented. Detail: (proposed with D52, 2026-11-10). Partially implemented (2026-11-15): phases 1 and 3 are built and tested over a real AIDIN peer link between two nodes on loopback; the Android Binder MCP broker (phase 2) and a run on two real devices (phase 4) are not.
+Status: Implemented 2026-11-16 (MVP re-scoped by the owner to the desktop host: phases 1 and 3, built and tested over a real AIDIN peer link; the Android broker and the two-device run are post-MVP).
+Non-MVP Work: **Remaining** (Android Binder MCP broker, Android screens, a real two-device run)
 
 Related: RFC-0105 (inference groups), RFC-0104 (locality), RFC-0027 (trust and taint), RFC-0031 (MCP), D48, D49, D51, D52. Study: `plans/cross-device-agent-routing.md` in the project files.
 
@@ -82,4 +83,19 @@ files:
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsViewModel.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsPane.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SampleAgentRuns.kt
+```
+
+## Post-MVP Work
+
+```yaml
+post_mvp:
+  - id: "0107.1"
+    title: "Android host Binder MCP broker for tool relay (phase 2)"
+    status: todo
+  - id: "0107.2"
+    title: "Android screens for hosting switches, tool allowlists and the approval prompt"
+    status: todo
+  - id: "0107.3"
+    title: "A real two-device run on the owner's devices (phase 4)"
+    status: todo
 ```

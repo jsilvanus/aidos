@@ -97,6 +97,18 @@ class DesktopTunnelsTest {
     }
 
     @Test
+    fun `confirming the host key is the egress grant for exactly that host and port, and is audited`() {
+        val t = tunnels()
+        val id = t.create("home", "server.example.org", 22, "tunnel", 47100)
+        assertNull(t.views().single().egressGrantedTo, "nothing is granted before the user confirms")
+        t.probeHostKey(id)
+        assertNull(t.views().single().egressGrantedTo, "probing alone does not grant")
+        t.confirmHostKey(id)
+        assertEquals("server.example.org:22", t.views().single().egressGrantedTo)
+        assertTrue(java.io.File(root, "tunnels-audit.log").readText().contains("egress granted to server.example.org:22"))
+    }
+
+    @Test
     fun `a tunnel cannot start until the host key the server showed is confirmed`() {
         val t = tunnels()
         val id = t.create("home", "server.example.org", 22, "tunnel", 47100)
