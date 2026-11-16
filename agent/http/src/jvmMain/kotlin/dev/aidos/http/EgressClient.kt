@@ -6,10 +6,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import okhttp3.ConnectionPool
+import okhttp3.Dns
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.net.Proxy
 import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
+import java.net.UnknownHostException
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -83,9 +89,10 @@ interface EgressClient {
  */
 class DefaultEgressClient(
     val policy: EgressSecurityPolicy = EgressSecurityPolicy(),
-    private val httpClient: HttpClient = HttpClient.newBuilder()
+    // Template for the per-hop clients below; only its TLS and timeout settings are used.
+    // Redirects, proxies and name resolution are fixed per hop and cannot be loosened from here.
+    private val baseClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(Duration.ofSeconds(15))
-        .followRedirects(HttpClient.Redirect.NEVER) // Redirects handled explicitly by policy
         .build(),
     private val recordSink: (EgressRecord) -> Unit = {},
 ) : EgressClient {
@@ -142,27 +149,22 @@ class DefaultEgressClient(
             while (true) {
                 try {
                     val remainingMillis = (deadlineMillis - System.currentTimeMillis()).coerceAtLeast(1)
-                    val reqBuilder = HttpRequest.newBuilder()
-                        .uri(current.uri)
-                        .timeout(Duration.ofMillis(remainingMillis))
-
-                    headers.forEach { (k, v) -> reqBuilder.setHeader(k, v) }
-
-                    val publisher = body?.let { HttpRequest.BodyPublishers.ofByteArray(it) }
-                        ?: HttpRequest.BodyPublishers.noBody()
-
-                    when (method) {
-                        "GET" -> reqBuilder.GET()
-                        "HEAD" -> reqBuilder.method("HEAD", HttpRequest.BodyPublishers.noBody())
-                        "POST" -> reqBuilder.POST(publisher)
-                        "PUT" -> reqBuilder.PUT(publisher)
-                        "DELETE" -> reqBuilder.DELETE()
-                        else -> reqBuilder.method(method, publisher)
+                    val reqBuilder = Request.Builder().url(current.uri.toString())
+                    // The connection is pinned, so a caller-chosen Host could only mislead the server.
+                    headers.forEach { (k, v) -> if (!k.equals("host", ignoreCase = true)) reqBuilder.header(k, v) }
+                    val payload = when (method) {
+                        "GET", "HEAD" -> null
+                        else -> (body ?: ByteArray(0)).toRequestBody()
                     }
+                    reqBuilder.method(method, payload)
 
-                    val httpResponse = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofInputStream())
-                    val redirectTarget = if (httpResponse.statusCode() in 300..399) {
-                        val location = httpResponse.headers().firstValue("Location").orElse(null)
+                    // RFC-0042 point 3: dial exactly the addresses that were just classified and verify the
+                    // socket that results. One client per hop, so a redirect is pinned to its own checked
+                    // addresses and no pooled connection from another destination is ever reused.
+                    val hopClient = pinnedClient(current, effectiveScope, remainingMillis)
+                    val httpResponse = hopClient.newCall(reqBuilder.build()).execute()
+                    val redirectTarget = if (httpResponse.code in 300..399) {
+                        val location = httpResponse.header("Location")
                         if (location != null) {
                             try {
                                 val redirectValidation = policy.validateRedirect(
@@ -202,7 +204,7 @@ class DefaultEgressClient(
                                 }
                                 redirectValidation as EgressValidationResult.Allowed
                             } finally {
-                                runCatching { httpResponse.body().close() }
+                                runCatching { httpResponse.close() }
                             }
                         } else {
                             null
@@ -211,7 +213,7 @@ class DefaultEgressClient(
                         null
                     }
                     if (redirectTarget != null) {
-                        val next = afterRedirect(httpResponse.statusCode(), current.uri, redirectTarget.uri, method, headers, body)
+                        val next = afterRedirect(httpResponse.code, current.uri, redirectTarget.uri, method, headers, body)
                         method = next.method
                         headers = next.headers
                         body = next.body
@@ -220,7 +222,8 @@ class DefaultEgressClient(
                     }
 
                     val maxBytes = effectiveScope.maxResponseBytes.coerceAtLeast(0L)
-                    httpResponse.body().use { bodyStream ->
+                    httpResponse.use {
+                        val bodyStream = httpResponse.body!!.byteStream()
                         // A blocked read cannot be interrupted, but closing the stream ends it.
                         val watchdog = bodyDeadline.schedule(
                             { runCatching { bodyStream.close() } },
@@ -228,7 +231,7 @@ class DefaultEgressClient(
                             TimeUnit.MILLISECONDS,
                         )
                         try {
-                        val contentLength = httpResponse.headers().firstValue("Content-Length").orElse(null)?.toLongOrNull()
+                        val contentLength = httpResponse.header("Content-Length")?.toLongOrNull()
                         if (contentLength != null && contentLength > maxBytes) {
                             record(
                                 request = request,
@@ -282,8 +285,8 @@ class DefaultEgressClient(
                         )
                         return@withContext Result.success(
                             EgressResponse(
-                                statusCode = httpResponse.statusCode(),
-                                headers = httpResponse.headers().map(),
+                                statusCode = httpResponse.code,
+                                headers = httpResponse.headers.toMultimap(),
                                 body = responseBytes,
                                 record = record
                             )
@@ -292,6 +295,20 @@ class DefaultEgressClient(
                             watchdog.cancel(false)
                         }
                     }
+                } catch (e: ConnectedAddressDenied) {
+                    // The socket that came up was not one of the addresses that passed the check.
+                    record(
+                        request = request,
+                        host = current.uri.host ?: "unknown",
+                        addressClass = e.denial.addressClass ?: current.addressClass,
+                        method = request.method,
+                        requestBytes = requestBytes,
+                        responseBytes = 0L,
+                        payloadHash = payloadHash,
+                        durationMs = System.currentTimeMillis() - startTime,
+                        outcome = e.denial.outcome,
+                    )
+                    return@withContext Result.failure(SecurityException("RFC-0042 Egress Denied: ${e.denial.reason}"))
                 } catch (e: Exception) {
                     record(
                         request = request,
@@ -347,6 +364,50 @@ class DefaultEgressClient(
         }
         runCatching { recordSink(record) }
         return record
+    }
+
+    /** Thrown from the network interceptor, which may only fail with an [IOException]. */
+    private class ConnectedAddressDenied(val denial: EgressValidationResult.Denied) : IOException(denial.reason)
+
+    /**
+     * A client whose only resolver answers with [target]'s already-checked addresses (RFC-0042 points
+     * 2-3), and whose connected socket is checked again before a byte is sent. No system DNS lookup
+     * happens after the check, so a name that answers public first and private second cannot be
+     * rebound; TLS still verifies the original host name because the URL is unchanged.
+     */
+    private fun pinnedClient(
+        target: EgressValidationResult.Allowed,
+        scope: CapabilityScope.Network,
+        remainingMillis: Long,
+    ): OkHttpClient {
+        val host = target.uri.host
+        val pinned = target.resolvedAddresses
+        val pinnedDns = object : Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> =
+                if (hostname.equals(host, ignoreCase = true)) pinned else throw UnknownHostException(hostname)
+        }
+        val verifyConnected = Interceptor { chain ->
+            val connected = chain.connection()?.socket()?.inetAddress
+            if (connected == null || pinned.none { it.address.contentEquals(connected.address) }) {
+                throw ConnectedAddressDenied(
+                    EgressValidationResult.Denied(
+                        reason = "connected to ${connected?.hostAddress} which is not an address checked for '$host'",
+                        outcome = EgressOutcome.BLOCKED_POST_DNS,
+                    )
+                )
+            }
+            policy.addressDenial(host, connected, scope)?.let { throw ConnectedAddressDenied(it) }
+            chain.proceed(chain.request())
+        }
+        return baseClient.newBuilder()
+            .dns(pinnedDns)
+            .proxy(Proxy.NO_PROXY) // a proxy would receive the host name and resolve it itself
+            .followRedirects(false) // redirects are re-validated hop by hop above
+            .followSslRedirects(false)
+            .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+            .callTimeout(Duration.ofMillis(remainingMillis))
+            .addNetworkInterceptor(verifyConnected)
+            .build()
     }
 
     private class Hop(val method: String, val headers: Map<String, String>, val body: ByteArray?)
