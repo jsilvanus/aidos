@@ -77,7 +77,9 @@ survive a contributor in a hurry.
    loopback, link-local, and RFC-1918 private ranges are denied by default. This is what stops
    SSRF into the user's own network, which on a phone means their home LAN.
 3. **On the connected socket** — the address actually connected to is re-checked, closing the
-   rebinding window between resolution and connection.
+   rebinding window between resolution and connection. The address that was checked is the
+   address that is connected: the client dials exactly the addresses step 2 classified and never
+   resolves the name a second time, while TLS still verifies the original hostname.
 4. **On every redirect** — a redirect target is a *new* destination and is validated from step 1.
    Cross-origin redirects are denied by default rather than followed.
 
