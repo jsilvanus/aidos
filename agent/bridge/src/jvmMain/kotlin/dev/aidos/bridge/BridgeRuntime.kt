@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -47,20 +48,40 @@ class BridgeRuntime(
     private val maxQueriesPerWindow: Int = 30,
     private val queryWindow: Duration = 60.seconds,
     private val grantTtl: Duration = 60.seconds,
+    /** Disclosure bound (RFC-0113 §4.2 point 4): blinded queries one target project answers in [budgetWindow], all actors together. */
+    private val maxQueriesPerProjectPerDay: Int = 500,
+    private val budgetWindow: Duration = 24.hours,
 ) {
     private val approvedGrants = ConcurrentHashMap<String, EgressGrant>()
-    private val queryTimes = ConcurrentHashMap<String, ArrayDeque<Instant>>()
+    // Both guarded by queryTimes' monitor.
+    private val queryTimes = HashMap<String, ArrayDeque<Instant>>()
+    private val budgetTimes = HashMap<String, ArrayDeque<Instant>>()
+
+    /** Why a blinded query is not admitted. */
+    enum class QueryRefusal { RATE_LIMITED, BUDGET_EXHAUSTED }
 
     /** True while [actorId] is within the blinded-query rate limit; records the query when it is. */
-    fun admitQuery(actorId: String): Boolean {
+    fun admitQuery(actorId: String): Boolean = admitQuery(actorId, targetProjectId = null) == null
+
+    /**
+     * Admits one blinded query, or says why not. Two limits apply (RFC-0113 §4.2): the rate limit
+     * per actor, and the target project's daily budget, which every actor shares, so a new session
+     * does not start a new count. A refused query counts against neither.
+     */
+    fun admitQuery(actorId: String, targetProjectId: String?): QueryRefusal? = synchronized(queryTimes) {
         val now = clock()
-        val times = queryTimes.computeIfAbsent(actorId) { ArrayDeque() }
-        synchronized(times) {
-            while (times.isNotEmpty() && now - times.first() > queryWindow) times.removeFirst()
-            if (times.size >= maxQueriesPerWindow) return false
-            times.addLast(now)
-            return true
+        queryTimes.values.forEach { times -> while (times.isNotEmpty() && now - times.first() > queryWindow) times.removeFirst() }
+        queryTimes.values.removeIf { it.isEmpty() }
+        budgetTimes.values.forEach { times -> while (times.isNotEmpty() && now - times.first() > budgetWindow) times.removeFirst() }
+        budgetTimes.values.removeIf { it.isEmpty() }
+
+        if ((queryTimes[actorId]?.size ?: 0) >= maxQueriesPerWindow) return QueryRefusal.RATE_LIMITED
+        if (targetProjectId != null && (budgetTimes[targetProjectId]?.size ?: 0) >= maxQueriesPerProjectPerDay) {
+            return QueryRefusal.BUDGET_EXHAUSTED
         }
+        queryTimes.getOrPut(actorId) { ArrayDeque() }.addLast(now)
+        if (targetProjectId != null) budgetTimes.getOrPut(targetProjectId) { ArrayDeque() }.addLast(now)
+        null
     }
 
     /**
@@ -118,7 +139,8 @@ class BridgeRuntime(
     private fun reparkIfSettled(request: OutboundMessageRequest) {
         val existing = coordinator.getParkedMessage(request.id)
         if (existing == null || existing.status == ParkedMessageStatus.TRANSMITTED ||
-            existing.status == ParkedMessageStatus.REJECTED
+            existing.status == ParkedMessageStatus.REJECTED ||
+            existing.status == ParkedMessageStatus.DELIVERY_FAILED
         ) {
             park(request)
         }

@@ -34,6 +34,9 @@ enum class ParkedMessageStatus {
     APPROVED,
     REJECTED,
     TRANSMITTED,
+
+    /** The gate passed the message but the channel did not take it: nothing was sent, and the grant is spent. */
+    DELIVERY_FAILED,
 }
 
 /**
@@ -377,6 +380,22 @@ class EgressGateCoordinator(
         transmittedMessages.addLast(transmitted)
         while (transmittedMessages.size > MAX_TRANSMITTED_LOG) transmittedMessages.removeFirst()
         return transmitted
+    }
+
+    /**
+     * Takes back the record of a transmission the channel then failed to deliver. [transmit] has to
+     * record before delivery, because the grant must be spent before anything is handed to the
+     * channel; without this the log, and the parked message's status, said "transmitted" for a
+     * message that never left. The grant stays spent: sending again needs a new approval.
+     */
+    @Synchronized
+    fun deliveryFailed(transmissionId: String) {
+        val entry = transmittedMessages.firstOrNull { it.transmissionId == transmissionId } ?: return
+        transmittedMessages.remove(entry)
+        val parked = parkedMessages[entry.messageId]
+        if (parked != null && parked.status == ParkedMessageStatus.TRANSMITTED) {
+            parkedMessages[entry.messageId] = parked.copy(status = ParkedMessageStatus.DELIVERY_FAILED)
+        }
     }
 
     @Synchronized
