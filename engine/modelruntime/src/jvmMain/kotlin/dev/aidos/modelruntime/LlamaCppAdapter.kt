@@ -1,11 +1,12 @@
 package dev.aidos.modelruntime
 
 import de.kherud.llama.InferenceParameters
+import de.kherud.llama.LlamaIterator
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import dev.aidos.kernel.CancellableModelAdapter
 import dev.aidos.kernel.ContentBlock
 import dev.aidos.kernel.EmbeddingModelAdapter
-import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
 import dev.aidos.kernel.ModelResponse
@@ -37,7 +38,7 @@ class LlamaCppAdapter(
     private val embeddingMode: Boolean = false,
     /** Batch size, GPU layers and sampling come from here; context and threads arrive resolved above. */
     private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
-) : ModelAdapter, EmbeddingModelAdapter {
+) : CancellableModelAdapter, EmbeddingModelAdapter {
     override val providerId = "llama.cpp"
     override val modelVersion = "java-llama.cpp-4.2.0"
     override val contextWindow = contextSize
@@ -49,6 +50,10 @@ class LlamaCppAdapter(
 
     @Volatile
     private var closed: Boolean = false
+
+    /** The generation in progress, so [cancelCurrentInference] (timeout, model close) can stop the native work. */
+    @Volatile
+    private var activeIterator: LlamaIterator? = null
 
     private fun loadModel(
         modelPath: File,
@@ -145,14 +150,29 @@ class LlamaCppAdapter(
                 .setTopK(settings.topK ?: ModelRunSettings.DEFAULT_TOP_K)
             val tokens = model.generate(parameters).iterator()
             var tokenCount = 0
+            var stoppedOnSequence = false
+            val longestStop = request.stopConditions.maxOfOrNull { it.length } ?: 0
 
-            while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
-                val token = tokens.next()
-                output.append(token.text)
-                tokenCount++
-                emit(ModelStreamEvent.Delta(token.text))
+            activeIterator = tokens
+            try {
+                while (tokens.hasNext() && tokenCount < request.maxOutputTokens) {
+                    val token = tokens.next()
+                    output.append(token.text)
+                    tokenCount++
+                    emit(ModelStreamEvent.Delta(token.text))
 
-                if (shouldStop(output.toString(), request.stopConditions)) break
+                    if (longestStop > 0 && endsWithStop(output, token.text.length, longestStop, request.stopConditions)) {
+                        stoppedOnSequence = true
+                        break
+                    }
+                }
+            } finally {
+                if (activeIterator === tokens) activeIterator = null
+                // The iterator only releases its native task when it reads the model's own stop.
+                // Leaving the loop any other way (token cap, stop sequence, the collector going
+                // away) would otherwise keep llama.cpp generating up to n_predict for nobody,
+                // holding the model's only slot, and leak the task.
+                if (tokens.hasNext()) runCatching { tokens.cancel() }
             }
 
             val finalText = output.toString()
@@ -164,7 +184,7 @@ class LlamaCppAdapter(
 
             val stopReason = when {
                 tokenCount >= request.maxOutputTokens -> StopReason.MAX_TOKENS
-                shouldStop(finalText, request.stopConditions) -> StopReason.STOP_SEQUENCE
+                stoppedOnSequence -> StopReason.STOP_SEQUENCE
                 toolCalls.isNotEmpty() -> StopReason.TOOL_USE
                 else -> StopReason.END_TURN
             }
@@ -269,8 +289,19 @@ class LlamaCppAdapter(
         tools: List<dev.aidos.kernel.ToolDescriptor>,
     ): List<ToolCall> = ToolCallParser.parse(output, tools, isConstrained = false)
 
-    private fun shouldStop(output: String, stopSequences: List<String>): Boolean =
-        stopSequences.any { output.contains(it) }
+    /**
+     * Whether a stop sequence was completed by the token just appended. Only the tail that the
+     * new token can have changed is searched, so a long generation does not rescan (or copy) the
+     * whole output for every token.
+     */
+    private fun endsWithStop(output: StringBuilder, appended: Int, longestStop: Int, stopSequences: List<String>): Boolean {
+        val from = (output.length - appended - longestStop + 1).coerceAtLeast(0)
+        return stopSequences.any { it.isNotEmpty() && output.indexOf(it, from) >= 0 }
+    }
+
+    override fun cancelCurrentInference() {
+        activeIterator?.let { runCatching { it.cancel() } }
+    }
 
     private fun estimateTokens(text: String): Int =
         (text.split("\\s+".toRegex()).size * 1.3).toInt()
@@ -278,6 +309,7 @@ class LlamaCppAdapter(
     fun close() {
         if (closed) return
         closed = true
+        cancelCurrentInference()
         try {
             model.close()
         } catch (e: Exception) {
