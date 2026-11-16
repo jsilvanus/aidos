@@ -310,6 +310,14 @@ class SplitInferenceTest {
                 anchor.peers.value.any { it.nodeId == h.nodeId && it.connected && it.lastHeartbeat != null }
             }
         }
+        // Each side judges the other: the anchor must hold the helpers as HELP and they it as ANCHOR before a plan
+        // can be assigned (the helper refuses an anchor it does not yet trust).
+        for (h in listOf(helper1, helper2)) {
+            eventually("trust is mutual with ${h.nodeId}") {
+                (anchor.authorize(h.nodeId, Scope.HELP) as? TrustDecision.Allowed)?.domains?.contains(TrustDomain.Group(group)) == true &&
+                    (h.authorize(anchor.nodeId, Scope.ANCHOR) as? TrustDecision.Allowed)?.domains?.contains(TrustDomain.Group(group)) == true
+            }
+        }
         // Connect helper1 <-> helper2 so all group members know each other
         helper1.connect("127.0.0.1", helper2.port!!)
         eventually("helpers linked") {

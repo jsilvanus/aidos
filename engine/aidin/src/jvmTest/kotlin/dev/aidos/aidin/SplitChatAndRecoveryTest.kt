@@ -85,6 +85,13 @@ class SplitChatAndRecoveryTest {
             anchor.peers.value.any { it.nodeId == helper.nodeId && it.connected && it.lastHeartbeat != null } &&
                 (anchor.authorize(helper.nodeId, Scope.HELP) as? TrustDecision.Allowed)?.domains?.contains(TrustDomain.Group(group)) == true
         }
+        // The helper judges the anchor on its own side too (it refuses a PlanAssign from a node it does not
+        // yet hold as ANCHOR). Waiting only for the anchor's view raced the helper's: CI saw
+        // "anchor not authorized" as a Refused outcome.
+        eventually("helper authorizes the anchor to anchor in the group") {
+            (helper.authorize(anchor.nodeId, Scope.ANCHOR) as? TrustDecision.Allowed)?.domains?.contains(TrustDomain.Group(group)) == true &&
+                anchor.peers.value.any { it.nodeId == helper.nodeId && (it.state == PeerState.READY || it.state == PeerState.ACTIVE) }
+        }
         val helperSup = HelperProcessSupervisor(
             node = helper,
             cacheDir = Files.createTempDirectory("aidin-chat-cache").toFile().also { tempDirs += it },
@@ -102,7 +109,9 @@ class SplitChatAndRecoveryTest {
             blockCount = 24,
             anchorRamBudgetBytes = 2_000_000_000L,
         )
-        return Split(anchorSup, helperSup, assertIs<SplitPlanOutcome.Planned>(outcome).plan)
+        // Name the refusal in the failure: "expected Planned, was Refused" hid the cause of the CI flake.
+        assertTrue(outcome is SplitPlanOutcome.Planned, "split was not planned: $outcome")
+        return Split(anchorSup, helperSup, (outcome as SplitPlanOutcome.Planned).plan)
     }
 
     @Test
