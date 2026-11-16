@@ -412,6 +412,38 @@ M21, and it gates G3.
   measurements exist across devices? Aggregating them would be misleading; showing only the
   local measurement discards useful information.
 
+## Amendment 2026-11-16: prompt formatting and tool calling
+
+Added after the 2026-11-16 code review found that both llama.cpp adapters wrote prompts as
+`User:` / `Assistant:` lines and that tools never reached a local model.
+
+1. **The model's own chat template is the prompt format.** A GGUF that declares
+   `tokenizer.chat_template` is prompted by evaluating that template (llama.cpp's Jinja engine)
+   over the request's turns, with the generation prompt appended. The runtime never invents a
+   role framing for such a model. If the template cannot be evaluated, the adapter falls back to a
+   role-labelled prompt and logs that it did.
+2. **A model without a template gets its content verbatim.** It has no notion of roles; any
+   framing would be text the caller did not send.
+3. **System turns are merged into one leading system message**, because several templates accept
+   only that.
+4. **Tools use one documented text protocol on every local model** (RFC-0021, "constrained
+   decoding or a documented text protocol"): the system message lists the tools and asks for
+   calls as `{"tool": "<name>", "args": {...}}`, which `ToolCallParser` reads back. Model-family
+   tool syntaxes are not used, since the binding returns raw text and they could not be parsed.
+   Earlier calls and results are replayed in the same syntax.
+5. **`tool_choice` decides constraint.** `required` and a specific tool constrain decoding with a
+   GBNF grammar, so the output can only be a call. `auto` leaves the model free to answer in
+   prose, so the call is parsed heuristically and `ToolCall.rawText` is kept. `none` offers no tools.
+6. **Text returned to the caller excludes the parsed calls.**
+7. **The evaluated prompt prefix is cached between requests** (`cache_prompt`), so a conversation
+   does not re-evaluate its history on every turn.
+8. **Desktop and Android share one implementation** (`LlamaChatPrompt`), so the two hosts cannot
+   differ in how a request becomes a prompt.
+
+Not covered: per-request sampling parameters. `ModelRequest` (kernel, frozen at G0) carries no
+temperature or top-p, so the Engine applies the per-model run settings and ignores the values a
+client sends. Changing that needs a kernel contract change and is left open.
+
 ## Implementation Files
 
 ```yaml
@@ -420,6 +452,8 @@ files:
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/ModelRunSettings.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaChatPrompt.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/LlamaChatPromptTest.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppAdapter.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
