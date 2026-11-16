@@ -1,7 +1,7 @@
 # RFC-0027: Trust, Taint, and Untrusted Content
 
-Status: Implemented 2026-11-10 (Accepted 2026-08-03). Partially superseded by [RFC-0110](0110-optional-guardian-approval.md) (Optional Guardian Approval for Tainted Runs). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
-Non-MVP Work: **Remaining** (configurable attenuation policy, taint-aware context assembly, injection-pattern detection, RFC-0110 Guardian escalation)
+Status: Implemented 2026-11-10 (Accepted 2026-08-03). Partially superseded by [RFC-0127](0127-optional-guardian-approval.md) (Optional Guardian Approval for Tainted Runs). Requirement-to-code-and-test map: [STATUS.md](STATUS.md#rfc-0027-requirement-map).
+Non-MVP Work: **Remaining** (configurable attenuation policy, taint-aware context assembly, injection-pattern detection, RFC-0127 Guardian escalation)
 
 ## Abstract
 
@@ -152,7 +152,7 @@ click through it.
 
 Approving grants a **single-use** exercise, not a capability upgrade. The Run remains tainted.
 
-See [RFC-0110](0110-optional-guardian-approval.md) for the opt-in user-scope `GUARDIAN` mode, which interposes a two-gate taint escalation evaluator — an inbound System One Decision Model suspicion latch (Gate A) and an outbound blind, zero-tool Guardian LLM verifier (Gate B) — before falling back to human approval with the verifier's rationale.
+See [RFC-0127](0127-optional-guardian-approval.md) for the opt-in user-scope `GUARDIAN` mode, which interposes a two-gate taint escalation evaluator — an inbound System One Decision Model suspicion latch (Gate A) and an outbound blind, zero-tool Guardian LLM verifier (Gate B) — before falling back to human approval with the verifier's rationale.
 
 ### Interaction with structural sandboxing
 
@@ -217,7 +217,7 @@ What people usually want when they ask is **curation for quality**, and that exi
 name: the cookbook (RFC-0022) ranks models by fit and states what they are good at. Curation and
 trust are different claims and keep different words.
 
-[RFC-0110](0110-optional-guardian-approval.md) preserves this invariant: its opt-in two-gate
+[RFC-0127](0127-optional-guardian-approval.md) preserves this invariant: its opt-in two-gate
 taint escalation evaluator (Decision Model Gate A + Blind Guardian LLM Gate B) never declares a
 "trusted model" or clears taint; Gate B inspects only the `TRUSTED` user prompt and candidate tool
 invocation with zero tools bound, and fails closed to human approval on ambiguity or suspected
@@ -236,7 +236,7 @@ Automatic detection of injection patterns in retrieved content, raising taint ra
 attempting to filter the content.
 
 Opt-in two-gate (Decision Model Gate A + Blind Guardian LLM Gate B) taint escalation evaluation
-is specified separately in [RFC-0110](0110-optional-guardian-approval.md).
+is specified separately in [RFC-0127](0127-optional-guardian-approval.md).
 
 ## Implementation Files
 
@@ -315,8 +315,8 @@ post_mvp:
       - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
     done_when: "A model-based injection screener (Gate A latch) is wired; there is no pattern-based detection."
   - id: "0027.4"
-    title: "RFC-0110 Guardian escalation"
+    title: "RFC-0127 Guardian escalation"
     status: done
     files:
-      - docs/rfcs/0110-optional-guardian-approval.md
+      - docs/rfcs/0127-optional-guardian-approval.md
 ```

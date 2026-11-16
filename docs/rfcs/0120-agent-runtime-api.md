@@ -1,6 +1,7 @@
 # RFC-0120: Agent Runtime API (`/v1/agent`)
 
 Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: not served on Android, no streaming or persistence).
+Non-MVP Work: **Remaining**
 
 Related: D48 (proposed), D49 (per-app agent grant), D52 (placement and tool relay), RFC-0027 (taint), RFC-0030/0031 (tools, MCP), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0115 (Engine-side tools), RFC-0103/0121 (Engine API and SDK).
 

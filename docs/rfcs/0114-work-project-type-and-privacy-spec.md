@@ -4,7 +4,7 @@
 Non-MVP Work: **None**
 **Date:** 2026-11-14  
 **Authors:** Aidos Project Type & Privacy Security Architecture  
-**Related RFCs:** [RFC-0003 Security](0003-security.md), [RFC-0010 Projects](0010-projects.md), [RFC-0018 Capability Model](0018-capability-model.md), [RFC-0027 Trust and Taint](0027-trust-and-taint.md), [RFC-0036 Settings and Configuration](0036-settings-and-configuration.md), [RFC-0042 Networking and Egress](0042-networking-and-egress.md), [RFC-0047 Project Templates and Project Types](0047-project-templates-and-project-types.md), [RFC-0049 Platform Profiles](0049-platform-capability-profiles.md), [RFC-0051 Desktop & LAN Engine Sharing](0051-lan-engine-sharing.md), [RFC-0104 Inference Locality](0104-inference-locality.md), [RFC-0110 Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md), [RFC-0113 Blinded Egress Bridge](0113-blinded-egress-bridge.md)  
+**Related RFCs:** [RFC-0003 Security](0003-security.md), [RFC-0010 Projects](0010-projects.md), [RFC-0018 Capability Model](0018-capability-model.md), [RFC-0027 Trust and Taint](0027-trust-and-taint.md), [RFC-0036 Settings and Configuration](0036-settings-and-configuration.md), [RFC-0042 Networking and Egress](0042-networking-and-egress.md), [RFC-0047 Project Templates and Project Types](0047-project-templates-and-project-types.md), [RFC-0049 Platform Profiles](0049-platform-capability-profiles.md), [RFC-0126 Desktop & LAN Engine Sharing](0126-lan-engine-sharing.md), [RFC-0104 Inference Locality](0104-inference-locality.md), [RFC-0110 Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md), [RFC-0113 Blinded Egress Bridge](0113-blinded-egress-bridge.md)  
 **Related Decisions:** D42 (Taint Monotonicity), D54 (Blinded Bridge), D55 (Dual Intent Graph Modes)
 
 ---
@@ -57,7 +57,7 @@ Users managing professional engagements face unique confidentiality and operatio
 ### 3.2 Egress Control & Model Locality
 - **`routing.remote_egress = ASK`**: Work projects disallow silent cloud model routing. Prompts containing proprietary data can be processed on:
   1. The local device (e.g. local quantized models, desktop GPU).
-  2. A trusted local network cluster (`PlatformProfile.DESKTOP`, LAN engine sharing via RFC-0051).
+  2. A trusted local network cluster (`PlatformProfile.DESKTOP`, LAN engine sharing via RFC-0126).
 - Remote API providers (e.g., Anthropic, OpenAI) are parked behind per-Run approval cards where the user inspects the sanitized context before approving transmission.
 
 ### 3.3 Intent Graph Dispatch: `AUTO_WHEN_READY`

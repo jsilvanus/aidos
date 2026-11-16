@@ -21,7 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** RFC-0022 D45: the /v1/systemone surface, against a fake decision model (no ONNX needed). */
+/** RFC-0125 D45: the /v1/systemone surface, against a fake decision model (no ONNX needed). */
 class EngineHttpServerSystemOneTest {
     private val requestJson = """
         {"model":"fake-decider","state":"poista edellinen lause","questions":{

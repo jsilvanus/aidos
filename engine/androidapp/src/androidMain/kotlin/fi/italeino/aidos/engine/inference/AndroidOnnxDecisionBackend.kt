@@ -8,7 +8,7 @@ import dev.aidos.modelruntime.ModelRunSettings
 import java.io.File
 
 /**
- * Adds ONNX decision models (typed decisions / "System One", RFC-0022 D45) to the Android host's
+ * Adds ONNX decision models (typed decisions / "System One", RFC-0125 D45) to the Android host's
  * backend. A model is a package directory `<filesDir>/models/<modelId>/` (model.onnx, tokenizer.json,
  * rl_agent_config.json; see docs/system-one.md); every other id goes to [delegate] unchanged.
  *

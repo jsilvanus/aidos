@@ -10,7 +10,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** RFC-0051 on the desktop: LAN is off by default, and an added device goes through the same approvals as any app. */
+/** RFC-0126 on the desktop: LAN is off by default, and an added device goes through the same approvals as any app. */
 class DesktopLanSharingTest {
     private fun newSharing(): Triple<DesktopLanSharing, FileAppApprovalStore, java.io.File> {
         val dir = Files.createTempDirectory("lan-desktop").toFile()

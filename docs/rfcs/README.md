@@ -28,7 +28,11 @@ Every RFC whose header says `Non-MVP Work: **Remaining**` MUST carry a `## Post-
 
 ### Accepted is not implemented
 
-Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code on 2026-11-09. Of the 51 Accepted RFCs audited, two (0046, and 0036 since 2026-11-10) are fully implemented, one is not applicable (0043, decision only), one has only schema (0037), and the rest are partial. Update STATUS.md when an RFC's implementation changes.
+Accepted means the design is approved, not that it is built. [`STATUS.md`](STATUS.md) records, per RFC, how much of it exists in code, as audited against the code. As of 2026-11-16 the corpus has 88 RFCs: 71 Implemented, 9 Accepted (0000, 0001 and 0099 are documents with nothing to build; 0106, 0118 and 0124 are partially built; 0115 is in progress; 0043 is unscheduled), 2 Draft (0060, 0109), 4 Superseded (0012, 0013, 0014, 0051) and 3 Archived reviews (0100 to 0102). Update STATUS.md when an RFC's implementation changes, and these counts with it.
+
+### One number, one RFC
+
+An RFC number names exactly one document; `scripts/rfc/postmvp.py` fails on a duplicate. Three numbers were once shared and were split on 2026-11-16: Inference Backend Architecture moved from 0022 to [0125](0125-inference-backend-architecture.md), LAN Engine Sharing from 0051 to [0126](0126-lan-engine-sharing.md), and Optional Guardian Approval from 0110 to [0127](0127-optional-guardian-approval.md). In commits and notes older than that date, RFC-0022, RFC-0051 and RFC-0110 may mean either document of the pair.
 
 ### Accepted is not frozen
 
@@ -47,11 +51,9 @@ amended by an ordinary RFC diff.
 As of 2026-08-03 the legacy audit is complete except RFC-0099 (Roadmap), and the corpus splits
 two ways.
 
-**Accepted (54).** Read end to end and checked against `docs/decisions.md`, `schema/`, and
-`runtime/kernel/`. Implementation may begin.
-
-**Draft (7).** 0033 Shell · 0041 Export/Import · 0051 Desktop · 0060 Plugin SDK · and the
-reviews. Genuinely unsettled or post-MVP — every one is a subsystem the MVP does not build.
+At that date 54 RFCs were Accepted (read end to end and checked against `docs/decisions.md`,
+`schema/`, and `kernel/`) and 7 were Draft. Those counts are history: the current ones are under
+"Accepted is not implemented" above, and the notes below record how individual RFCs left Draft.
 
 **0041 Export/Import left Draft on 2026-11-10** when its MVP was built and tested; see its header and STATUS.md.
 

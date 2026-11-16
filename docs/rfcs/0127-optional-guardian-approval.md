@@ -1,9 +1,11 @@
-# RFC-0110: Optional Guardian Approval for Tainted Runs
+# RFC-0127: Optional Guardian Approval for Tainted Runs
+
+> Renumbered on 2026-11-16: this RFC was published as RFC-0110, a number it shared with [RFC-0110: Dual-Mode Intent Graph](0110-dual-mode-intent-graph.md). Older commits and notes that say RFC-0110 may mean this document.
 
 Status: Implemented 2026-11-15 (Draft 2026-11-14).
 Non-MVP Work: **None** Partially amends [RFC-0027](0027-trust-and-taint.md).
 
-Related: RFC-0027 (trust and taint), RFC-0008 (agent loop), RFC-0009 (durable execution), RFC-0018 (capability model), RFC-0020 (AI engine), RFC-0022 (inference backend / Decision capability), RFC-0025 (prompt construction), RFC-0030 (tool broker), RFC-0031 (MCP & Binder transport), RFC-0036 (settings), RFC-0046 (identity & audit), D7, D30, D31, D45, D51.
+Related: RFC-0027 (trust and taint), RFC-0008 (agent loop), RFC-0009 (durable execution), RFC-0018 (capability model), RFC-0020 (AI engine), RFC-0125 (inference backend / Decision capability), RFC-0025 (prompt construction), RFC-0030 (tool broker), RFC-0031 (MCP & Binder transport), RFC-0036 (settings), RFC-0046 (identity & audit), D7, D30, D31, D45, D51.
 
 ## Abstract
 
@@ -131,7 +133,7 @@ data class InputScreeningVerdict(
 )
 ```
 
-`SystemOneTaintInputScreener` (in `agent:daemon`) delegates to the Engine's System One HTTP endpoint (`POST /v1/systemone` per `docs/system-one.md` and RFC-0022):
+`SystemOneTaintInputScreener` (in `agent:daemon`) delegates to the Engine's System One HTTP endpoint (`POST /v1/systemone` per `docs/system-one.md` and RFC-0125):
 
 - **Model:** Configurable via `trust.guardian_decision_model` (default `"laya-multilingual"`).
 - **Primitive:** `noul` (`DecisionQuestion.Noul`).
@@ -209,7 +211,7 @@ Gate B only ever evaluates `DenialReason.TAINT_REQUIRES_APPROVAL`. It can never 
 
 ## Data Model
 
-RFC-0110 requires **no new SQLite tables or columns** in `schema/user.sql`, `schema/vault.sql`, or `schema/project.sql`. All durable state reuses existing tables:
+RFC-0127 requires **no new SQLite tables or columns** in `schema/user.sql`, `schema/vault.sql`, or `schema/project.sql`. All durable state reuses existing tables:
 
 - **`settings` (`schema/user.sql` and `schema/project.sql`):** Stores `trust.taint_approval_policy` (`"MANUAL"` or `"GUARDIAN"`), `trust.guardian_decision_model`, and `trust.guardian_llm_model` as `ScopeClass.PREFERENCE` across `user`, `project`, and `run` scopes (Run -> Project -> User -> Default).
 - **`runs` (`schema/project.sql`):**

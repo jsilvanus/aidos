@@ -349,7 +349,7 @@ class RuntimeCompositionRootTest {
         assertEquals(EgressPolicy.ASK, RuntimeCompositionRoot.resolveEgressPolicy(userDriver, snapshot))
     }
 
-    // ─── RFC-0110: trust.taint_approval_policy, Gate A screener, and Guardian wiring ────────
+    // ─── RFC-0127: trust.taint_approval_policy, Gate A screener, and Guardian wiring ────────
 
     @Test
     fun `resolveTaintApprovalPolicy defaults to MANUAL and resolves across Run, Project aidos toml, and User`() {

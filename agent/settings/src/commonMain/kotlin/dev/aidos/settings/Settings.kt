@@ -61,28 +61,28 @@ object Settings {
         default(TaintApprovalPolicy.MANUAL)
         description(
             "Taint escalation approval policy: MANUAL requires human confirmation per call; " +
-                "GUARDIAN uses two-gate automated verification (RFC-0110)."
+                "GUARDIAN uses two-gate automated verification (RFC-0127)."
         )
         codec(EnumCodec(TaintApprovalPolicy.entries.toTypedArray()))
     }
 
     /**
-     * Model ID used by Gate A SystemOne taint input screener (RFC-0110).
+     * Model ID used by Gate A SystemOne taint input screener (RFC-0127).
      */
     val trustGuardianDecisionModel: SettingDescriptor<String> = setting("trust.guardian_decision_model") {
         scopeClass(ScopeClass.PREFERENCE)
         default("laya-multilingual")
-        description("Model used by Gate A SystemOne taint input screener (RFC-0110).")
+        description("Model used by Gate A SystemOne taint input screener (RFC-0127).")
         codec(StringCodec)
     }
 
     /**
-     * Model ID used by Gate B LLM Guardian verifier (RFC-0110). Empty = auto-routed.
+     * Model ID used by Gate B LLM Guardian verifier (RFC-0127). Empty = auto-routed.
      */
     val trustGuardianLlmModel: SettingDescriptor<String> = setting("trust.guardian_llm_model") {
         scopeClass(ScopeClass.PREFERENCE)
         default("")
-        description("Model used by Gate B LLM Guardian verifier. Empty = auto-routed (RFC-0110).")
+        description("Model used by Gate B LLM Guardian verifier. Empty = auto-routed (RFC-0127).")
         codec(StringCodec)
     }
 
@@ -406,13 +406,13 @@ enum class VoiceApprovalsLevel {
 }
 
 /**
- * Taint escalation approval policy for `trust.taint_approval_policy` (RFC-0110, RFC-0027).
+ * Taint escalation approval policy for `trust.taint_approval_policy` (RFC-0127, RFC-0027).
  */
 enum class TaintApprovalPolicy {
     /** Every TAINT_REQUIRES_APPROVAL parks the Run for human confirmation (RFC-0027). */
     MANUAL,
 
-    /** Two-gate verification (Gate A Decision Model + Gate B Blind Guardian LLM, RFC-0110). */
+    /** Two-gate verification (Gate A Decision Model + Gate B Blind Guardian LLM, RFC-0127). */
     GUARDIAN,
 }
 

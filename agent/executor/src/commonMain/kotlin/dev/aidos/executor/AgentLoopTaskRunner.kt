@@ -102,7 +102,7 @@ private data class StoredToolCall(val callId: String, val toolName: String, val 
 private data class StoredModelResponse(
     val text: String?,
     val toolCalls: List<StoredToolCall>,
-    // Nullable since RFC-0022: not every backend reports why it stopped. Recording null is
+    // Nullable since RFC-0125: not every backend reports why it stopped. Recording null is
     // truthful; synthesising "UNKNOWN" would be indistinguishable from a real StopReason.
     val stopReason: String?,
 )
@@ -116,9 +116,9 @@ private data class StoredToolResult(
     val trustLevel: String,
     /** This result's own label (RFC-0027); null in rows written before it existed. */
     val resultTrust: String? = null,
-    /** RFC-0110 Gate A: one-way suspicion latch persisted across eviction and crash recovery. */
+    /** RFC-0127 Gate A: one-way suspicion latch persisted across eviction and crash recovery. */
     val injectionSuspected: Boolean = false,
-    /** RFC-0110 Gate A: optional probability reported by [TaintInputScreener]. */
+    /** RFC-0127 Gate A: optional probability reported by [TaintInputScreener]. */
     val injectionProbability: Double? = null,
     /** RFC-0029: error code and class when outcome is FAILED. */
     val errorCode: String? = null,
@@ -372,11 +372,11 @@ class AgentLoopTaskRunner(
      * inline in the row, exactly as before.
      */
     private val largeOutputs: LargeOutputStore? = null,
-    /** RFC-0110: resolves user-controlled taint approval policy (MANUAL default vs GUARDIAN). */
+    /** RFC-0127: resolves user-controlled taint approval policy (MANUAL default vs GUARDIAN). */
     private val resolveTaintApprovalPolicy: () -> TaintApprovalPolicy = { TaintApprovalPolicy.MANUAL },
-    /** RFC-0110 Gate A: optional inbound prompt-injection screener for UNTRUSTED tool results. */
+    /** RFC-0127 Gate A: optional inbound prompt-injection screener for UNTRUSTED tool results. */
     private val taintInputScreener: TaintInputScreener? = null,
-    /** RFC-0110 Gate B: optional blind verifier for TAINT_REQUIRES_APPROVAL under GUARDIAN policy. */
+    /** RFC-0127 Gate B: optional blind verifier for TAINT_REQUIRES_APPROVAL under GUARDIAN policy. */
     private val guardianVerifier: GuardianApprovalVerifier? = null,
     /** Per-Run taint approval policy resolver (takes precedence over [resolveTaintApprovalPolicy]). */
     private val resolveTaintApprovalPolicyForRun: ((RunId) -> TaintApprovalPolicy)? = null,
@@ -710,7 +710,7 @@ class AgentLoopTaskRunner(
             return TaskResult(false, "Model invocation failed: ${err.message}")
         }
 
-        // RFC-0022: one ordered `outputs` list replaced the separate text/toolCalls fields.
+        // RFC-0125: one ordered `outputs` list replaced the separate text/toolCalls fields.
         // Derived once here, same shape AgentLoop.kt uses, so the two paths read a response
         // identically rather than each inventing an interpretation of `outputs`.
         val responseText = response.outputs
@@ -1108,7 +1108,7 @@ class AgentLoopTaskRunner(
                 "(${secretKinds.joinToString()}) and has been excluded from AI context.]"
         }
 
-        // RFC-0110 Gate A: screen UNTRUSTED tool results only after secret withholding so
+        // RFC-0127 Gate A: screen UNTRUSTED tool results only after secret withholding so
         // credentials never leave the tool boundary, failing safely to no latch if unavailable.
         val screeningVerdict = if (
             result.trustLevel == TrustLevel.UNTRUSTED &&
@@ -1722,7 +1722,7 @@ class AgentLoopTaskRunner(
         ) { bindString(0, runId.value) }.value ?: "unknown tool call"
 
     /**
-     * RFC-0110 Gate A one-way suspicion latch: returns true if any `TOOL_CALL` attempt in [runId]
+     * RFC-0127 Gate A one-way suspicion latch: returns true if any `TOOL_CALL` attempt in [runId]
      * persisted `injectionSuspected = true`, surviving eviction, process restart, and
      * [LargeOutputStore] externalization.
      */

@@ -95,7 +95,7 @@ class LlamaCppAdapter(
     }
 
     /**
-     * Run inference and return the generalized RFC-0022 response shape.
+     * Run inference and return the generalized RFC-0125 response shape.
      * Text and tool calls are separate ordered ModelOutput values; model identity and usage
      * remain attached to the response rather than being encoded in output types.
      *

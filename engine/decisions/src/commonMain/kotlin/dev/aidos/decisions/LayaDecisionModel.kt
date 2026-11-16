@@ -15,7 +15,7 @@ class TensorResult(
     val actLogits: Array<FloatArray>,
 )
 
-/** Runs the exported Laya graph (RFC-0022 ONNX backend). Implementations own the session lifecycle. */
+/** Runs the exported Laya graph (RFC-0125 ONNX backend). Implementations own the session lifecycle. */
 interface DecisionTensorRunner : AutoCloseable {
     fun run(batch: TensorBatch): TensorResult
 }

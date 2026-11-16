@@ -129,6 +129,9 @@ After real inference works, make it safe to run continuously in a phone process.
 - Introduce explicit request states: queued, loading, running, completed, cancelled, failed.
 - Add bounded request queueing. A full/busy Engine must return a defined `503`-style condition rather
   than hanging callers or spawning unbounded coroutines.
+  **2026-11-16 note:** RFC-0103 ("Concurrency and memory policy") later settled this the other way
+  by default: the queue is unbounded and a request is never rejected for queue depth. The bound and
+  its `503` remain as an opt-in (`InferenceRequestManager.maxQueuedRequests`). The RFC governs.
 - **2026-11-09 update:** Implemented LRU context eviction in `GlobalModelRuntime` with active model protection (`isModelActive`) and `memoryAdmissionCheck` hook before loading, deterministically disposing evicted models via `backend.unload(evictId)`. Added `isModelActive(modelId)` in `InferenceRequestManager` tracking admitted and running requests. Verified with 138 passing unit/concurrency tests across `:engine:enginehost:jvmTest` and `:engine:modelruntime:jvmTest`.
 - **2026-09-04 update:** Engine HTTP inference now runs through a bounded request manager with
   explicit busy/shutdown `503` outcomes, per-model generation serialization, and lifecycle metrics
@@ -418,7 +421,12 @@ project's own `sessions`/`runs` tables when a driver is open (mirroring `hydrate
 and `sessions.send()` persists a real `PENDING` `runs`/`tasks` row even when no `RunExecutor` is
 wired, instead of the old `_runs`-map-only stub. Covered by `RealRuntimeClientSessionTest`.
 
-**What's still open, and it's the part that actually reaches the Android app:** `androidapp`'s
+**2026-11-16 note: the paragraph below is history.** `agent/androidapp` now has
+`AndroidRuntimeClientFactory`, which injects `userDriver` and `projectDbFactory` from
+`AndroidStorage` under `Context.filesDir`, and CI builds the Android apps. What remains is a run on
+a device (`docs/android-fgs-device-test.md`).
+
+**What was still open (2026-08-25), and it's the part that actually reaches the Android app:** `androidapp`'s
 `MainActivity` still constructs a bare `RealRuntimeClient()` with nothing injected — no
 `userDriver`, `projectDbFactory`, or `projectLocker` — so on-device it still runs exactly like the
 old in-memory mock; the fix above only takes effect once something wires those seams. Doing that
@@ -521,8 +529,8 @@ The loop, once per milestone:
 - **Amend the RFC before departing from it**, in its own commit, not alongside the code. RFC
   amendments are marked sections inside the RFC, not new files beside them.
 - **G1 blocks all AI work.** Crash recovery is the one metric with no acceptable degradation: 100%
-  of `kill -9` points resume correctly, not "mostly". The `RecoveryClass` defect above is a live
-  claim against this rule.
+  of `kill -9` points resume correctly, not "mostly". A `RecoveryClass` defect is a live claim against this rule
+  (see `lessons.md`).
 
 ### Where everything lives
 
@@ -532,8 +540,8 @@ The loop, once per milestone:
 | [`lessons.md`](lessons.md) | what we learned the hard way | read before your first commit |
 | [`docs/mvp-roadmap.md`](docs/mvp-roadmap.md) | 38 milestones with RFCs and done-when conditions | the work breakdown |
 | [`docs/decisions.md`](docs/decisions.md) | settled decisions — *why* the architecture is this | **settled**; cite `D<n>` |
-| [`docs/rfcs/`](docs/rfcs/) | 67 RFCs — *what* the system does | Accepted ⇒ implement against it |
-| [`schema/`](schema/) | canonical DDL, 3 files, 59 tables, `check.py` | **governs**; RFC DDL defers to it |
+| [`docs/rfcs/`](docs/rfcs/) | 88 RFCs — *what* the system does | Accepted ⇒ implement against it |
+| [`schema/`](schema/) | canonical DDL, 3 files, 61 tables, `check.py` | **governs**; RFC DDL defers to it |
 | [`kernel/`](kernel/) | KMP contract surface, no implementations | frozen at G0 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | the map, one paragraph per subsystem | orientation only |
 | [`CLAUDE.md`](CLAUDE.md) | how Claude works in this repo | process |

@@ -1,6 +1,7 @@
 # RFC-0123: Trusted Component Registry (TCR)
 
 Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: duplicate panes remain in Aidos engineui and Amp amp-ui; no manifest or versioned contracts).
+Non-MVP Work: **Remaining**
 
 Related: D46, D54; RFC-0051 Desktop, RFC-0106 (generative UI), RFC-0110/0111/0112 (intent-graph and adaptive UI), RFC-0113 (egress gate), RFC-0116 (Amp), RFC-0119 (Engine app UI).
 

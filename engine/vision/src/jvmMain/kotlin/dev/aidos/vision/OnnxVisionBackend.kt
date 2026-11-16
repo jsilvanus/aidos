@@ -6,7 +6,7 @@ import dev.aidos.modelruntime.InferenceBackend
 import java.io.File
 
 /**
- * Adds vision models to an existing JVM [InferenceBackend] (RFC-0022): a model is a [VisionPackage]
+ * Adds vision models to an existing JVM [InferenceBackend] (RFC-0125): a model is a [VisionPackage]
  * directory `<modelsDir>/<modelId>/`; every other id is delegated unchanged. Stack it with
  * [dev.aidos.decisions.OnnxDecisionBackend]; the two recognise disjoint directory shapes.
  * The Android host has the same decorator in :androidapp over the same [VisionPackages].

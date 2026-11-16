@@ -535,7 +535,7 @@ capability, kind (`ModelKind.DECISION`) and endpoint (`POST /v1/systemone`, Jev-
 of being squeezed into a classification or chat API. The contract lives in `engine/decisions`, not the
 frozen kernel. Laya multilingual via ONNX Runtime is the first model; ggmlc GGUFs are not supported
 (llama.cpp cannot load them). Decisions never execute actions. Proposed and settled 2026-10-12 (owner approved).
-Details: RFC-0022 "Decision capability".
+Details: RFC-0125 "Decision capability".
 
 ### D46 — Dictator owns the text-editing and actor pill domain in Generative UI (Trusted Component Registry / TCR) · `SETTLED`
 
@@ -672,7 +672,7 @@ from a peer counts as `remote`. RFC-0105 accepted by the owner 2026-10-26; the o
 
 **Existing `/v1/agent` tool-results protocol** (caller executes tools, D48) stays for apps that have no MCP server (e.g. Messenger on desktop).
 
-**RFC-0051** (LAN Engine Sharing): not used for Aidos-to-Aidos traffic; the AIDIN peer link already has mutual authentication with node keys. Left for generic non-Aidos HTTP clients, later.
+**RFC-0126** (LAN Engine Sharing): not used for Aidos-to-Aidos traffic; the AIDIN peer link already has mutual authentication with node keys. Left for generic non-Aidos HTTP clients, later.
 
 **Not decided here:** whether a desktop-hosted run continues or is cancelled when the phone drops; the wire form of the peer agent endpoints (RFC-0107 draft).
 

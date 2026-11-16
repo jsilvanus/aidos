@@ -17,7 +17,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** RFC-0051: the SDK pairing helper against a real HTTPS listener, plus the mDNS announcement. */
+/** RFC-0126: the SDK pairing helper against a real HTTPS listener, plus the mDNS announcement. */
 class LanPairingEndToEndTest {
 
     @Test

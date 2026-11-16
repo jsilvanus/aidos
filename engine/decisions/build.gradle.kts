@@ -3,7 +3,7 @@ plugins {
     id("com.android.library")
 }
 
-// RFC-0022 amendment (D45): the typed-decision ("System One") capability. The decision contract lives
+// RFC-0125 amendment (D45): the typed-decision ("System One") capability. The decision contract lives
 // here, not in :kernel (frozen); the kernel gains only the additive ModelKind.DECISION and the
 // DecisionModelAdapter bridge below makes a decision model loadable through the normal ModelRuntime.
 kotlin {

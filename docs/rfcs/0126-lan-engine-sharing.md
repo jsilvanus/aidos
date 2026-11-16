@@ -1,4 +1,6 @@
-# RFC-0051: LAN Engine Sharing and External Device Pairing
+# RFC-0126: LAN Engine Sharing and External Device Pairing
+
+> Renumbered on 2026-11-16: this RFC was published as RFC-0051, a number it shared with [RFC-0051: Desktop](0051-desktop.md). Older commits and notes that say RFC-0051 may mean this document.
 
 **Status:** Implemented 2026-11-15 (MVP on the desktop host: phases 1 to 5 built and tested end to end; the Android listener is post-MVP). Kept as its own RFC: it is the only door for non-Aidos HTTP clients, while AIDIN ([RFC-0105](0105-inference-groups.md), [0107](0107-remote-agent-hosting.md), [0108](0108-aidin-remote-routes.md)) connects Aidos Engines to each other and leaves generic clients to this RFC.
 Non-MVP Work: **Remaining** (Android LAN listener and TLS identity, Android UI for adding devices, per-device permissions beyond inference access, signed manual descriptors)
@@ -438,16 +440,16 @@ Checklist for work beyond the MVP. Each item has a stable id; set `status` to `p
 
 ```yaml
 post_mvp:
-  - id: "0051.1"
+  - id: "0126.1"
     title: "Android LAN listener and TLS identity"
     status: todo
-  - id: "0051.2"
+  - id: "0126.2"
     title: "Android UI for adding devices"
     status: todo
-  - id: "0051.3"
+  - id: "0126.3"
     title: "per-device permissions beyond inference access"
     status: todo
-  - id: "0051.4"
+  - id: "0126.4"
     title: "signed manual descriptors"
     status: todo
 ```

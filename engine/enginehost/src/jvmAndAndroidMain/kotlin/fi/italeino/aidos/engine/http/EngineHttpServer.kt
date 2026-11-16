@@ -162,12 +162,12 @@ class EngineHttpServer(
     /** Router for virtual model IDs (`aidos:chat`) and locality-filtered peer/group fallback. */
     val virtualModelRouter: VirtualModelRouter = VirtualModelRouter(modelRuntime, aidinNode, virtualModels),
     /**
-     * RFC-0051: per-device credentials for the LAN listener. The LAN listener authenticates only
+     * RFC-0126: per-device credentials for the LAN listener. The LAN listener authenticates only
      * these (never a Binder or loopback token) and each request still passes [isSubjectApproved],
      * [subjectLocality] and the host's agent grant, all keyed by the device's `ext:` subject.
      */
     private val externalDevices: ExternalDeviceGrants? = null,
-    /** RFC-0051 Mode A: exchange of a short-lived code for a credential, offered on the LAN listener only. */
+    /** RFC-0126 Mode A: exchange of a short-lived code for a credential, offered on the LAN listener only. */
     private val pairingCodes: PairingCodes? = null,
     /**
      * RFC-0107: handler for the `/aidin/v1/agent/` endpoints over the peer link. The node has already required the
@@ -227,7 +227,7 @@ class EngineHttpServer(
     }
 
     /**
-     * RFC-0051: opt-in LAN listener. HTTPS only, there is no cleartext LAN port; [ssl] carries the
+     * RFC-0126: opt-in LAN listener. HTTPS only, there is no cleartext LAN port; [ssl] carries the
      * Engine's persistent TLS identity. Serves inference (and the host's extra routes), not model
      * lifecycle administration or the AIDIN peer endpoints. Needs [externalDevices]. [engine] must support
      * TLS (CIO does not); JVM hosts pass Netty.
@@ -309,7 +309,7 @@ class EngineHttpServer(
             bearer("bearerAuth") {
                 authenticate { tokenCredential ->
                     if (lan) {
-                        // RFC-0051: LAN requests authenticate with a per-device credential only, then
+                        // RFC-0126: LAN requests authenticate with a per-device credential only, then
                         // face the same per-app approval (model use) as any other subject.
                         val grant = externalDevices?.authenticate(tokenCredential.token) ?: return@authenticate null
                         if (isSubjectApproved?.invoke(grant.subject) != true) return@authenticate null
@@ -343,7 +343,7 @@ class EngineHttpServer(
         routing {
             get("/health") { call.respond(mapOf("status" to "ok")) }
             if (lan) {
-                // RFC-0051 Mode A: a code is exchanged for a credential, once, without a bearer.
+                // RFC-0126 Mode A: a code is exchanged for a credential, once, without a bearer.
                 post("/lan/v1/pair") { handleLanPair(call) }
             }
             authenticate("bearerAuth") {
@@ -356,7 +356,7 @@ class EngineHttpServer(
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
-                // Typed decisions (RFC-0022 D45). /v1/systemone is the Jev-compatible path; /v1/decisions
+                // Typed decisions (RFC-0125 D45). /v1/systemone is the Jev-compatible path; /v1/decisions
                 // is OpenJev's alias for the same handler.
                 post("/v1/systemone") { handleDecisions(call) }
                 post("/v1/decisions") { handleDecisions(call) }

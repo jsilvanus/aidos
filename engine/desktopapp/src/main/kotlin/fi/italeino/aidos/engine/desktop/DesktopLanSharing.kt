@@ -17,7 +17,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * RFC-0051 on the desktop: opt-in HTTPS sharing of this Engine with other devices on the LAN.
+ * RFC-0126 on the desktop: opt-in HTTPS sharing of this Engine with other devices on the LAN.
  *
  * Off by default; the loopback listener is unaffected either way. Adding a device is the user's
  * approval of that device for model use: it appears in the same approval store as every other
@@ -79,7 +79,7 @@ class DesktopLanSharing(
         val identity = ssl ?: LanTlsIdentity.loadOrCreate(File(stateDir, "lan-tls.p12"), password()).also { ssl = it }
         server.startLan(identity, io.ktor.server.netty.Netty, port = s.port)
         boundPort = runBlocking { server.getBoundLanPort() }
-        // RFC-0051 "Service discovery": announce the listener so clients need not type an address. Best effort:
+        // RFC-0126 "Service discovery": announce the listener so clients need not type an address. Best effort:
         // a network without multicast just means the address has to be entered.
         announcement = runCatching {
             LanDiscovery.announce("aidos-engine-${java.net.InetAddress.getLocalHost().hostName}".take(60), boundPort ?: s.port, identity.fingerprintSha256)

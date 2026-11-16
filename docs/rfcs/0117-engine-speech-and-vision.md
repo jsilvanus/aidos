@@ -1,12 +1,13 @@
 # RFC-0117: Engine Speech and Vision (STT, vision, voice providers)
 
 Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: nothing has run on a physical Android device; no streaming or timestamps).
+Non-MVP Work: **Remaining**
 
-Related: RFC-0022 (inference backends; owns the ONNX Runtime backend and the Decision capability), RFC-0103 (Engine and API v1), RFC-0104 (locality), RFC-0050/0057 (Android, hands-free), RFC-0035 (secrets), D28, D36 to D44, D45.
+Related: RFC-0125 (inference backends; owns the ONNX Runtime backend and the Decision capability), RFC-0103 (Engine and API v1), RFC-0104 (locality), RFC-0050/0057 (Android, hands-free), RFC-0035 (secrets), D28, D36 to D44, D45.
 
 ## Abstract
 
-RFC-0022 defines how the Engine hosts inference backends and describes the typed-decision ("System One") capability. Two further modalities are built on that foundation and have no RFC: **speech-to-text** (Whisper on ONNX Runtime behind `POST /v1/audio/transcriptions`) and **vision** (SmolVLM on ONNX Runtime behind `images` on chat messages). This RFC records what they are, why they run where they run, the package format they load, and what they promise to callers.
+RFC-0125 defines how the Engine hosts inference backends and describes the typed-decision ("System One") capability. Two further modalities are built on that foundation and have no RFC: **speech-to-text** (Whisper on ONNX Runtime behind `POST /v1/audio/transcriptions`) and **vision** (SmolVLM on ONNX Runtime behind `images` on chat messages). This RFC records what they are, why they run where they run, the package format they load, and what they promise to callers.
 
 ## Motivation
 

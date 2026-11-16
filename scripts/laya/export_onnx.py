@@ -2,7 +2,7 @@
 """Export a Laya checkpoint (e.g. multilingual) to the 5-input ONNX graph Aidos' Decision backend loads.
 
 Code only: weights and the resulting .onnx stay OUTSIDE the repository (CLAUDE.md "never store model
-weights"). RFC-0022 (decision capability). Needs: torch, transformers, onnx, onnxruntime, laya.
+weights"). RFC-0125 (decision capability). Needs: torch, transformers, onnx, onnxruntime, laya.
 
     python export_onnx.py CHECKPOINT_DIR --subfolder multilingual --out laya_multilingual.onnx [--int8]
 

@@ -18,7 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** RFC-0051: a real HTTPS listener, certificate pinning by fingerprint, and no cleartext LAN port. */
+/** RFC-0126: a real HTTPS listener, certificate pinning by fingerprint, and no cleartext LAN port. */
 class LanTlsEndToEndTest {
 
     private fun pinned(fingerprint: String): HttpClient {

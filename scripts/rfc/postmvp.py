@@ -82,6 +82,12 @@ def impl_files(text):
 
 def main():
     errs, rows = [], []
+    # One number names one RFC: two files sharing a number make every bare "RFC-NNNN" ambiguous.
+    seen_nums = {}
+    for name in load():
+        if name[:4] in seen_nums:
+            errs.append('%s: RFC number %s is already used by %s' % (name, name[:4], seen_nums[name[:4]]))
+        seen_nums[name[:4]] = name
     for name, (t, items) in load().items():
         # A listed implementation file that no longer exists means the RFC points at code that was
         # moved or deleted: the list is what tools and reviewers use to find an RFC's code.
@@ -97,6 +103,8 @@ def main():
             elif not os.path.exists(os.path.join(ROOT, p)):
                 errs.append('%s: Implementation Files lists a missing file: %s' % (name, p))
         hdr = re.search(r'^Non-MVP Work: \*\*(Remaining|None)\*\*', t, re.M)
+        if hdr is None and re.search(r'^\*{0,2}Status:?\*{0,2}:?\s*\*{0,2}Implemented', t, re.M):
+            errs.append('%s: Implemented but has no "Non-MVP Work:" header line' % name)
         if items is None:
             if hdr and hdr.group(1) == 'Remaining':
                 errs.append('%s: header says Remaining but there is no ## Post-MVP Work block' % name)

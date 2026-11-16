@@ -3,7 +3,7 @@
 Status: Implemented 2026-11-16 (MVP re-scoped by the owner to the desktop Engine: phases 1 to 3 and 5; phone-side SSH and Android integration are post-MVP).
 Non-MVP Work: **Remaining** (phase 4 phone-side SSH and Android integration, setup-key installer, RTT-fed split planner, QR-carried hints)
 
-Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0051 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
+Related: RFC-0105 (inference groups, peer link), RFC-0104 (locality), RFC-0107 (remote agent hosting), RFC-0035 (secrets), RFC-0042 (egress), RFC-0027 (trust and taint), RFC-0126 (LAN sharing, not used here), D47, D50, D52, D53. Study: `plans/remote-routes-home-gpu.md` in the project files.
 
 ## Abstract
 
@@ -11,7 +11,7 @@ A phone away from home should be able to use the home desktop Engine's models (`
 
 ## Motivation
 
-- RFC-0105 discovery is LAN only; RFC-0051 excludes the internet; D52 needs the peer link to be reachable from anywhere to be useful.
+- RFC-0105 discovery is LAN only; RFC-0126 excludes the internet; D52 needs the peer link to be reachable from anywhere to be useful.
 - Users already run SSH reverse tunnels (autossh) and overlay networks (Tailscale, WireGuard). Both should work without Aidos knowing the product.
 - Cloudflare-style HTTP tunnels terminate TLS at a third party and would break node-key mTLS, so they are not a peer-link route.
 
@@ -123,7 +123,7 @@ Phase 1 needs no SSH on the phone: it dials the server's public port as `direct`
 
 ## Not covered
 
-Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they would be `remote` placement and are a RFC-0051 concern for generic clients); running commands over SSH (future RFC); Tailscale-specific integration (works as `direct`); NAT traversal of our own.
+Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they would be `remote` placement and are a RFC-0126 concern for generic clients); running commands over SSH (future RFC); Tailscale-specific integration (works as `direct`); NAT traversal of our own.
 
 ## Phases
 

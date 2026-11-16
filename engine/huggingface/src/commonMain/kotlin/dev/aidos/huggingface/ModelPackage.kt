@@ -10,7 +10,7 @@ data class RepoFile(
 /**
  * A set of repo files that only works together, installed into one directory of the Engine's
  * models folder. A single-file download cannot express this: an ONNX decision model such as Laya
- * needs its graph, its tokenizer and its config side by side (RFC-0022 D45, `LayaPackage`).
+ * needs its graph, its tokenizer and its config side by side (RFC-0125 D45, `LayaPackage`).
  *
  * @property directory the repo folder the graph lives in ("" for the repo root, "onnx" for the
  *   Optimum/transformers.js layout). Files are installed flat, under their base names.

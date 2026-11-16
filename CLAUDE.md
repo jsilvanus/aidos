@@ -129,7 +129,7 @@ Aidos uses RFCs to drive implementation. This means:
 ├── LICENSE                # EUPL-1.2
 ├── docs/
 │   ├── README.md          # Documentation structure
-│   ├── rfcs/              # All RFCs (0000-0102)
+│   ├── rfcs/              # All RFCs (0000-0127)
 │   ├── decisions.md       # Settled architecture decisions (D1-D34+)
 │   ├── mvp-roadmap.md     # Milestones, RFCs, and done-when conditions
 │   └── ...

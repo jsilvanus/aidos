@@ -13,7 +13,7 @@ import java.nio.FloatBuffer
 import java.nio.LongBuffer
 
 /**
- * ONNX Runtime binding for SmolVLM's exported graphs (RFC-0022). CPU execution provider, like the
+ * ONNX Runtime binding for SmolVLM's exported graphs (RFC-0125). CPU execution provider, like the
  * decision models; the same code runs on the JVM and on Android (`onnxruntime-android`).
  *
  * The decoder is the "merged" graph: one session handles both the prompt (empty past) and every

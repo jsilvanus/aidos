@@ -8,7 +8,7 @@ import dev.aidos.modelruntime.InferenceBackend
 import java.io.File
 
 /**
- * Adds ONNX vision models (SmolVLM packages, RFC-0022) to the Android host's backend. A model is a
+ * Adds ONNX vision models (SmolVLM packages, RFC-0125) to the Android host's backend. A model is a
  * package directory `<filesDir>/models/<modelId>/` (see [dev.aidos.vision.VisionPackage]); every other
  * id goes to [delegate] unchanged. Stacked over [AndroidOnnxDecisionBackend]: the two recognise
  * disjoint directory shapes.

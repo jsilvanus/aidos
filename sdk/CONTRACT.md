@@ -70,7 +70,7 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   decisions (`choice`/`score`/`noul`), request `{model, state, questions, min_confidence?}`, response
   `{model, answers, usage}`, Jev/OpenJev-compatible. The interface method has a default (`null`), so
   existing implementers compile. Engine advertises capability `decisions` for models of kind
-  `decision`. See RFC-0022 "Decision capability" (D45, proposed).
+  `decision`. See RFC-0125 "Decision capability" (D45, proposed).
 
 - `images` on `ChatMessage` (request): optional list of base64 image bytes (PNG/JPEG/...) or
   `data:image/...;base64,` URLs on `user` messages; `content` is the question about them. Omitted from

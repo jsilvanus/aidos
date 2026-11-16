@@ -24,7 +24,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** RFC-0051: the LAN door authenticates per-device credentials and keeps every per-app check. */
+/** RFC-0126: the LAN door authenticates per-device credentials and keeps every per-app check. */
 class LanSharingTest {
     private val clock = AtomicReference(Instant.parse("2026-11-15T10:00:00Z"))
     private val grants = ExternalDeviceGrants(now = { clock.get() })
