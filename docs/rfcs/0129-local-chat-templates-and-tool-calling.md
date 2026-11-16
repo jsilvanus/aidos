@@ -97,10 +97,12 @@ Some local models write private reasoning before the reply, between markers. A r
 
 | Opening | Closing (any one of these) |
 |---|---|
-| `<\|channel>thought` (Gemma 4) | `<channel\|>`, `<\|channel\|>` |
+| `<\|channel>` followed by the channel name, e.g. `thought` (Gemma 4) | `<channel\|>` (confirmed from the model's token table), `<\|channel\|>` (tolerated variant) |
 | `<think>` (Qwen, DeepSeek style) | `</think>` |
 
-The closing variants of the Gemma pair are not all confirmed against a live model; each listed variant is tested, and a variant that a real model is seen to use is the one to keep.
+The Gemma closer is confirmed from the model's token table but no full reply has shown it yet; verify it on a real reply when one is available. Special tokens such as `<\|think\|>`, `<\|turn>` and `<turn\|>` are not thinking blocks and are not stripped.
+
+A marker split across deltas is handled at any character, and a block still open at the end of generation (stop, token cap or cancel) yields no visible text.
 
 The block is removed before anything else reads the reply:
 - It is not streamed (no `Delta` carries it), not in the returned text, not given to `ToolCallParser`, and it cannot complete a stop sequence.
@@ -140,6 +142,8 @@ files:
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppInferenceBackend.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/LlamaChatPromptTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GbnfGrammarAndParsingTest.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/ThinkingFilter.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ThinkingFilterTest.kt
 ```
 
 ## Post-MVP Work
