@@ -7,7 +7,12 @@ import dev.aidos.aidin.RouteInfo
 import dev.aidos.aidin.RouteQueryRequest
 import dev.aidos.aidin.SplitInferenceOutcome
 import dev.aidos.aidin.TrustDomain
+import dev.aidos.modelruntime.DigestMismatchException
+import dev.aidos.modelruntime.InsufficientMemoryException
+import dev.aidos.modelruntime.ModelNotInstalledException
+import dev.aidos.modelruntime.ResidentModelsBusyException
 import dev.aidos.modelruntime.SamplingOverride
+import dev.aidos.modelruntime.TokenCountingAdapter
 import dev.aidos.decisions.DecisionModelAdapter
 import dev.aidos.decisions.DecisionRequestException
 import dev.aidos.decisions.DecisionWire
@@ -1238,7 +1243,9 @@ class EngineHttpServer(
                                             ChunkDelta(content = "", tool_calls = toolCalls.ifEmpty { null }),
                                             event.response.stopReason?.name?.lowercase(),
                                         )
-                                    )
+                                    ),
+                                    // A streaming client had no way to learn what the answer cost.
+                                    usage = event.response.usage?.let { TokenUsage(it.inputTokens ?: 0, it.outputTokens ?: 0, it.totalTokens ?: 0) },
                                 )
                                 writeStringUtf8("data: ${wireJson.encodeToString(finalChunk)}\n\n")
                             }
@@ -1453,23 +1460,14 @@ class EngineHttpServer(
             val embeddingsResult = executeManaged(request.model, locality) { adapter, placement ->
                 call.response.header(PLACEMENT_HEADER, placement.wire)
                 call.response.header(ROUTE_HEADER, "local")
-                val embeddingAdapter = adapter as? EmbeddingModelAdapter
-                    ?: throw UnsupportedOperationException("Model ${request.model} does not support embeddings")
-
-                request.input.mapIndexed { index, text ->
-                    val vector = embeddingAdapter.embed(text).getOrThrow()
-                    if (vector.isEmpty()) {
-                        throw IllegalStateException("Embedding model returned an empty vector")
-                    }
-                    Embedding(embedding = vector.toList(), index = index)
-                }
+                embedAll(adapter, request.model, request.input)
             }
             if (embeddingsResult.isFailure) {
                 respondClassifiedError(call, embeddingsResult.exceptionOrNull(), sensitiveInputs)
                 return
             }
 
-            val embeddings = embeddingsResult.getOrThrow()
+            val (embeddings, usage) = embeddingsResult.getOrThrow()
             val dimension = embeddings.firstOrNull()?.embedding?.size ?: 0
             if (dimension == 0 || embeddings.any { it.embedding.size != dimension }) {
                 call.respond(
@@ -1483,12 +1481,31 @@ class EngineHttpServer(
                 EmbeddingsResponse(
                     data = embeddings,
                     model = request.model,
-                    usage = TokenUsage(0, 0, 0),
+                    usage = usage,
                 )
             )
         } catch (e: Exception) {
             respondClassifiedError(call, e, sensitiveInputs)
         }
+    }
+
+    /**
+     * Embeds every input with [adapter] and counts the tokens they made. The count comes from the
+     * model's own tokenizer where the adapter offers one, and is zero where it does not.
+     */
+    private suspend fun embedAll(adapter: ModelAdapter, modelId: String, inputs: List<String>): Pair<List<Embedding>, TokenUsage> {
+        val embeddingAdapter = adapter as? EmbeddingModelAdapter
+            ?: throw UnsupportedOperationException("Model $modelId does not support embeddings")
+        val counter = adapter as? TokenCountingAdapter
+        var tokens = 0
+        val embeddings = inputs.mapIndexed { index, text ->
+            val vector = embeddingAdapter.embed(text).getOrThrow()
+            if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
+            tokens += counter?.countTokens(text) ?: 0
+            // asList is a view over the array: the vector is not copied before it is written out.
+            Embedding(embedding = vector.asList(), index = index)
+        }
+        return embeddings to TokenUsage(prompt_tokens = tokens, completion_tokens = 0, total_tokens = tokens)
     }
 
     private suspend fun executeEmbeddingsRoute(
@@ -1497,16 +1514,10 @@ class EngineHttpServer(
         locality: Locality,
     ): Pair<ResolvedCandidateRoute, EmbeddingsResponse> = when (route) {
         is ResolvedCandidateRoute.LocalModel -> {
-            val embeddings = executeManaged(route.modelId, locality) { adapter, _ ->
-                val embeddingAdapter = adapter as? EmbeddingModelAdapter
-                    ?: throw UnsupportedOperationException("Model ${route.modelId} does not support embeddings")
-                request.input.mapIndexed { index, text ->
-                    val vector = embeddingAdapter.embed(text).getOrThrow()
-                    if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
-                    Embedding(embedding = vector.toList(), index = index)
-                }
+            val (embeddings, usage) = executeManaged(route.modelId, locality) { adapter, _ ->
+                embedAll(adapter, route.modelId, request.input)
             }.getOrThrow()
-            route to EmbeddingsResponse(data = embeddings, model = request.model, usage = TokenUsage(0, 0, 0))
+            route to EmbeddingsResponse(data = embeddings, model = request.model, usage = usage)
         }
         is ResolvedCandidateRoute.PeerDelegation -> {
             val node = aidinNode() ?: throw ModelUnavailableException(route.modelId)
@@ -1992,18 +2003,13 @@ class EngineHttpServer(
             )
         val localExecLocality = peerLocality.strictest(Locality.LOCAL_ONLY)
         val result = executeManaged(embReq.model, localExecLocality) { adapter, _ ->
-            val embeddingAdapter = adapter as? EmbeddingModelAdapter
-                ?: throw UnsupportedOperationException("Model ${embReq.model} does not support embeddings")
-            embReq.input.mapIndexed { index, text ->
-                val vector = embeddingAdapter.embed(text).getOrThrow()
-                if (vector.isEmpty()) throw IllegalStateException("Embedding model returned an empty vector")
-                Embedding(embedding = vector.toList(), index = index)
-            }
+            embedAll(adapter, embReq.model, embReq.input)
         }
         if (result.isFailure) {
             return delegateErrorResponse(request.requestId, result.exceptionOrNull())
         }
-        val resp = EmbeddingsResponse(data = result.getOrThrow(), model = embReq.model, usage = TokenUsage(0, 0, 0))
+        val (embeddings, usage) = result.getOrThrow()
+        val resp = EmbeddingsResponse(data = embeddings, model = embReq.model, usage = usage)
         return LinkMessage.DelegateResponse(request.requestId, 200, wireJson.encodeToString(resp))
     }
 
@@ -2170,7 +2176,24 @@ class EngineHttpServer(
                     "cancelled_error",
                     code = "request_cancelled"
                 )
-            error is EngineBusyException || rawMessage.contains("ENGINE_BUSY") ->
+            // Typed failures are matched before any message text is looked at. The text matches
+            // below remain for errors that only ever arrive as strings: llama.cpp through JNI, and
+            // backends that have not been moved to the typed exceptions.
+            error is ModelNotInstalledException ->
+                HttpStatusCode.NotFound to ErrorDetail("Model is not installed", "model_error", code = "model_not_installed")
+            error is InsufficientMemoryException ->
+                HttpStatusCode.ServiceUnavailable to ErrorDetail(
+                    "Insufficient memory to load or run model",
+                    "resource_exhausted",
+                    code = "insufficient_memory"
+                )
+            error is DigestMismatchException ->
+                HttpStatusCode.UnprocessableEntity to ErrorDetail(
+                    "Model integrity verification failed",
+                    "model_error",
+                    code = "model_integrity_mismatch"
+                )
+            error is EngineBusyException || error is ResidentModelsBusyException || rawMessage.contains("ENGINE_BUSY") ->
                 HttpStatusCode.ServiceUnavailable to ErrorDetail(
                     "Engine is busy; retry later",
                     "engine_busy",

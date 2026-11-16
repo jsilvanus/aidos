@@ -218,6 +218,9 @@ class EngineHttpServerTest {
         // came from three separate SSE frames, not one response chopped up after the fact.
         assertEquals(listOf("Hel", "lo", " world", ""), deltaContents)
         assertTrue(body.trim().endsWith("data: [DONE]"))
+        // The last chunk, and only the last, tells a streaming client what the answer cost.
+        assertEquals(1, Regex("\"usage\":\\{").findAll(body).count(), body)
+        assertTrue(body.contains("\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3,\"total_tokens\":13}"), body)
     }
 
     @Test

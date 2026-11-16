@@ -54,6 +54,8 @@ class EngineHttpServerEmbeddingsTest {
         assertTrue(body.contains("0.5"))
         assertTrue(body.contains("-0.25"))
         assertTrue(!body.contains("0.0\"]"), "response must not be the old placeholder vector")
+        // Usage is the tokenizer's count of the inputs ("alpha" = 5, "beta" = 4 in this adapter), not zeros.
+        assertTrue(body.contains("\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":0,\"total_tokens\":9}"), body)
     }
 
     @Test
@@ -130,7 +132,9 @@ private class EmbeddingTestRuntime : ModelRuntime {
     override fun loaded(): List<String> = listOf("test-embedding")
 }
 
-private class EmbeddingTestAdapter : EmbeddingModelAdapter {
+private class EmbeddingTestAdapter : EmbeddingModelAdapter, dev.aidos.modelruntime.TokenCountingAdapter {
+    override fun countTokens(text: String): Int? = text.length
+
     override val providerId = "test"
     override val modelId = "test-embedding"
     override val modelVersion = "1.0"

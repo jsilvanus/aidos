@@ -9,6 +9,7 @@ import dev.aidos.kernel.EmbeddingModelAdapter
 import dev.aidos.modelruntime.LlamaChatPrompt
 import dev.aidos.modelruntime.ModelRunSettings
 import dev.aidos.modelruntime.SamplingOverride
+import dev.aidos.modelruntime.TokenCountingAdapter
 import dev.aidos.modelruntime.ToolCallParser
 import dev.aidos.kernel.ModelRef
 import dev.aidos.kernel.ModelRequest
@@ -37,7 +38,7 @@ class AndroidLlamaCppAdapter(
     private val settings: ModelRunSettings = ModelRunSettings.DEFAULT,
     /** The chat template the GGUF declares, or null for a model with no notion of chat roles. */
     private val chatTemplate: String? = null,
-) : CancellableModelAdapter, EmbeddingModelAdapter, AutoCloseable {
+) : CancellableModelAdapter, EmbeddingModelAdapter, TokenCountingAdapter, AutoCloseable {
     override val providerId: String = "llama.cpp.android"
     override val modelVersion: String = "java-llama.cpp-4.2.0"
     override val isLocal: Boolean = true
@@ -73,6 +74,9 @@ class AndroidLlamaCppAdapter(
     }
 
     override fun supportsNativeToolCalls(): Boolean = false
+
+    override fun countTokens(text: String): Int? =
+        if (closed) null else runCatching { model.encode(text).size }.getOrNull()
 
     override suspend fun embed(text: String): Result<FloatArray> = try {
         if (closed) Result.failure(IllegalStateException("Model $modelId is unloaded"))
