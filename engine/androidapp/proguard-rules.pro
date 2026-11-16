@@ -1,5 +1,5 @@
 # java-llama.cpp calls into native JNI methods reflectively.
--keep class de.kherud.llama.** { *; }
+-keep class net.ladenthin.llama.** { *; }
 -keepclasseswithmembernames class * {
     native <methods>;
 }
