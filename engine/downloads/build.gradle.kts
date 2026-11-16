@@ -17,6 +17,9 @@ kotlin {
         val jvmMain by getting
         val jvmTest by getting
         val androidMain by getting
+        // Plain java.io code shared by the JVM and Android targets (ModelQuarantine).
+        jvmMain.kotlin.srcDir("src/jvmAndAndroidMain/kotlin")
+        androidMain.kotlin.srcDir("src/jvmAndAndroidMain/kotlin")
 
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

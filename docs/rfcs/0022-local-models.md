@@ -527,6 +527,9 @@ files:
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackend.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/ModelFileDigests.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelFileDigestsTest.kt
+  - engine/downloads/src/jvmAndAndroidMain/kotlin/dev/aidos/downloads/ModelQuarantine.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/ModelQuarantineTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelQuarantineBackendTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GgufRot13FixtureTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelRunSettingsTest.kt
   - engine/models/src/commonMain/kotlin/dev/aidos/models/DatabaseModelCatalogManager.kt

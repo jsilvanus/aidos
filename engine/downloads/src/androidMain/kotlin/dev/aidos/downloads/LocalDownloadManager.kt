@@ -66,7 +66,8 @@ class LocalDownloadManager(private val downloadDir: String, private val tokenPro
             }
             val actualDigest = sha256(target)
             if (expectedDigest != null && !actualDigest.equals(expectedDigest, ignoreCase = true)) {
-                target.delete()
+                // RFC-0022: moved to quarantine/, never left in the store (deleted if the move fails).
+                ModelQuarantine.quarantine(target, target.name, expectedDigest, actualDigest, url)
                 partialFile.delete()
                 emit(DownloadEvent.DigestMismatch(expectedDigest, actualDigest))
                 return@flow

@@ -3,6 +3,7 @@ package dev.aidos.modelruntime
 import dev.aidos.kernel.ModelAdapter
 import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelKind
+import dev.aidos.downloads.ModelQuarantine
 import java.io.File
 
 /**
@@ -22,6 +23,7 @@ class LlamaCppInferenceBackend : InferenceBackend {
 
     init {
         modelsDir.mkdirs()
+        ModelQuarantine.enforceRetention(ModelQuarantine.dirFor(modelsDir))
     }
 
     /**
@@ -121,6 +123,13 @@ class LlamaCppInferenceBackend : InferenceBackend {
     override suspend fun delete(modelId: String) {
         val file = modelFile(modelId)
         file.delete()
+        ModelFileDigests.invalidate(file)
+    }
+
+    /** RFC-0022: a file with the wrong digest is moved to `quarantine/` beside the store. */
+    override suspend fun quarantine(modelId: String, expectedDigest: String, actualDigest: String) {
+        val file = modelFile(modelId)
+        ModelQuarantine.quarantine(file, modelId, expectedDigest, actualDigest, sourceUrl = null)
         ModelFileDigests.invalidate(file)
     }
 
