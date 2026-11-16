@@ -7,9 +7,9 @@ import dev.aidos.kernel.TextOutput
 import dev.aidos.kernel.ToolChoice
 import dev.aidos.kernel.TrustLevel
 import dev.aidos.kernel.Turn
-import de.kherud.llama.InferenceParameters
-import de.kherud.llama.LlamaModel
-import de.kherud.llama.ModelParameters
+import net.ladenthin.llama.parameters.InferenceParameters
+import net.ladenthin.llama.LlamaModel
+import net.ladenthin.llama.parameters.ModelParameters
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import java.io.File
@@ -119,7 +119,7 @@ class GgufRot13FixtureTest {
 
             // Greedy-equivalent: the winning logit leads by 16, so the fixture is
             // effectively deterministic even under the binding's default sampling.
-            val first = it.generate(InferenceParameters("Hello").setNPredict(1)).first()
+            val first = it.generate(InferenceParameters("Hello").withNPredict(1)).first()
             assertEquals("b", first.text, "expected rot13('o') = 'b'")
         }
     }

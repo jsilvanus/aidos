@@ -51,20 +51,27 @@ object EngineAttach {
         return RunningEngine(url, token, pid)
     }
 
+    /**
+     * The token `engine.json` holds now. A client calls this once after a 401: the Engine mints a new admin token at
+     * every start (RFC-0115), so a restarted Engine invalidates the one the client holds. Null when no other
+     * process's Engine is running.
+     */
+    fun reloadToken(): String? = runningEngine()?.token
+
     fun lanControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): LanControl =
-        running?.let { HttpLanControl(it.baseUrl, it.token) } ?: LocalLanControl(host.lanSharing)
+        running?.let { HttpLanControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalLanControl(host.lanSharing)
 
     fun tunnelsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): TunnelsControl =
-        running?.let { HttpTunnelsControl(it.baseUrl, it.token) } ?: LocalTunnelsControl(host)
+        running?.let { HttpTunnelsControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalTunnelsControl(host)
 
     fun peersControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): PeersControl =
-        running?.let { HttpPeersControl(it.baseUrl, it.token) } ?: LocalPeersControl(host)
+        running?.let { HttpPeersControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalPeersControl(host)
 
     fun approvalsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ApprovalsControl =
-        running?.let { HttpApprovalsControl(it.baseUrl, it.token) } ?: LocalApprovalsControl(host)
+        running?.let { HttpApprovalsControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalApprovalsControl(host)
 
     fun appsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): AppsControl =
-        running?.let { HttpAppsControl(it.baseUrl, it.token) } ?: LocalAppsControl(host)
+        running?.let { HttpAppsControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalAppsControl(host)
 
     /**
      * The app starts its own Engine only when the user wants that ([autoStart]) and no Engine service already owns
@@ -73,17 +80,17 @@ object EngineAttach {
     fun shouldStartOwnEngine(autoStart: Boolean, running: RunningEngine? = runningEngine()): Boolean = autoStart && running == null
 
     fun statusControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): StatusControl =
-        running?.let { HttpStatusControl(it.baseUrl, it.token) } ?: LocalStatusControl(host)
+        running?.let { HttpStatusControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalStatusControl(host)
 
     fun vaultControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): VaultControl =
-        running?.let { HttpVaultControl(it.baseUrl, it.token) } ?: host.vaultGate
+        running?.let { HttpVaultControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: host.vaultGate
 
     fun modelsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ModelsControl =
-        running?.let { HttpModelsControl(it.baseUrl, it.token) } ?: host.modelsControl
+        running?.let { HttpModelsControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: host.modelsControl
 
     fun modelDetailControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): ModelDetailControl =
-        running?.let { HttpModelDetailControl(it.baseUrl, it.token) } ?: host.modelDetailControl
+        running?.let { HttpModelDetailControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: host.modelDetailControl
 
     fun agentsControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): AgentsControl =
-        running?.let { HttpAgentsControl(it.baseUrl, it.token) } ?: host.agentsControl
+        running?.let { HttpAgentsControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: host.agentsControl
 }

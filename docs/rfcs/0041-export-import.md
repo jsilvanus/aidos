@@ -497,17 +497,6 @@ The MVP is built (`agent/portability`, CLI `export`/`import`/`keygen`). Where it
 
 Open Questions resolved by this build: partial exports and incremental, snapshot, selective and streaming export stay Future Work (not built). Cryptographic timestamping, 100 GB+ projects, P2P sync and cross-version deduplication remain open.
 
-## Open Questions
-
-- Should exports be cryptographically timestamped (with external service)?
-- How should very large projects (100GB+) handle export?
-- Should partial exports be supported? (e.g., exclude Git history)
-- Should there be a "minimal export" format for lightweight sharing?
-- How should P2P sync use export/import? (Or is that separate?)
-- Should exports be versioned for backward compatibility?
-- Should there be automatic deduplication across export versions?
-- Should export files be timestamped to prevent modification?
-
 ## Implementation Files
 
 ```yaml
@@ -549,5 +538,23 @@ post_mvp:
     status: todo
   - id: "0041.6"
     title: "UI"
+    status: todo
+  - id: "0041.7"
+    title: "Owner decision: cryptographic timestamping of exports, and whether an external service is used"
+    status: todo
+  - id: "0041.8"
+    title: "Streaming export for very large projects (100 GB and more)"
+    status: todo
+  - id: "0041.9"
+    title: "Minimal lightweight export format for sharing"
+    status: todo
+  - id: "0041.10"
+    title: "Owner decision: whether P2P sync uses export and import or needs its own RFC"
+    status: todo
+  - id: "0041.11"
+    title: "Export format versioning for backward compatibility"
+    status: todo
+  - id: "0041.12"
+    title: "Deduplicate blobs across export versions"
     status: todo
 ```

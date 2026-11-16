@@ -15,7 +15,7 @@ plugins {
     id("com.android.application") version "8.5.2" apply false
 }
 
-// RFC-0022: de.kherud:llama extracts its native library into `de.kherud.llama.tmpdir` (default
+// RFC-0022: net.ladenthin:llama extracts its native library into `net.ladenthin.llama.tmpdir` (default
 // java.io.tmpdir) and, on load, deletes libraries it takes for stale leftovers. Test JVMs of
 // different modules run in parallel, so one could delete the library another was loading
 // (ExceptionInInitializerError at LlamaLoader). Give every test task its own directory.
@@ -23,7 +23,7 @@ subprojects {
     tasks.withType<Test>().configureEach {
         val dir = layout.buildDirectory.dir("tmp/$name/llama-native")
         doFirst { dir.get().asFile.mkdirs() }
-        systemProperty("de.kherud.llama.tmpdir", dir.get().asFile.absolutePath)
+        systemProperty("net.ladenthin.llama.tmpdir", dir.get().asFile.absolutePath)
         // RFC-0105: a flaky CI failure ("There were failing tests") used to name no test, so it could
         // not be diagnosed. Print each failed test with its stack trace in the job log.
         testLogging {

@@ -15,20 +15,22 @@ import java.time.Duration
 /** [ModelsControl] over a running Engine's loopback admin API (`/v1/admin/models`). */
 class HttpModelsControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : ModelsControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun call(method: String, path: String, body: String? = null, timeoutSeconds: Long = 30): String = withContext(Dispatchers.IO) {
         val b = HttpRequest.newBuilder(URI("$baseUrl$path")).timeout(Duration.ofSeconds(timeoutSeconds))
-            .header("Authorization", "Bearer $token").header("Content-Type", "application/json")
+            .header("Authorization", "Bearer ${auth.token}").header("Content-Type", "application/json")
         val req = when (method) {
             "GET" -> b.GET().build()
             "DELETE" -> b.DELETE().build()
             else -> b.method(method, HttpRequest.BodyPublishers.ofString(body ?: "{}")).build()
         }
-        val r = client.send(req, HttpResponse.BodyHandlers.ofString())
+        val r = auth.send(client, req)
         if (r.statusCode() !in 200..299) {
             val msg = Regex("\"message\"\\s*:\\s*\"([^\"]*)\"").find(r.body())?.groupValues?.get(1)
             throw EngineControlException(r.statusCode(), msg ?: "Engine answered ${r.statusCode()}")

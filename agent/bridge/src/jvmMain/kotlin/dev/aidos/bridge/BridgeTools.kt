@@ -138,11 +138,17 @@ class BlindedQueryTool(
                 "denied: this session may not run $schema against that project",
             )
         }
-        if (!bridge.admitQuery(actorId)) {
-            return text(
+        // Proposals write into the project and answer nothing, so they do not spend its budget.
+        when (bridge.admitQuery(actorId, target.takeIf { operation in SCHEMA_ANSWERS })) {
+            BridgeRuntime.QueryRefusal.RATE_LIMITED -> return text(
                 handle, ToolOutcome.Denied(DenialReason.CONSTRAINT_EXCEEDED),
                 "denied: too many blinded queries in a short time; try again later",
             )
+            BridgeRuntime.QueryRefusal.BUDGET_EXHAUSTED -> return text(
+                handle, ToolOutcome.Denied(DenialReason.BUDGET_EXHAUSTED),
+                "denied: that project has answered its daily number of blinded queries",
+            )
+            null -> Unit
         }
         val actor = ActorRef(ActorKind.SESSION, actorId)
         return try {
@@ -209,6 +215,9 @@ class BlindedQueryTool(
         const val VERIFY_CONTACT_CIRCLE = "bridge:verify_contact_circle"
         const val CHECK_LIST_CONTAINS = "bridge:check_list_contains"
         const val PROPOSE_TASK = "bridge:propose_task"
+
+        /** The operations that answer a question about the target project, as opposed to writing into it. */
+        val SCHEMA_ANSWERS = setOf(CHECK_AVAILABILITY, VERIFY_CONTACT_CIRCLE, CHECK_LIST_CONTAINS)
         private val MAX_WINDOW = 14.days
 
         /** The schema name a [CapabilityScope.Bridge] grant lists for each operation. */
@@ -295,6 +304,8 @@ class MessageSendTool(
                     text(handle, ToolOutcome.Ok, "message sent to ${request.recipient} via ${request.channel}")
                 } catch (e: Exception) {
                     // The grant is spent; a retry needs a new approval, which is the safe side.
+                    // But nothing left the device, and the record must say so.
+                    bridge.coordinator.deliveryFailed(result.transmissionId)
                     text(
                         handle,
                         ToolOutcome.Failed(AidosError("message.delivery_failed", ErrorClass.INDETERMINATE, "the channel did not confirm delivery")),

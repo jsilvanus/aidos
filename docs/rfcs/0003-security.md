@@ -55,6 +55,8 @@ This RFC does not address collaboration security (how to share capabilities acro
 
 ### Threat Model
 
+The whole threat model, with attack paths, the code that implements each control, and known gaps, is in [docs/threat-model.md](../threat-model.md). The text below is the design-time summary.
+
 The adversary Aidos is designed against is **not** someone who has already compromised the
 device. It is content and code that the user's agent will read or run in the course of ordinary
 work, and which the user has no reason to have inspected.

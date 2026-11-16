@@ -1,7 +1,9 @@
 package dev.aidos.api.socket
 
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.nio.file.Path
 import java.nio.file.attribute.AclEntry
 import java.nio.file.attribute.AclEntryPermission
@@ -52,16 +54,25 @@ object OwnerOnlyFiles {
         return acl.acl.all { it.principal() == owner }
     }
 
-    /** Writes [text] to a new owner-only file: restricted before any secret is written, so there is no readable window. */
+    /**
+     * Writes [text] to an owner-only file at [path], atomically: the secret goes to a temp file in the same directory
+     * (restricted before any secret is written, so there is no readable window) and is then renamed over [path], so a
+     * reader sees the old file or the new one, never a half-written one.
+     */
     @Throws(IOException::class)
     fun writeSecret(path: Path, text: String) {
-        Files.deleteIfExists(path)
-        Files.createFile(path)
+        val dir = path.toAbsolutePath().parent
+        val tmp = Files.createTempFile(dir, "." + path.fileName.toString(), ".tmp")
         try {
-            restrict(path)
-            Files.writeString(path, text)
+            restrict(tmp)
+            Files.writeString(tmp, text)
+            try {
+                Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING)
+            }
         } catch (e: IOException) {
-            Files.deleteIfExists(path)
+            Files.deleteIfExists(tmp)
             throw e
         }
     }

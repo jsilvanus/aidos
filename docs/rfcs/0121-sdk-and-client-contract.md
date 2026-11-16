@@ -67,11 +67,6 @@ The SDK is published to GitHub Packages from `main` as `0.1.0-build.N+sha`; `SDK
 
 Built and enforced: everything above except physical-device verification. Not covered by the freeze: `/v1/agent/*`, tool-calling types, per-request accounting.
 
-## Open Questions
-
-- When does v2 become necessary (what would force a break)? Candidate: streaming for STT, or tool-calling types.
-- Should the SDK be published to a registry other than GitHub Packages for third parties?
-
 ## Implementation Files
 
 ```yaml

@@ -9,11 +9,12 @@ cd engine
 ./gradlew :desktopapp:run        # JDK 17; Windows: gradlew.bat
 ```
 
-In the window: install a small chat model (Models tab, for example a Qwen 0.5B/1.5B GGUF) and start the Engine. Starting writes `~/.aidos/engine.json` (port 18080, a loopback token, `"agentApi": "/v1/agent"`). Locality is enforced by the Engine (D47, `local_only` by default), so a local model needs no extra configuration.
+In the window: install a small chat model (Models tab, for example a Qwen 0.5B/1.5B GGUF) and start the Engine. Starting writes `~/.aidos/engine.json` (port 18080, a loopback-only token that is new at every start, `"agentApi": "/v1/agent"`). Locality is enforced by the Engine (D47, `local_only` by default), so a local model needs no extra configuration.
 
 ## 2. Smoke test with curl
 
 ```
+# The token changes every time the Engine starts, so read it again after a restart.
 TOKEN=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.aidos/engine.json')))['token'])")
 curl -s -H "Authorization: Bearer $TOKEN" localhost:18080/v1/models
 curl -s -H "Authorization: Bearer $TOKEN" localhost:18080/v1/agent/info
@@ -44,4 +45,4 @@ Report anything that differs; the gaps known today are listed in D48 (no per-age
 
 ## Running the Engine tests while the app is open (Windows)
 
-Windows cannot overwrite a loaded `jllama.dll`. The llama.cpp binding extracts it into `%TEMP%`, so running `gradle jvmTest` in `engine` while the Aidos desktop app (or a Gradle daemon from an earlier test run) is alive makes the llama tests fail with `UnsatisfiedLinkError: No native library found` and then `NoClassDefFoundError: de.kherud.llama.LlamaModel`. Stop the app and run `gradle --stop`, delete a stray `jllama.dll` in `%TEMP%` if one remains, then re-run.
+Windows cannot overwrite a loaded `jllama.dll`. The llama.cpp binding extracts it into `%TEMP%`, so running `gradle jvmTest` in `engine` while the Aidos desktop app (or a Gradle daemon from an earlier test run) is alive makes the llama tests fail with `UnsatisfiedLinkError: No native library found` and then `NoClassDefFoundError: net.ladenthin.llama.LlamaModel`. Stop the app and run `gradle --stop`, delete a stray `jllama.dll` in `%TEMP%` if one remains, then re-run.

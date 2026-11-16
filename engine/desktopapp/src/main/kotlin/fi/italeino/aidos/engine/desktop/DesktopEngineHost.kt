@@ -267,10 +267,9 @@ class DesktopEngineHost(
         try {
             val tokens = TokenManager()
             // Ensure desktop localhost caller has an approved token for external clients (RFC-0103)
-            val localTokenInfo = tokens.generateNewToken(
-                validityDurationSeconds = 86400 * 365,
-                subject = LOCALHOST_SUBJECT
-            )
+            // RFC-0115: minted at every start, valid for this process only, accepted from loopback only. The previous
+            // run's token (and any old 365-day one left in engine.json) is overwritten below and never valid again.
+            val localTokenInfo = tokens.generateProcessToken(LOCALHOST_SUBJECT)
             if (approvalStore.getApproval(LOCALHOST_SUBJECT) == null) {
                 approvalStore.recordFirstHandshake(LOCALHOST_SUBJECT, "Localhost Desktop Client")
             }

@@ -70,6 +70,9 @@ class InMemoryAppApprovalStore : AppApprovalStore {
     override suspend fun recordHandshakeAttempt(packageName: String) =
         set(packageName) { it.copy(lastSeenAt = now(), attemptCount = it.attemptCount + 1) }
 
+    override suspend fun pinSigner(packageName: String, signerSha256: String, resetApproval: Boolean) =
+        set(packageName) { it.withSigner(signerSha256, resetApproval) }
+
     override suspend fun updateRequestCount(packageName: String, increment: Int) =
         set(packageName) { it.copy(requestCount = it.requestCount + increment) }
 

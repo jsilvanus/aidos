@@ -1,6 +1,7 @@
 package fi.italeino.aidos.sdk.client
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -115,10 +116,34 @@ interface AidosEngineClient {
     val locality: Locality? get() = null
 
     /**
-     * The most recent classified error from Engine (§2.7), or null if the last call succeeded
-     * or no requests have been made.
+     * The most recent classified error from Engine (§2.7) from ANY call on this client, best
+     * effort, or null if no call has failed yet. A successful call does not clear it, and with
+     * concurrent calls it may belong to a different call than the one you just made: for the
+     * error of one specific call use the `...Result` methods ([chatCompletionResult] and friends),
+     * which carry it in the returned [Result].
      */
     val lastError: EngineError? get() = null
+
+    /**
+     * Per-call variants of the typed methods: the [Result] fails with [EngineApiException]
+     * carrying this call's own [EngineError], so concurrent calls cannot see each other's errors.
+     * Added to API v1 as additive default methods (sdk/CONTRACT.md); the defaults adapt the
+     * nullable method and [lastError], so other implementers of this interface keep compiling.
+     */
+    suspend fun requestResult(endpoint: String, method: String = "POST", body: String? = null): Result<String> =
+        request(endpoint, method, body).orFailure(lastError)
+
+    suspend fun chatCompletionResult(request: ChatCompletionRequest): Result<ChatCompletionResponse> =
+        chatCompletion(request).orFailure(lastError)
+
+    suspend fun embeddingsResult(request: EmbeddingsRequest): Result<EmbeddingsResponse> =
+        embeddings(request).orFailure(lastError)
+
+    suspend fun transcribeResult(request: TranscriptionRequest): Result<TranscriptionResponse> =
+        transcribe(request).orFailure(lastError)
+
+    suspend fun decideResult(request: DecisionRequest): Result<DecisionResponse> =
+        decide(request).orFailure(lastError)
 
     /** Release resources and forget the current handshake. */
     fun close()
@@ -167,6 +192,14 @@ data class EngineError(
         return if (hint != null) "$message ($hint)" else message
     }
 }
+
+private fun <T : Any> T?.orFailure(error: EngineError?): Result<T> =
+    if (this != null) Result.success(this) else Result.failure(
+        EngineApiException(
+            error?.statusCode ?: 0,
+            error ?: EngineError(message = "Engine returned no result", type = "engine_error")
+        )
+    )
 
 /**
  * Thrown when an Aidos Engine HTTP streaming call fails with a classified error.
@@ -545,6 +578,21 @@ internal class SseFrameParser {
     }
 }
 
+private const val CAPABILITIES_TTL_MS = 5000L
+
+/** The slice of `GET /v1/models` the client reads; unknown fields are ignored. */
+@Serializable
+internal data class ModelsListWire(val data: List<ModelCardWire> = emptyList())
+
+@Serializable
+internal data class ModelCardWire(
+    val id: String,
+    val kind: String,
+    val context_window: Int? = null,
+    val quantization: String? = null,
+    val placement: String? = null
+)
+
 private val jsonMediaType = "application/json".toMediaType()
 private val methodsRequiringBody = setOf("POST", "PUT", "PATCH")
 
@@ -574,9 +622,21 @@ internal class EngineClientImpl(
 ) : AidosEngineClient {
     private var handshakeResult: HandshakeResponse? = null
     private var availabilityState: EngineAvailability = EngineAvailability.NotInstalled
-    private var cachedCapabilities: EngineCapabilities? = null
-    private var lastCapabilitiesRefresh = 0L
-    override var lastError: EngineError? = null
+    private class CachedCapabilities(val value: EngineCapabilities, val at: Long)
+
+    // Written by doHandshakeLocked/close and by capabilities() under capabilitiesMutex; @Volatile
+    // so readers never see a torn pair (value and timestamp travel together).
+    @Volatile private var cachedCapabilities: CachedCapabilities? = null
+    // Bumped by every handshake, so a live capabilities fetch that overlapped a re-handshake does
+    // not store a result that belongs to the previous Engine process.
+    @Volatile private var handshakeGeneration = 0
+    // Separate from handshakeMutex: the live fetch goes through the authorised request path, whose
+    // 401 handling takes handshakeMutex, so sharing one would deadlock.
+    private val capabilitiesMutex = Mutex()
+
+    // Most recent error from any call, best effort (see AidosEngineClient.lastError). Only failing
+    // calls write it: a success must not wipe the error a concurrent call has just set.
+    @Volatile override var lastError: EngineError? = null
         private set
     // Guards concurrent callers from triggering overlapping re-handshakes (RFC-0103: "the port is
     // ephemeral... never assumed stable across Engine restarts" — two racing re-handshakes could
@@ -590,6 +650,8 @@ internal class EngineClientImpl(
     }
 
     private suspend fun doHandshakeLocked(): Boolean {
+        handshakeGeneration++
+        cachedCapabilities = null
         val outcome = try {
             withTimeoutOrNull(handshakeTimeoutMs) { handshakePerformer.performHandshake() }
         } catch (e: Exception) {
@@ -628,55 +690,122 @@ internal class EngineClientImpl(
         return newest.takeIf { it >= maxOf(engine.first, supportedApiVersions.first) }
     }
 
-    override suspend fun capabilities(): EngineCapabilities {
+    /**
+     * Engine's capabilities, cached for [CAPABILITIES_TTL_MS]. On expiry the model list is fetched
+     * live from `GET /v1/models`, so a model installed or removed after the handshake shows up;
+     * the endpoint list has no live source and always comes from the handshake. When the fetch
+     * fails, or Engine does not advertise `models`, the handshake snapshot is returned.
+     */
+    override suspend fun capabilities(): EngineCapabilities = capabilitiesMutex.withLock {
         val now = System.currentTimeMillis()
+        cachedCapabilities?.let { if (now - it.at < CAPABILITIES_TTL_MS) return@withLock it.value }
 
-        // Cache capabilities for 5 seconds
-        cachedCapabilities?.let { if (now - lastCapabilitiesRefresh < 5000) return it }
+        val generation = handshakeGeneration
+        val snapshot = handshakeResult?.toCapabilities()
+            ?: return@withLock EngineCapabilities(endpoints = emptyList(), models = emptyList())
+        val live = if ("models" in snapshot.endpoints) fetchLiveModels() else null
+        val result = if (live != null) snapshot.copy(models = live) else snapshot
+        // A re-handshake during the fetch makes this result stale: still return it, do not keep it.
+        if (generation == handshakeGeneration) cachedCapabilities = CachedCapabilities(result, now)
+        result
+    }
 
-        return handshakeResult?.capabilities?.let { caps ->
-            EngineCapabilities(
-                endpoints = caps.endpoints,
-                models = caps.models.map { model ->
-                    EngineModel(
-                        id = model.id,
-                        kind = model.kind,
-                        contextWindow = model.context_window,
-                        quantization = model.quantization,
-                        placement = model.placement
-                    )
-                }
-            ).also {
-                cachedCapabilities = it
-                lastCapabilitiesRefresh = now
-            }
-        } ?: EngineCapabilities(endpoints = emptyList(), models = emptyList())
+    private fun HandshakeResponse.toCapabilities() = EngineCapabilities(
+        endpoints = capabilities.endpoints,
+        models = capabilities.models.map { model ->
+            EngineModel(
+                id = model.id,
+                kind = model.kind,
+                contextWindow = model.context_window,
+                quantization = model.quantization,
+                placement = model.placement
+            )
+        }
+    )
+
+    /** Live `GET /v1/models`, or null on any failure (the caller falls back to the handshake). */
+    private suspend fun fetchLiveModels(): List<EngineModel>? = try {
+        val body = withContext(Dispatchers.IO) {
+            executeCall("models", "GET", null, allowReauth = true, record = false)
+        }
+        engineJson.decodeFromString<ModelsListWire>(body).data.map {
+            EngineModel(
+                id = it.id,
+                kind = it.kind,
+                contextWindow = it.context_window,
+                quantization = it.quantization,
+                placement = it.placement
+            )
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     override suspend fun request(endpoint: String, method: String, body: String?): String? =
         withContext(Dispatchers.IO) { executeRaw(endpoint, method, body, allowReauth = true) }
 
-    private suspend fun executeRaw(
+    override suspend fun requestResult(endpoint: String, method: String, body: String?): Result<String> =
+        withContext(Dispatchers.IO) { callResult { executeCall(endpoint, method, body, allowReauth = true) } }
+
+    /** Nullable form of [executeCall]: null on any Engine failure, the error left in [lastError]. */
+    private suspend fun executeRaw(endpoint: String, method: String, body: String?, allowReauth: Boolean): String? =
+        try {
+            executeCall(endpoint, method, body, allowReauth)
+        } catch (e: EngineApiException) {
+            null
+        }
+
+    /** Runs [block], turning an [EngineApiException] into a failed [Result] (cancellation still propagates). */
+    private inline fun <T> callResult(block: () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: EngineApiException) {
+        Result.failure(e)
+    }
+
+    /** Decodes [body] as [T]; an unreadable body is a failure of this call, recorded like any other. */
+    private inline fun <reified T> decodeOrFail(body: String): T = try {
+        engineJson.decodeFromString<T>(body)
+    } catch (e: Exception) {
+        throw fail(EngineError(message = "Unreadable response from Engine", type = "decode_error", code = "invalid_response"), 502)
+    }
+
+    /**
+     * Records [error] as the most recent one and returns the exception carrying it. Every failure
+     * path goes through here, so the error a call returns is always its own.
+     */
+    private fun fail(error: EngineError, status: Int = error.statusCode ?: 503, record: Boolean = true): EngineApiException {
+        if (record) lastError = error
+        return EngineApiException(status, error)
+    }
+
+    /**
+     * The one transport path: the response body on success, otherwise throws [EngineApiException]
+     * with this call's own [EngineError]. Only failures write [lastError], and only when [record].
+     */
+    private suspend fun executeCall(
         endpoint: String,
         method: String,
         body: String?,
-        allowReauth: Boolean
-    ): String? {
-        val current = handshakeResult ?: run {
-            lastError = EngineError(
+        allowReauth: Boolean,
+        record: Boolean = true
+    ): String {
+        val current = handshakeResult ?: throw fail(
+            EngineError(
                 message = "Engine is not initialized or unavailable ($availabilityState)",
                 type = "availability_error",
                 code = "engine_unavailable"
-            )
-            return null
-        }
+            ), 503, record
+        )
         if (!localityEnforceable(current)) {
-            lastError = EngineError(
-                message = "Locality restriction ($locality) cannot be enforced by this Engine",
-                type = "locality_error",
-                code = "locality_unsupported"
+            throw fail(
+                EngineError(
+                    message = "Locality restriction ($locality) cannot be enforced by this Engine",
+                    type = "locality_error",
+                    code = "locality_unsupported"
+                ), 403, record
             )
-            return null
         }
         // OkHttp requires a non-null body for methods that carry one (POST/PUT/PATCH) — unlike
         // HttpURLConnection, it refuses to build the request rather than sending an empty body.
@@ -699,24 +828,21 @@ internal class EngineClientImpl(
                     // stale token). Retry exactly once with a fresh handshake.
                     response.code == 401 && allowReauth -> {
                         val reconnected = handshakeMutex.withLock { doHandshakeLocked() }
-                        if (reconnected) executeRaw(endpoint, method, body, allowReauth = false) else {
-                            lastError = EngineError(
-                                message = "Engine token expired and re-handshake failed",
-                                type = "auth_error",
-                                code = "unauthorized",
-                                statusCode = 401
+                        if (reconnected) executeCall(endpoint, method, body, allowReauth = false, record = record) else {
+                            throw fail(
+                                EngineError(
+                                    message = "Engine token expired and re-handshake failed",
+                                    type = "auth_error",
+                                    code = "unauthorized",
+                                    statusCode = 401
+                                ), 401, record
                             )
-                            null
                         }
                     }
-                    response.isSuccessful -> {
-                        lastError = null
-                        response.body?.string()
-                    }
+                    response.isSuccessful -> response.body?.string() ?: ""
                     else -> {
                         val errorBody = response.body?.string()
-                        lastError = parseErrorDetail(errorBody, response.code)
-                        null
+                        throw fail(parseErrorDetail(errorBody, response.code), response.code, record)
                     }
                 }
             }
@@ -725,22 +851,24 @@ internal class EngineClientImpl(
             // port is ephemeral (RFC-0103: "never assumed stable across Engine restarts"). A 401
             // can never arrive from a port that is gone, so this is the same reconnect case.
             if (allowReauth && handshakeMutex.withLock { doHandshakeLocked() }) {
-                executeRaw(endpoint, method, body, allowReauth = false)
+                executeCall(endpoint, method, body, allowReauth = false, record = record)
             } else {
-                lastError = EngineError(
-                    message = e.message ?: "Engine is not reachable",
-                    type = "io_error",
-                    code = "connection_failed"
+                throw fail(
+                    EngineError(
+                        message = e.message ?: "Engine is not reachable",
+                        type = "io_error",
+                        code = "connection_failed"
+                    ), 503, record
                 )
-                null
             }
         } catch (e: IOException) {
-            lastError = EngineError(
-                message = e.message ?: "Network error connecting to Engine",
-                type = "io_error",
-                code = "connection_failed"
+            throw fail(
+                EngineError(
+                    message = e.message ?: "Network error connecting to Engine",
+                    type = "io_error",
+                    code = "connection_failed"
+                ), 503, record
             )
-            null
         }
     }
 
@@ -784,15 +912,10 @@ internal class EngineClientImpl(
     override suspend fun supportsEndpoint(endpoint: String): Boolean =
         capabilities().endpoints.contains(endpoint)
 
-    override suspend fun chatCompletion(request: ChatCompletionRequest): ChatCompletionResponse? {
-        val responseBody = executeRaw(
-            "chat/completions", "POST", engineJson.encodeToString(request), allowReauth = true
-        ) ?: return null
-        return try {
-            engineJson.decodeFromString(responseBody)
-        } catch (e: Exception) {
-            null
-        }
+    override suspend fun chatCompletion(request: ChatCompletionRequest): ChatCompletionResponse? = chatCompletionResult(request).getOrNull()
+
+    override suspend fun chatCompletionResult(request: ChatCompletionRequest): Result<ChatCompletionResponse> = callResult {
+        decodeOrFail<ChatCompletionResponse>(executeCall("chat/completions", "POST", engineJson.encodeToString(request), allowReauth = true))
     }
 
     override fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatCompletionChunk> = flow {
@@ -862,7 +985,6 @@ internal class EngineClientImpl(
                     lastError = err
                     throw EngineApiException(response.code, err)
                 }
-                lastError = null
                 val source = response.body?.source() ?: return@use
                 val parser = SseFrameParser()
                 while (!source.exhausted()) {
@@ -911,42 +1033,28 @@ internal class EngineClientImpl(
         return false
     }
 
-    override suspend fun embeddings(request: EmbeddingsRequest): EmbeddingsResponse? {
-        val responseBody = executeRaw(
-            "embeddings", "POST", engineJson.encodeToString(request), allowReauth = true
-        ) ?: return null
-        return try {
-            engineJson.decodeFromString(responseBody)
-        } catch (e: Exception) {
-            null
-        }
+    override suspend fun embeddings(request: EmbeddingsRequest): EmbeddingsResponse? = embeddingsResult(request).getOrNull()
+
+    override suspend fun embeddingsResult(request: EmbeddingsRequest): Result<EmbeddingsResponse> = callResult {
+        decodeOrFail<EmbeddingsResponse>(executeCall("embeddings", "POST", engineJson.encodeToString(request), allowReauth = true))
     }
 
-    override suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse? {
-        val responseBody = executeRaw(
-            "audio/transcriptions", "POST", engineJson.encodeToString(request), allowReauth = true
-        ) ?: return null
-        return try {
-            engineJson.decodeFromString(responseBody)
-        } catch (e: Exception) {
-            null
-        }
+    override suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse? = transcribeResult(request).getOrNull()
+
+    override suspend fun transcribeResult(request: TranscriptionRequest): Result<TranscriptionResponse> = callResult {
+        decodeOrFail<TranscriptionResponse>(executeCall("audio/transcriptions", "POST", engineJson.encodeToString(request), allowReauth = true))
     }
 
-    override suspend fun decide(request: DecisionRequest): DecisionResponse? {
-        val responseBody = executeRaw(
-            "systemone", "POST", engineJson.encodeToString(request), allowReauth = true
-        ) ?: return null
-        return try {
-            engineJson.decodeFromString(responseBody)
-        } catch (e: Exception) {
-            null
-        }
+    override suspend fun decide(request: DecisionRequest): DecisionResponse? = decideResult(request).getOrNull()
+
+    override suspend fun decideResult(request: DecisionRequest): Result<DecisionResponse> = callResult {
+        decodeOrFail<DecisionResponse>(executeCall("systemone", "POST", engineJson.encodeToString(request), allowReauth = true))
     }
 
     override fun close() {
         availabilityState = EngineAvailability.NotInstalled
         handshakeResult = null
+        handshakeGeneration++
         cachedCapabilities = null
         lastError = null
     }
@@ -957,6 +1065,8 @@ internal class EngineClientImpl(
     internal fun setHandshakeResult(result: HandshakeResponse) {
         handshakeResult = result
         availabilityState = EngineAvailability.Available
+        handshakeGeneration++
+        cachedCapabilities = null
     }
 }
 

@@ -800,13 +800,6 @@ across sessions (RFC-0028). The last is the one that catches driver/worker ping-
 **Contradictory instructions?** Resolved by the precedence hierarchy in RFC-0025; conflicts
 between instruction sources are surfaced to the user rather than silently ordered.
 
-## Open Questions
-
-- Should a user be able to fork a session and explore an alternative path? (Attractive, but it
-  interacts with worker refs and provenance in ways not yet worked through.)
-- Should sessions be able to message each other directly, or is coordination through artifacts,
-  events, and child Runs sufficient?
-
 ## Implementation Files
 
 ```yaml

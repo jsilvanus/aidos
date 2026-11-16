@@ -38,6 +38,57 @@ class VaultTest {
     }
 
     @Test
+    fun `every table of the schema is created, and a vault opens again on its own file`() = runTest {
+        // A statement that followed a comment was skipped, so migration_history never existed,
+        // and every error while applying the schema was swallowed.
+        val file = File(Files.createTempDirectory("vault-schema").toFile(), "vault.db")
+        val key = SqliteSecretsVault.generateKey()
+        val first = SqliteSecretsVault(file, key)
+        val id = first.store("k", SecretKind.TOKEN, "value-1234".toCharArray())
+        first.close()
+
+        val tables = java.sql.DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { c ->
+            c.createStatement().executeQuery("SELECT name FROM sqlite_master WHERE type='table'").use { rs ->
+                buildSet { while (rs.next()) add(rs.getString(1)) }
+            }
+        }
+        assertTrue(tables.containsAll(setOf("schema_versions", "migration_history", "secrets")), "tables: $tables")
+
+        val again = SqliteSecretsVault(file, key)
+        assertEquals("value-1234", String(again.resolve(id).getOrThrow()))
+        again.close()
+    }
+
+    @Test
+    fun `a file that is not a vault stops the vault from opening`() {
+        val file = File(Files.createTempDirectory("vault-bad").toFile(), "vault.db")
+        file.writeText("this is not a sqlite database, and it is long enough to have a header to reject")
+        val failure = runCatching { SqliteSecretsVault(file) }.exceptionOrNull()
+        assertNotNull(failure, "a corrupt vault file opened as if it were empty")
+    }
+
+    @Test
+    fun `schema statements survive comments and leave PRAGMAs out`() {
+        val statements = SqliteSecretsVault.schemaStatements(
+            "-- header\nPRAGMA x = 1;\nCREATE TABLE a (id TEXT); -- trailing\n-- about b\nCREATE TABLE b (\n  id TEXT -- the id\n);\n"
+        )
+        assertEquals(2, statements.size, statements.toString())
+        assertTrue(statements[0].startsWith("CREATE TABLE a"))
+        assertTrue(statements[1].startsWith("CREATE TABLE b"))
+    }
+
+    @Test
+    fun `the redactor finds a known value more than once and beside pattern matches`() {
+        val redactor = Redactor()
+        redactor.register("id1", "db_password", "hunter2hunter2".toCharArray())
+        val out = redactor.redact("a=hunter2hunter2; b=hunter2hunter2 and hunter2hunter then eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+        assertEquals("a=«redacted:db_password»; b=«redacted:db_password» and hunter2hunter then «redacted:jwt»", out)
+        val plain = "nothing to see here"
+        assertTrue(redactor.redact(plain) === plain, "an unchanged string is returned as it came")
+        assertEquals(listOf("known_value", "pattern:jwt"), redactor.detections("x hunter2hunter2 eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"))
+    }
+
+    @Test
     fun `get returns metadata without the value`() = runTest {
         val vault = tempVault()
         val id = vault.store("gh_token", SecretKind.TOKEN, "ghp_abc123".toCharArray())

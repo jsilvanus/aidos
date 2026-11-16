@@ -3,6 +3,7 @@ package fi.italeino.aidos.engine.desktop
 import fi.italeino.aidos.engine.approval.AppApprovalRecord
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
 import fi.italeino.aidos.engine.approval.AppApprovalStore
+import fi.italeino.aidos.engine.approval.withSigner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,6 +98,9 @@ class FileAppApprovalStore(
     override suspend fun recordHandshakeAttempt(packageName: String): AppApprovalRecord? = update(packageName) {
         it.copy(lastSeenAt = now().toString(), attemptCount = it.attemptCount + 1)
     }
+
+    override suspend fun pinSigner(packageName: String, signerSha256: String, resetApproval: Boolean): AppApprovalRecord? =
+        update(packageName) { it.withSigner(signerSha256, resetApproval) }
 
     override suspend fun updateRequestCount(packageName: String, increment: Int): AppApprovalRecord? =
         update(packageName) { it.copy(requestCount = it.requestCount + increment) }

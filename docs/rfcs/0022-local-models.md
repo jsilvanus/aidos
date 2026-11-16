@@ -219,9 +219,24 @@ user chooses a model
     → recorded in installed_models
 ```
 
-A model whose digest does not match what the catalogue promised is **deleted, not quarantined**.
-There is no scenario in which the right response to "these are not the weights we asked for" is
-to keep them.
+A model whose digest does not match what the catalogue promised is **quarantined, not kept and
+not silently discarded** (amended 2026-11-16, Juha). The file is moved out of the model store, so
+a mismatched file never stays where it could be listed or loaded, but it is kept for a short time
+so a bad catalogue digest, a bad mirror or a tampered download can be examined.
+
+- The file is moved by atomic rename into a `quarantine/` directory beside the model store, named
+  `<original-name>.<first 12 hex of the actual sha256>.quarantined`, with a sidecar
+  `<same name>.json` holding the model id, expected digest, actual digest, source URL and time.
+- Nothing in the Engine loads, lists or serves from `quarantine/`. The catalogue, `/v1/models`
+  and the loader do not see it: the model counts as not installed, and the caller gets the same
+  typed digest-mismatch error as before (API v1 is additive-only).
+- Disk use is bounded: at most the newest 2 quarantined files are kept, and any older than
+  7 days are deleted. This is checked at engine start and after each new quarantine.
+- A partial download (interrupted, short) is not a digest mismatch and is handled as before.
+- If the rename fails (another filesystem, permissions) the file is deleted instead and the
+  failure logged. A mismatched file never stays in the model store.
+- There is no automatic "accept anyway". Releasing a file from quarantine is future work and is
+  not part of this RFC's MVP.
 
 ### Loading is globally serialized
 
@@ -373,7 +388,7 @@ Measured cold-start and throughput per `(model_id, device)` are retained as metr
 1. GGUF, user scope, content-addressed by digest.
 2. Cookbook: device profile × model requirements including KV cache, four verdicts, measured
    values replacing estimates once a model has run.
-3. Explicit acquisition, resumable, digest-verified, deleted on mismatch.
+3. Explicit acquisition, resumable, digest-verified, quarantined on mismatch.
 4. Global admission queue, LRU eviction, `mmap` where available.
 5. Foreground-only inference, parking otherwise (D24).
 6. Storage screen with per-model attribution and manual removal.
@@ -400,17 +415,6 @@ M21, and it gates G3.
   than something the user configures.
 - **Fine-tuned adapters** (LoRA) applied at load time, once there is a reason more specific than
   that it is possible.
-
-## Open Questions
-
-- Should `RUNS_TIGHT` be offered at all by default, or only behind an explicit "show models that
-  may be unstable"? It is the band where the app gets killed, and a user who does not understand
-  the verdict will blame Aidos rather than the model.
-- Does the cookbook need to model *concurrent* load — an LLM and an embedding model resident
-  together during indexing — or is serializing them through the admission queue sufficient?
-- How should a model that runs well on one device and badly on another be presented, once
-  measurements exist across devices? Aggregating them would be misleading; showing only the
-  local measurement discards useful information.
 
 ## Amendment 2026-11-16: prompt formatting and tool calling
 
@@ -512,6 +516,9 @@ files:
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppInferenceBackend.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/ModelFileDigests.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelFileDigestsTest.kt
+  - engine/downloads/src/jvmAndAndroidMain/kotlin/dev/aidos/downloads/ModelQuarantine.kt
+  - engine/downloads/src/jvmTest/kotlin/dev/aidos/downloads/ModelQuarantineTest.kt
+  - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelQuarantineBackendTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/GgufRot13FixtureTest.kt
   - engine/modelruntime/src/jvmTest/kotlin/dev/aidos/modelruntime/ModelRunSettingsTest.kt
   - engine/models/src/commonMain/kotlin/dev/aidos/models/DatabaseModelCatalogManager.kt
@@ -538,5 +545,14 @@ post_mvp:
     status: todo
   - id: "0022.3"
     title: "on-device G3/M21 budget validation"
+    status: todo
+  - id: "0022.4"
+    title: "Owner decision: whether RUNS_TIGHT models are offered by default or only behind an explicit opt-in"
+    status: todo
+  - id: "0022.5"
+    title: "Model concurrent residency of an LLM and an embedding model during indexing (admission queue serializes them today)"
+    status: todo
+  - id: "0022.6"
+    title: "Present per-device model measurements without aggregating them across devices"
     status: todo
 ```

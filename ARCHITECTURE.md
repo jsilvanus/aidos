@@ -226,6 +226,7 @@ instruction set.
 10b. [RFC-0009: Durable Execution](docs/rfcs/0009-durable-execution.md) — How Runs survive eviction.
 10c. [RFC-0002: Runtime Architecture](docs/rfcs/0002-runtime.md) — High-level design of the engine.
 11. [RFC-0003: Security](docs/rfcs/0003-security.md) — Capability-based access control.
+11b. [Threat model](docs/threat-model.md) — Attackers, attack paths, controls, and known gaps.
 12. [RFC-0004: Event Bus](docs/rfcs/0004-event-bus.md) — How subsystems communicate.
 13. [RFC-0005: Scheduler](docs/rfcs/0005-scheduler.md) — Session lifecycle and fairness.
 14. [RFC-0011: Sessions](docs/rfcs/0011-sessions.md) — Long-lived workers.

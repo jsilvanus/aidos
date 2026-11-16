@@ -114,17 +114,21 @@ class Redactor(
         var result = input
         val found = LinkedHashSet<String>()
         for (reg in active()) {
-            val needleStr = String(reg.value)
-            if (result.contains(needleStr)) {
-                result = result.replace(needleStr, "«redacted:${reg.name}»")
+            // Searched as chars: making a String of the value on every call left a copy of every
+            // secret on the heap for each string that crossed a boundary.
+            if (indexOf(result, reg.value, 0) >= 0) {
+                result = replaceAll(result, reg.value, "«redacted:${reg.name}»")
                 found += "known_value"
             }
         }
-        for ((pattern, label) in PATTERNS) {
-            val m = pattern.matcher(result)
-            if (m.find()) {
-                result = m.replaceAll("«redacted:$label»")
-                found += "pattern:$label"
+        // One pass decides whether any pattern can match; the twelve are only run when one does.
+        if (ANY_PATTERN.matcher(result).find()) {
+            for ((pattern, label) in PATTERNS) {
+                val m = pattern.matcher(result)
+                if (m.find()) {
+                    result = m.replaceAll(java.util.regex.Matcher.quoteReplacement("«redacted:$label»"))
+                    found += "pattern:$label"
+                }
             }
         }
         if (sink != null) for (kind in found) sink.record(boundary, kind)
@@ -135,12 +139,40 @@ class Redactor(
     fun detections(input: String): List<String> {
         val found = LinkedHashSet<String>()
         for (reg in active()) {
-            if (input.contains(String(reg.value))) found += "known_value"
+            if (indexOf(input, reg.value, 0) >= 0) found += "known_value"
         }
-        for ((pattern, label) in PATTERNS) {
-            if (pattern.matcher(input).find()) found += "pattern:$label"
+        if (ANY_PATTERN.matcher(input).find()) {
+            for ((pattern, label) in PATTERNS) {
+                if (pattern.matcher(input).find()) found += "pattern:$label"
+            }
         }
         return found.toList()
+    }
+
+    private fun indexOf(haystack: String, needle: CharArray, from: Int): Int {
+        val last = haystack.length - needle.size
+        var i = from
+        while (i <= last) {
+            i = haystack.indexOf(needle[0], i)
+            if (i < 0 || i > last) return -1
+            var j = 1
+            while (j < needle.size && haystack[i + j] == needle[j]) j++
+            if (j == needle.size) return i
+            i++
+        }
+        return -1
+    }
+
+    private fun replaceAll(haystack: String, needle: CharArray, replacement: String): String {
+        val out = StringBuilder(haystack.length)
+        var from = 0
+        while (true) {
+            val at = indexOf(haystack, needle, from)
+            if (at < 0) break
+            out.append(haystack, from, at).append(replacement)
+            from = at + needle.size
+        }
+        return out.append(haystack, from, haystack.length).toString()
     }
 
     /** True if [input] contains a known value or matches a pattern. */
@@ -165,5 +197,8 @@ class Redactor(
             Pattern.compile("\\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\\s:/@]+:[^\\s/@]+@[^\\s/]+") to "connection-string",
             Pattern.compile("(?i)(api[_-]?key|secret|token|password|passwd|credential)\\s*[=:]\\s*['\"]?[A-Za-z0-9+/._-]{16,}") to "credential-assignment",
         )
+
+        /** Any of [PATTERNS]: a string this does not match needs none of them run. */
+        private val ANY_PATTERN: Pattern = Pattern.compile(PATTERNS.joinToString("|") { "(?:" + it.first.pattern() + ")" })
     }
 }

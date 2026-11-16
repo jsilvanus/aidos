@@ -12,15 +12,17 @@ import java.time.Duration
 /** [StatusControl] over a running Engine's loopback admin API (`/v1/admin/status`). */
 class HttpStatusControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : StatusControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun status(): EngineStatusInfo = withContext(Dispatchers.IO) {
-        val r = client.send(
-            HttpRequest.newBuilder(URI("$baseUrl/v1/admin/status")).timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer $token").GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
+        val r = auth.send(
+            client,
+            HttpRequest.newBuilder(URI("$baseUrl/v1/admin/status")).timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer ${auth.token}").GET().build(),
         )
         if (r.statusCode() != 200) throw EngineControlException(r.statusCode(), "Engine answered ${r.statusCode()}")
         json.decodeFromString(r.body())

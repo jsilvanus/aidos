@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.agent
 
+import fi.italeino.aidos.engine.control.AdminAuth
 import fi.italeino.aidos.engine.control.EngineControlException
 import fi.italeino.aidos.engine.http.ErrorDetail
 import fi.italeino.aidos.engine.http.ErrorResponse
@@ -75,21 +76,23 @@ fun Route.adminAgentsRoutes(control: AgentsControl, adminSubjects: Set<String>) 
 /** [AgentsControl] over a running Engine's loopback admin API. */
 class HttpAgentsControl(
     private val baseUrl: String,
-    private val token: String,
+    token: String,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
+    reloadToken: () -> String? = { null },
 ) : AgentsControl {
+    private val auth = AdminAuth(token, reloadToken)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private suspend fun call(method: String, path: String, body: String? = null): HttpResponse<String> = withContext(Dispatchers.IO) {
         val b = HttpRequest.newBuilder(URI("$baseUrl$path")).timeout(Duration.ofSeconds(15))
-            .header("Authorization", "Bearer $token").header("Content-Type", "application/json")
-        client.send(
+            .header("Authorization", "Bearer ${auth.token}").header("Content-Type", "application/json")
+        auth.send(
+            client,
             when (method) {
                 "GET" -> b.GET().build()
                 "DELETE" -> b.DELETE().build()
                 else -> b.method(method, HttpRequest.BodyPublishers.ofString(body ?: "{}")).build()
             },
-            HttpResponse.BodyHandlers.ofString(),
         )
     }
 

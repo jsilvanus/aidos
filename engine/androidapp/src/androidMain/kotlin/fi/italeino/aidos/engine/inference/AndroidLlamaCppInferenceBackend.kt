@@ -11,6 +11,7 @@ import dev.aidos.models.ModelCatalogManager
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import dev.aidos.downloads.ModelQuarantine
 import java.io.File
 
 /**
@@ -25,6 +26,7 @@ class AndroidLlamaCppInferenceBackend(
 ) : InferenceBackend {
     private val modelsDir = File(context.filesDir, "models").apply { mkdirs() }
     private val liveAdapters = mutableMapOf<String, AndroidLlamaCppAdapter>()
+    init { ModelQuarantine.enforceRetention(ModelQuarantine.dirFor(modelsDir)) } // RFC-0022: at engine start
 
     override suspend fun catalog(): List<ModelDescriptor> {
         reconcileInstalledState().getOrThrow()
@@ -123,6 +125,15 @@ class AndroidLlamaCppInferenceBackend(
         }
         if (partial.exists()) partial.delete()
         catalogManager.uninstall(modelId).getOrThrow()
+    }
+
+    /** RFC-0022: a single-file model with the wrong digest is moved to `quarantine/` beside the store, then uninstalled. */
+    override suspend fun quarantine(modelId: String, expectedDigest: String, actualDigest: String) {
+        liveAdapters.remove(modelId)?.close()
+        val installed = catalogManager.listInstalled().getOrNull()?.firstOrNull { it.modelId == modelId }
+        val file = installed?.let { File(it.path) } ?: resolveModelFile(modelId)
+        if (file.isFile) ModelQuarantine.quarantine(file, modelId, expectedDigest, actualDigest, sourceUrl = null, quarantineDir = ModelQuarantine.dirFor(modelsDir))
+        delete(modelId)
     }
 
     override suspend fun load(modelId: String): Result<ModelAdapter> =
