@@ -2,9 +2,9 @@ name: schema
 
 on:
   push:
-    paths: ['schema/**', 'docs/rfcs/**', '.github/workflows/schema.yml']
+    paths: ['schema/**', 'docs/rfcs/**', 'scripts/rfc/**', 'agent/**', 'engine/**', 'sdk/**', 'kernel/**', '.github/workflows/schema.yml']
   pull_request:
-    paths: ['schema/**', 'docs/rfcs/**', '.github/workflows/schema.yml']
+    paths: ['schema/**', 'docs/rfcs/**', 'scripts/rfc/**', 'agent/**', 'engine/**', 'sdk/**', 'kernel/**', '.github/workflows/schema.yml']
 
 jobs:
   validate:
@@ -16,5 +16,7 @@ jobs:
           python-version: '3.12'
       - name: Validate schema
         run: python3 schema/check.py
-      - name: Validate RFC post-MVP checklists
+      # Also fails when an RFC's Implementation Files block lists a file that no longer exists,
+      # which is why code paths trigger this workflow.
+      - name: Validate RFC post-MVP checklists and Implementation Files
         run: python3 scripts/rfc/postmvp.py --report

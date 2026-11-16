@@ -12,6 +12,9 @@ Each RFC with remaining post-MVP work carries a fenced yaml block under `## Post
         done_when: "..."    # optional one-line condition (also the semantic-search query)
         files: []           # code that implements it (required, and must exist, when done/partial)
 
+It also checks every RFC's `## Implementation Files` yaml block: the block must exist and every
+path in it must be repo-root-relative and present in the tree.
+
 Usage: postmvp.py [--report] [--json]. Exits 1 on validation errors.
 Stdlib only: the block is a deliberately small yaml subset.
 """
@@ -59,9 +62,40 @@ def load():
         out[os.path.basename(f)] = (t, parse_block(m.group(1)) if m else None)
     return out
 
+def impl_files(text):
+    """Paths in an RFC's `## Implementation Files` yaml block (CLAUDE.md, "Implementation file
+    tracking"), or None when the RFC has no such block."""
+    sec = re.search(r'^## Implementation Files\s*\n(.*?)(?=^## |\Z)', text, re.S | re.M)
+    blk = re.search(r'```yaml\n(.*?)```', sec.group(1), re.S) if sec else None
+    if not blk:
+        return None
+    paths = []
+    for raw in blk.group(1).split('\n'):
+        line = raw.split(' #')[0].strip()
+        if not line or line.startswith('#') or line in ('files:', 'files: []'):
+            continue
+        m = re.match(r'^-\s*(.+)$', line)
+        if not m:
+            raise ValueError('unparseable Implementation Files line: %r' % raw)
+        paths.append(unq(m.group(1)))
+    return paths
+
 def main():
     errs, rows = [], []
     for name, (t, items) in load().items():
+        # A listed implementation file that no longer exists means the RFC points at code that was
+        # moved or deleted: the list is what tools and reviewers use to find an RFC's code.
+        try:
+            listed = impl_files(t)
+        except ValueError as e:
+            errs.append('%s: %s' % (name, e)); listed = []
+        if listed is None:
+            errs.append('%s: no ## Implementation Files yaml block' % name)
+        for p in listed or []:
+            if p.startswith('/') or '..' in p.split('/'):
+                errs.append('%s: Implementation Files path must be repo-root-relative: %s' % (name, p))
+            elif not os.path.exists(os.path.join(ROOT, p)):
+                errs.append('%s: Implementation Files lists a missing file: %s' % (name, p))
         hdr = re.search(r'^Non-MVP Work: \*\*(Remaining|None)\*\*', t, re.M)
         if items is None:
             if hdr and hdr.group(1) == 'Remaining':
