@@ -29,7 +29,7 @@ re-handshakes once; it never reuses a stale token.
 **4. Transport.** HTTP on `127.0.0.1:<port>` (ephemeral, from the handshake), header
 `Authorization: Bearer <token>`. Endpoints: `GET /v1/models`, `POST /v1/chat/completions`
 (non-streaming and SSE, terminated by `data: [DONE]`), `POST /v1/embeddings`,
-`POST /v1/audio/transcriptions` (JSON with base64 `file`, not OpenAI multipart).
+`POST /v1/audio/transcriptions` (JSON with base64 `file`; OpenAI-style multipart is also accepted, see below).
 
 **5. Wire types.** The JSON field names in `AidosEngineClient.kt` (OpenAI-compatible request/response
 types, `capabilitiesJson`). Clients ignore unknown fields.
@@ -82,6 +82,11 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   `TranscriptionRequest.prompt` is new and optional. `file` is a base64 WAV (any PCM/float depth, any
   channel count or rate; resampled to 16 kHz mono by Engine). Unusable audio is HTTP 400 on `file`.
   See `docs/stt.md`.
+- **Multipart upload (additive, RFC-0117 amendment).** The same route also takes OpenAI-style
+  `multipart/form-data` with fields `file` (raw WAV bytes), `model`, `language?`, `prompt?`,
+  `response_format?` (`json` or `text`), `temperature?`. The JSON form is unchanged. The SDK sends it
+  through the additive `transcribeBytes(model, wav, language?, prompt?)` and
+  `transcribeBytesResult(...)` methods; `transcribe(TranscriptionRequest)` stays on JSON.
 
 - **Locality (RFC-0104).** Request header `X-Aidos-Locality: local_only|trusted_cluster|any`; response
   header `X-Aidos-Placement: local|cluster|remote`; optional `placement` on `/v1/models` cards and on
@@ -114,7 +119,7 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   `locality_violation`, etc.) along with `userActionableMessage()`, avoiding opaque `null` results.
   It is best effort and shared by every call on the client: a success does not clear it, and with
   concurrent calls it may belong to another call.
-- `requestResult`, `chatCompletionResult`, `embeddingsResult`, `transcribeResult`, `decideResult`
+- `requestResult`, `chatCompletionResult`, `embeddingsResult`, `transcribeResult`, `transcribeBytesResult`, `decideResult`
   (additive default methods): the same calls returning `Result<T>`, failing with `EngineApiException`
   carrying that call's own `EngineError`. The nullable methods are built on them.
 - `capabilities()` refreshes the model list live from `GET /v1/models` every 5 seconds when the

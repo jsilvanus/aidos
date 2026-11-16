@@ -45,7 +45,7 @@ class ContractFreezeTest {
                 "apiVersion", "availability", "capabilities", "chatCompletion", "chatCompletionResult", "close", "decide", "decideResult",
                 "embeddings", "embeddingsResult", "engineVersion", "getLastError", "getLocality",
                 "initialize", "isAvailable", "request", "requestResult", "streamChatCompletion", "supportsEndpoint",
-                "transcribe", "transcribeResult"
+                "transcribe", "transcribeBytes", "transcribeBytesResult", "transcribeResult"
             ),
             // `...Result` methods return kotlin.Result, so the JVM appends a "-<hash>" mangling suffix.
             AidosEngineClient::class.java.methods.map { it.name.substringBefore('-') }.filter { !it.contains("$") }.distinct().sorted()

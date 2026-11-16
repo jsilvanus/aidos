@@ -21,8 +21,10 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
@@ -95,6 +97,25 @@ interface AidosEngineClient {
 
     /** `/v1/audio/transcriptions`. Null on any failure (including Engine unavailable). */
     suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse?
+
+    /**
+     * `/v1/audio/transcriptions` as OpenAI-style `multipart/form-data` (RFC-0117 amendment): [wav] goes
+     * up as raw bytes, without the base64 that [transcribe] needs. Null on any failure. Additive; the
+     * default sends the same audio through [transcribe] so other implementers keep working.
+     */
+    suspend fun transcribeBytes(model: String, wav: ByteArray, language: String? = null, prompt: String? = null): TranscriptionResponse? =
+        transcribeBytesResult(model, wav, language, prompt).getOrNull()
+
+    /** [transcribeBytes] returning `Result<T>`, failing with the call's own [EngineError] (see [transcribeResult]). */
+    suspend fun transcribeBytesResult(model: String, wav: ByteArray, language: String? = null, prompt: String? = null): Result<TranscriptionResponse> =
+        transcribeResult(
+            TranscriptionRequest(
+                file = java.util.Base64.getEncoder().encodeToString(wav),
+                model = model,
+                language = language,
+                prompt = prompt,
+            )
+        )
 
     /**
      * `/v1/systemone`: typed decisions ("System One"). Several typed questions about [DecisionRequest.state]
@@ -789,7 +810,9 @@ internal class EngineClientImpl(
         method: String,
         body: String?,
         allowReauth: Boolean,
-        record: Boolean = true
+        record: Boolean = true,
+        // A body that is not JSON (multipart transcription). Reused as is on a re-handshake retry.
+        rawBody: RequestBody? = null,
     ): String {
         val current = handshakeResult ?: throw fail(
             EngineError(
@@ -809,7 +832,7 @@ internal class EngineClientImpl(
         }
         // OkHttp requires a non-null body for methods that carry one (POST/PUT/PATCH) — unlike
         // HttpURLConnection, it refuses to build the request rather than sending an empty body.
-        val requestBody = body?.toRequestBody(jsonMediaType)
+        val requestBody = rawBody ?: body?.toRequestBody(jsonMediaType)
             ?: if (method in methodsRequiringBody) "".toRequestBody(jsonMediaType) else null
         val httpRequest = Request.Builder()
             .url("http://127.0.0.1:${current.port}/v1/$endpoint")
@@ -828,7 +851,7 @@ internal class EngineClientImpl(
                     // stale token). Retry exactly once with a fresh handshake.
                     response.code == 401 && allowReauth -> {
                         val reconnected = handshakeMutex.withLock { doHandshakeLocked() }
-                        if (reconnected) executeCall(endpoint, method, body, allowReauth = false, record = record) else {
+                        if (reconnected) executeCall(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody) else {
                             throw fail(
                                 EngineError(
                                     message = "Engine token expired and re-handshake failed",
@@ -851,7 +874,7 @@ internal class EngineClientImpl(
             // port is ephemeral (RFC-0103: "never assumed stable across Engine restarts"). A 401
             // can never arrive from a port that is gone, so this is the same reconnect case.
             if (allowReauth && handshakeMutex.withLock { doHandshakeLocked() }) {
-                executeCall(endpoint, method, body, allowReauth = false, record = record)
+                executeCall(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody)
             } else {
                 throw fail(
                     EngineError(
@@ -1043,6 +1066,17 @@ internal class EngineClientImpl(
 
     override suspend fun transcribeResult(request: TranscriptionRequest): Result<TranscriptionResponse> = callResult {
         decodeOrFail<TranscriptionResponse>(executeCall("audio/transcriptions", "POST", engineJson.encodeToString(request), allowReauth = true))
+    }
+
+    override suspend fun transcribeBytesResult(model: String, wav: ByteArray, language: String?, prompt: String?): Result<TranscriptionResponse> = callResult {
+        // RFC-0117 amendment: the same route as JSON, multipart body. Same auth, locality and 401 re-handshake.
+        val form = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("model", model)
+            .addFormDataPart("file", "audio.wav", wav.toRequestBody("audio/wav".toMediaType()))
+        language?.let { form.addFormDataPart("language", it) }
+        prompt?.let { form.addFormDataPart("prompt", it) }
+        decodeOrFail<TranscriptionResponse>(executeCall("audio/transcriptions", "POST", null, allowReauth = true, rawBody = form.build()))
     }
 
     override suspend fun decide(request: DecisionRequest): DecisionResponse? = decideResult(request).getOrNull()
