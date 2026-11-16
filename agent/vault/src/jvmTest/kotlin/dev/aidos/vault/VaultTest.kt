@@ -57,6 +57,41 @@ class VaultTest {
     }
 
     @Test
+    fun `concurrent rotations leave every replaced value redacted`() {
+        // RFC-0035 "Rotation and revocation": a rotated-out value stays filtered for the grace
+        // period. Unlocked, two rotations could both read the same "old" value, so the value one
+        // of them wrote was replaced without ever being retired, and passed the redactor in clear.
+        repeat(20) { round ->
+            val redactor = Redactor()
+            val dir = Files.createTempDirectory("vault-test").toFile()
+            val vault = SqliteSecretsVault(File(dir, "vault.db"), SqliteSecretsVault.generateKey(), redactor)
+            val id = kotlinx.coroutines.runBlocking { vault.store("k", SecretKind.API_KEY, "initial-value-$round".toCharArray()) }
+            val values = (0 until 16).map { "rotated-value-$round-$it-end" }
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(values.size)
+            try {
+                val start = java.util.concurrent.CountDownLatch(1)
+                values.map { v ->
+                    pool.submit {
+                        start.await()
+                        kotlinx.coroutines.runBlocking { vault.rotate(id, v.toCharArray()) }
+                    }
+                }.also { start.countDown() }.forEach { it.get() }
+            } finally {
+                pool.shutdownNow()
+            }
+            val redacted = redactor.redact(values.joinToString(" | "))
+            values.forEach { assertFalse(it in redacted, "rotated-out value passed the redactor: $it") }
+            vault.close()
+        }
+    }
+
+    @Test
+    fun `rotating a secret that does not exist fails and retires nothing`() = runTest {
+        val vault = tempVault()
+        assertTrue(runCatching { vault.rotate("no-such-id", "x".toCharArray()) }.isFailure)
+    }
+
+    @Test
     fun `delete removes the secret`() = runTest {
         val vault = tempVault()
         val id = vault.store("temp_key", SecretKind.GENERIC, "value".toCharArray())

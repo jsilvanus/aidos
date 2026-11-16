@@ -52,6 +52,15 @@ class SqliteSecretsVault(
     /** Throwaway key held in memory: tests and callers that want a vault that cannot outlive the process. */
     constructor(dbFile: File) : this(dbFile, generateKey())
 
+    /**
+     * One JDBC connection serves every caller, and a connection is not safe for concurrent use:
+     * two Runs resolving at once could interleave statements, and two rotations could each read
+     * the same "old" value. Every operation holds this lock for its whole read-modify-write.
+     * Calls are short and never suspend, so a monitor is enough.
+     */
+    private val lock = Any()
+    private inline fun <T> locked(block: () -> T): T = synchronized(lock, block)
+
     private val conn: Connection
 
     init {
@@ -75,7 +84,7 @@ class SqliteSecretsVault(
     /** Registers every stored value with [redactor] (a per-Run redactor builds its known set this way). */
     fun registerAllWith(redactor: Redactor) = registerAll(redactor)
 
-    private fun registerAll(redactor: Redactor) {
+    private fun registerAll(redactor: Redactor): Unit = locked {
         val rows = mutableListOf<Triple<String, String, Pair<ByteArray, ByteArray>>>()
         conn.prepareStatement("SELECT id,name,ciphertext,nonce FROM secrets").use { st ->
             st.executeQuery().use { rs -> while (rs.next()) rows += Triple(rs.getString(1), rs.getString(2), rs.getBytes(3) to rs.getBytes(4)) }
@@ -87,7 +96,7 @@ class SqliteSecretsVault(
         }
     }
 
-    override fun close() { conn.close() }
+    override fun close() = locked { conn.close() }
 
     private fun applySchema() {
         val sql = SqliteSecretsVault::class.java.getResourceAsStream("/vault.sql")
@@ -102,7 +111,7 @@ class SqliteSecretsVault(
         }
     }
 
-    override suspend fun store(name: String, kind: SecretKind, value: CharArray): SecretId {
+    override suspend fun store(name: String, kind: SecretKind, value: CharArray): SecretId = locked {
         val id = UUID.randomUUID().toString()
         val (ciphertext, nonce) = encrypt(id, value)
         val now = Clock.System.now().toString()
@@ -120,10 +129,10 @@ class SqliteSecretsVault(
         // Registered immediately: the value is now a known secret even before anything resolves it.
         redactor?.register(id, name, value)
         value.fill('\u0000')
-        return id
+        id
     }
 
-    override suspend fun rotate(id: SecretId, newValue: CharArray) {
+    override suspend fun rotate(id: SecretId, newValue: CharArray): Unit = locked {
         val (name, old) = conn.prepareStatement("SELECT name,ciphertext,nonce FROM secrets WHERE id=?").use { st ->
             st.setString(1, id)
             st.executeQuery().use { rs ->
@@ -133,7 +142,7 @@ class SqliteSecretsVault(
         }
         val (ciphertext, nonce) = encrypt(id, newValue)
         val now = Clock.System.now().toString()
-        conn.prepareStatement(
+        val updated = conn.prepareStatement(
             "UPDATE secrets SET ciphertext=?,nonce=?,last_rotated_at=? WHERE id=?"
         ).use { stmt ->
             stmt.setBytes(1, ciphertext)
@@ -142,6 +151,8 @@ class SqliteSecretsVault(
             stmt.setString(4, id)
             stmt.executeUpdate()
         }
+        // Nothing was replaced, so nothing may be retired: the redactor must keep matching the stored value.
+        if (updated == 0) error("secrets.not_found: $id")
         // The prior value leaves the vault but stays filtered for a grace period (RFC-0035).
         redactor?.retire("$id#old", name, old, rotationGraceMillis)
         redactor?.register(id, name, newValue)
@@ -149,7 +160,7 @@ class SqliteSecretsVault(
         newValue.fill('\u0000')
     }
 
-    override suspend fun delete(id: SecretId) {
+    override suspend fun delete(id: SecretId): Unit = locked {
         conn.prepareStatement("DELETE FROM secrets WHERE id=?").use { stmt ->
             stmt.setString(1, id)
             stmt.executeUpdate()
@@ -157,15 +168,15 @@ class SqliteSecretsVault(
         redactor?.unregister(id)
     }
 
-    override suspend fun resolve(id: SecretId): Result<CharArray> = runCatching {
+    override suspend fun resolve(id: SecretId): Result<CharArray> = runCatching { locked {
         val e = readEntry(id)
         // A secret with an allow-list is for named consumers only; the runtime's anonymous
         // resolve() must not be a way around it.
         if (e.allowedConsumers.isNotEmpty()) error("secrets.consumer_required: $id has an allow-list; use resolveFor")
         load(e)
-    }
+    } }
 
-    override suspend fun resolveFor(id: SecretId, request: SecretRequest): Result<CharArray> = runCatching {
+    override suspend fun resolveFor(id: SecretId, request: SecretRequest): Result<CharArray> = runCatching { locked {
         val e = readEntry(id)
         if (request.tainted) error("secrets.denied_tainted: a Run that read untrusted content cannot resolve secrets")
         if (e.allowedConsumers.isNotEmpty() && request.consumer.key !in e.allowedConsumers) {
@@ -174,13 +185,13 @@ class SqliteSecretsVault(
         val value = load(e)
         accessSink?.record(SecretAccess(id, request.consumer, request.capabilityId, request.attemptId, Clock.System.now()))
         value
-    }
+    } }
 
-    override suspend fun setExpiry(id: SecretId, expiresAt: Instant?) {
+    override suspend fun setExpiry(id: SecretId, expiresAt: Instant?): Unit = locked {
         update("UPDATE secrets SET expires_at=? WHERE id=?", expiresAt?.toString(), id)
     }
 
-    override suspend fun setAllowedConsumers(id: SecretId, consumers: List<ConsumerRef>) {
+    override suspend fun setAllowedConsumers(id: SecretId, consumers: List<ConsumerRef>): Unit = locked {
         update("UPDATE secrets SET allowed_consumers_json=? WHERE id=?", Json.encodeToString(consumers.map { it.key }), id)
     }
 
@@ -214,7 +225,7 @@ class SqliteSecretsVault(
         return value
     }
 
-    override suspend fun get(id: SecretId): Result<SecretEntry> = runCatching {
+    override suspend fun get(id: SecretId): Result<SecretEntry> = runCatching { locked {
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets WHERE id=?"
         ).use { stmt ->
@@ -224,9 +235,9 @@ class SqliteSecretsVault(
                 rowToEntry(rs)
             }
         }
-    }
+    } }
 
-    override suspend fun getByName(name: String): Result<SecretEntry> = runCatching {
+    override suspend fun getByName(name: String): Result<SecretEntry> = runCatching { locked {
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets WHERE name=?"
         ).use { stmt ->
@@ -236,9 +247,9 @@ class SqliteSecretsVault(
                 rowToEntry(rs)
             }
         }
-    }
+    } }
 
-    override suspend fun list(): List<SecretEntry> {
+    override suspend fun list(): List<SecretEntry> = locked {
         val results = mutableListOf<SecretEntry>()
         conn.prepareStatement(
             "SELECT id,name,kind,allowed_consumers_json,created_at,expires_at,last_used_at,last_rotated_at FROM secrets"
@@ -247,7 +258,7 @@ class SqliteSecretsVault(
                 while (rs.next()) results.add(rowToEntry(rs))
             }
         }
-        return results
+        results
     }
 
     // ── Crypto ─────────────────────────────────────────────────────────────────
