@@ -76,7 +76,6 @@ Built (desktop): Status, Models, Model detail, Connected Apps, Agents, MCP Serve
 files:
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/theme/AidosEngineTheme.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/AgentsPane.kt
-  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/Components.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsPane.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/GroupsPane.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/McpServersPane.kt

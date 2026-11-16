@@ -838,7 +838,6 @@ files:
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSearchFiltersTest.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/ui/ModelSelfTestTest.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/theme/AidosEngineTheme.kt
-  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/Components.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ConnectedAppsPane.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/ModelsPanes.kt
   - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsContent.kt

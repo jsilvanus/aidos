@@ -426,7 +426,6 @@ files:
   - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingTest.kt
   - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/LanPairing.kt
   - engine/enginehost/src/jvmMain/kotlin/fi/italeino/aidos/engine/lan/LanDiscovery.kt
-  - engine/engineui/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/ui/LanSharingPane.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopLanSharingModel.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/LanPairingEndToEndTest.kt
