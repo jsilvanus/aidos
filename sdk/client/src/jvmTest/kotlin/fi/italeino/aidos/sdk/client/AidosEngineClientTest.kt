@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -345,6 +346,26 @@ class AidosEngineClientTest {
 
         val transcription = client.transcribe(TranscriptionRequest(file = "base64", model = "whisper"))
         assertEquals("hello world", transcription?.text)
+    }
+
+    @Test
+    fun transcribeBytes_postsMultipartWithTheRawWav() = runTest {
+        server.enqueue(MockResponse().setBody("""{"text":"hei"}"""))
+        val client = clientPointedAtServer()
+        val wav = "RIFF\u0000\u0000\u0000\u0000WAVE".toByteArray(Charsets.ISO_8859_1)
+
+        val transcription = client.transcribeBytes("whisper", wav, language = "fi", prompt = "Herra armahda")
+        assertEquals("hei", transcription?.text)
+
+        val recorded = server.takeRequest()
+        assertTrue(recorded.getHeader("Content-Type")!!.startsWith("multipart/form-data"))
+        val body = recorded.body.readByteArray()
+        val text = String(body, Charsets.ISO_8859_1)
+        assertTrue(text.contains("name=\"model\"") && text.contains("whisper"), text)
+        assertTrue(text.contains("name=\"language\"") && text.contains("fi"), text)
+        assertTrue(text.contains("name=\"prompt\"") && text.contains("Herra armahda"), text)
+        assertTrue(text.contains("name=\"file\"; filename=\"audio.wav\""), text)
+        assertTrue(text.contains(String(wav, Charsets.ISO_8859_1)), "raw WAV bytes must travel unencoded")
     }
 
     // --- RFC-0104: locality ---------------------------------------------------------------------
