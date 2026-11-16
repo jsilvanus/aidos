@@ -18,6 +18,7 @@ import io.ktor.server.routing.get as routeGet
 import io.ktor.server.testing.testApplication
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -149,7 +150,7 @@ class LanSharingTest {
     }
 
     @Test
-    fun `pairing codes expire, and wrong guesses lock out the address that made them, not the code`() {
+    fun `pairing codes expire, and wrong guesses lock out the address that made them, not the code`() = runBlocking {
         val codes = PairingCodes(grants, now = { clock.get() }, codeLifetimeSeconds = 60, maxAttempts = 3)
         val expiring = codes.start("a", 3600)
         clock.set(clock.get().plusSeconds(61))
@@ -170,13 +171,30 @@ class LanSharingTest {
     }
 
     @Test
-    fun `wrong guesses from many addresses together are capped`() {
-        val codes = PairingCodes(grants, now = { clock.get() })
+    fun `many addresses guessing slow the pairing down but do not block the right code`() = runBlocking {
+        val waits = mutableListOf<Long>()
+        // Waiting moves the test clock, as it would move the real one.
+        val codes = PairingCodes(grants, now = { clock.get() }, pause = { ms -> waits += ms; clock.set(clock.get().plusMillis(ms)) })
         val code = codes.start("tablet", 3600)
-        repeat(30) { assertNull(codes.redeem("00000000", source = "10.0.1.$it")) }
-        assertNull(codes.redeem(code, source = "10.0.0.7"), "the cap holds for everyone until the minute passes")
+        // Six addresses, five wrong guesses each: the old global cap refused everyone after this.
+        for (n in 0 until 6) repeat(5) { assertNull(codes.redeem("00000000", source = "10.0.1.$n")) }
+        assertNull(codes.redeem("00000000", source = "10.0.1.9")) // takes the first free turn
+        assertEquals("tablet", codes.redeem(code, source = "10.0.0.7")?.grant?.label, "the right code still redeems")
+        assertTrue(waits.isNotEmpty(), "once the cap was reached attempts waited for their turn")
+        assertTrue(waits.all { it <= 10_000 }, "no wait exceeds the ceiling: $waits")
+    }
+
+    @Test
+    fun `a flood that outlasts the wait ceiling is still refused`() = runBlocking {
+        // Nobody's wait moves the clock, as when many attempts arrive at the same instant.
+        val codes = PairingCodes(grants, now = { clock.get() }, pause = { })
+        val code = codes.start("tablet", 3600)
+        var refused = 0
+        for (n in 0 until 100) if (codes.redeem("00000000", source = "10.0.2.$n") == null) refused++
+        assertEquals(100, refused)
+        assertNull(codes.redeem(code, source = "10.0.0.7"), "the queue of turns is full, so the flood pays for itself")
         clock.set(clock.get().plusSeconds(61))
-        assertEquals("tablet", codes.redeem(code, source = "10.0.0.7")?.grant?.label)
+        assertEquals("tablet", codes.redeem(code, source = "10.0.0.7")?.grant?.label, "and it ends with the minute")
     }
 
     @Test
