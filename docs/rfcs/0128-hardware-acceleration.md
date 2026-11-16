@@ -167,6 +167,8 @@ There are two ways to get GPU-enabled natives, and the first step of this work i
 
 **[decision]** Try route A first on the Windows desktop and one phone. If the migration is clean, use it; if not, take route B. The rest of this section holds for both.
 
+**Spike outcome (2026-11-16): route A is taken.** Both adapters now use `net.ladenthin:llama` 6.0.0. Checked **[code]**: the desktop adapter and the 67 `:modelruntime` tests pass against the real 6.0.0 native, and a Gemma 4 E2B QAT Q4_0 GGUF (`google/gemma-4-E2B-it-qat-q4_0-gguf`) loads, generates and cancels on CPU, which the 4.2.0 native could not be expected to do. Not checked: GPU runs (no GPU in the build environment), the Android build and a phone run (no Android SDK there; CI compiles the app). What the migration changed: desktop adds the classifier jars `cpu-{windows-x86-64,linux-x86-64,linux-aarch64}`, `metal-macos-aarch64` and `vulkan-{windows,linux}-x86-64` (a GPU jar holds only its backend module and is used on top of the CPU jar; `-Dnet.ladenthin.llama.backend=cpu` or `vulkan` restricts it). Android uses the `llama-android` AAR, whose manifest forces **minSdk 28**, so the Engine app's minSdk went from 26 to 28 (the reference phone, a OnePlus 8, runs Android 10 or later). The checked-in `libjllama.so` is gone. The native library directory must be extracted at install (`useLegacyPackaging = true`) because ggml opens its CPU modules by scanning that directory.
+
 **Desktop, phase 1: Vulkan.** One Vulkan native per OS (Windows x64, Linux x64), with the CPU path included. It covers NVIDIA, AMD and Intel with one binary and needs no vendor toolkit, which is what goal 4 asks for. **[decision]** Vulkan before CUDA: it is the only option that gives every desktop GPU owner acceleration from the installer alone.
 
 **Desktop, later: CUDA native pack.** NVIDIA owners can install an optional pack built with `GGML_CUDA`. It is larger and NVIDIA-only, so it is a download, not part of the installer. With `GGML_BACKEND_DL` the pack is one more backend library beside the Vulkan one, and the ladder prefers CUDA when both are present.
@@ -285,7 +287,12 @@ Read 2026-11-16:
 ## Implementation Files
 
 ```yaml
-files: []
+files:
+  - engine/modelruntime/build.gradle.kts
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
+  - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaChatPrompt.kt
+  - engine/androidapp/build.gradle.kts
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidLlamaCppAdapter.kt
 ```
 
 ## Post-MVP Work

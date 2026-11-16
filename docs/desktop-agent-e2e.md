@@ -44,4 +44,4 @@ Report anything that differs; the gaps known today are listed in D48 (no per-age
 
 ## Running the Engine tests while the app is open (Windows)
 
-Windows cannot overwrite a loaded `jllama.dll`. The llama.cpp binding extracts it into `%TEMP%`, so running `gradle jvmTest` in `engine` while the Aidos desktop app (or a Gradle daemon from an earlier test run) is alive makes the llama tests fail with `UnsatisfiedLinkError: No native library found` and then `NoClassDefFoundError: de.kherud.llama.LlamaModel`. Stop the app and run `gradle --stop`, delete a stray `jllama.dll` in `%TEMP%` if one remains, then re-run.
+Windows cannot overwrite a loaded `jllama.dll`. The llama.cpp binding extracts it into `%TEMP%`, so running `gradle jvmTest` in `engine` while the Aidos desktop app (or a Gradle daemon from an earlier test run) is alive makes the llama tests fail with `UnsatisfiedLinkError: No native library found` and then `NoClassDefFoundError: net.ladenthin.llama.LlamaModel`. Stop the app and run `gradle --stop`, delete a stray `jllama.dll` in `%TEMP%` if one remains, then re-run.
