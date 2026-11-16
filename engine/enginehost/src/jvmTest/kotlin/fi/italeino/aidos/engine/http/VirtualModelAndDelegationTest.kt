@@ -267,6 +267,7 @@ class VirtualModelAndDelegationTest {
                 virtualModels = {
                     listOf(VirtualModelConfig("aidos:chat", ModelKind.LLM, listOf(VirtualCandidate.Group(group, "big-split"))))
                 },
+                subjectLocality = { subject -> if (subject == "limited-app") Locality.LOCAL_ONLY else null },
             )
             application { server.installInto(this) }
             val token = tokens.generateNewToken().token
@@ -302,6 +303,24 @@ class VirtualModelAndDelegationTest {
                 setBody(body)
             }
             assertEquals(HttpStatusCode.Forbidden, localOnly.status, localOnly.bodyAsText())
+
+            // The peer-delegation door on loopback takes the same app tokens, so it is held to
+            // the same limits: no header means the default, and an app's own limit still applies.
+            val splitBody = json.encodeToString(
+                ChatCompletionRequest(model = "big-split", messages = listOf(ChatMessage(role = "user", content = "Hello")))
+            )
+            suspend fun viaPeerDoor(bearer: String, locality: String?) = client.post("/aidin/v1/chat/completions") {
+                bearerAuth(bearer)
+                contentType(ContentType.Application.Json)
+                locality?.let { header(LOCALITY_HEADER, it) }
+                setBody(splitBody)
+            }
+            assertEquals(HttpStatusCode.OK, viaPeerDoor(token, "trusted_cluster").status)
+            val noHeader = viaPeerDoor(token, null)
+            assertEquals(HttpStatusCode.Forbidden, noHeader.status, noHeader.bodyAsText())
+            val limitedApp = viaPeerDoor(tokens.generateNewToken(subject = "limited-app").token, "any")
+            assertEquals(HttpStatusCode.Forbidden, limitedApp.status, limitedApp.bodyAsText())
+            assertTrue(limitedApp.bodyAsText().contains("locality_violation"), limitedApp.bodyAsText())
         } finally {
             anchorSup.close()
             helperSup.close()

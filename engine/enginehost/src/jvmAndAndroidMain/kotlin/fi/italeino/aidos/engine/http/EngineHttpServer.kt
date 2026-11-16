@@ -1751,7 +1751,11 @@ class EngineHttpServer(
             return
         }
         val planVersion = call.request.headers[PLAN_VERSION_HEADER]?.toLongOrNull()
-        val callerLocalityRaw = call.request.headers[LOCALITY_HEADER] ?: Locality.ANY.wire
+        // RFC-0104: this door is opened with an ordinary app token, so it is held to the same
+        // layered limit as /v1: what was asked for (the default when nothing was), the app's own
+        // limit and Engine's. It used to read a missing header as "any" and skip the app's limit,
+        // which let an app held to local_only reach a split model through here.
+        val callerLocalityRaw = (resolveLocality(call) ?: return).wire
         val bodyText = receiveBoundedBodyText(call) ?: return
         val fakeReq = LinkMessage.DelegateRequest(
             requestId = UUID.randomUUID().toString(),
@@ -1883,6 +1887,10 @@ class EngineHttpServer(
         val anchor = aidinNode()?.activeAnchorSupervisor
         val plan = anchor?.activePlan
         if (anchor != null && plan != null && plan.modelId == chatReq.model) {
+            // A split model sends activations to its helpers: the caller's limit must allow that.
+            if (!peerLocality.permits(Placement.CLUSTER)) {
+                return delegateErrorResponse(request.requestId, LocalityViolationException(chatReq.model, peerLocality, Placement.CLUSTER))
+            }
             return when (val outcome = splitChat(anchor, chatReq, request.planVersion)) {
                 is SplitInferenceOutcome.Success -> {
                     val resp = splitChatResponse(outcome, chatReq.model)

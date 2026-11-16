@@ -455,6 +455,8 @@ Added after the 2026-11-16 code review found that both llama.cpp adapters wrote 
 files:
   - engine/cookbook/src/commonMain/kotlin/dev/aidos/cookbook/Cookbook.kt
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/GlobalModelRuntime.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/ModelRuntimeErrors.kt
+  - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/SamplingOverride.kt
   - engine/modelruntime/src/commonMain/kotlin/dev/aidos/modelruntime/ModelRunSettings.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaCppAdapter.kt
   - engine/modelruntime/src/jvmMain/kotlin/dev/aidos/modelruntime/LlamaChatPrompt.kt
