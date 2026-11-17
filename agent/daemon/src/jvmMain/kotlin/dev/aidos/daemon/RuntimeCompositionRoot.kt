@@ -34,6 +34,7 @@ import dev.aidos.bridge.ProjectAuditBridgeLogger
 import dev.aidos.bridge.ProjectIngressTaskHandler
 import dev.aidos.bridge.RegisteredProjectDrivers
 import dev.aidos.executor.RunCreator
+import dev.aidos.executor.SecretScreeningResult
 import dev.aidos.executor.SqlBudgetLedger
 import dev.aidos.executor.SqliteExecutor
 import dev.aidos.executor.TaintInputScreener
@@ -78,7 +79,9 @@ import dev.aidos.vault.ConsumerKind
 import dev.aidos.vault.ConsumerRef
 import dev.aidos.vault.RedactionBoundary
 import dev.aidos.vault.Redactor
+import dev.aidos.vault.SecretContentPolicy
 import dev.aidos.vault.SecretRequest
+import dev.aidos.vault.SecretScreening
 import dev.aidos.vault.SqliteSecretsVault
 import dev.aidos.http.DefaultEgressClient
 import dev.aidos.http.EgressClient
@@ -573,6 +576,7 @@ class RuntimeCompositionRoot(
         // RFC-0035: registered before any adapter, audit log, or MCP server ever sees a secret.
         val redactor = Redactor(sink = RedactionEventsSink(projectDriver, projectId.value, idGen, nowIso))
         vault?.registerAllWith(redactor)
+        val secretContentPolicy = SecretContentPolicy(redactor)
         val audit = AuditLog(projectDriver, deviceId) { redactor.redactJson(it, RedactionBoundary.LOG) }
         val capabilityManager = SqliteCapabilityManager(projectDriver, UuidV7Generator(), nowIso, deviceId = deviceId)
         val broker = ToolBroker(
@@ -812,10 +816,12 @@ class RuntimeCompositionRoot(
             broker = broker,
             subjectId = sessionId,
             redact = { redactor.redact(it, RedactionBoundary.ATTEMPT) },
-            detectSecrets = { _, text ->
-                redactor.detections(text).also { kinds ->
-                    // Records the detection (kind + boundary) in redaction_events; the result is discarded.
-                    if (kinds.isNotEmpty()) redactor.redact(text, RedactionBoundary.PROMPT)
+            // RFC-0035: credential values are replaced by markers; only credential-shaped text is withheld.
+            screenSecrets = { _, text ->
+                when (val screening = secretContentPolicy.screen(text)) {
+                    SecretScreening.Clean -> SecretScreeningResult.Clean
+                    is SecretScreening.Redacted -> SecretScreeningResult.Redacted(screening.text, screening.kinds, screening.count)
+                    is SecretScreening.Withheld -> SecretScreeningResult.Withheld(screening.kinds)
                 }
             },
             resolveCapability = capabilityResolver::resolve,
