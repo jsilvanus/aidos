@@ -49,7 +49,7 @@ A package is a flat directory laid out like an `onnx-community/*` repository: en
 
 ### Text-to-speech (amendment, built on the desktop JVM host; not run on a device)
 
-Status of this section: decided 2026-11-16 (Finnish: Piper fi_FI harri with the Kotlin phonemizer; English: Piper en_US LJSpeech high with CMUdict). Built in `engine/tts` and `POST /v1/audio/speech`; the real-voice test is opt-in and Android is not wired yet.
+Status of this section: decided 2026-11-16 (Finnish: Piper fi_FI harri with the Kotlin phonemizer; English: Piper en_US LJSpeech high with CMUdict). Built in `engine/tts` and `POST /v1/audio/speech`; the real-voice test is opt-in. The Android host stacks the voice backend (`AndroidOnnxTtsBackend`), not yet run on a device. A virtual speech model may be delegated to a peer over `/aidin/v1/audio/speech` (PCM travels base64 inside the JSON peer reply), under the same locality rules as chat.
 
 Goal: the Engine can speak. A model of kind `tts` loads and `POST /v1/audio/speech` returns audio. Finnish must work first; English should work too. The Android app keeps the system TTS (`AndroidDeviceTtsEngine`) until a later decision.
 
@@ -157,6 +157,8 @@ files:
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxTtsBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
 ```
 
 ## Post-MVP Work
@@ -224,6 +226,8 @@ post_mvp:
       - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
       - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
       - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+      - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxTtsBackend.kt
+      - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
       - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
       - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
 

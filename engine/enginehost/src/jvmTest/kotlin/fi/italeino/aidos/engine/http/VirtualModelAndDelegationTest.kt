@@ -131,6 +131,27 @@ private class TestRuntime(
  * peer delegation over mTLS `PeerLink`, origin split-route trust verification, mid-request fallback,
  * and warm local fallback pinning.
  */
+/** A peer's text-to-speech voice (RFC-0117 amendment): 1 000 ms of samples, counting the calls it serves. */
+private class PeerVoice(private val id: String) : ModelRuntime {
+    val synthesised = AtomicInteger()
+    private val models = listOf(ModelDescriptor(id, id, ModelKind.TTS, "local", true, 4000, 1L, "d"))
+    private val voice = object : dev.aidos.tts.TtsModel {
+        override val modelId = id
+        override fun synthesize(request: dev.aidos.tts.SpeechRequest): dev.aidos.tts.SpeechResult {
+            synthesised.incrementAndGet()
+            return dev.aidos.tts.SpeechResult(ByteArray(2 * 22050), 22050)
+        }
+        override fun close() = Unit
+    }
+    override suspend fun catalog() = models
+    override suspend fun installed() = models
+    override suspend fun load(modelId: String): Result<ModelAdapter> =
+        if (modelId == id) Result.success(dev.aidos.tts.TtsModelAdapterImpl(voice)) else Result.failure(IllegalArgumentException("MODEL_NOT_INSTALLED: $modelId"))
+    override suspend fun delete(modelId: String) = Unit
+    override suspend fun unload(modelId: String) = Unit
+    override fun loaded(): List<String> = listOf(id)
+}
+
 class VirtualModelAndDelegationTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val nodes = mutableListOf<AidinNode>()
@@ -477,6 +498,47 @@ class VirtualModelAndDelegationTest {
 
         // 3. Stranger peer with no credential -> null (never contacted)
         assertNull(originPlacementForPeerRoute(admin, untrustedStranger, trustedSplitRoute))
+    }
+
+    @Test
+    fun aVirtualVoiceIsSpokenByThePeerThatHoldsItWhenTheLocalityAllowsIt() = testApplication {
+        val originNode = createNode()
+        val peerNode = createNode(models = listOf(ModelAdvert("fake-piper", "tts", "sha256:piper", "local", loaded = true)))
+        pairNodes(originNode, peerNode)
+
+        val peerVoice = PeerVoice("fake-piper")
+        EngineHttpServer(tokenManager = TokenManager(), modelRuntime = peerVoice, aidinNode = { peerNode })
+
+        val originTokens = TokenManager()
+        val originServer = EngineHttpServer(
+            tokenManager = originTokens,
+            modelRuntime = TestRuntime(emptyList(), "origin"),
+            aidinNode = { originNode },
+            virtualModels = {
+                listOf(
+                    VirtualModelConfig(
+                        id = "aidos:voice",
+                        kind = ModelKind.TTS,
+                        candidates = listOf(VirtualCandidate.Peer(peerNode.nodeId, "fake-piper")),
+                    ),
+                )
+            },
+        )
+        application { originServer.installInto(this) }
+        val token = originTokens.generateNewToken().token
+
+        val res = client.post("/v1/audio/speech") {
+            bearerAuth(token)
+            header(LOCALITY_HEADER, "trusted_cluster")
+            contentType(ContentType.Application.Json)
+            setBody("""{"model":"aidos:voice","input":"Hyvää huomenta"}""")
+        }
+        assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
+        assertEquals("audio/wav", res.contentType()?.withoutParameters()?.toString())
+        assertEquals("RIFF", String(res.readRawBytes(), 0, 4, Charsets.US_ASCII))
+        assertEquals("cluster", res.headers[PLACEMENT_HEADER])
+        assertEquals("peer:${peerNode.nodeId.value}", res.headers[ROUTE_HEADER])
+        assertEquals(1, peerVoice.synthesised.get())
     }
 
     @Test

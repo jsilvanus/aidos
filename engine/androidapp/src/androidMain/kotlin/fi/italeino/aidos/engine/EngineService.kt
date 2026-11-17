@@ -43,6 +43,7 @@ import fi.italeino.aidos.engine.inference.AndroidLlamaCppInferenceBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxDecisionBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxVisionBackend
 import fi.italeino.aidos.engine.inference.AndroidOnnxSttBackend
+import fi.italeino.aidos.engine.inference.AndroidOnnxTtsBackend
 import fi.italeino.aidos.engine.inference.InferenceRequestManager
 import fi.italeino.aidos.engine.license.EncryptedLicenseAcceptanceStore
 import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
@@ -249,16 +250,19 @@ class EngineService : LifecycleService() {
                 // digest; filesDir/models is only the artifact store.
                 // ONNX decision models (typed decisions, RFC-0125 D45) are packages under filesDir/models/<id>/;
                 // every other id still goes to llama.cpp.
-                // Whisper speech-to-text (RFC-0103) and SmolVLM vision packages live in the same directory.
+                // Whisper speech-to-text (RFC-0103), SmolVLM vision and Piper voice (RFC-0117) packages live in the same directory.
                 val onnxModelsDir = java.io.File(filesDir, "models")
                 lateinit var inferenceManager: InferenceRequestManager
                 val runtime = GlobalModelRuntime(
-                    AndroidOnnxVisionBackend(
-                        delegate = AndroidOnnxSttBackend(
-                            delegate = AndroidOnnxDecisionBackend(
-                                delegate = AndroidLlamaCppInferenceBackend(
-                                    context = this@EngineService,
-                                    catalogManager = catalog,
+                    AndroidOnnxTtsBackend(
+                        delegate = AndroidOnnxVisionBackend(
+                            delegate = AndroidOnnxSttBackend(
+                                delegate = AndroidOnnxDecisionBackend(
+                                    delegate = AndroidLlamaCppInferenceBackend(
+                                        context = this@EngineService,
+                                        catalogManager = catalog,
+                                    ),
+                                    modelsDir = onnxModelsDir,
                                 ),
                                 modelsDir = onnxModelsDir,
                             ),

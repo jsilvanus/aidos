@@ -19,6 +19,7 @@ import dev.aidos.decisions.DecisionWire
 import dev.aidos.stt.SttModelAdapter
 import dev.aidos.tts.PiperVoice
 import dev.aidos.tts.SpeechRequest
+import dev.aidos.tts.SpeechResult
 import dev.aidos.tts.SpeechText
 import dev.aidos.tts.TtsModelAdapter
 import dev.aidos.tts.TtsRequestException
@@ -420,6 +421,7 @@ class EngineHttpServer(
                     post("/aidin/v1/chat/completions") { handleAidinHttpDelegation(call, "/aidin/v1/chat/completions") }
                     post("/aidin/v1/embeddings") { handleAidinHttpDelegation(call, "/aidin/v1/embeddings") }
                     post("/aidin/v1/audio/transcriptions") { handleAidinHttpDelegation(call, "/aidin/v1/audio/transcriptions") }
+                    post("/aidin/v1/audio/speech") { handleAidinHttpDelegation(call, "/aidin/v1/audio/speech") }
                     post("/aidin/v1/systemone") { handleAidinHttpDelegation(call, "/aidin/v1/systemone") }
                 }
 
@@ -1723,8 +1725,8 @@ class EngineHttpServer(
 
     /**
      * `POST /v1/audio/speech` (RFC-0117 amendment): OpenAI-shaped speech from a text-to-speech voice. Same auth,
-     * locality and admission as the other inference routes; a chat or non-voice model is refused with 400. Local
-     * voices only: speech is not delegated to peers yet.
+     * locality and admission as the other inference routes; a chat or non-voice model is refused with 400. A virtual
+     * model routes like transcription: local, or delegated to a peer over `/aidin/v1/audio/speech`.
      */
     private suspend fun handleSpeech(call: ApplicationCall) {
         ensureAidinAttached()
@@ -1748,12 +1750,41 @@ class EngineHttpServer(
             return reject("input is ${request.input.length} characters; the limit is ${SpeechText.MAX_INPUT_CHARS}", "input", "input_too_long")
         }
 
+        if (virtualModelRouter.isVirtualModelId(request.model)) {
+            try {
+                val routes = virtualModelRouter.resolveRoutes(request.model, locality)
+                val first = runCatching { speechFromRoute(routes[0], request.input, request.voice, speed, locality) }
+                val fallback = routes.getOrNull(1)
+                val used = if (first.isSuccess) {
+                    first.getOrThrow()
+                } else {
+                    val err = first.exceptionOrNull()!!
+                    if (routes[0] !is ResolvedCandidateRoute.LocalModel && isRetryableRouteFailure(err) && fallback != null) {
+                        quarantineFailedRoute(routes[0])
+                        speechFromRoute(fallback, request.input, request.voice, speed, locality)
+                    } else {
+                        throw err
+                    }
+                }
+                call.response.header(PLACEMENT_HEADER, used.first.placement.wire)
+                call.response.header(ROUTE_HEADER, used.first.routeHeader)
+                respondSpeech(call, used.second, format)
+            } catch (e: TtsRequestException) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail(e.message ?: "invalid input", "invalid_request_error", param = "input", code = "invalid_input"))
+                )
+            } catch (e: Exception) {
+                respondClassifiedError(call, e, emptyList())
+            }
+            return
+        }
+
         try {
             val result = executeManaged(request.model, locality) { adapter, placement ->
                 call.response.header(PLACEMENT_HEADER, placement.wire)
                 call.response.header(ROUTE_HEADER, "local")
-                if (adapter !is TtsModelAdapter) throw TtsRequestException("Model ${request.model} is not a text-to-speech model")
-                adapter.synthesize(SpeechRequest(request.input, request.voice, speed)).getOrThrow()
+                synthesizeWith(adapter, request.model, request.input, request.voice, speed)
             }
             val failure = result.exceptionOrNull()
             if (failure is TtsRequestException) {
@@ -1767,15 +1798,49 @@ class EngineHttpServer(
                 respondClassifiedError(call, failure, emptyList())
                 return
             }
-            val speech = result.getOrThrow()
-            if (format == "pcm") {
-                call.response.header("X-Aidos-Sample-Rate", speech.sampleRate.toString())
-                call.respondBytes(speech.pcm16, ContentType("audio", "pcm"))
-            } else {
-                call.respondBytes(WavWriter.pcm16Wav(speech.pcm16, speech.sampleRate), ContentType("audio", "wav"))
-            }
+            respondSpeech(call, result.getOrThrow(), format)
         } catch (e: Exception) {
             respondClassifiedError(call, e, emptyList())
+        }
+    }
+
+    /** Runs the voice behind [adapter]; a model that is not a text-to-speech voice is refused as a bad request. */
+    private suspend fun synthesizeWith(adapter: ModelAdapter, modelId: String, input: String, voice: String?, speed: Double): SpeechResult {
+        if (adapter !is TtsModelAdapter) throw TtsRequestException("Model $modelId is not a text-to-speech model")
+        return adapter.synthesize(SpeechRequest(input, voice, speed)).getOrThrow()
+    }
+
+    /** One route of a virtual speech model: local, or delegated to the peer that holds the voice. */
+    private suspend fun speechFromRoute(
+        route: ResolvedCandidateRoute,
+        input: String,
+        voice: String?,
+        speed: Double,
+        locality: Locality,
+    ): Pair<ResolvedCandidateRoute, SpeechResult> = when (route) {
+        is ResolvedCandidateRoute.LocalModel -> {
+            val speech = executeManaged(route.modelId, locality) { adapter, _ ->
+                synthesizeWith(adapter, route.modelId, input, voice, speed)
+            }.getOrThrow()
+            route to speech
+        }
+        is ResolvedCandidateRoute.PeerDelegation -> {
+            val node = aidinNode() ?: throw ModelUnavailableException(route.modelId)
+            val body = SpeechRequestBody(model = route.modelId, input = input, voice = voice, response_format = "pcm", speed = speed)
+            val resp = node.delegate(route.peerNodeId, "/aidin/v1/audio/speech", wireJson.encodeToString(body), locality.wire, route.planVersion)
+            if (resp.status != 200) throw exceptionFromPeerError(resp.status, resp.bodyJson, route.peerNodeId.value, route.modelId)
+            val decoded = wireJson.decodeFromString<SpeechDelegateResponse>(resp.bodyJson)
+            route to SpeechResult(Base64.getDecoder().decode(decoded.pcm16), decoded.sample_rate)
+        }
+        is ResolvedCandidateRoute.LocalSplitAnchor -> throw UnsupportedOperationException("Split model does not support speech")
+    }
+
+    private suspend fun respondSpeech(call: ApplicationCall, speech: SpeechResult, format: String) {
+        if (format == "pcm") {
+            call.response.header("X-Aidos-Sample-Rate", speech.sampleRate.toString())
+            call.respondBytes(speech.pcm16, ContentType("audio", "pcm"))
+        } else {
+            call.respondBytes(WavWriter.pcm16Wav(speech.pcm16, speech.sampleRate), ContentType("audio", "wav"))
         }
     }
 
@@ -2091,6 +2156,7 @@ class EngineHttpServer(
             "/aidin/v1/chat/completions" -> handleDelegatedChat(request, effectivePeerLocality, emitStream)
             "/aidin/v1/embeddings" -> handleDelegatedEmbeddings(request, effectivePeerLocality)
             "/aidin/v1/audio/transcriptions" -> handleDelegatedTranscriptions(request, effectivePeerLocality)
+            "/aidin/v1/audio/speech" -> handleDelegatedSpeech(request, effectivePeerLocality)
             "/aidin/v1/systemone" -> handleDelegatedDecisions(request, effectivePeerLocality)
             else -> LinkMessage.DelegateResponse(
                 requestId = request.requestId,
@@ -2291,6 +2357,35 @@ class EngineHttpServer(
             requestId = request.requestId,
             status = 200,
             bodyJson = wireJson.encodeToString(TranscriptionResponse(text = result.getOrThrow())),
+        )
+    }
+
+    /** Peer side of `/aidin/v1/audio/speech`: runs the voice locally and returns its PCM base64-encoded. */
+    private suspend fun handleDelegatedSpeech(
+        request: LinkMessage.DelegateRequest,
+        peerLocality: Locality,
+    ): LinkMessage.DelegateResponse {
+        fun bad(message: String, code: String) = LinkMessage.DelegateResponse(
+            requestId = request.requestId,
+            status = 400,
+            bodyJson = wireJson.encodeToString(ErrorResponse(ErrorDetail(message, "invalid_request_error", code = code))),
+        )
+        val body = runCatching { wireJson.decodeFromString<SpeechRequestBody>(request.bodyJson) }.getOrNull()
+            ?: return bad("Malformed speech request", "invalid_json")
+        val speed = body.speed ?: 1.0
+        if (!(speed >= PiperVoice.MIN_SPEED && speed <= PiperVoice.MAX_SPEED)) return bad("speed is out of range", "invalid_request")
+        if (body.input.length > SpeechText.MAX_INPUT_CHARS) return bad("input is too long", "input_too_long")
+        val result = executeManaged(body.model, peerLocality.strictest(Locality.LOCAL_ONLY)) { adapter, _ ->
+            synthesizeWith(adapter, body.model, body.input, body.voice, speed)
+        }
+        if (result.isFailure) return delegateErrorResponse(request.requestId, result.exceptionOrNull())
+        val speech = result.getOrThrow()
+        return LinkMessage.DelegateResponse(
+            requestId = request.requestId,
+            status = 200,
+            bodyJson = wireJson.encodeToString(
+                SpeechDelegateResponse(pcm16 = Base64.getEncoder().encodeToString(speech.pcm16), sample_rate = speech.sampleRate)
+            ),
         )
     }
 
