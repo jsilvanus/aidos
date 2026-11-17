@@ -69,7 +69,8 @@ class DesktopTunnelsTest {
     }
 
     private fun eventually(what: String, check: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + 10_000
+        // CI runners are slow under load; the 10 s bound flaked on CI (run 2 of the head commit).
+        val deadline = System.currentTimeMillis() + 30_000
         while (System.currentTimeMillis() < deadline) { if (check()) return; Thread.sleep(20) }
         throw AssertionError("timed out waiting for: $what")
     }

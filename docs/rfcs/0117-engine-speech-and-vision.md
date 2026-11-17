@@ -47,9 +47,9 @@ A chat message may carry `images`: base64 image bytes or `data:image/...;base64,
 
 A package is a flat directory laid out like an `onnx-community/*` repository: encoder and decoder graphs at one precision (int8 preferred, then int8, fp32, fp16), tokenizer and config files. `ModelPackage.detectWhisper` and the vision/decision equivalents pick the files; the installer downloads all of them or none. The desktop app installs from the Hugging Face browser; Android has no in-app package install yet (scripts `scripts/stt/fetch-whisper.mjs` and `scripts/vision/fetch-smolvlm.mjs` fetch a package for copying).
 
-### Text-to-speech (amendment, proposed, not built)
+### Text-to-speech (amendment, built on the desktop JVM host; not run on a device)
 
-Status of this section: proposed 2026-11-16. The model choice is the owner's decision. Nothing here is implemented; the Implementation Files list does not change until stage 2.
+Status of this section: decided 2026-11-16 (Finnish: Piper fi_FI harri with the Kotlin phonemizer; English: Piper en_US LJSpeech high with CMUdict). Built in `engine/tts` and `POST /v1/audio/speech`; the real-voice test is opt-in and Android is not wired yet.
 
 Goal: the Engine can speak. A model of kind `tts` loads and `POST /v1/audio/speech` returns audio. Finnish must work first; English should work too. The Android app keeps the system TTS (`AndroidDeviceTtsEngine`) until a later decision.
 
@@ -69,7 +69,7 @@ Goal: the Engine can speak. A model of kind `tts` loads and `POST /v1/audio/spee
 
 **Package layout (proposed).** A directory package: `<voice>.onnx` (VITS graph), `<voice>.onnx.json` (sample rate, `phoneme_id_map`, `num_speakers`, inference scales, `espeak.voice` field kept for reference only), and `MODEL_CARD`. `ModelPackage.detectPiper` picks the files; the installer downloads all of them or none, as for STT.
 
-**Route (proposed).** `POST /v1/audio/speech`, OpenAI-shaped JSON `{model, input, voice?, response_format?, speed?}`. Output `audio/wav` (16-bit PCM) by default; `pcm` also allowed; other formats are HTTP 400 with a clear message. Input limit 4000 characters; longer text is split at sentence ends. The request goes through the request manager and the same auth, locality and admission rules as the other inference routes. A `tts` model on chat routes is refused with a helpful error, as for STT. Capability string `audio.speech`.
+**Route.** `POST /v1/audio/speech`, OpenAI-shaped JSON `{model, input, voice?, response_format?, speed?}`. Output `audio/wav` (16-bit PCM) by default; `pcm` also allowed; other formats are HTTP 400 with a clear message. Input limit 4000 characters; longer text is split at sentence ends. The request goes through the request manager and the same auth, locality and admission rules as the other inference routes. A `tts` model on chat routes is refused with a helpful error, as for STT. Capability string `audio.speech`.
 
 **Limits and non-goals.** No streaming audio, no SSML, no voice cloning, no emotion controls, no speaker selection beyond the voices in the package, no Android in-app package install in this amendment.
 
@@ -139,6 +139,24 @@ files:
   - docs/stt.md
   - scripts/stt/fetch-whisper.mjs
   - scripts/vision/fetch-smolvlm.mjs
+  - engine/tts/build.gradle.kts
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/EnglishPhonemizer.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/FinnishPhonemizer.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/Phonemizer.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/PiperConfig.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/SpeechText.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/TtsTypes.kt
+  - engine/tts/src/commonMain/kotlin/dev/aidos/tts/WavWriter.kt
+  - engine/tts/src/commonTest/kotlin/dev/aidos/tts/TtsCoreTest.kt
+  - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/OrtPiperGraph.kt
+  - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/PiperVoice.kt
+  - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/TtsPackages.kt
+  - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/VoicePackage.kt
+  - engine/tts/src/jvmMain/kotlin/dev/aidos/tts/OnnxTtsBackend.kt
+  - engine/tts/src/jvmTest/kotlin/dev/aidos/tts/PiperVoiceTest.kt
+  - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
+  - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
 ```
 
 ## Post-MVP Work
@@ -183,9 +201,32 @@ post_mvp:
     title: "Measure Whisper small on a mid-range Android phone; decide whether a smaller Finnish fine-tune is needed"
     status: todo
   - id: "0117.10"
-    title: "Text-to-speech: Piper Finnish voice package, pure-Kotlin Finnish phonemizer, POST /v1/audio/speech (amendment stage 2, after the owner picks the model)"
-    status: todo
+    title: "Text-to-speech: Piper voice packages (Finnish and English), pure-Kotlin Finnish phonemizer, CMUdict English, POST /v1/audio/speech"
+    status: partial
     phase: P1
+    files:
+      - engine/tts/build.gradle.kts
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/EnglishPhonemizer.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/FinnishPhonemizer.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/Phonemizer.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/PiperConfig.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/SpeechText.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/TtsTypes.kt
+      - engine/tts/src/commonMain/kotlin/dev/aidos/tts/WavWriter.kt
+      - engine/tts/src/commonTest/kotlin/dev/aidos/tts/TtsCoreTest.kt
+      - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/OrtPiperGraph.kt
+      - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/PiperVoice.kt
+      - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/TtsPackages.kt
+      - engine/tts/src/jvmAndAndroidMain/kotlin/dev/aidos/tts/VoicePackage.kt
+      - engine/tts/src/jvmMain/kotlin/dev/aidos/tts/OnnxTtsBackend.kt
+      - engine/tts/src/jvmTest/kotlin/dev/aidos/tts/PiperVoiceTest.kt
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/EngineHttpServer.kt
+      - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
+      - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
+      - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+      - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
+      - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
+
   - id: "0117.11"
     title: "Text-to-speech fallback: detect a user-installed espeak-ng (GPL-3.0 or later, not shipped) for English quality; never bundled"
     status: todo

@@ -32,6 +32,7 @@ import dev.aidos.vision.OnnxVisionBackend
 import dev.aidos.providers.ProviderBackend
 import dev.aidos.providers.ProviderConfigs
 import dev.aidos.stt.OnnxSttBackend
+import dev.aidos.tts.OnnxTtsBackend
 import dev.aidos.modelruntime.GlobalModelRuntime
 import dev.aidos.modelruntime.RunSettingsSource
 import dev.aidos.modelruntime.LlamaCppInferenceBackend
@@ -286,7 +287,7 @@ class DesktopEngineHost(
                 // HTTP providers (e.g. a local Ollama) from providers.json; read per call, so editing it needs no restart.
                 CatalogAwareInferenceBackend(
                     ProviderBackend(
-                        OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir),
+                        OnnxTtsBackend(OnnxVisionBackend(OnnxSttBackend(OnnxDecisionBackend(LlamaCppInferenceBackend(), modelsDir), modelsDir), modelsDir), modelsDir),
                         { ProviderConfigs.load(File(stateDir, "providers.json")) },
                     ),
                     modelsDir = modelsDir,

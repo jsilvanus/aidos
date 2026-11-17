@@ -31,6 +31,8 @@ kotlin {
                 api(project(":vision"))
                 // Whisper speech-to-text behind /v1/audio/transcriptions; contract lives in :stt.
                 api(project(":stt"))
+                // Piper text-to-speech behind /v1/audio/speech (RFC-0117 amendment); contract lives in :tts.
+                api(project(":tts"))
                 // Inference groups / AIDIN (RFC-0105 D50): peer trust, delegation, virtual model routing, split plans.
                 api(project(":aidin"))
                 implementation(project(":modelruntime"))

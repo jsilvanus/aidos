@@ -44,7 +44,7 @@ class ContractFreezeTest {
             listOf(
                 "apiVersion", "availability", "capabilities", "chatCompletion", "chatCompletionResult", "close", "decide", "decideResult",
                 "embeddings", "embeddingsResult", "engineVersion", "getLastError", "getLocality",
-                "initialize", "isAvailable", "request", "requestResult", "streamChatCompletion", "supportsEndpoint",
+                "initialize", "isAvailable", "request", "requestResult", "speak", "streamChatCompletion", "supportsEndpoint",
                 "transcribe", "transcribeBytes", "transcribeBytesResult", "transcribeResult"
             ),
             // `...Result` methods return kotlin.Result, so the JVM appends a "-<hash>" mangling suffix.

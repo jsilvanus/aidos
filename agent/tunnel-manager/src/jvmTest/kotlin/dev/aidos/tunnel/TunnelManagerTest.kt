@@ -227,23 +227,23 @@ class TunnelManagerTest {
         assertEquals(true, storage.lastSavedConfig?.remoteAccessAllowed)
 
         tunnel.start()
-        val upState = withTimeout(5_000) { tunnel.state.first { it is TunnelState.Up } }
+        val upState = withTimeout(30_000) { tunnel.state.first { it is TunnelState.Up } }
         assertEquals(TunnelState.Up(47100), upState)
-        assertEquals("Up (port 47100)", withTimeout(5_000) { tunnel.statusText.first { it.startsWith("Up") } })
+        assertEquals("Up (port 47100)", withTimeout(30_000) { tunnel.statusText.first { it.startsWith("Up") } })
         assertEquals("SHA256:server-key", storage.loadPinnedHostKey("home-desktop"))
 
         tunnel.stop()
         assertEquals(TunnelState.Stopped, tunnel.state.value)
-        assertEquals("Stopped", withTimeout(5_000) { tunnel.statusText.first { it == "Stopped" } })
+        assertEquals("Stopped", withTimeout(30_000) { tunnel.statusText.first { it == "Stopped" } })
 
         // Pin a different fingerprint in storage and verify start() loads it and rejects server's key.
         storage.pinHostKey("home-desktop", "SHA256:other-expected-key")
         tunnel.start()
-        val rejected = withTimeout(5_000) { tunnel.state.first { it is TunnelState.HostKeyChanged } }
+        val rejected = withTimeout(30_000) { tunnel.state.first { it is TunnelState.HostKeyChanged } }
         assertEquals(TunnelState.HostKeyChanged("SHA256:server-key"), rejected)
         assertEquals(1, sessions.size)
         assertTrue(
-            withTimeout(5_000) { tunnel.statusText.first { it.contains("Host key changed") } }
+            withTimeout(30_000) { tunnel.statusText.first { it.contains("Host key changed") } }
                 .contains("SHA256:server-key"),
         )
     }

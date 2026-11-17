@@ -17,6 +17,12 @@ import dev.aidos.decisions.DecisionModelAdapter
 import dev.aidos.decisions.DecisionRequestException
 import dev.aidos.decisions.DecisionWire
 import dev.aidos.stt.SttModelAdapter
+import dev.aidos.tts.PiperVoice
+import dev.aidos.tts.SpeechRequest
+import dev.aidos.tts.SpeechText
+import dev.aidos.tts.TtsModelAdapter
+import dev.aidos.tts.TtsRequestException
+import dev.aidos.tts.WavWriter
 import dev.aidos.stt.SttRequest
 import dev.aidos.stt.SttRequestException
 import dev.aidos.kernel.*
@@ -402,6 +408,7 @@ class EngineHttpServer(
                 post("/v1/chat/completions") { handleChatCompletions(call) }
                 post("/v1/embeddings") { handleEmbeddings(call) }
                 post("/v1/audio/transcriptions") { handleTranscriptions(call) }
+                post("/v1/audio/speech") { handleSpeech(call) }
                 // Typed decisions (RFC-0125 D45). /v1/systemone is the Jev-compatible path; /v1/decisions
                 // is OpenJev's alias for the same handler.
                 post("/v1/systemone") { handleDecisions(call) }
@@ -1711,6 +1718,64 @@ class EngineHttpServer(
             respondTranscription(call, TranscriptionResponse(text = result.getOrThrow()), responseFormat)
         } catch (e: Exception) {
             respondClassifiedError(call, e, sensitivePrompts)
+        }
+    }
+
+    /**
+     * `POST /v1/audio/speech` (RFC-0117 amendment): OpenAI-shaped speech from a text-to-speech voice. Same auth,
+     * locality and admission as the other inference routes; a chat or non-voice model is refused with 400. Local
+     * voices only: speech is not delegated to peers yet.
+     */
+    private suspend fun handleSpeech(call: ApplicationCall) {
+        ensureAidinAttached()
+        val locality = resolveLocality(call) ?: return
+        val request = receiveBoundedJson<SpeechRequestBody>(call, policy.maxRequestBytes) ?: return
+
+        suspend fun reject(message: String, param: String, code: String) {
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse(ErrorDetail(message, "invalid_request_error", param = param, code = code)))
+        }
+
+        if (request.model.isBlank()) return reject("model must not be blank", "model", "invalid_request")
+        val format = request.response_format ?: "wav"
+        if (format != "wav" && format != "pcm") {
+            return reject("response_format must be \"wav\" or \"pcm\"; other formats are not supported yet", "response_format", "unsupported_format")
+        }
+        val speed = request.speed ?: 1.0
+        if (!(speed >= PiperVoice.MIN_SPEED && speed <= PiperVoice.MAX_SPEED)) {
+            return reject("speed must be between ${PiperVoice.MIN_SPEED} and ${PiperVoice.MAX_SPEED}", "speed", "invalid_request")
+        }
+        if (request.input.length > SpeechText.MAX_INPUT_CHARS) {
+            return reject("input is ${request.input.length} characters; the limit is ${SpeechText.MAX_INPUT_CHARS}", "input", "input_too_long")
+        }
+
+        try {
+            val result = executeManaged(request.model, locality) { adapter, placement ->
+                call.response.header(PLACEMENT_HEADER, placement.wire)
+                call.response.header(ROUTE_HEADER, "local")
+                if (adapter !is TtsModelAdapter) throw TtsRequestException("Model ${request.model} is not a text-to-speech model")
+                adapter.synthesize(SpeechRequest(request.input, request.voice, speed)).getOrThrow()
+            }
+            val failure = result.exceptionOrNull()
+            if (failure is TtsRequestException) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(ErrorDetail(failure.message ?: "invalid input", "invalid_request_error", param = "input", code = "invalid_input"))
+                )
+                return
+            }
+            if (result.isFailure) {
+                respondClassifiedError(call, failure, emptyList())
+                return
+            }
+            val speech = result.getOrThrow()
+            if (format == "pcm") {
+                call.response.header("X-Aidos-Sample-Rate", speech.sampleRate.toString())
+                call.respondBytes(speech.pcm16, ContentType("audio", "pcm"))
+            } else {
+                call.respondBytes(WavWriter.pcm16Wav(speech.pcm16, speech.sampleRate), ContentType("audio", "wav"))
+            }
+        } catch (e: Exception) {
+            respondClassifiedError(call, e, emptyList())
         }
     }
 
