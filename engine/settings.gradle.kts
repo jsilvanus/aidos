@@ -75,6 +75,8 @@ include(":aidin")
 include(":vision")
 include(":providers")
 include(":stt")
+// RFC-0117 amendment: text-to-speech (Piper voices on ONNX Runtime).
+include(":tts")
 include(":cookbook")
 include(":huggingface")
 include(":downloads")
