@@ -338,7 +338,7 @@ class GuardianApprovalEndToEndTest {
         verifier: GuardianApprovalVerifier? = null,
         largeOutputs: LargeOutputStore? = null,
         redact: (String) -> String = { it },
-        detectSecrets: (String, String) -> List<String> = { _, _ -> emptyList() },
+        screenSecrets: (String, String) -> SecretScreeningResult = { _, _ -> SecretScreeningResult.Clean },
         fileContentProvider: (String) -> String = { path -> "contents of $path" },
     ): Triple<JdbcSqliteDriver, RunId, Pair<SqliteExecutor, GuardianTestTools>> {
         val driver = openDriver()
@@ -395,7 +395,7 @@ class GuardianApprovalEndToEndTest {
             broker = broker,
             subjectId = sid,
             redact = redact,
-            detectSecrets = detectSecrets,
+            screenSecrets = screenSecrets,
             resolveCapability = resolver(caps),
             largeOutputs = largeOutputs,
             resolveTaintApprovalPolicy = policy,
@@ -659,7 +659,7 @@ class GuardianApprovalEndToEndTest {
             policy = { TaintApprovalPolicy.GUARDIAN },
             screener = throwingScreener,
             verifier = verifier,
-            detectSecrets = { _, text -> if (text.contains("AWS_SECRET")) listOf("aws_key") else emptyList() },
+            screenSecrets = { _, text -> if (text.contains("AWS_SECRET")) SecretScreeningResult.Withheld(listOf("aws_key")) else SecretScreeningResult.Clean },
             fileContentProvider = { path -> if (path.endsWith(".env")) "AWS_SECRET=12345" else "normal untrusted text" },
         )
         val (executor, tools) = pair
@@ -672,6 +672,41 @@ class GuardianApprovalEndToEndTest {
         assertEquals(1, tools.pushes)
         assertEquals("UNTRUSTED", taintLevel(driver, runId))
         assertTrue(auditEntries(driver, "TaintInjectionSuspected").isEmpty())
+    }
+
+    @Test
+    fun `Gate A screens a redacted output on its redacted text (RFC-0035)`() = runBlocking {
+        val screened = mutableListOf<String>()
+        val recordingScreener = object : TaintInputScreener {
+            override suspend fun screen(toolName: String, untrustedText: String): InputScreeningVerdict {
+                screened += untrustedText
+                return InputScreeningVerdict(instructionSuspected = false)
+            }
+        }
+        val redacted = "val k = \"«redacted:aws-access-key»\"\n[1 credential-like value(s) in this result were replaced with redaction markers.]"
+
+        val (driver, runId, pair) = setupRig(
+            responses = listOf(
+                call("c1", "read-file", "node_modules/config.kt"),
+                call("c2", "read-file", "node_modules/normal.txt"),
+                endTurnResponse(),
+            ),
+            policy = { TaintApprovalPolicy.GUARDIAN },
+            screener = recordingScreener,
+            screenSecrets = { _, text ->
+                if (text.contains("AWS_KEY_VALUE")) SecretScreeningResult.Redacted(redacted, listOf("pattern:aws-access-key"), 1)
+                else SecretScreeningResult.Clean
+            },
+            fileContentProvider = { path -> if (path.endsWith("config.kt")) "val k = \"AWS_KEY_VALUE\"" else "normal untrusted text" },
+        )
+        val (executor, _) = pair
+
+        executor.drive(runId)
+
+        assertEquals("COMPLETED", runState(driver, runId))
+        assertEquals(2, screened.size, "a redacted output is screened, like a clean one")
+        assertTrue(screened.any { it == redacted }, "the screener saw the redacted text")
+        assertTrue(screened.none { it.contains("AWS_KEY_VALUE") }, "the screener never saw the value")
     }
 
     @Test

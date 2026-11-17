@@ -52,6 +52,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -201,7 +202,7 @@ class AgentLoopTaskRunnerTest {
         redact: (String) -> String = { it },
         resolveRemoteAdapter: (String) -> ModelAdapter? = { null },
         largeOutputs: LargeOutputStore? = null,
-        detectSecrets: (String, String) -> List<String> = { _, _ -> emptyList() },
+        screenSecrets: (String, String) -> SecretScreeningResult = { _, _ -> SecretScreeningResult.Clean },
     ) = SqliteExecutor(
         driver = driver,
         audit = AuditLog(driver),
@@ -219,7 +220,7 @@ class AgentLoopTaskRunnerTest {
             redact = redact,
             resolveRemoteAdapter = resolveRemoteAdapter,
             largeOutputs = largeOutputs,
-            detectSecrets = detectSecrets,
+            screenSecrets = screenSecrets,
         ),
     )
 
@@ -368,7 +369,9 @@ class AgentLoopTaskRunnerTest {
 
         buildExecutor(
             driver, fakeRouter(adapter), brokerReturning(ToolOutcome.Ok, TrustLevel.UNTRUSTED, dotenv),
-            detectSecrets = { _, text -> if ("DB_PASSWORD=" in text) listOf("pattern:credential-assignment") else emptyList() },
+            screenSecrets = { _, text ->
+                if ("DB_PASSWORD=" in text) SecretScreeningResult.Withheld(listOf("pattern:credential-assignment")) else SecretScreeningResult.Clean
+            },
         ).drive(runId)
 
         assertEquals("COMPLETED", runRow(driver, runId).first)
@@ -383,6 +386,36 @@ class AgentLoopTaskRunnerTest {
         val audit = driver.executeQuery(null, "SELECT subject_ref, detail_json FROM audit_log WHERE kind = 'SecretContentWithheld'",
             mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) + "|" + c.getString(1) else null) }, 0).value!!
         assertEquals("read-file|{\"kinds\":[\"pattern:credential-assignment\"]}", audit)
+    }
+
+    @Test
+    fun `a tool result with a credential-like value keeps its text and gets a marker (RFC-0035)`() = runBlocking {
+        val driver = openDriver()
+        val (_, _, runId) = createRun(driver)
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(toolCallResponse("read-file"), endTurnResponse()), requests)
+        val source = "class Client {\n    val key = \"AKIAABCDEFGHIJKLMNOP\"\n    fun connect() = Unit\n}"
+        val redacted = "class Client {\n    val key = \"«redacted:aws-access-key»\"\n    fun connect() = Unit\n}" +
+            "\n[1 credential-like value(s) in this result were replaced with redaction markers.]"
+
+        buildExecutor(
+            driver, fakeRouter(adapter), brokerReturning(ToolOutcome.Ok, TrustLevel.TRUSTED, source),
+            screenSecrets = { _, text ->
+                if ("AKIA" in text) SecretScreeningResult.Redacted(redacted, listOf("pattern:aws-access-key"), 1)
+                else SecretScreeningResult.Clean
+            },
+        ).drive(runId)
+
+        assertEquals("COMPLETED", runRow(driver, runId).first)
+        val seen = requests[1].messages.filterIsInstance<Turn.ToolResult>().single().result.content
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals(redacted, seen, "the model gets the redacted text, not the withheld notice")
+        assertFalse(seen.contains("AKIA"))
+        val audit = driver.executeQuery(null, "SELECT subject_ref, detail_json FROM audit_log WHERE kind = 'SecretContentRedacted'",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) + "|" + c.getString(1) else null) }, 0).value!!
+        assertEquals("read-file|{\"kinds\":[\"pattern:aws-access-key\"],\"count\":1}", audit)
+        assertEquals(0, driver.executeQuery(null, "SELECT COUNT(*) FROM audit_log WHERE kind = 'SecretContentWithheld'",
+            mapper = { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getLong(0)!!.toInt() else 0) }, 0).value)
     }
 
     @Test
