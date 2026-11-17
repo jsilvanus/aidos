@@ -14,6 +14,7 @@ import dev.aidos.tts.SpeechText
 import dev.aidos.tts.TtsModel
 import dev.aidos.tts.TtsModelAdapterImpl
 import dev.aidos.tts.TtsRequestException
+import fi.italeino.aidos.engine.inference.LOCALITY_HEADER
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -41,9 +42,14 @@ class EngineHttpServerSpeechTest {
         override fun close() = Unit
     }
 
-    private class SingleModelRuntime(private val id: String, private val kind: ModelKind, private val adapter: ModelAdapter) : ModelRuntime {
+    private class SingleModelRuntime(
+        private val id: String,
+        private val kind: ModelKind,
+        private val adapter: ModelAdapter,
+        private val isLocal: Boolean = true,
+    ) : ModelRuntime {
         override suspend fun catalog() = installed()
-        override suspend fun installed() = listOf(ModelDescriptor(id, id, kind, "local", true, 4000, 1L, "d"))
+        override suspend fun installed() = listOf(ModelDescriptor(id, id, kind, "local", isLocal, 4000, 1L, "d"))
         override suspend fun load(modelId: String): Result<ModelAdapter> =
             if (modelId == id) Result.success(adapter) else Result.failure(IllegalStateException("Model $modelId is not installed"))
         override suspend fun delete(modelId: String) = Unit
@@ -155,6 +161,22 @@ class EngineHttpServerSpeechTest {
                 setBody("""{"model":"fake-piper","input":"   "}""")
             }
             assertEquals(HttpStatusCode.BadRequest, r.status)
+        }
+    }
+
+    @Test
+    fun localOnlyRefusesAVoiceThatIsNotLocal() {
+        val fake = FakeVoice()
+        val remoteVoice = SingleModelRuntime("fake-piper", ModelKind.TTS, TtsModelAdapterImpl(fake), isLocal = false)
+        withServer(remoteVoice) { token ->
+            val r = client.post("/v1/audio/speech") {
+                bearerAuth(token); contentType(ContentType.Application.Json)
+                header(LOCALITY_HEADER, "local_only")
+                setBody("""{"model":"fake-piper","input":"hei"}""")
+            }
+            assertEquals(HttpStatusCode.Forbidden, r.status)
+            assertTrue(r.bodyAsText().contains("\"type\":\"locality_violation\""), r.bodyAsText())
+            assertEquals(null, fake.last, "a refused voice must not synthesise")
         }
     }
 
