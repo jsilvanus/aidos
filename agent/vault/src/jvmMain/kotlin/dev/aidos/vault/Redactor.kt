@@ -110,29 +110,54 @@ class Redactor(
      * Redact known values and suspicious patterns from [input]. Returns [input] itself when
      * nothing was found. Each kind found is reported to the sink once per call.
      */
-    fun redact(input: String, boundary: RedactionBoundary = RedactionBoundary.UNSPECIFIED): String {
+    fun redact(input: String, boundary: RedactionBoundary = RedactionBoundary.UNSPECIFIED): String =
+        redactCounted(input, boundary).text
+
+    /**
+     * Outcome of [redactCounted]: the redacted text, the kinds found, and how many matches were
+     * replaced, known values and pattern matches counted apart (RFC-0035 "Secrets found in content").
+     */
+    data class Redaction(
+        val text: String,
+        val kinds: List<String>,
+        val knownValueHits: Int,
+        val patternHits: Int,
+    )
+
+    /**
+     * [redact], also counting the matches it replaced. Returns the text as given when nothing was
+     * found. Never returns or records a match.
+     */
+    fun redactCounted(input: String, boundary: RedactionBoundary = RedactionBoundary.UNSPECIFIED): Redaction {
         var result = input
         val found = LinkedHashSet<String>()
+        var knownHits = 0
         for (reg in active()) {
             // Searched as chars: making a String of the value on every call left a copy of every
             // secret on the heap for each string that crossed a boundary.
-            if (indexOf(result, reg.value, 0) >= 0) {
+            val hits = countOf(result, reg.value)
+            if (hits > 0) {
                 result = replaceAll(result, reg.value, "«redacted:${reg.name}»")
                 found += "known_value"
+                knownHits += hits
             }
         }
+        var patternHits = 0
         // One pass decides whether any pattern can match; the twelve are only run when one does.
         if (ANY_PATTERN.matcher(result).find()) {
             for ((pattern, label) in PATTERNS) {
                 val m = pattern.matcher(result)
-                if (m.find()) {
-                    result = m.replaceAll(java.util.regex.Matcher.quoteReplacement("«redacted:$label»"))
+                var hits = 0
+                while (m.find()) hits++
+                if (hits > 0) {
+                    result = m.reset().replaceAll(java.util.regex.Matcher.quoteReplacement("«redacted:$label»"))
                     found += "pattern:$label"
+                    patternHits += hits
                 }
             }
         }
         if (sink != null) for (kind in found) sink.record(boundary, kind)
-        return result
+        return Redaction(result, found.toList(), knownHits, patternHits)
     }
 
     /** The kinds of secret [input] contains, without redacting or reporting. Never the match. */
@@ -161,6 +186,17 @@ class Redactor(
             i++
         }
         return -1
+    }
+
+    private fun countOf(haystack: String, needle: CharArray): Int {
+        var hits = 0
+        var from = 0
+        while (true) {
+            val at = indexOf(haystack, needle, from)
+            if (at < 0) return hits
+            hits++
+            from = at + needle.size
+        }
     }
 
     private fun replaceAll(haystack: String, needle: CharArray, replacement: String): String {
