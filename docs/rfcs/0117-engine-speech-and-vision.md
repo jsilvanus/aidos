@@ -157,6 +157,8 @@ files:
   - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
   - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxTtsBackend.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
 ```
 
 ## Post-MVP Work
@@ -224,6 +226,8 @@ post_mvp:
       - engine/enginehost/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/engine/http/OpenAiSchema.kt
       - engine/enginehost/src/jvmTest/kotlin/fi/italeino/aidos/engine/http/EngineHttpServerSpeechTest.kt
       - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopEngineHost.kt
+      - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/inference/AndroidOnnxTtsBackend.kt
+      - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/EngineService.kt
       - sdk/client/src/jvmAndAndroidMain/kotlin/fi/italeino/aidos/sdk/client/AidosEngineClient.kt
       - sdk/client/src/jvmTest/kotlin/fi/italeino/aidos/sdk/client/ContractFreezeTest.kt
 
