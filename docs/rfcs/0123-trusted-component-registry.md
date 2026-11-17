@@ -107,12 +107,12 @@ post_mvp:
     status: todo
     phase: P2
   - id: "0123.8"
-    title: "Owner decision: delete duplicate panes now, or keep them as fallbacks until registry versions are stable"
+    title: "Duplicate panes stay as fallbacks until registry versions are stable (decided 2026-11-17)"
     status: todo
   - id: "0123.9"
     title: "Validated component manifest, and who may add a component"
     status: todo
   - id: "0123.10"
-    title: "Owner decision: publish the registry as an artifact instead of a sibling checkout"
+    title: "Registry is published as a versioned, pinned package, not a sibling checkout (decided 2026-11-17)"
     status: todo
 ```

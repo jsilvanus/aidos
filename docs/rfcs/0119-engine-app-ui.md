@@ -185,6 +185,6 @@ post_mvp:
     title: "Move the remaining panes to HTTP controls (RFC-0115 stage 1)"
     status: todo
   - id: "0119.8"
-    title: "Owner decision: share pane Composables fully between Android and desktop, or keep platform-specific shells"
+    title: "Pane Composables are shared between Android and desktop; only the shells differ (decided 2026-11-17)"
     status: todo
 ```

@@ -540,7 +540,7 @@ post_mvp:
     title: "UI"
     status: todo
   - id: "0041.7"
-    title: "Owner decision: cryptographic timestamping of exports, and whether an external service is used"
+    title: "Exports get no external timestamping for now; local SHA-256 manifest only (decided 2026-11-17)"
     status: todo
   - id: "0041.8"
     title: "Streaming export for very large projects (100 GB and more)"
@@ -549,7 +549,7 @@ post_mvp:
     title: "Minimal lightweight export format for sharing"
     status: todo
   - id: "0041.10"
-    title: "Owner decision: whether P2P sync uses export and import or needs its own RFC"
+    title: "P2P sync gets its own RFC and does not reuse export and import (decided 2026-11-17)"
     status: todo
   - id: "0041.11"
     title: "Export format versioning for backward compatibility"

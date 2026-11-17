@@ -174,6 +174,6 @@ post_mvp:
     status: todo
     phase: P2
   - id: "0116.14"
-    title: "Owner decision: which Amp tools are safe to expose over MCP (answer_from_context, request_progressive_disclosure)"
+    title: "Android Amp MCP uses Binder only; answer_from_context and request_progressive_disclosure stay unexposed for now (decided 2026-11-17)"
     status: todo
 ```

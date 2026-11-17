@@ -695,7 +695,7 @@ post_mvp:
     title: "Fall back to an alternative model when a model fails"
     status: todo
   - id: "0020.9"
-    title: "Owner decision: trusted-models concept (models validated for a project)"
+    title: "Trusted-models concept deferred; digest checks are the trust base (decided 2026-11-17)"
     status: todo
   - id: "0020.10"
     title: "Warn before running computationally expensive models"
