@@ -331,6 +331,7 @@ files:
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SecretsWiring.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SecretsWiringTest.kt
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SecretScreeningResult.kt
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/EventStoreReplayTest.kt
@@ -354,9 +355,11 @@ files:
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/DesktopVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/Redactor.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretContentPolicy.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretsVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SqliteSecretsVault.kt
   - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/Rfc0035RequirementsTest.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/SecretContentPolicyTest.kt
   - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/VaultTest.kt
   - schema/project.sql
   - schema/user.sql
