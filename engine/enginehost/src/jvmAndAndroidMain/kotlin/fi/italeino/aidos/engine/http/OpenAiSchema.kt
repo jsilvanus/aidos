@@ -165,6 +165,13 @@ data class TranscriptionResponse(
     val text: String
 )
 
+/** Peer reply to `/aidin/v1/audio/speech` (RFC-0117 amendment): 16-bit mono PCM, base64, at [sample_rate] Hz. */
+@Serializable
+data class SpeechDelegateResponse(
+    val pcm16: String,
+    val sample_rate: Int,
+)
+
 // Chat Completion Streaming Schema (RFC-0103, Phase C.2)
 
 @Serializable

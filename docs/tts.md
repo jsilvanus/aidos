@@ -29,4 +29,5 @@ Run the opt-in real-voice test with `AIDOS_TTS_MODEL_DIR=<dir of one voice packa
 
 - Input is at most 4000 characters; long text is spoken sentence by sentence.
 - Finnish phonemes are rule-based and approximate; English out-of-dictionary words use a rough letter-to-sound rule.
-- Local voices only; the Android app keeps the system TTS until a later decision.
+- Local voices, or a peer that holds the voice when the request's locality allows it.
+- The Android host stacks the voice backend, but it is not verified on a device yet.

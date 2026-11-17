@@ -61,8 +61,8 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
   (OpenAI-shaped; `response_format` is `wav` (default) or `pcm`; `speed` 0.25 to 4.0; `input` at most 4000
   characters). Response is `audio/wav` (or raw `audio/pcm` with `X-Aidos-Sample-Rate`); the body is binary, not
   JSON. Errors are JSON as on the other routes. SDK: `AidosEngineClient.speak(SpeechRequest): ByteArray?` (null on
-  any failure) with a default of `null` on the interface, so other implementers keep compiling. Local voices only;
-  peers are not asked to speak yet. Chat and non-voice models refuse this route with HTTP 400.
+  any failure) with a default of `null` on the interface, so other implementers keep compiling. A virtual voice
+  may be served by a peer over `/aidin/v1/audio/speech`, under the same locality rules as chat. Chat and non-voice models refuse this route with HTTP 400.
 
 - `AidosEngineClientFactory.create(EngineHandshakeSource)`: a client whose handshake comes from
   somewhere other than Binder. Engine uses it for its own in-process calls; tests use it to run the
