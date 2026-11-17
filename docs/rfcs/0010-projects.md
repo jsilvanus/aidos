@@ -610,7 +610,7 @@ post_mvp:
     title: "Multi-user project access control: read-only versus read-write per project"
     status: todo
   - id: "0010.10"
-    title: "Owner decision: project naming on export and import (global namespace versus per-machine uniqueness)"
+    title: "Project naming is unique per machine, with a UUID as identity and a free display name (decided 2026-11-17)"
     status: todo
   - id: "0010.11"
     title: "Project encapsulation levels: share knowledge across projects without sharing state"

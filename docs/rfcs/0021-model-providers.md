@@ -318,6 +318,6 @@ post_mvp:
     title: "Provider declares its tool-calling is native but unreliable, so routing can prefer constrained decoding"
     status: todo
   - id: "0021.6"
-    title: "Owner decision: redaction placement (broker before adapter, or inside the adapter for structured fields)"
+    title: "Redaction runs in the broker before the adapter (decided 2026-11-17)"
     status: todo
 ```

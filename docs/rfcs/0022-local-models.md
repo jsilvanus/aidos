@@ -547,7 +547,7 @@ post_mvp:
     title: "on-device G3/M21 budget validation"
     status: todo
   - id: "0022.4"
-    title: "Owner decision: whether RUNS_TIGHT models are offered by default or only behind an explicit opt-in"
+    title: "RUNS_TIGHT models are offered only behind an explicit opt-in (decided 2026-11-17)"
     status: todo
   - id: "0022.5"
     title: "Model concurrent residency of an LLM and an embedding model during indexing (admission queue serializes them today)"

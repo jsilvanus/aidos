@@ -423,13 +423,13 @@ post_mvp:
     title: "model attestation"
     status: todo
   - id: "0105.8"
-    title: "Owner decision: group certificate validity and renewal (30 days proposed)"
+    title: "Group certificate is valid 30 days, renewed automatically at two-thirds of its life (decided 2026-11-17)"
     status: todo
   - id: "0105.9"
-    title: "Owner decision: whether the group signing key may live on more than one admin device, and how it is backed up"
+    title: "Group signing key lives on one admin device, plus an encrypted offline backup (decided 2026-11-17)"
     status: todo
   - id: "0105.10"
-    title: "Owner decision: whether aidos:chat candidate lists are per Engine only or pushed by a group admin"
+    title: "aidos:chat candidate lists are per Engine only (decided 2026-11-17)"
     status: todo
   - id: "0105.11"
     title: "Bind node keys to the installation identity with a signed statement once the identity RFC exists"

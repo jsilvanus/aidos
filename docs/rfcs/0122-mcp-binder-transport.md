@@ -123,6 +123,6 @@ post_mvp:
     title: "AppFunctions as an additional outbound surface for other apps"
     status: todo
   - id: "0122.11"
-    title: "Owner decision: settle D51 now that two repositories use the binder"
+    title: "D51 settled 2026-11-15; no decision left (decided 2026-11-17)"
     status: todo
 ```
