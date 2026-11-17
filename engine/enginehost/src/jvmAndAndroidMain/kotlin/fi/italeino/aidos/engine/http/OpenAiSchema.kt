@@ -150,6 +150,16 @@ data class TranscriptionRequest(
     val temperature: Float = 0.0f
 )
 
+/** `POST /v1/audio/speech` body (RFC-0117 amendment), OpenAI-shaped. `response_format` is `wav` (default) or `pcm`. */
+@Serializable
+data class SpeechRequestBody(
+    val model: String,
+    val input: String,
+    val voice: String? = null,
+    val response_format: String? = "wav",
+    val speed: Double? = 1.0,
+)
+
 @Serializable
 data class TranscriptionResponse(
     val text: String
