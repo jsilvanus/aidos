@@ -99,6 +99,13 @@ interface AidosEngineClient {
     suspend fun transcribe(request: TranscriptionRequest): TranscriptionResponse?
 
     /**
+     * `/v1/audio/speech` (RFC-0117 amendment): speaks [SpeechRequest.input] with the voice model
+     * [SpeechRequest.model] and returns the audio (WAV unless [SpeechRequest.response_format] is `pcm`). Null on any
+     * failure. Additive: the default is null, so other implementers keep compiling (sdk/CONTRACT.md).
+     */
+    suspend fun speak(request: SpeechRequest): ByteArray? = null
+
+    /**
      * `/v1/audio/transcriptions` as OpenAI-style `multipart/form-data` (RFC-0117 amendment): [wav] goes
      * up as raw bytes, without the base64 that [transcribe] needs. Null on any failure. Additive; the
      * default sends the same audio through [transcribe] so other implementers keep working.
@@ -399,6 +406,16 @@ data class EmbeddingsResponse(
     val data: List<Embedding>,
     val model: String,
     val usage: TokenUsage
+)
+
+/** `/v1/audio/speech` body (RFC-0117 amendment). `response_format` is `wav` (default) or `pcm`; `speed` is 0.25 to 4.0. */
+@Serializable
+data class SpeechRequest(
+    val model: String,
+    val input: String,
+    val voice: String? = null,
+    val response_format: String? = null,
+    val speed: Double? = null,
 )
 
 @Serializable
@@ -813,7 +830,21 @@ internal class EngineClientImpl(
         record: Boolean = true,
         // A body that is not JSON (multipart transcription). Reused as is on a re-handshake retry.
         rawBody: RequestBody? = null,
-    ): String {
+    ): String = executeCallRaw(endpoint, method, body, allowReauth, record, rawBody) { it.body?.string() ?: "" }
+
+    /**
+     * [executeCall] with the success body read by [read]: binary answers (speech audio, RFC-0117 amendment) use it
+     * with `bytes()`. Auth, locality, the 401 re-handshake and error mapping are the same for both.
+     */
+    private suspend fun <T> executeCallRaw(
+        endpoint: String,
+        method: String,
+        body: String?,
+        allowReauth: Boolean,
+        record: Boolean,
+        rawBody: RequestBody?,
+        read: (okhttp3.Response) -> T,
+    ): T {
         val current = handshakeResult ?: throw fail(
             EngineError(
                 message = "Engine is not initialized or unavailable ($availabilityState)",
@@ -851,7 +882,7 @@ internal class EngineClientImpl(
                     // stale token). Retry exactly once with a fresh handshake.
                     response.code == 401 && allowReauth -> {
                         val reconnected = handshakeMutex.withLock { doHandshakeLocked() }
-                        if (reconnected) executeCall(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody) else {
+                        if (reconnected) executeCallRaw(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody, read = read) else {
                             throw fail(
                                 EngineError(
                                     message = "Engine token expired and re-handshake failed",
@@ -862,7 +893,7 @@ internal class EngineClientImpl(
                             )
                         }
                     }
-                    response.isSuccessful -> response.body?.string() ?: ""
+                    response.isSuccessful -> read(response)
                     else -> {
                         val errorBody = response.body?.string()
                         throw fail(parseErrorDetail(errorBody, response.code), response.code, record)
@@ -874,7 +905,7 @@ internal class EngineClientImpl(
             // port is ephemeral (RFC-0103: "never assumed stable across Engine restarts"). A 401
             // can never arrive from a port that is gone, so this is the same reconnect case.
             if (allowReauth && handshakeMutex.withLock { doHandshakeLocked() }) {
-                executeCall(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody)
+                executeCallRaw(endpoint, method, body, allowReauth = false, record = record, rawBody = rawBody, read = read)
             } else {
                 throw fail(
                     EngineError(
@@ -1067,6 +1098,13 @@ internal class EngineClientImpl(
     override suspend fun transcribeResult(request: TranscriptionRequest): Result<TranscriptionResponse> = callResult {
         decodeOrFail<TranscriptionResponse>(executeCall("audio/transcriptions", "POST", engineJson.encodeToString(request), allowReauth = true))
     }
+
+    override suspend fun speak(request: SpeechRequest): ByteArray? = callResult {
+        // RFC-0117 amendment: JSON in, binary out. Same auth, locality and 401 re-handshake as the other calls.
+        executeCallRaw("audio/speech", "POST", engineJson.encodeToString(request), allowReauth = true, record = true, rawBody = null) {
+            it.body?.bytes() ?: ByteArray(0)
+        }
+    }.getOrNull()
 
     override suspend fun transcribeBytesResult(model: String, wav: ByteArray, language: String?, prompt: String?): Result<TranscriptionResponse> = callResult {
         // RFC-0117 amendment: the same route as JSON, multipart body. Same auth, locality and 401 re-handshake.

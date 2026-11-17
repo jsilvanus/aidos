@@ -56,6 +56,14 @@ and `AndroidAidosEngineClientFactory.createClient(context)` / `AndroidEngineClie
 
 ## Additions within v1
 
+- **Speech (RFC-0117 amendment).** `POST /v1/audio/speech` is backed by a text-to-speech voice (Piper on
+  ONNX Runtime) when the model's kind is `tts`. Request `{model, input, voice?, response_format?, speed?}`
+  (OpenAI-shaped; `response_format` is `wav` (default) or `pcm`; `speed` 0.25 to 4.0; `input` at most 4000
+  characters). Response is `audio/wav` (or raw `audio/pcm` with `X-Aidos-Sample-Rate`); the body is binary, not
+  JSON. Errors are JSON as on the other routes. SDK: `AidosEngineClient.speak(SpeechRequest): ByteArray?` (null on
+  any failure) with a default of `null` on the interface, so other implementers keep compiling. Local voices only;
+  peers are not asked to speak yet. Chat and non-voice models refuse this route with HTTP 400.
+
 - `AidosEngineClientFactory.create(EngineHandshakeSource)`: a client whose handshake comes from
   somewhere other than Binder. Engine uses it for its own in-process calls; tests use it to run the
   real client against the real host (`SdkHostContractTest`).
