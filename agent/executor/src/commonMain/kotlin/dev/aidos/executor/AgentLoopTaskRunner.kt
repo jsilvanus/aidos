@@ -336,13 +336,12 @@ class AgentLoopTaskRunner(
      */
     private val redact: (String) -> String = { it },
     /**
-     * RFC-0035 "Secrets found in content": given a tool's name and its text result, returns the
-     * kinds of credential it contains (never the match), or empty. A non-empty answer withholds
-     * the whole result from the transcript and every prompt -- the model is told only that
-     * content was withheld, and the user gets a non-modal notice through the audit log. Defaults
-     * to "nothing found" for callers with no detector.
+     * RFC-0035 "Secrets found in content": given a tool's name and its text result, returns what
+     * to do with it (never a match). [SecretScreeningResult.Withheld] keeps the whole result out
+     * of the transcript and every prompt; [SecretScreeningResult.Redacted] puts its redacted text
+     * in instead. Defaults to "clean" for callers with no screener.
      */
-    private val detectSecrets: (toolName: String, text: String) -> List<String> = { _, _ -> emptyList() },
+    private val screenSecrets: (toolName: String, text: String) -> SecretScreeningResult = { _, _ -> SecretScreeningResult.Clean },
     /**
      * RFC-0008 step 8c, M19: resolves a model-emitted [ToolCall] to a capability the subject
      * already holds for the tool's required permission — picking the most recently issued,
@@ -1097,22 +1096,36 @@ class AgentLoopTaskRunner(
         }
         // RFC-0035: content that looks like credentials never reaches the transcript. Nothing of
         // the match is kept -- not in the snapshot, not in the audit row, not in the notice.
-        val secretKinds = detectSecrets(callRow.toolName, unguarded)
-        val text = if (secretKinds.isEmpty()) unguarded else {
-            audit.write(
-                id = idGen(), projectId = run.projectId.value, kind = "SecretContentWithheld",
-                actor = resolveSessionActor(task.sessionId.value), subjectRef = callRow.toolName,
-                detailJson = "{\"kinds\":[" + secretKinds.joinToString(",") { "\"$it\"" } + "]}", nowIso = nowIso(),
-            )
-            "[Content withheld: the result of ${callRow.toolName} looks like it contains credentials " +
-                "(${secretKinds.joinToString()}) and has been excluded from AI context.]"
+        val screening = screenSecrets(callRow.toolName, unguarded)
+        val text = when (screening) {
+            SecretScreeningResult.Clean -> unguarded
+            is SecretScreeningResult.Redacted -> {
+                audit.write(
+                    id = idGen(), projectId = run.projectId.value, kind = "SecretContentRedacted",
+                    actor = resolveSessionActor(task.sessionId.value), subjectRef = callRow.toolName,
+                    detailJson = "{\"kinds\":[" + screening.kinds.joinToString(",") { "\"$it\"" } +
+                        "],\"count\":${screening.count}}",
+                    nowIso = nowIso(),
+                )
+                screening.text
+            }
+            is SecretScreeningResult.Withheld -> {
+                audit.write(
+                    id = idGen(), projectId = run.projectId.value, kind = "SecretContentWithheld",
+                    actor = resolveSessionActor(task.sessionId.value), subjectRef = callRow.toolName,
+                    detailJson = "{\"kinds\":[" + screening.kinds.joinToString(",") { "\"$it\"" } + "]}", nowIso = nowIso(),
+                )
+                "[Content withheld: the result of ${callRow.toolName} looks like it contains credentials " +
+                    "(${screening.kinds.joinToString()}) and has been excluded from AI context.]"
+            }
         }
 
         // RFC-0127 Gate A: screen UNTRUSTED tool results only after secret withholding so
         // credentials never leave the tool boundary, failing safely to no latch if unavailable.
+        // A redacted result is screened as its redacted text: the markers hide the values.
         val screeningVerdict = if (
             result.trustLevel == TrustLevel.UNTRUSTED &&
-            secretKinds.isEmpty() &&
+            screening !is SecretScreeningResult.Withheld &&
             taintInputScreener != null &&
             text.isNotBlank()
         ) {

@@ -6,7 +6,7 @@ Revision 3 (owner, 2026-11-10): (a) **default trust is TRUSTED** (binding defaul
 
 Revision 2 (owner, 2026-11-10): (1) **buttons are user-configured bindings**, any number per device, each binding routing its speech to a chosen sink; (2) **trust is configured by the user per binding**, not fixed at UNTRUSTED, because untrusted input would defeat hands-free operation (RFC-0057); (3) **Omi is deferred and may be removed**; (4) **the code must be modular so it can be split out** of this repository later; (5) pairing stays mandatory.
 
-Related: RFC-0027 (trust and taint), RFC-0035 (secrets and vault), RFC-0036 (settings), RFC-0046 (identity and device identity), RFC-0056 (retention), RFC-0057 (glanceable and hands-free), RFC-0103 (Engine), RFC-0104 (locality), RFC-0105 (inference groups), RFC-0107 (remote agent hosting); D47, D48, D49, D51, D52. Hardware study: `plans/ai-cube-esp32.md` and `plans/ai-button-existing-products.md` in the project files. Engine API v1 (`sdk/CONTRACT.md`) is frozen and is not changed here.
+Related: RFC-0027 (trust and taint), RFC-0035 (secrets and vault), RFC-0036 (settings), RFC-0046 (identity and device identity), RFC-0056 (retention), RFC-0057 (glanceable and hands-free), RFC-0103 (Engine), RFC-0104 (locality), RFC-0105 (inference groups), RFC-0107 (remote agent hosting); D47, D48, D49, D51, D52. Hardware study: `docs/plans/ai-cube-esp32.md` and `docs/plans/ai-button-existing-products.md` in the project files. Engine API v1 (`sdk/CONTRACT.md`) is frozen and is not changed here.
 
 Evidence labels: **[sourced]** = read from a vendor or project page today; **[known]** = background knowledge, not re-checked; **[estimate]** = arithmetic or guess to be replaced by a measurement; **[decision]** = a choice this RFC proposes.
 

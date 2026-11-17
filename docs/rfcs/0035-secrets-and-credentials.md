@@ -168,7 +168,26 @@ where*, never the match.
 ### Secrets found in content
 
 When the detector matches content being read into the runtime — a `.env` file, a config file, a
-tool result — the containing ContentNode is labelled `SECRET` (RFC-0024). That label means:
+tool result — the response depends on how much of the content matched. A single credential-like
+value in an ordinary file should not hide the file, so only credential-shaped content is withheld
+whole; any other content keeps its text, with each matched value replaced by a marker. The rule
+(`SecretContentPolicy`) for the text of one result:
+
+1. No match: the text passes unchanged.
+2. **Withheld as a whole** when any of these holds: it contains a PEM private key block; it has
+   four or more pattern matches; or it is assignment-shaped, meaning it has at least one pattern
+   match, at least three non-blank lines, and at least half of its non-blank lines are
+   `NAME=value` or `NAME: value` lines (the shape of `.env`, `.properties` and simple YAML). The
+   assignment rule exists because in such a file the patterns catch some secrets and miss others,
+   so keeping the rest would leak the ones missed.
+3. **Otherwise redacted:** every matched value is replaced with `«redacted:<kind>»`, the rest of
+   the text is kept, and one line is appended stating how many values were replaced.
+4. A value equal to a registered vault secret is always replaced, and does not count toward the
+   four: that match is exact, not a guess.
+
+The thresholds are constants in code, each pointing back to this section.
+
+Withheld content is the case described here. Its label means:
 
 - excluded from all prompts, local and remote;
 - excluded from exports;
@@ -179,6 +198,11 @@ The user is told, once, non-modally: *"`.env` looks like it contains credentials
 excluded from AI context."* Not a blocking dialog — this is common and the user usually knows —
 but not silent either, because a user who does not know their secrets are being skipped will
 wonder why the model cannot see their configuration.
+
+A redacted result is not excluded, so the model sees its text. The line appended to it reads
+*"N credential-like value(s) in this result were replaced with redaction markers."* Both cases
+are audited: `SecretContentWithheld` (kinds only) and `SecretContentRedacted` (kinds and the count).
+Neither records a matched value.
 
 ### Rotation and revocation
 
@@ -287,7 +311,7 @@ Recorded 2026-11-10 with the implementation. The design above is unchanged; thes
 2. **Android Keystore is not implemented.** The vault module is JVM-only and the Android host does not run the vault yet; the Android section of this RFC (the Engine's separate vault) still holds.
 3. **Ciphertext is bound to its row.** The secret's id is the AES-GCM associated data, so a ciphertext copied onto another row fails to decrypt.
 4. **Audit location.** `secret_accesses` carries a non-null capability id under a foreign key, but the runtime's own resolutions have no capability. They are written to `audit_log` as `SecretResolved`. `secret_accesses` is kept for resolutions made under a `secrets:read` capability.
-5. **Content found to contain secrets** is withheld from the transcript as a whole and audited (`SecretContentWithheld`) rather than labelled on a content node, because no tool produces content nodes yet.
+5. **Content found to contain secrets.** Credential-shaped content (see "Secrets found in content") is withheld from the transcript as a whole and audited (`SecretContentWithheld`); other content has its matched values replaced and is audited (`SecretContentRedacted`). Both are recorded on the audit row rather than on a content node, because no tool produces content nodes yet.
 6. **Short values.** A known value shorter than four characters is not registered with the redactor: it would corrupt ordinary text more often than it would protect anything.
 7. **`secrets:read` grants** are refused at grant time unless they name specific secret ids; an empty list, a blank id, `*` or `?` is rejected.
 8. **Consumer allow-lists.** A secret with an allow-list can only be resolved by a named consumer (`MCP_SERVER:<server>`, `PROVIDER:<name>`, `GIT_REMOTE:<host>`); the runtime's anonymous resolve refuses it.
@@ -307,6 +331,7 @@ files:
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SecretsWiring.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/SecretsWiringTest.kt
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/AgentLoopTaskRunner.kt
+  - agent/executor/src/commonMain/kotlin/dev/aidos/executor/SecretScreeningResult.kt
   - agent/executor/src/commonMain/kotlin/dev/aidos/executor/EventStore.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/AgentLoopTaskRunnerTest.kt
   - agent/executor/src/jvmTest/kotlin/dev/aidos/executor/EventStoreReplayTest.kt
@@ -330,9 +355,11 @@ files:
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/DesktopVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/Redactor.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretContentPolicy.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SecretsVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/SqliteSecretsVault.kt
   - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/Rfc0035RequirementsTest.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/SecretContentPolicyTest.kt
   - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/VaultTest.kt
   - schema/project.sql
   - schema/user.sql
