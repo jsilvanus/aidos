@@ -3,7 +3,7 @@
 Status: Implemented 2026-11-13 (Accepted 2026-10-26 by the owner). Owner choices settled the same day (D50): child-process
 split inference, both trust mechanisms, delegation before layer split, local unless stated (D47).
 Implementation status (audited 2026-11-13): **phases 1, 2, and 3 all IMPLEMENTED and tested, with host-path production integration wired**. Phase 1 (pairing/groups), Phase 2 (virtual models/delegation), and Phase 3 (layer split) are complete with full test coverage. Phase 3 includes planner, supervisors, JVM emulation fallback, and native `llama-server`/`ggml-rpc-server` support. CI job `llama-rpc-native` builds llama.cpp with `GGML_RPC=ON` and validates split inference. Host integration now resolves split GGUF artifacts from installed model records (not filename guesses) and is covered by desktop host tests. See [STATUS.md](STATUS.md).
-Non-MVP Work: **Remaining** (coordinator election, GGUF transfer, checkpoint/KV-cache migration, tensor parallelism, ONNX split, BLE/Wi-Fi Direct, model attestation)
+Non-MVP Work: **Remaining** (coordinator election, GGUF transfer, checkpoint/KV-cache migration, tensor parallelism, ONNX split, split token streaming, split tool calling, BLE/Wi-Fi Direct, model attestation)
 
 Related: RFC-0103 (Aidos Engine), RFC-0104 (inference locality, D47), RFC-0003 (security),
 RFC-0046 (identity), `docs/aidin.md` (AIDIN design background), `IDENTITY-AND-MODEL-ATTESTATION-SUGGESTION.md`
@@ -265,7 +265,11 @@ Each phase ends in something runnable; later phases depend on earlier ones.
 Coordinator election among several anchors; moving GGUF files between nodes; checkpoint or KV-cache
 migration; tensor parallelism; splitting ONNX models; Bluetooth LE and Wi-Fi Direct transports;
 model attestation (identity proposal §4); allowing a specific remote provider rather than all of
-`remote` (RFC-0104 open item).
+`remote` (RFC-0104 open item). Two known limits of layer-split inference stay until after MVP:
+split models do not stream tokens as they are generated (one chunk arrives at the end), and split
+models do not accept tools (the tool protocol of RFC-0129 is not passed through the anchor).
+Split has not yet run on two real machines, which is why both are deferred (owner decision,
+2026-11-17).
 
 ## Risks
 
@@ -429,5 +433,11 @@ post_mvp:
     status: todo
   - id: "0105.11"
     title: "Bind node keys to the installation identity with a signed statement once the identity RFC exists"
+    status: todo
+  - id: "0105.12"
+    title: "Split models stream tokens as they are generated instead of one chunk at the end"
+    status: todo
+  - id: "0105.13"
+    title: "Split models accept tools: pass the tool protocol of RFC-0129 through the anchor"
     status: todo
 ```
