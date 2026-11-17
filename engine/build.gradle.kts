@@ -24,5 +24,12 @@ subprojects {
         val dir = layout.buildDirectory.dir("tmp/$name/llama-native")
         doFirst { dir.get().asFile.mkdirs() }
         systemProperty("net.ladenthin.llama.tmpdir", dir.get().asFile.absolutePath)
+        // RFC-0105: a flaky CI failure ("There were failing tests") used to name no test, so it could
+        // not be diagnosed. Print each failed test with its stack trace in the job log.
+        testLogging {
+            events("failed")
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            showStandardStreams = false
+        }
     }
 }
