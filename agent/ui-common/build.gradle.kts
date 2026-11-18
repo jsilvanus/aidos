@@ -35,6 +35,11 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit"))
+                // RFC-0124 UI-60: Compose UI smoke tests run headless on the JVM (runComposeUiTest).
+                // Explicit coordinates: ui-common does not apply the Compose Gradle plugin, so the
+                // `compose.uiTest` accessor aidos-tcr uses is not available here.
+                implementation("org.jetbrains.compose.ui:ui-test-junit4:$composeMultiplatformVersion")
+                implementation("org.jetbrains.compose.desktop:desktop-jvm-linux-x64:$composeMultiplatformVersion")
             }
         }
     }
