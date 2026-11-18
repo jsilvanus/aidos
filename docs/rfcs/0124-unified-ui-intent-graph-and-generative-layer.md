@@ -1,6 +1,6 @@
 # RFC-0124: Unified Aidos UI: Intent Graph Views, the Generative Layer and the Android Handheld
 
-Status: Accepted 2026-11-16, partially implemented. The views, adaptive shell, pills and TCR components exist and run on Android and desktop; the declarative generative layer (A2UI manifests rendered through the TCR) and several surfaces are not built.
+Status: Accepted 2026-11-16, amended 2026-11-18. Views, shell and placement exist; data wiring, live updates, editing and the generative layer are being built (2026-11-18 plan). Not Implemented: see the Amendment and Post-MVP Work.
 Non-MVP Work: **Remaining** (see Post-MVP Work)
 
 Related: RFC-0106 (generative UI), RFC-0110 (dual-mode intent graph), RFC-0111 (presentation paradigms and launchers), RFC-0112 (universal adaptive UI, blinded egress), RFC-0113 (egress gate), RFC-0118 (Android host), RFC-0119 (Engine app UI), RFC-0123 (Trusted Component Registry), D46, D49.
@@ -55,8 +55,10 @@ The presenters are shared between Android and desktop and are tested on the JVM.
 | Timeline | more | more | primary | MVP |
 | Relay River | more | more | more | MVP |
 | Radial Radar | more | more | more | MVP |
-| Transit Metro Map | not offered | more | more | Post-MVP |
-| Logic Breadboard | not offered | more | more | Post-MVP |
+| Transit Metro Map | more (strip form) | more | more | Post-MVP |
+| Logic Breadboard | more (strip form) | more | more | Post-MVP |
+
+The narrow strip forms of the Metro Map and the Breadboard come with 0124.5.
 
 "Primary" is persistent navigation, at most five on a phone. "More" is the chip row and the command palette. A view an Android MVP lists as reachable is never hidden on any form factor. The two hidden designs are wide diagrams from RFC-0111 (Designs 2 and 5) that need a narrow-screen rework; they stay in the palette as an escape hatch until then.
 
@@ -76,6 +78,32 @@ A phone user can: see the inbox of things that need them; open a task and its de
 
 Acceptance, not yet run on a device: install the app on a phone, create a project, add a task by voice, see it in the Inbox and the Outliner, approve one effect in Gates, expand the canvas, rotate and unfold and see the navigation change. The checklist is item 0124.1.
 
+## Amendment 2026-11-18: finishing and wiring the views
+
+The views are shells over fixed or in-memory data today. The decisions below were taken for the finishing work (plan `plans/ui-build-plan.md`, sections 2 and 3), each as the option that keeps most possibilities open and is easiest to revert. None changes an Agent API v1 shape in a breaking way, and none changes the schema.
+
+| ID | Decision | Reason |
+|---|---|---|
+| U1 | Presenters and screens stay in aidos `agent/ui-common`. Only data-agnostic pieces (A2UI) go to aidos-tcr. Duplicated leaf components are not touched (owner decision 10, 2026-11-17). | TCR cannot depend on `agent/api`; moving later is a package move, no API change. |
+| U2 | Desktop: views stay in the desktop engine's Workspace mode. No new "Aidos Desktop" app now. | `ui-common` is a library; a future Aidos Desktop app embeds `AidosUniversalApp` the same way. |
+| U3 | Android: views stay in `agent/androidapp` (`fi.italeino.aidos`). The D49 merge into `fi.italeino.aidos.engine` is not part of this plan. | All new code is host-agnostic; a merge moves activities only. |
+| U4 | Desktop workspace uses `AgentRuntimeAttach.connect()`: daemon when it answers, else DB-backed in-process. Demo seed removed. | Same rule the Shell grants screen already follows (RFC-0115, D60). |
+| U5 | No magic project ids. A `WorkspaceBootstrap` finds the project by name and type, or creates it (`RuntimeManaged` slug). No new storage for the choice. | Purely client side; no schema change. |
+| U6 | Live updates: additive `RuntimeEvent.IntentGraphChanged` **plus** a 5 s poll fallback (covers writes by other processes). | Additive API v1 change; drop either half later. |
+| U7 | No batch "get graph" API. One `ProjectGraphStore` per project fetches once and feeds all views. | Add an API later only if measured slow. |
+| U8 | Living Document text is stored in the selected node's `description` (via `updateNode`). With no node selected it edits a per-project GOAL node titled "Notes", created on first save. | No schema change; a later `documents` table can import descriptions. |
+| U9 | Gates shows five sources: parked egress, parked tool approvals (new additive list API), pending capability requests, intent proposals, NEEDS_REVIEW verification. Diffs come from `runtimeClient.diff`. | Uses existing approval paths; nothing new decides on its own. |
+| U10 | "Start" on a node: additive `IntentCommands.startNodeRun` using the existing `IntentRunCoordinator`. Auto-dispatch of `AUTO_WHEN_READY` nodes is not in this plan. | One new method with a default body; auto-dispatch is a runtime feature, separate. |
+| U11 | Metro Map and Breadboard get a narrow "strip" form and are offered under "More" on phones (0124.5). | One line per view in `ViewModeCatalog`. |
+| U12 | A2UI model, parser, validator, catalog and renderer live in aidos-tcr, package `dev.aidos.tcr.a2ui`. The catalog is an explicit allowlist; each entry names a `tcr-manifest.json` id and contract version. | Registry owns what it can render (RFC-0123); nothing else depends on it. |
+| U13 | Manifests reach the UI as the persisted arguments of a built-in agent tool `present_ui` (the `tool_calls` row the executor already writes), read back through an additive `IntentCommands.listUiManifests()`. No new event, no schema change. The executor checks structure and size only; full validation happens at render time and fails closed. Reason: the executor emits no `RuntimeEvent`s in production today (even `ToolApprovalRequired` is never emitted), so an event-only path would not reach the UI. | No schema change; reads data that is already stored; a dedicated table can come later. |
+| U14 | Manifest actions v1: `open_node`, `complete_node`, `start_node`, `reply_to_agent`. A manifest from an UNTRUSTED run asks for confirmation before any action. Effects still go through normal approvals. | Small fixed set; more ids are additive. |
+| U15 | UI tests run as JVM Compose desktop tests in `ui-common` now. Android emulator tests (0124.10) stay open. | Shared code is the same; emulator CI can be added later. |
+| U16 | RFC-0124 open questions: keep the selected view when the form factor changes (current behaviour); the palette stays the escape hatch and lists every view; Gates gets a badge count. | Current behaviour kept; badge is additive. |
+| U17 | aidos-tcr stays JVM-only. `agent/androidapp` already consumes it on Android. If the Android CI build fails once `ui-common` uses TCR in `commonMain`, run contingency package UI-07 (add `androidTarget` to TCR). | Do nothing unless needed. |
+
+**Wiring layer.** One `ProjectGraphStore` per open project feeds every view presenter. A `WorkspaceController` holds the selected node and the current view, and is the only place views call to mutate. Views read nothing else: not storage, not `RuntimeClient` directly.
+
 ## Security
 
 - The generative layer renders only registered components with registered actions; unknown types fail closed.
@@ -89,8 +117,11 @@ Built: the twelve views with presenters tested on the JVM; the adaptive shell (`
 ## Open Questions
 
 1. Should Gates carry a badge count in the bottom bar? It needs a count from `ApprovalGatePresenter`.
+   Answered 2026-11-18: yes. Gates gets a badge count (U16); it is additive and lands with 0124.6.
 2. When the form factor changes mid-session and the selected view is no longer primary, keep it selected (current behaviour) or return to the Inbox?
+   Answered 2026-11-18: keep the selected view, which is the current behaviour (U16).
 3. Whether the command palette should hide views that a form factor does not offer, or stay the escape hatch.
+   Answered 2026-11-18: the palette stays the escape hatch and lists every view (U16).
 
 ## Implementation Files
 
@@ -155,4 +186,24 @@ post_mvp:
   - id: "0124.10"
     title: "Compose UI tests for the views on Android, run on the emulator in CI"
     status: todo
+  - id: "0124.11"
+    title: "ProjectGraphStore and WorkspaceController: one live, polled graph per project feeding all views"
+    status: todo
+    phase: P1
+    done_when: "two views opened on the same project show the same node list, and a node added through one appears in the other within 5 seconds"
+  - id: "0124.12"
+    title: "Additive runtime APIs the views need: IntentGraphChanged event, listParkedEffects, startNodeRun, listUiManifests"
+    status: todo
+    phase: P1
+    done_when: "each of the four APIs has a default body in the Agent API, a test, and is served over the socket"
+  - id: "0124.13"
+    title: "Hosts use real projects and the real runtime (no magic project ids, no in-memory desktop client)"
+    status: todo
+    phase: P1
+    done_when: "a task created in the desktop and Android hosts is still there after the app restarts, and no host opens the project ids default-workspace or life"
+  - id: "0124.14"
+    title: "Node Inspector shared by all views: edit, link, start, complete, archive"
+    status: todo
+    phase: P1
+    done_when: "a node can be edited, linked, started, completed and archived from the Inspector sheet opened by any view"
 ```
