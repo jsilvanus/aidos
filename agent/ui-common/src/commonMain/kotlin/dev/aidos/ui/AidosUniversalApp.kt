@@ -223,10 +223,7 @@ private fun AidosUniversalAppContent(
         TimelineGanttPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val livingDocPresenter = remember(currentProjectId) {
-        LivingDocPresenter(
-            initialDocumentId = "doc-$currentProjectId",
-            initialTitle = "Living Workspace Specification",
-        )
+        LivingDocPresenter(controller.currentStore.value.snapshot, controller, coroutineScope)
     }
     // RFC-0113: the Human Egress Gate Card is fed by the runtime's parked outbound messages and its
     // Approve / Deny go through the same effect-approval path the CLI uses, so a person's decision is
@@ -447,7 +444,12 @@ private fun AidosUniversalAppContent(
                     "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
                     "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter, controller = controller, formFactor = formFactor)
                     "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor, controller = controller)
-                    "livingdoc" -> LivingDocView(presenter = livingDocPresenter, controller = controller, formFactor = formFactor)
+                    "livingdoc" -> LivingDocView(
+                        presenter = livingDocPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
+                        voiceCaptureController = voiceCaptureController,
+                    )
                     "gates" -> ApprovalGatesScreen(presenter = gatePresenter, controller = controller, formFactor = formFactor)
                     "projects" -> ProjectHubScreen(
                         presenter = projectHubPresenter,

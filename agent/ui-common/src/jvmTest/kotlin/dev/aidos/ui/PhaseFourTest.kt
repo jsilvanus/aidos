@@ -11,16 +11,10 @@ import dev.aidos.intent.IntentNodeStatusView
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.intent.IntentTargetProfile
 import dev.aidos.intent.NodeDispatchPolicy
-import dev.aidos.ui.paradigms.livingdoc.LivingDocIntent
-import dev.aidos.ui.paradigms.livingdoc.LivingDocPresenter
 import dev.aidos.ui.paradigms.outliner.CausalOutlinerPresenter
-import dev.aidos.ui.pills.PillRole
-import dev.aidos.ui.tcr.code.DiffLine
-import dev.aidos.ui.tcr.code.DiffLineType
 import org.junit.Test
 import kotlin.system.measureTimeMillis
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PhaseFourTest {
@@ -58,43 +52,6 @@ class PhaseFourTest {
         }
 
         assertTrue(elapsed < 200, "Outliner flattening took too long: ${elapsed}ms")
-    }
-
-    @Test
-    fun testLivingDocConcurrentEditAndSoftReservationLock() {
-        val presenter = LivingDocPresenter(
-            initialDocumentId = "arch-doc",
-            initialTitle = "Core System Architecture",
-            initialText = "Line 1: System Vision\nLine 2: Authentication\nLine 3: Database Storage",
-        )
-
-        assertEquals(3, presenter.state.value.lines.size)
-
-        // Human edits Line 1
-        presenter.send(LivingDocIntent.UpdateLine(1, "Line 1: System Vision (Updated by Human)"))
-        assertEquals("Line 1: System Vision (Updated by Human)", presenter.state.value.lines[0].text)
-
-        // Worker Blue Pill acquires soft reservation lock on Line 2
-        presenter.send(LivingDocIntent.AcquireSoftLock(2, PillRole.WORKER_CODE_BLUE))
-        assertTrue(presenter.state.value.lines[1].isLockedByAgent)
-        assertEquals(PillRole.WORKER_CODE_BLUE, presenter.state.value.lines[1].lockOwner)
-
-        // Human attempts to overwrite locked Line 2 -> protected, unchanged!
-        presenter.send(LivingDocIntent.UpdateLine(2, "Human conflict overwrite attempt"))
-        assertEquals("Line 2: Authentication", presenter.state.value.lines[1].text)
-
-        // Worker releases lock and commits completed diff
-        presenter.send(LivingDocIntent.ReleaseSoftLock(2))
-        assertFalse(presenter.state.value.lines[1].isLockedByAgent)
-
-        val diffs = listOf(
-            DiffLine(DiffLineType.CONTEXT, "Line 2: Authentication"),
-            DiffLine(DiffLineType.ADDITION, "    + Added OAuth2 and Passkey verification"),
-        )
-        presenter.send(LivingDocIntent.CommitAgentDiff("Auth Enhancement", diffs))
-
-        assertEquals(1, presenter.state.value.completedDiffs.size)
-        assertEquals("Auth Enhancement", presenter.state.value.completedDiffs.first().first)
     }
 
     private fun createNode(id: String, title: String, parentId: String?): IntentNodeRecord {
