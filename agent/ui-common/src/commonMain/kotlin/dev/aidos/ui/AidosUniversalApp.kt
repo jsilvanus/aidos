@@ -82,6 +82,7 @@ import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.workspace.WorkspaceBootstrap
+import dev.aidos.ui.generative.ManifestActionsProvider
 import dev.aidos.ui.workspace.WorkspaceController
 import dev.aidos.ui.workspace.WorkspaceKind
 import kotlinx.coroutines.cancel
@@ -281,178 +282,180 @@ private fun AidosUniversalAppContent(
             )
         }
 
-    ResponsiveScaffold(
-        destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
-        destinationsFor = ::destinationsFor,
-        selectedDestinationId = selectedDestinationId,
-        onDestinationSelected = { id -> controller.navigate(id) },
-        topBar = {
-            NativeProcessRecoveryBar(health = nativeHealth)
-        },
-        overlayContent = {
-            MultiAgentPillOverlay(
-                pills = pills,
-                onPillClick = { pill -> pill.activeTaskId?.let { controller.openInspector(it) } },
-            )
-            CommandPaletteModal(presenter = commandPalettePresenter)
-            val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
-            val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-                SnackbarHost(hostState = snackbarHost)
-            }
-            AssistantSheetOverlay(
-                isOpen = isAssistantOpen,
-                isListening = voiceState.isListening,
-                streamedGhostText = effectiveTranscript,
-                preferredBackend = voiceState.preferredBackend,
-                activeBackend = voiceState.activeBackend,
-                errorMessage = voiceState.errorMessage,
-                onSelectBackend = { backend: SttBackend ->
-                    voiceCaptureController?.selectBackend(backend)
-                },
-                onToggleListening = {
-                    val ctrl = voiceCaptureController
-                    if (ctrl != null) {
-                        coroutineScope.launch {
-                            if (voiceState.isListening) {
-                                val text = ctrl.stopListening()
-                                if (!text.isNullOrBlank()) {
-                                    assistantGhostText = text
+    ManifestActionsProvider(snapshot = graphSnapshot, controller = controller) {
+        ResponsiveScaffold(
+            destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
+            destinationsFor = ::destinationsFor,
+            selectedDestinationId = selectedDestinationId,
+            onDestinationSelected = { id -> controller.navigate(id) },
+            topBar = {
+                NativeProcessRecoveryBar(health = nativeHealth)
+            },
+            overlayContent = {
+                MultiAgentPillOverlay(
+                    pills = pills,
+                    onPillClick = { pill -> pill.activeTaskId?.let { controller.openInspector(it) } },
+                )
+                CommandPaletteModal(presenter = commandPalettePresenter)
+                val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
+                val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                    SnackbarHost(hostState = snackbarHost)
+                }
+                AssistantSheetOverlay(
+                    isOpen = isAssistantOpen,
+                    isListening = voiceState.isListening,
+                    streamedGhostText = effectiveTranscript,
+                    preferredBackend = voiceState.preferredBackend,
+                    activeBackend = voiceState.activeBackend,
+                    errorMessage = voiceState.errorMessage,
+                    onSelectBackend = { backend: SttBackend ->
+                        voiceCaptureController?.selectBackend(backend)
+                    },
+                    onToggleListening = {
+                        val ctrl = voiceCaptureController
+                        if (ctrl != null) {
+                            coroutineScope.launch {
+                                if (voiceState.isListening) {
+                                    val text = ctrl.stopListening()
+                                    if (!text.isNullOrBlank()) {
+                                        assistantGhostText = text
+                                    }
+                                } else {
+                                    ctrl.startListening()
                                 }
-                            } else {
-                                ctrl.startListening()
                             }
                         }
-                    }
-                },
-                onTranscriptEdit = { edited ->
-                    assistantGhostText = edited
-                    voiceCaptureController?.updateTranscript(edited)
-                },
-                onProposeTask = { text ->
-                    coroutineScope.launch {
-                        runtimeClient.intents.createNode(
-                            CreateIntentNodeRequest(
-                                projectId = currentProjectId,
-                                title = text,
-                                type = IntentNodeType.ATOMIC_TASK,
+                    },
+                    onTranscriptEdit = { edited ->
+                        assistantGhostText = edited
+                        voiceCaptureController?.updateTranscript(edited)
+                    },
+                    onProposeTask = { text ->
+                        coroutineScope.launch {
+                            runtimeClient.intents.createNode(
+                                CreateIntentNodeRequest(
+                                    projectId = currentProjectId,
+                                    title = text,
+                                    type = IntentNodeType.ATOMIC_TASK,
+                                )
                             )
-                        )
-                        controller.currentStore.value.refreshNow()
+                            controller.currentStore.value.refreshNow()
+                            voiceCaptureController?.cancel()
+                            isAssistantOpen = false
+                            assistantGhostText = ""
+                        }
+                    },
+                    onDismiss = {
                         voiceCaptureController?.cancel()
                         isAssistantOpen = false
-                        assistantGhostText = ""
-                    }
-                },
-                onDismiss = {
-                    voiceCaptureController?.cancel()
-                    isAssistantOpen = false
-                },
-            )
-        },
-        modifier = modifier.fillMaxSize(),
-    ) { formFactor ->
-        LaunchedEffect(formFactor) {
-            dexPreserver.captureSession(
-                projectId = currentProjectId,
-                nodeId = null,
-                documentText = livingDocPresenter.state.value.text,
-                viewport = canvasPresenter.state.value.viewport,
-                formFactor = formFactor,
-            )
-        }
+                    },
+                )
+            },
+            modifier = modifier.fillMaxSize(),
+        ) { formFactor ->
+            LaunchedEffect(formFactor) {
+                dexPreserver.captureSession(
+                    projectId = currentProjectId,
+                    nodeId = null,
+                    documentText = livingDocPresenter.state.value.text,
+                    viewport = canvasPresenter.state.value.viewport,
+                    formFactor = formFactor,
+                )
+            }
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF0B1120))
-                    .padding(horizontal = SpacingTokens.sm, vertical = SpacingTokens.xs),
-                horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
-                contentPadding = PaddingValues(horizontal = SpacingTokens.xs),
-            ) {
-                items(ViewModeCatalog.offered(formFactor), key = { it.id }) { mode ->
-                    val isSelected = selectedDestinationId == mode.id
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                if (isSelected) ColorTokens.ActorAgent.copy(alpha = 0.25f) else Color(0xFF1E293B),
-                                shape = RoundedCornerShape(CornerTokens.pill),
+            Column(modifier = Modifier.fillMaxSize()) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0B1120))
+                        .padding(horizontal = SpacingTokens.sm, vertical = SpacingTokens.xs),
+                    horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
+                    contentPadding = PaddingValues(horizontal = SpacingTokens.xs),
+                ) {
+                    items(ViewModeCatalog.offered(formFactor), key = { it.id }) { mode ->
+                        val isSelected = selectedDestinationId == mode.id
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (isSelected) ColorTokens.ActorAgent.copy(alpha = 0.25f) else Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(CornerTokens.pill),
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) ColorTokens.ActorAgent else Color(0xFF334155),
+                                    shape = RoundedCornerShape(CornerTokens.pill),
+                                )
+                                .clickable { controller.navigate(mode.id) }
+                                .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = mode.label,
+                                style = AidosTypography.baseTypography.labelSmall,
+                                color = if (isSelected) Color.White else ColorTokens.StatusStale,
                             )
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) ColorTokens.ActorAgent else Color(0xFF334155),
-                                shape = RoundedCornerShape(CornerTokens.pill),
-                            )
-                            .clickable { controller.navigate(mode.id) }
-                            .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = mode.label,
-                            style = AidosTypography.baseTypography.labelSmall,
-                            color = if (isSelected) Color.White else ColorTokens.StatusStale,
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    when (selectedDestinationId) {
+                        "inbox" -> ActionInboxScreen(
+                            presenter = inboxPresenter,
+                            controller = controller,
+                            formFactor = formFactor,
+                            onItemClick = { item ->
+                                controller.switchProject(item.node.projectId)
+                                controller.navigate("outliner", item.node.id)
+                            },
+                        )
+                        "outliner" -> CausalOutlinerScreen(
+                            presenter = outlinerPresenter,
+                            controller = controller,
+                            formFactor = formFactor,
+                            onDrillDown = { controller.navigate("livingdoc") },
+                        )
+                        "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter, controller = controller, formFactor = formFactor)
+                        "metro" -> TransitMetroMapView(presenter = metroPresenter, controller = controller, formFactor = formFactor)
+                        "kanban" -> CartridgeDockScreen(
+                            presenter = kanbanPresenter,
+                            controller = controller,
+                            formFactor = formFactor,
+                        )
+                        "radar" -> RadialRadarScreen(presenter = radarPresenter, controller = controller, formFactor = formFactor)
+                        "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
+                        "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter, controller = controller, formFactor = formFactor)
+                        "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor, controller = controller)
+                        "livingdoc" -> LivingDocView(
+                            presenter = livingDocPresenter,
+                            controller = controller,
+                            formFactor = formFactor,
+                            voiceCaptureController = voiceCaptureController,
+                        )
+                        "gates" -> ApprovalGatesScreen(presenter = gatePresenter, controller = controller, formFactor = formFactor)
+                        "projects" -> ProjectHubScreen(
+                            presenter = projectHubPresenter,
+                            controller = controller,
+                            formFactor = formFactor,
+                            onProjectClick = { projId ->
+                                controller.switchProject(projId)
+                                controller.navigate("inbox")
+                            },
+                            onPinProjectClick = onPinProjectLauncher,
                         )
                     }
                 }
-            }
-
-            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                when (selectedDestinationId) {
-                    "inbox" -> ActionInboxScreen(
-                        presenter = inboxPresenter,
+                // Desktop: a 360 dp panel at the end of the row. Handhelds: a bottom sheet (it draws no space here).
+                if (workspaceState.inspectorOpen && selectedNodeId != null) {
+                    NodeInspector(
+                        presenter = inspectorPresenter,
                         controller = controller,
                         formFactor = formFactor,
-                        onItemClick = { item ->
-                            controller.switchProject(item.node.projectId)
-                            controller.navigate("outliner", item.node.id)
-                        },
-                    )
-                    "outliner" -> CausalOutlinerScreen(
-                        presenter = outlinerPresenter,
-                        controller = controller,
-                        formFactor = formFactor,
-                        onDrillDown = { controller.navigate("livingdoc") },
-                    )
-                    "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter, controller = controller, formFactor = formFactor)
-                    "metro" -> TransitMetroMapView(presenter = metroPresenter, controller = controller, formFactor = formFactor)
-                    "kanban" -> CartridgeDockScreen(
-                        presenter = kanbanPresenter,
-                        controller = controller,
-                        formFactor = formFactor,
-                    )
-                    "radar" -> RadialRadarScreen(presenter = radarPresenter, controller = controller, formFactor = formFactor)
-                    "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
-                    "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter, controller = controller, formFactor = formFactor)
-                    "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor, controller = controller)
-                    "livingdoc" -> LivingDocView(
-                        presenter = livingDocPresenter,
-                        controller = controller,
-                        formFactor = formFactor,
-                        voiceCaptureController = voiceCaptureController,
-                    )
-                    "gates" -> ApprovalGatesScreen(presenter = gatePresenter, controller = controller, formFactor = formFactor)
-                    "projects" -> ProjectHubScreen(
-                        presenter = projectHubPresenter,
-                        controller = controller,
-                        formFactor = formFactor,
-                        onProjectClick = { projId ->
-                            controller.switchProject(projId)
-                            controller.navigate("inbox")
-                        },
-                        onPinProjectClick = onPinProjectLauncher,
+                        onClose = { controller.closeInspector() },
                     )
                 }
-            }
-            // Desktop: a 360 dp panel at the end of the row. Handhelds: a bottom sheet (it draws no space here).
-            if (workspaceState.inspectorOpen && selectedNodeId != null) {
-                NodeInspector(
-                    presenter = inspectorPresenter,
-                    controller = controller,
-                    formFactor = formFactor,
-                    onClose = { controller.closeInspector() },
-                )
-            }
+                }
             }
         }
     }

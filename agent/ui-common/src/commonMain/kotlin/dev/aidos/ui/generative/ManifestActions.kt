@@ -2,6 +2,9 @@ package dev.aidos.ui.generative
 
 import dev.aidos.api.UiManifestRecord
 import dev.aidos.kernel.TrustLevel
+import dev.aidos.tcr.a2ui.A2uiManifest
+import dev.aidos.tcr.a2ui.A2uiNode
+import dev.aidos.tcr.a2ui.A2uiValue
 import dev.aidos.ui.workspace.GraphSnapshot
 
 /**
@@ -85,4 +88,22 @@ fun confirmationText(action: ManifestAction): String {
         is ManifestAction.ReplyToAgent -> "send this reply to the agent"
     }
     return "This card came from an agent that read untrusted content. Do you want to $what?"
+}
+
+/**
+ * Every button of a manifest as actionId to label. The renderer hands the host only the id, so
+ * `reply_to_agent` takes its text from here. A repeated id keeps its first label.
+ */
+fun manifestButtons(manifest: A2uiManifest): Map<String, String> {
+    val out = linkedMapOf<String, String>()
+    fun walk(node: A2uiNode) {
+        if (node.type == "ActionButton") {
+            val id = (node.props["actionId"] as? A2uiValue.Text)?.value
+            if (id != null) out.putIfAbsent(id, (node.props["label"] as? A2uiValue.Text)?.value.orEmpty())
+        }
+        node.slots.values.forEach(::walk)
+        node.children.forEach(::walk)
+    }
+    walk(manifest.root)
+    return out
 }

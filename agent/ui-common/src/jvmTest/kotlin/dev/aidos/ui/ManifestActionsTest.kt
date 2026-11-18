@@ -3,8 +3,12 @@ package dev.aidos.ui
 import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeType
+import dev.aidos.tcr.a2ui.A2uiManifest
+import dev.aidos.tcr.a2ui.A2uiNode
+import dev.aidos.tcr.a2ui.A2uiValue
 import dev.aidos.ui.generative.ManifestAction
 import dev.aidos.ui.generative.ManifestActionRegistry
+import dev.aidos.ui.generative.manifestButtons
 import dev.aidos.ui.generative.needsConfirmation
 import dev.aidos.ui.workspace.GraphSnapshot
 import kotlin.test.Test
@@ -109,5 +113,26 @@ class ManifestActionsTest {
         val ids = listOf("open_node", "bogus")
         assertFalse(ManifestActionRegistry.allResolve(ids, record(), { it }, snapshot))
         assertTrue(ManifestActionRegistry.allResolve(listOf("open_node", "start_node:n2"), record(), { it }, snapshot))
+    }
+
+    @Test
+    fun `buttons of a manifest map each action id to its label, including nested ones`() {
+        fun button(id: String, label: String) = A2uiNode(
+            type = "ActionButton",
+            props = mapOf("actionId" to A2uiValue.Text(id), "label" to A2uiValue.Text(label)),
+            slots = emptyMap(),
+            children = emptyList(),
+        )
+        val root = A2uiNode(
+            type = "Card",
+            props = emptyMap(),
+            slots = emptyMap(),
+            children = listOf(
+                button("open_node", "Open"),
+                A2uiNode("Row", emptyMap(), emptyMap(), listOf(button("reply_to_agent", "Yes"))),
+            ),
+        )
+        val manifest = A2uiManifest(manifestId = "m1", targetNodeId = "n1", root = root)
+        assertEquals(mapOf("open_node" to "Open", "reply_to_agent" to "Yes"), manifestButtons(manifest))
     }
 }

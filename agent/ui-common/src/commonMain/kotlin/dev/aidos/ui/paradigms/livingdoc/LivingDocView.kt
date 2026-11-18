@@ -209,7 +209,6 @@ fun GenerativeBlocksSlot(cards: List<UiManifestRecord>, formFactor: FormFactor) 
     GenerativeCards(
         records = cards,
         density = if (formFactor == FormFactor.HANDHELD_COMPACT) A2uiDensity.COMPACT else A2uiDensity.REGULAR,
-        onAction = { _, _ -> },
     )
 }
 
