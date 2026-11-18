@@ -194,6 +194,9 @@ class RealRuntimeClient : RuntimeClient {
     private val projectIdGen = UuidV7Generator()
     private val sessionIdGen = UuidV7Generator()
     private val runIdGen = UuidV7Generator()
+    // Intent node, edge, proposal and audit ids are persisted in the project database, so they
+    // need the same restart-safe generator as the ids above; nextId() restarts at aidos-1.
+    private val intentIdGen = UuidV7Generator()
 
     private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
     private val _inMemoryIntents = InMemoryIntentCommands(
@@ -215,14 +218,14 @@ class RealRuntimeClient : RuntimeClient {
     private fun intentCycleDetector(driver: SqlDriver): IntentCycleDetector = IntentCycleDetector(
         driver = driver,
         audit = AuditLog(driver, resolvedDeviceId),
-        idGen = ::nextId,
+        idGen = { intentIdGen.next() },
         nowIso = { Clock.System.now().toString() },
     )
 
     private fun intentRepository(driver: SqlDriver): IntentGraphRepository = IntentGraphRepository(
         driver = driver,
         cycleDetector = intentCycleDetector(driver),
-        idGen = ::nextId,
+        idGen = { intentIdGen.next() },
         nowIso = { Clock.System.now().toString() },
     )
 
@@ -230,7 +233,7 @@ class RealRuntimeClient : RuntimeClient {
         driver = driver,
         audit = AuditLog(driver, resolvedDeviceId),
         cycleDetector = intentCycleDetector(driver),
-        idGen = ::nextId,
+        idGen = { intentIdGen.next() },
         nowIso = { Clock.System.now().toString() },
     )
 
@@ -517,6 +520,7 @@ class RealRuntimeClient : RuntimeClient {
 
     // ── Id generation ──────────────────────────────────────────────────────────
 
+    // Process-local ids only; never for rows in a project database (they would collide after a restart).
     fun nextId(): String = "aidos-${_idCounter++}"
 
     // ── Publish events (for use by internal services) ────────────────────────
@@ -1097,7 +1101,7 @@ class RealRuntimeClient : RuntimeClient {
                 projectId = request.projectId,
                 title = request.title,
                 type = request.type,
-                id = request.id ?: nextId(),
+                id = request.id ?: intentIdGen.next(),
                 description = request.description,
                 priority = request.priority,
                 parentId = request.parentId,
