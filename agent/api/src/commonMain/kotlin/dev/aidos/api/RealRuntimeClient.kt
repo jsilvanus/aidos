@@ -2,6 +2,7 @@ package dev.aidos.api
 
 import app.cash.sqldelight.db.QueryResult
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import app.cash.sqldelight.db.SqlDriver
@@ -1389,6 +1390,41 @@ class RealRuntimeClient : RuntimeClient {
                 )
             }
             emitIntentGraphChanged(projectId, "IMPLEMENTATION_CONFIRMED", listOf(nodeId))
+        }
+
+        override suspend fun listUiManifests(
+            projectId: String,
+            targetNodeId: String?,
+            limit: Int,
+        ): List<UiManifestRecord> {
+            val driver = resolveProjectDriver(projectId) ?: return emptyList()
+            data class Row(val callId: String, val runId: String, val args: String, val taint: String, val at: String?)
+            // Same row shape the executor persists for every tool call; 'OK' is the success outcome.
+            val rows = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT c.call_id, c.run_id, c.arguments_json, r.taint_level, r.started_at " +
+                    "FROM tool_calls c JOIN runs r ON r.id = c.run_id " +
+                    "WHERE c.tool_name = 'present_ui' AND c.outcome = 'OK' AND r.project_id = ? " +
+                    "ORDER BY r.started_at DESC, c.step_index DESC, c.rowid DESC",
+                mapper = { cursor ->
+                    val out = mutableListOf<Row>()
+                    while (cursor.next().value) {
+                        out += Row(cursor.getString(0)!!, cursor.getString(1)!!, cursor.getString(2)!!, cursor.getString(3)!!, cursor.getString(4))
+                    }
+                    QueryResult.Value(out)
+                },
+                parameters = 1,
+            ) { bindString(0, projectId) }.value
+            val result = mutableListOf<UiManifestRecord>()
+            for (row in rows) {
+                if (result.size >= limit.coerceAtLeast(0)) break
+                val args = runCatching { Json.parseToJsonElement(row.args).jsonObject }.getOrNull() ?: continue
+                val node = args["targetNodeId"]?.jsonPrimitive?.contentOrNull ?: continue
+                val manifest = args["manifest"] as? kotlinx.serialization.json.JsonObject ?: continue
+                if (targetNodeId != null && node != targetNodeId) continue
+                result += UiManifestRecord(row.callId, row.runId, projectId, node, manifest.toString(), row.taint, row.at)
+            }
+            return result
         }
 
         override suspend fun startNodeRun(

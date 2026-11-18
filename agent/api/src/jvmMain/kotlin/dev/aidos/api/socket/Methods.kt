@@ -72,6 +72,7 @@ object Methods {
     const val INTENTS_RESOLVE_PROPOSAL = "intents.resolveProposal"
     const val INTENTS_CONFIRM_IMPLEMENTATION = "intents.confirmImplementation"
     const val INTENTS_START_NODE_RUN = "intents.startNodeRun"
+    const val INTENTS_LIST_UI_MANIFESTS = "intents.listUiManifests"
     const val INTENTS_EXPORT_SNAPSHOT = "intents.exportSnapshotJson"
     const val INTENTS_IMPORT_SNAPSHOT = "intents.importAndReconcileSnapshot"
 

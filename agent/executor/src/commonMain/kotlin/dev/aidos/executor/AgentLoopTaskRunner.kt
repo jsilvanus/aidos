@@ -3,6 +3,7 @@ package dev.aidos.executor
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.broker.AuditLog
+import dev.aidos.intent.IntentGraphRepository
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AidosError
@@ -94,6 +95,11 @@ private object UnboundedWindow : ExecutionWindow {
 private const val MAX_AUDIT_RATIONALE_LENGTH = 1000
 
 private val json = Json { ignoreUnknownKeys = true }
+
+/** RFC-0124 U13: the built-in tool name `listUiManifests` reads back out of `tool_calls`. */
+const val PRESENT_UI_TOOL = "present_ui"
+private const val PRESENT_UI_SCHEMA = "https://aidos.dev/schemas/a2ui-v1.json"
+private const val PRESENT_UI_MAX_BYTES = 64 * 1024
 
 @Serializable
 private data class StoredToolCall(val callId: String, val toolName: String, val argumentsJson: String)
@@ -207,6 +213,36 @@ private val askUserToolDescriptor = ToolDescriptor(
             putJsonObject("question") { put("type", "string") }
         }
         put("required", buildJsonArray { add("question") })
+    },
+    effect = EffectKind.Read,
+    requiredPermission = Permission.NOTIFY,
+    recoveryClass = RecoveryClass.IDEMPOTENT,
+    availability = ToolAvailability(
+        profiles = setOf(PlatformProfile.DESKTOP, PlatformProfile.MOBILE, PlatformProfile.HEADLESS_SERVER),
+        tier = AvailabilityTier.UNIVERSAL,
+        requiresNetwork = false,
+    ),
+)
+
+/**
+ * RFC-0124 generative layer (U13): `present_ui` shows an A2UI v1 card next to an intent node. A
+ * built-in runner tool like [askUserToolDescriptor] -- it has no effect outside the UI, so it is not
+ * registered with [EffectBroker]. The executor checks structure and size only; the TCR parser
+ * validates the manifest fully at render time and fails closed.
+ */
+private val presentUiToolDescriptor = ToolDescriptor(
+    name = PRESENT_UI_TOOL,
+    title = "Show UI card",
+    description = "Show a small card next to an intent node using only components from the Trusted " +
+        "Component Registry (A2UI v1). Use for results, metrics, diffs, or a choice of next actions. " +
+        "The card is shown to the user; it cannot run code.",
+    inputSchema = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("targetNodeId") { put("type", "string") }
+            putJsonObject("manifest") { put("type", "object") }
+        }
+        put("required", buildJsonArray { add("targetNodeId"); add("manifest") })
     },
     effect = EffectKind.Read,
     requiredPermission = Permission.NOTIFY,
@@ -504,9 +540,9 @@ class AgentLoopTaskRunner(
 
         // ask_user / spawn_worker are built-in runner tools (no EffectBroker registration needed).
         val builtInTools = if (workerSpawner != null && !run.isWorkerSession) {
-            listOf(askUserToolDescriptor, spawnWorkerToolDescriptor)
+            listOf(askUserToolDescriptor, presentUiToolDescriptor, spawnWorkerToolDescriptor)
         } else {
-            listOf(askUserToolDescriptor)
+            listOf(askUserToolDescriptor, presentUiToolDescriptor)
         }
         val availableTools = broker.descriptorsFor(subjectId, run.platformProfile, run.networkAvailable)
             .filterNot { it.name == RemoteModelEgressTool.MODEL_EGRESS_TOOL_NAME } + builtInTools
@@ -830,6 +866,9 @@ class AgentLoopTaskRunner(
         // comment for why it isn't registered as a broker Tool in the first place.
         if (callRow.toolName == "ask_user") {
             return executeAskUser(task, callRow, run)
+        }
+        if (callRow.toolName == PRESENT_UI_TOOL) {
+            return executePresentUi(task, callRow, run)
         }
         if (callRow.toolName == "spawn_worker" && workerSpawner != null) {
             return executeSpawnWorker(task, callRow, run, workerSpawner)
@@ -1237,6 +1276,52 @@ class AgentLoopTaskRunner(
                 taskState = TaskState.AWAITING_INPUT,
             ),
         )
+    }
+
+    /**
+     * RFC-0124 `present_ui`: structural checks only (the TCR parser validates the manifest at render
+     * time). The full arguments stay in `tool_calls.arguments_json`, which `listUiManifests` reads.
+     */
+    private suspend fun executePresentUi(task: Task, callRow: ToolCallRow, run: RunContext): TaskResult {
+        val error = presentUiError(callRow.argumentsJson, run)
+        val result = if (error == null) {
+            val nodeId = parseJsonObject(callRow.argumentsJson)["targetNodeId"]!!.jsonPrimitive.content
+            ToolCallResult(
+                callId = callRow.callId,
+                outcome = ToolOutcome.Ok,
+                content = listOf(ContentBlock.Text("Shown to the user next to node $nodeId.")),
+                trustLevel = TrustLevel.TRUSTED,
+            )
+        } else {
+            ToolCallResult(
+                callId = callRow.callId,
+                outcome = ToolOutcome.Failed(AidosError(ErrorCodes.TOOL_INVALID_ARGUMENTS, ErrorClass.INVALID_INPUT, error)),
+                content = listOf(ContentBlock.Text(error)),
+                trustLevel = TrustLevel.TRUSTED,
+            )
+        }
+        return finishToolCall(task, callRow, run, result)
+    }
+
+    /** Returns the message for the first failed `present_ui` check, or null when all pass. */
+    private fun presentUiError(argumentsJson: String, run: RunContext): String? {
+        if (argumentsJson.length > PRESENT_UI_MAX_BYTES || argumentsJson.encodeToByteArray().size > PRESENT_UI_MAX_BYTES) {
+            return "present_ui arguments exceed the $PRESENT_UI_MAX_BYTES byte limit"
+        }
+        val args = runCatching { json.parseToJsonElement(argumentsJson) as? JsonObject }.getOrNull()
+            ?: return "present_ui arguments must be a JSON object"
+        val nodeId = (args["targetNodeId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim().orEmpty()
+        if (nodeId.isEmpty()) return "present_ui requires a non-empty 'targetNodeId'"
+        val manifest = args["manifest"] as? JsonObject ?: return "present_ui requires 'manifest' to be an object"
+        val schema = (manifest["\$schema"] as? JsonPrimitive)?.contentOrNull
+        if (schema != PRESENT_UI_SCHEMA) return "present_ui manifest '\$schema' must be $PRESENT_UI_SCHEMA"
+        val manifestId = (manifest["manifestId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (manifestId.isNullOrEmpty()) return "present_ui manifest requires a string 'manifestId'"
+        if (manifest["root"] !is JsonObject) return "present_ui manifest requires an object 'root'"
+        if (IntentGraphRepository(driver, idGen = idGen, nowIso = nowIso).getNode(run.projectId.value, nodeId) == null) {
+            return "present_ui targetNodeId '$nodeId' is not a node of this project"
+        }
+        return null
     }
 
     private suspend fun executeSpawnWorker(

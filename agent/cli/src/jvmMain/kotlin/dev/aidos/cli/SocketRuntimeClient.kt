@@ -26,6 +26,7 @@ import dev.aidos.api.KnowledgeQueries
 import dev.aidos.api.KnowledgeQuery
 import dev.aidos.api.KnowledgeResult
 import dev.aidos.api.ParkedEffectRequest
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
 import dev.aidos.api.ProjectCommands
@@ -657,6 +658,19 @@ class SocketRuntimeClient(
                 sessionId?.let { put("sessionId", it) }
             }
             WireExtended.decodeStartNodeRunResult(call(Methods.INTENTS_START_NODE_RUN, params).jsonObject)
+        }
+
+        override suspend fun listUiManifests(
+            projectId: String,
+            targetNodeId: String?,
+            limit: Int,
+        ): List<UiManifestRecord> = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                targetNodeId?.let { put("targetNodeId", it) }
+                put("limit", limit)
+            }
+            WireExtended.decodeUiManifestList(call(Methods.INTENTS_LIST_UI_MANIFESTS, params).jsonArray)
         }
 
         override suspend fun exportSnapshotJson(projectId: String): String = withContext(Dispatchers.IO) {

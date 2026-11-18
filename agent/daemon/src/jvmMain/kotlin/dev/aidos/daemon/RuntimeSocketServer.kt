@@ -535,6 +535,13 @@ class RuntimeSocketServer(
                 sessionId = params["sessionId"]?.jsonPrimitive?.contentOrNull,
             )
         )
+        Methods.INTENTS_LIST_UI_MANIFESTS -> WireExtended.encodeUiManifestList(
+            client.intents.listUiManifests(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                targetNodeId = params["targetNodeId"]?.jsonPrimitive?.contentOrNull,
+                limit = params["limit"]?.jsonPrimitive?.intOrNull ?: 50,
+            )
+        )
         Methods.INTENTS_EXPORT_SNAPSHOT -> JsonPrimitive(
             client.intents.exportSnapshotJson(params["projectId"]!!.jsonPrimitive.content)
         )

@@ -777,6 +777,87 @@ class AgentLoopTaskRunnerTest {
             }, 2
         ) { bindString(0, runId.value); bindString(1, callId) }.value
 
+    // ─── RFC-0124 U13: present_ui ──────────────────────────────────────────────
+
+    private fun presentUiResponse(arguments: kotlinx.serialization.json.JsonObject, callId: String = "ui-1") = ModelResponse(
+        outputs = listOf(
+            ToolCallOutput(ToolCall(callId = callId, toolName = "present_ui", arguments = arguments, capabilityId = null)),
+        ),
+        stopReason = StopReason.TOOL_USE,
+        usage = testUsage(),
+        model = testModel(),
+    )
+
+    private fun manifestArgs(
+        nodeId: String,
+        schema: String = "https://aidos.dev/schemas/a2ui-v1.json",
+        padding: Int = 0,
+    ) = buildJsonObject {
+        put("targetNodeId", nodeId)
+        put("manifest", buildJsonObject {
+            put("\$schema", schema)
+            put("manifestId", "m1")
+            put("root", buildJsonObject { put("type", "text"); put("text", "x".repeat(padding)) })
+        })
+    }
+
+    private fun seedNode(driver: app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver, projectId: String, nodeId: String) {
+        dev.aidos.intent.IntentGraphRepository(driver, idGen = { nextId() }, nowIso = { nowIso })
+            .createNode(projectId = projectId, id = nodeId, title = "Node", type = dev.aidos.intent.IntentNodeType.ATOMIC_TASK)
+    }
+
+    private fun runPresentUi(arguments: kotlinx.serialization.json.JsonObject, seed: Boolean = true): Triple<String, String, List<ModelRequest>> = runBlocking {
+        val driver = openDriver()
+        val (pid, _, runId) = createRun(driver)
+        if (seed) seedNode(driver, pid, "node-1")
+        val requests = mutableListOf<ModelRequest>()
+        val adapter = fakeModel(listOf(presentUiResponse(arguments), endTurnResponse()), requests)
+        buildExecutor(driver, fakeRouter(adapter), noOpBroker()).drive(runId)
+        val outcome = toolCallOutcomeFor(driver, runId, "ui-1")
+        val args = driver.executeQuery(null, "SELECT arguments_json FROM tool_calls WHERE call_id = 'ui-1'",
+            mapper = { c -> check(c.next().value); app.cash.sqldelight.db.QueryResult.Value(c.getString(0)!!) }, 0).value
+        Triple(outcome, args, requests)
+    }
+
+    private fun toolResultText(requests: List<ModelRequest>): String =
+        requests.last().messages.filterIsInstance<Turn.ToolResult>().flatMap { it.result.content }
+            .filterIsInstance<ContentBlock.Text>().joinToString("\n") { it.text }
+
+    @Test
+    fun `present_ui with a valid manifest is persisted and succeeds`() {
+        val (outcome, args, requests) = runPresentUi(manifestArgs("node-1"))
+        assertEquals("OK", outcome)
+        assertTrue(args.contains("\"manifestId\":\"m1\""), "the full arguments are persisted: $args")
+        assertEquals("Shown to the user next to node node-1.", toolResultText(requests))
+    }
+
+    @Test
+    fun `present_ui for an unknown node is an error`() {
+        val (outcome, _, requests) = runPresentUi(manifestArgs("ghost"))
+        assertEquals("FAILED", outcome)
+        assertTrue(toolResultText(requests).contains("ghost"))
+    }
+
+    @Test
+    fun `present_ui with the wrong schema is an error`() {
+        val (outcome, _, requests) = runPresentUi(manifestArgs("node-1", schema = "https://example.com/other.json"))
+        assertEquals("FAILED", outcome)
+        assertTrue(toolResultText(requests).contains("schema"))
+    }
+
+    @Test
+    fun `present_ui over 64 KiB is an error`() {
+        val (outcome, _, requests) = runPresentUi(manifestArgs("node-1", padding = 70_000))
+        assertEquals("FAILED", outcome)
+        assertTrue(toolResultText(requests).contains("limit"))
+    }
+
+    @Test
+    fun `present_ui without a manifest object is an error`() {
+        val (outcome, _, _) = runPresentUi(buildJsonObject { put("targetNodeId", "node-1") })
+        assertEquals("FAILED", outcome)
+    }
+
     @Test
     fun `the model calling ask_user parks the run instead of executing anything`() = runBlocking {
         val driver = openDriver()

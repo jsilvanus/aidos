@@ -23,6 +23,7 @@ import dev.aidos.api.ReviewState
 import dev.aidos.api.RunSummary
 import dev.aidos.api.SessionDetail
 import dev.aidos.api.StartNodeRunResult
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentCheckKind
@@ -622,6 +623,33 @@ object WireExtended {
         ),
         expiresAtIso = json["expiresAtIso"]!!.jsonPrimitive.content,
     )
+
+    fun encodeUiManifestList(list: List<UiManifestRecord>): JsonArray = buildJsonArray {
+        list.forEach {
+            add(buildJsonObject {
+                put("callId", it.callId)
+                put("runId", it.runId)
+                put("projectId", it.projectId)
+                put("targetNodeId", it.targetNodeId)
+                put("manifestJson", it.manifestJson)
+                put("runTaint", it.runTaint)
+                put("createdAt", it.createdAt)
+            })
+        }
+    }
+
+    fun decodeUiManifestList(json: JsonArray): List<UiManifestRecord> = json.map {
+        val o = it.jsonObject
+        UiManifestRecord(
+            callId = o["callId"]!!.jsonPrimitive.content,
+            runId = o["runId"]!!.jsonPrimitive.content,
+            projectId = o["projectId"]!!.jsonPrimitive.content,
+            targetNodeId = o["targetNodeId"]!!.jsonPrimitive.content,
+            manifestJson = o["manifestJson"]!!.jsonPrimitive.content,
+            runTaint = o["runTaint"]!!.jsonPrimitive.content,
+            createdAt = o["createdAt"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
 
     fun encodeStartNodeRunResult(r: StartNodeRunResult): JsonObject = buildJsonObject {
         when (r) {
