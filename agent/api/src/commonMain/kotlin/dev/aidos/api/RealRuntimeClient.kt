@@ -197,6 +197,8 @@ class RealRuntimeClient : RuntimeClient {
     // Intent node, edge, proposal and audit ids are persisted in the project database, so they
     // need the same restart-safe generator as the ids above; nextId() restarts at aidos-1.
     private val intentIdGen = UuidV7Generator()
+    // `tasks` rows written by the persistent send path (RFC-0008) are persisted too.
+    private val taskIdGen = UuidV7Generator()
 
     private val _openProjectDrivers = mutableMapOf<String, SqlDriver>()
     private val _inMemoryIntents = InMemoryIntentCommands(
@@ -784,7 +786,7 @@ class RealRuntimeClient : RuntimeClient {
                         "description, state, retry_policy_json) VALUES (?, ?, ?, ?, 0, ?, ?, 'PENDING', '{}')",
                     parameters = 6,
                 ) {
-                    bindString(0, nextId())
+                    bindString(0, taskIdGen.next())
                     bindString(1, runId)
                     bindString(2, sessionId)
                     bindString(3, session.projectId)

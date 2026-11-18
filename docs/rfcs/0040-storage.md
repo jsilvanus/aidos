@@ -283,6 +283,7 @@ files:
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/AndroidRuntimeClientFactory.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/RealRuntimeClientPersistenceTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/TaskIdPersistenceTest.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeClientFactory.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/DaemonCliIntegrationTest.kt
   - agent/storage/src/androidMain/kotlin/dev/aidos/storage/AndroidStorage.kt
