@@ -47,6 +47,12 @@ class WorkspaceController(
         stores.getOrPut(projectId) { ProjectGraphStore(projectId, client, scope).also { it.start() } }
     }
 
+    /**
+     * The store for [projectId] only if it is already running. Lets the Projects view count open
+     * tasks for projects the person has opened, without starting a store for every project (UI-34).
+     */
+    fun storeIfStarted(projectId: String): ProjectGraphStore? = synchronized(stores) { stores[projectId] }
+
     fun switchProject(projectId: String) {
         if (projectId == _state.value.projectId) return
         _state.update { it.copy(projectId = projectId, selectedNodeId = null, inspectorOpen = false) }
