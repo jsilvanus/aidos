@@ -89,7 +89,7 @@ class PhaseFiveTest {
 
     @Test
     fun testRadarZones() {
-        val zones = listOf(RadarZone.STRIKE_ZONE, RadarZone.INTERMEDIATE_ORBIT, RadarZone.OUTER_PERIMETER)
-        assertEquals(3, zones.size)
+        val zones = listOf(RadarZone.STRIKE_ZONE, RadarZone.IN_FLIGHT, RadarZone.HORIZON, RadarZone.SEALED)
+        assertEquals(4, zones.size)
     }
 }

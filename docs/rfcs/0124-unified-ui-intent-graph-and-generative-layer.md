@@ -154,6 +154,9 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/RadialRadarScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/MobileHorizonArcView.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RadarViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
