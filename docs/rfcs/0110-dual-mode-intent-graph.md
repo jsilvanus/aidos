@@ -242,6 +242,7 @@ post_mvp:
     title: "Android/Desktop Compose UI views"
     status: done
     files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - id: "0110.2"
     title: "socket wire protocol for intents.*"
     status: done
