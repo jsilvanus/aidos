@@ -29,6 +29,7 @@ import dev.aidos.api.ParkedEffectRequest
 import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
 import dev.aidos.api.ProjectCommands
+import dev.aidos.api.StartNodeRunResult
 import dev.aidos.api.ProjectDetail
 import dev.aidos.api.ProjectResult
 import dev.aidos.api.ProjectSummary
@@ -643,6 +644,19 @@ class SocketRuntimeClient(
                 criterionIds?.let { ids -> put("criterionIds", buildJsonArray { ids.forEach { add(it) } }) }
             }
             call(Methods.INTENTS_CONFIRM_IMPLEMENTATION, params).let { }
+        }
+
+        override suspend fun startNodeRun(
+            projectId: String,
+            nodeId: String,
+            sessionId: String?,
+        ): StartNodeRunResult = withContext(Dispatchers.IO) {
+            val params = buildJsonObject {
+                put("projectId", projectId)
+                put("nodeId", nodeId)
+                sessionId?.let { put("sessionId", it) }
+            }
+            WireExtended.decodeStartNodeRunResult(call(Methods.INTENTS_START_NODE_RUN, params).jsonObject)
         }
 
         override suspend fun exportSnapshotJson(projectId: String): String = withContext(Dispatchers.IO) {

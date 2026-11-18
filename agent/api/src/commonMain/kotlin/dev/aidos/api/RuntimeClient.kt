@@ -614,6 +614,15 @@ data class IndexingProgress(
 
 // ─── Intent Commands (RFC-0110) ───────────────────────────────────────────────
 
+/**
+ * RFC-0124 (UI-04): outcome of putting an agent on an intent node. [Refused] carries a stable
+ * [code] (`intent.not_startable`, `intent.no_project_db`, ...) and a human-readable [message].
+ */
+sealed interface StartNodeRunResult {
+    data class Started(val runId: String, val sessionId: String) : StartNodeRunResult
+    data class Refused(val code: String, val message: String) : StartNodeRunResult
+}
+
 interface IntentCommands {
     suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord
     suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord
@@ -692,6 +701,14 @@ interface IntentCommands {
         confirmedById: String = "local-user",
         criterionIds: List<String>? = null,
     )
+
+    /**
+     * Starts an agent Run on [nodeId] through the normal `sessions.send` path (guards: human-task
+     * isolation, status, profile, locality) and records the node-to-run link. Additive to Agent
+     * API v1: the default refuses, so runtimes that cannot do this stay source compatible.
+     */
+    suspend fun startNodeRun(projectId: String, nodeId: String, sessionId: String? = null): StartNodeRunResult =
+        StartNodeRunResult.Refused("intent.start_unsupported", "This runtime cannot start runs on intent nodes.")
 
     suspend fun exportSnapshotJson(projectId: String): String
 
