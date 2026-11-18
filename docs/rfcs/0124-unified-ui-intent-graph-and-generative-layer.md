@@ -206,6 +206,7 @@ files:
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/StartNodeRunTest.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RelayRiverViewTest.kt
+  - docs/ui-acceptance.md
 ```
 
 ## Post-MVP Work
@@ -215,7 +216,7 @@ post_mvp:
   - id: "0124.1"
     title: "Run the Android handheld acceptance on a phone, a foldable and DeX, and record the results"
     status: todo
-    done_when: "the acceptance script in this RFC passes on a physical phone and an unfolded device"
+    done_when: "the acceptance script in docs/ui-acceptance.md passes on a physical phone and an unfolded device"
   - id: "0124.2"
     title: "A2UI manifest parser and validator against the TCR manifest, failing closed on unknown types and props"
     status: done
