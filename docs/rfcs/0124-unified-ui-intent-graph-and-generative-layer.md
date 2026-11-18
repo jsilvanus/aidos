@@ -167,6 +167,8 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/TaskCartridgeView.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/KanbanViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/TimelineViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroMapView.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
