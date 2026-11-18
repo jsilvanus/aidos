@@ -61,6 +61,9 @@ import kotlinx.datetime.Instant
  * buffered events with sequence > sinceSequence are replayed before the live stream continues,
  * allowing clients to reconnect and receive the gap.
  */
+/** RFC-0124 Gates: parked tool arguments are shown truncated; the full call stays in `tool_calls`. */
+private const val PARKED_ARGUMENTS_MAX_CHARS = 4000
+
 class RealRuntimeClient : RuntimeClient {
 
     // ── Mutable state ──────────────────────────────────────────────────────────
@@ -361,6 +364,46 @@ class RealRuntimeClient : RuntimeClient {
                 recipient = arg("recipient") ?: return@mapNotNull null,
                 payload = arg("payload") ?: return@mapNotNull null,
                 reason = arg("reason"),
+            )
+        }
+    }
+
+    /** RFC-0124 Gates: every parked TOOL_CALL except message:send, read from durable state like [parkedEgressIn]. */
+    private fun parkedEffectsIn(projectId: String, driver: SqlDriver): List<ParkedEffectRequest> {
+        val parked = driver.executeQuery(
+            identifier = null,
+            sql = "SELECT run_id, task_id, operation_detail_json FROM continuations WHERE suspended_operation = 'TOOL_CALL'",
+            mapper = { cursor ->
+                val out = mutableListOf<Triple<String, String, String>>()
+                while (cursor.next().value) out += Triple(cursor.getString(0)!!, cursor.getString(1)!!, cursor.getString(2)!!)
+                QueryResult.Value(out)
+            },
+            parameters = 0,
+        ).value
+        return parked.mapNotNull { (runId, taskId, detailJson) ->
+            val detail = runCatching { Json.parseToJsonElement(detailJson).jsonObject }.getOrNull() ?: return@mapNotNull null
+            val toolName = detail["toolName"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            if (toolName == "message:send") return@mapNotNull null
+            val callId = detail["callId"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            val argumentsJson = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT arguments_json FROM tool_calls WHERE call_id = ?",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, callId) }.value ?: return@mapNotNull null
+            val runTaint = driver.executeQuery(
+                identifier = null,
+                sql = "SELECT taint_level FROM runs WHERE id = ?",
+                mapper = { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getString(0) else null) },
+                parameters = 1,
+            ) { bindString(0, runId) }.value ?: return@mapNotNull null
+            ParkedEffectRequest(
+                runId = runId,
+                taskId = taskId,
+                projectId = projectId,
+                toolName = toolName,
+                argumentsJson = argumentsJson.take(PARKED_ARGUMENTS_MAX_CHARS),
+                runTaint = runTaint,
             )
         }
     }
@@ -923,6 +966,9 @@ class RealRuntimeClient : RuntimeClient {
         // tool_calls row it points at), so a restart or a second process sees the same queue.
         override suspend fun listParkedEgress(): List<ParkedEgressRequest> =
             _openProjectDrivers.flatMap { (projectId, driver) -> parkedEgressIn(projectId, driver) }
+
+        override suspend fun listParkedEffects(): List<ParkedEffectRequest> =
+            _openProjectDrivers.flatMap { (projectId, driver) -> parkedEffectsIn(projectId, driver) }
 
         override suspend fun approve(requestId: String): CapabilityResult {
             val req = _pendingCapabilities.firstOrNull { it.requestId == requestId }

@@ -181,6 +181,13 @@ interface CapabilityCommands {
      * Hosts that cannot read project state return an empty list.
      */
     suspend fun listParkedEgress(): List<ParkedEgressRequest> = emptyList()
+
+    /**
+     * A tool call parked until a person approves or denies it (RFC-0018, RFC-0124 Gates).
+     * Approve or deny with [approveEffect] / [denyEffect] using [ParkedEffectRequest.runId] and
+     * [ParkedEffectRequest.taskId]. `message:send` is not included: it is in [listParkedEgress].
+     */
+    suspend fun listParkedEffects(): List<ParkedEffectRequest> = emptyList()
     suspend fun approve(requestId: String): CapabilityResult
     suspend fun deny(requestId: String, reason: String)
     suspend fun approveEffect(runId: String, taskId: String): CapabilityResult
@@ -226,6 +233,16 @@ data class ParkedEgressRequest(
     /** Lowercase hex SHA-256 of [payload]: what the approval's declassification grant is bound to. */
     val payloadFingerprint: String get() = PayloadFingerprint.sha256Hex(payload)
 }
+
+/** A tool call parked until a person approves or denies it (RFC-0018, RFC-0124 Gates). */
+data class ParkedEffectRequest(
+    val runId: String,
+    val taskId: String,
+    val projectId: String,
+    val toolName: String,
+    val argumentsJson: String,
+    val runTaint: String,
+)
 
 data class PendingCapabilityRequest(
     val requestId: String,

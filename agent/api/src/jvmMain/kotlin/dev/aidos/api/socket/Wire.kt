@@ -5,6 +5,7 @@ import dev.aidos.api.CreateProjectRequest
 import dev.aidos.api.CreateSessionRequest
 import dev.aidos.api.EventFilter
 import dev.aidos.api.GrantCapabilityRequest
+import dev.aidos.api.ParkedEffectRequest
 import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
 import dev.aidos.api.ProjectLocation
@@ -299,6 +300,31 @@ object Wire {
                 it.reason?.let { reason -> put("reason", reason) }
             })
         }
+    }
+
+    fun encodeParkedEffectList(list: List<ParkedEffectRequest>): JsonArray = buildJsonArray {
+        list.forEach {
+            add(buildJsonObject {
+                put("runId", it.runId)
+                put("taskId", it.taskId)
+                put("projectId", it.projectId)
+                put("toolName", it.toolName)
+                put("argumentsJson", it.argumentsJson)
+                put("runTaint", it.runTaint)
+            })
+        }
+    }
+
+    fun decodeParkedEffectList(json: JsonArray): List<ParkedEffectRequest> = json.map {
+        val o = it.jsonObject
+        ParkedEffectRequest(
+            runId = o["runId"]!!.jsonPrimitive.content,
+            taskId = o["taskId"]!!.jsonPrimitive.content,
+            projectId = o["projectId"]!!.jsonPrimitive.content,
+            toolName = o["toolName"]!!.jsonPrimitive.content,
+            argumentsJson = o["argumentsJson"]!!.jsonPrimitive.content,
+            runTaint = o["runTaint"]!!.jsonPrimitive.content,
+        )
     }
 
     fun decodeParkedEgressList(json: JsonArray): List<ParkedEgressRequest> = json.map {
