@@ -1,0 +1,132 @@
+package dev.aidos.ui.workspace
+
+import dev.aidos.api.CreateIntentNodeRequest
+import dev.aidos.api.RuntimeClient
+import dev.aidos.api.UpdateIntentNodeRequest
+import dev.aidos.intent.IntentEdgeKind
+import dev.aidos.intent.ProposalResolutionDecision
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+data class WorkspaceUiState(
+    val projectId: String,
+    val viewId: String,
+    val selectedNodeId: String?,
+    val inspectorOpen: Boolean,
+    val message: String?,
+)
+
+/**
+ * The one place the workspace mutates (RFC-0124 amendment). Navigation and selection live here so
+ * views stop keeping their own; every mutation goes through `client.intents` for the current
+ * project, refreshes the store, and leaves a short message or error in [state].
+ */
+class WorkspaceController(
+    private val client: RuntimeClient,
+    private val scope: CoroutineScope,
+    initialProjectId: String,
+    initialViewId: String,
+) {
+    private val _state = MutableStateFlow(
+        WorkspaceUiState(initialProjectId, initialViewId, selectedNodeId = null, inspectorOpen = false, message = null)
+    )
+    val state: StateFlow<WorkspaceUiState> = _state.asStateFlow()
+
+    private val stores = HashMap<String, ProjectGraphStore>()
+    private val _currentStore = MutableStateFlow(storeFor(initialProjectId))
+    val currentStore: StateFlow<ProjectGraphStore> = _currentStore.asStateFlow()
+
+    /** Cached per project, started on first use. */
+    fun storeFor(projectId: String): ProjectGraphStore = synchronized(stores) {
+        stores.getOrPut(projectId) { ProjectGraphStore(projectId, client, scope).also { it.start() } }
+    }
+
+    fun switchProject(projectId: String) {
+        if (projectId == _state.value.projectId) return
+        _state.update { it.copy(projectId = projectId, selectedNodeId = null, inspectorOpen = false) }
+        _currentStore.value = storeFor(projectId)
+    }
+
+    fun navigate(viewId: String, nodeId: String? = null) {
+        _state.update { it.copy(viewId = viewId, selectedNodeId = nodeId ?: it.selectedNodeId) }
+    }
+
+    fun select(nodeId: String?) {
+        _state.update { it.copy(selectedNodeId = nodeId) }
+    }
+
+    fun openInspector(nodeId: String) {
+        _state.update { it.copy(selectedNodeId = nodeId, inspectorOpen = true) }
+    }
+
+    fun closeInspector() {
+        _state.update { it.copy(inspectorOpen = false) }
+    }
+
+    fun createNode(request: CreateIntentNodeRequest) = mutate("Node created") {
+        client.intents.createNode(request.copy(projectId = projectId()))
+    }
+
+    fun updateNode(request: UpdateIntentNodeRequest) = mutate("Node updated") {
+        client.intents.updateNode(request.copy(projectId = projectId()))
+    }
+
+    fun archiveNode(nodeId: String) = mutate("Node archived") {
+        client.intents.archiveNode(projectId(), nodeId)
+        _state.update { if (it.selectedNodeId == nodeId) it.copy(selectedNodeId = null, inspectorOpen = false) else it }
+    }
+
+    fun completeHumanNode(nodeId: String, note: String? = null) = mutate("Marked done") {
+        client.intents.completeHumanNode(projectId(), nodeId, note = note)
+    }
+
+    fun addEdge(from: String, to: String, kind: IntentEdgeKind) = mutate("Link added") {
+        client.intents.addEdge(projectId(), from, to, kind)
+    }
+
+    fun removeEdge(from: String, to: String, kind: IntentEdgeKind) = mutate("Link removed") {
+        client.intents.removeEdge(projectId(), from, to, kind)
+    }
+
+    fun confirmImplementation(nodeId: String) = mutate("Implementation confirmed") {
+        client.intents.confirmImplementation(projectId(), nodeId)
+    }
+
+    fun resolveProposal(proposalId: String, decision: ProposalResolutionDecision) = mutate("Proposal resolved") {
+        client.intents.resolveProposal(projectId(), proposalId, decision)
+    }
+
+    /**
+     * Starts an agent run on a node. TODO(UI-21): `IntentCommands.startNodeRun` arrives with UI-04;
+     * the Node Inspector (UI-21) wires this method to it. Until then it only says so.
+     */
+    fun startNodeRun(nodeId: String) {
+        _state.update { it.copy(message = "Starting a run is not available yet ($nodeId)") }
+    }
+
+    fun clearMessage() {
+        _state.update { it.copy(message = null) }
+    }
+
+    private fun projectId() = _state.value.projectId
+
+    private fun mutate(success: String, block: suspend () -> Unit) {
+        val store = storeFor(projectId())
+        scope.launch {
+            try {
+                block()
+                store.refreshNow()
+                _state.update { it.copy(message = success) }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                _state.update { it.copy(message = "Failed: ${t.message ?: t::class.simpleName}") }
+            }
+        }
+    }
+}

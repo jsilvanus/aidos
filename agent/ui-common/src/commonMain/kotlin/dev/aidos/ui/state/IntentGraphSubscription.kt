@@ -28,6 +28,7 @@ data class IntentGraphUiState(
  * Shared reactive state bridge listening to [IntentCommands] (RFC-0110, RFC-0111).
  * Safe for high-frequency concurrent background dispatch.
  */
+@Deprecated("Use dev.aidos.ui.workspace.ProjectGraphStore (RFC-0124 amendment)")
 class IntentGraphSubscription(
     private val intentCommands: IntentCommands,
     private val scope: CoroutineScope,
