@@ -50,6 +50,8 @@ class DesktopModelsModel(
     private val scope: CoroutineScope,
     private val control: () -> fi.italeino.aidos.engine.control.ModelsControl = { host.modelsControl },
     private val installPollMillis: Long = 1_000,
+    /** The Engine's lifecycle as the Status screen sees it (attached or in-process), so Cookbook cannot disagree with it. */
+    private val engineState: kotlinx.coroutines.flow.StateFlow<fi.italeino.aidos.engine.EngineState> = host.state,
 ) {
     private val raw = MutableStateFlow(RawModelsState())
     private val installedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -73,7 +75,7 @@ class DesktopModelsModel(
         }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    val state: StateFlow<ModelsPaneState> = combine(raw, suggestions, host.state) { r, s, engineState ->
+    val state: StateFlow<ModelsPaneState> = combine(raw, suggestions, engineState) { r, s, engineState ->
         ModelsPaneState(
             engineState = engineState,
             localModels = r.localModels,

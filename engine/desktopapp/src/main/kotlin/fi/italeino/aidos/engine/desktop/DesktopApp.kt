@@ -66,7 +66,7 @@ class DesktopModels(
 ) {
     val status = DesktopStatusModel(host, scope, status = { EngineAttach.statusControl(host) }, apps = { EngineAttach.appsControl(host) })
     val apps = DesktopAppsModel(host, scope, control = { EngineAttach.appsControl(host) })
-    val models = DesktopModelsModel(host, prefs, scope, control = { EngineAttach.modelsControl(host) })
+    val models = DesktopModelsModel(host, prefs, scope, control = { EngineAttach.modelsControl(host) }, engineState = status.engineState)
     val agents = DesktopAgentsModel(host, scope, prefs, control = { EngineAttach.agentsControl(host) }, models = { EngineAttach.modelsControl(host) })
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(scope) { EngineAttach.lanControl(host) }
@@ -425,6 +425,10 @@ private fun StatusColumn(models: DesktopModels, modifier: Modifier) {
                     hint = if (state.isEngineRunning) "Click to turn off" else "Click to turn on",
                     modifier = Modifier.clickable { models.status.toggleEngine() },
                 )
+                val notice by models.status.notice.collectAsState()
+                notice?.let {
+                    Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp))
+                }
                 lastError?.let {
                     Text("Start failed: $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp))
                 }
@@ -437,7 +441,7 @@ private fun StatusColumn(models: DesktopModels, modifier: Modifier) {
 @Composable
 private fun AppsColumn(models: DesktopModels, modifier: Modifier) {
     val approvals by models.apps.approvals.collectAsState()
-    val isRunning by models.host.isRunning.collectAsState()
+    val isRunning by models.status.isRunning.collectAsState()
     var simulatedName by remember { mutableStateOf("") }
 
     Column(modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -503,7 +507,7 @@ private fun DetailColumn(models: DesktopModels, modelId: String, onBack: () -> U
 
     val state by detail.state.collectAsState()
     val loading by detail.loading.collectAsState()
-    val engineState by models.host.state.collectAsState()
+    val engineState by models.status.engineState.collectAsState()
     val prefs by models.prefs.data.collectAsState()
     val scope = rememberCoroutineScope()
     var pendingLicenseConfirm by remember { mutableStateOf(false) }
