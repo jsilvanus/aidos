@@ -159,6 +159,8 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PresentersOnStoreTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelinePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelineScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/BatonVectorLine.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/DockRules.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockScreen.kt
@@ -192,6 +194,7 @@ files:
   - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentStartCheck.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/StartNodeRunTest.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RelayRiverViewTest.kt
 ```
 
 ## Post-MVP Work
