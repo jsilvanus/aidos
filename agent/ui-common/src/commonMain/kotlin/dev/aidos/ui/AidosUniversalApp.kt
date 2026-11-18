@@ -19,6 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -83,6 +84,10 @@ import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.workspace.WorkspaceBootstrap
 import dev.aidos.ui.workspace.WorkspaceController
 import dev.aidos.ui.workspace.WorkspaceKind
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -194,30 +199,38 @@ private fun AidosUniversalAppContent(
         )
     }
 
+    // The graph presenters of one project collect that project's store. A child scope per project means
+    // switching projects cancels the old presenters' collectors instead of leaving them running.
+    val projectScope = remember(currentProjectId) {
+        CoroutineScope(coroutineScope.coroutineContext + SupervisorJob(coroutineScope.coroutineContext[Job]))
+    }
+    DisposableEffect(projectScope) {
+        onDispose { projectScope.cancel() }
+    }
     // RFC-0124 amendment (UI-20): every graph view reads the current project's live store.
     val outlinerPresenter = remember(currentProjectId) {
-        CausalOutlinerPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        CausalOutlinerPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val pipelinePresenter = remember(currentProjectId) {
-        RelayPipelinePresenter(controller.currentStore.value.snapshot, coroutineScope)
+        RelayPipelinePresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val metroPresenter = remember(currentProjectId) {
-        TransitMetroPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        TransitMetroPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val kanbanPresenter = remember(currentProjectId) {
-        CartridgeDockPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        CartridgeDockPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val radarPresenter = remember(currentProjectId) {
-        FocusRadarPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        FocusRadarPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val breadboardPresenter = remember(currentProjectId) {
-        BreadboardSchematicPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        BreadboardSchematicPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val canvasPresenter = remember(currentProjectId) {
-        SpatialCanvasPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        SpatialCanvasPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val timelinePresenter = remember(currentProjectId) {
-        TimelineGanttPresenter(controller.currentStore.value.snapshot, coroutineScope)
+        TimelineGanttPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val livingDocPresenter = remember(currentProjectId) {
         LivingDocPresenter(controller.currentStore.value.snapshot, controller, coroutineScope)
