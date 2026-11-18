@@ -38,6 +38,8 @@ data class ActionItemUiModel(
     val projectName: String,
     val isLifeProject: Boolean = false,
     val batonDirection: BatonTransferDirection = BatonTransferDirection.AGENT_TO_HUMAN,
+    /** Title of the agent task whose completion made this item actionable (UI-30). Null when none. */
+    val unblockedBy: String? = null,
 )
 
 @Composable
@@ -72,8 +74,6 @@ fun ActionItemCard(
                     horizontalArrangement = Arrangement.spacedBy(SpacingTokens.sm),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BatonHandoffBadge(direction = item.batonDirection)
-
                     Text(
                         text = if (item.isLifeProject) "🛡 [${item.projectName}]" else "💻 [${item.projectName}]",
                         style = AidosTypography.baseTypography.labelSmall,
@@ -86,6 +86,20 @@ fun ActionItemCard(
                     onClick = { onComplete(item.node.id) },
                     kind = ActionButtonKind.TACTILE_MICRO,
                 )
+            }
+
+            if (item.unblockedBy != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(SpacingTokens.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BatonHandoffBadge(direction = BatonTransferDirection.AGENT_TO_HUMAN)
+                    Text(
+                        text = "Unblocked by ${item.unblockedBy}",
+                        style = AidosTypography.baseTypography.labelSmall,
+                        color = Color(0xFFCBD5E1),
+                    )
+                }
             }
 
             Text(

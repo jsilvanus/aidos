@@ -128,6 +128,12 @@ Built: the twelve views with presenters tested on the JVM; the adaptive shell (`
 ```yaml
 files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ViewModeCatalog.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardGlyphs.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardComponentStrip.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/BreadboardViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ResponsiveScaffold.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/WindowSizeClass.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/AdaptiveLayoutState.kt
@@ -136,28 +142,61 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceBootstrap.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspectorPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspector.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/NodeInspectorTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/MultiAgentPillOverlay.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/PillDerivation.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/PresenceTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatesScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/GateCards.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/SpatialCanvasTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/WorkspaceCoreTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GatesViewTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PresentersOnStoreTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelinePresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelineScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/BatonVectorLine.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/DockRules.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/TaskCartridgeView.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/KanbanViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/TimelineViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroMapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/MetroViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/RadialRadarScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/MobileHorizonArcView.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RadarViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/InfiniteZuiCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/CanvasView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ForceDirectedLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/ConstraintShieldNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/BezierCausalEdge.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/CanvasViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectSlugs.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/ProjectsViewTest.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
   - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentStartCheck.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/StartNodeRunTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RelayRiverViewTest.kt
 ```
 
 ## Post-MVP Work
@@ -186,7 +225,18 @@ post_mvp:
     depends_on: ["0124.3"]
   - id: "0124.5"
     title: "Rework the Metro Map and Breadboard for a narrow screen and offer them on a phone"
-    status: todo
+    status: done
+    note: "Metro Next Stop strip (UI-40) and Breadboard component strip (UI-41) on HANDHELD_COMPACT; both offered under More on phones via ViewModeCatalog."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardLayout.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardGlyphs.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardComponentStrip.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ViewModeCatalog.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/BreadboardViewTest.kt
   - id: "0124.6"
     title: "Gates badge count in the navigation and a refusal path from the notification"
     status: todo

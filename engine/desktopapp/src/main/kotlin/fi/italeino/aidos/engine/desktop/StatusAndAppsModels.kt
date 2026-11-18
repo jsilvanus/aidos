@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,9 +37,26 @@ class DesktopStatusModel(
     private val scope: CoroutineScope,
     private val status: () -> fi.italeino.aidos.engine.control.StatusControl = { LocalStatusControl(host) },
     private val apps: () -> fi.italeino.aidos.engine.control.AppsControl = { LocalAppsControl(host) },
+    private val attached: () -> RunningEngine? = { EngineAttach.runningEngine() },
+    private val shutdownAttached: (RunningEngine) -> Boolean = EngineAttach::shutdown,
+    private val settleMillis: Long = 600,
 ) {
     private val _state = MutableStateFlow(StatusUiState())
     val state: StateFlow<StatusUiState> = _state.asStateFlow()
+
+    /**
+     * The one answer to "is the Engine on?" for every screen. Whichever Engine the controls talk to (this process's own
+     * or an attached service) is what [status] polls, so Status, Connected Apps and Cookbook all read this instead of
+     * the in-process host, which says "stopped" while an attached Engine serves.
+     */
+    val isRunning: StateFlow<Boolean> = _state.map { it.isEngineRunning }.stateIn(scope, SharingStarted.Eagerly, false)
+    val engineState: StateFlow<EngineState> = _state.map { EngineAttach.engineStateOf(it.isEngineRunning, it.engineStateName) }
+        .stateIn(scope, SharingStarted.Eagerly, EngineState.STARTING)
+
+    private val _notice = MutableStateFlow<String?>(null)
+
+    /** Why the last on/off click did nothing, when it could not do what was asked. Cleared by the next successful click. */
+    val notice: StateFlow<String?> = _notice.asStateFlow()
 
     init {
         scope.launch {
@@ -51,9 +69,15 @@ class DesktopStatusModel(
 
     fun toggleEngine() {
         scope.launch {
-            // An Engine service already owns the port and engine.json: starting a second one would break it.
-            if (!host.isRunning.value && !EngineAttach.shouldStartOwnEngine(autoStart = true)) return@launch
-            if (host.isRunning.value) host.stop() else host.start()
+            _notice.value = null
+            val other = attached()
+            if (other != null) {
+                // The Engine is another process's (a service or tray instance): ask it to stop through its admin API.
+                // Starting a second one here would fight it for the port and engine.json (RFC-0115, D61).
+                val stopped = withContext(Dispatchers.IO) { shutdownAttached(other) }
+                if (!stopped) _notice.value = "The running Engine (pid ${other.pid}) did not accept a stop request. Stop it from where it was started, e.g. the tray menu or its own window."
+                delay(settleMillis)
+            } else if (host.isRunning.value) host.stop() else host.start()
             refresh()
         }
     }

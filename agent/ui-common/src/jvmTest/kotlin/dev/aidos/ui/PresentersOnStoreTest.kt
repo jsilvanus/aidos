@@ -167,10 +167,10 @@ class PresentersOnStoreTest {
         val store = MutableStateFlow(snapshot(DerivedStatus.NOT_STARTED))
         val presenter = FocusRadarPresenter(store, scope)
         val zone = { presenter.state.value.radarNodes.first { it.node.id == "h" }.zone }
-        assertEquals(RadarZone.INTERMEDIATE_ORBIT, zone())
+        assertEquals(RadarZone.STRIKE_ZONE, zone())
 
         store.value = snapshot(DerivedStatus.DONE)
-        assertEquals(RadarZone.OUTER_PERIMETER, zone())
+        assertEquals(RadarZone.SEALED, zone())
     }
 
     @Test

@@ -27,15 +27,25 @@ import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForActor
 import dev.aidos.ui.theme.colorForStatus
 
+/**
+ * One cartridge on the Cartridge Dock (RFC-0111 Design 3). Shows the actor, target device, fuel
+ * (estimated steps), scope size, the AUTO/MANUAL dispatch toggle and a lock while blocked.
+ * [actions] is a slot for the compact deck's buttons; a tap on the card opens the inspector.
+ */
 @Composable
 fun TaskCartridgeView(
     node: IntentNodeRecord,
     status: DerivedStatus,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    unmetDependencies: Int = 0,
+    onToggleDispatch: (() -> Unit)? = null,
+    actions: @Composable () -> Unit = {},
 ) {
     val statusColor = colorForStatus(status)
     val actorColor = colorForActor(node.actorKind)
+    val blocked = status == DerivedStatus.BLOCKED || unmetDependencies > 0
+    val steps = node.estimatedSteps
 
     Box(
         modifier = modifier
@@ -51,46 +61,69 @@ fun TaskCartridgeView(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // LED Status indicator
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .background(statusColor, shape = CircleShape)
-                    )
-                    Text(
-                        text = status.name,
-                        style = AidosTypography.baseTypography.labelSmall,
-                        color = statusColor,
-                    )
+                    Box(modifier = Modifier.size(6.dp).background(statusColor, shape = CircleShape))
+                    Text(text = status.name, style = AidosTypography.baseTypography.labelSmall, color = statusColor)
                 }
-
-                // Actor badge
                 Box(
                     modifier = Modifier
                         .background(actorColor.copy(alpha = 0.2f), shape = RoundedCornerShape(CornerTokens.xs))
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
+                    Text(text = node.actorKind.name, style = AidosTypography.baseTypography.labelSmall, color = actorColor)
+                }
+            }
+
+            Text(text = node.title, style = AidosTypography.baseTypography.titleSmall, color = Color.White)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(SpacingTokens.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = targetBadge(node.targetProfile),
+                    style = AidosTypography.baseTypography.labelSmall,
+                    color = Color(0xFF94A3B8),
+                )
+                if (onToggleDispatch != null) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF334155), shape = RoundedCornerShape(CornerTokens.xs))
+                            .clickable(onClick = onToggleDispatch)
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = dispatchLabel(node.dispatchPolicy),
+                            style = AidosTypography.baseTypography.labelSmall,
+                            color = Color.White,
+                        )
+                    }
+                }
+                if (blocked) {
                     Text(
-                        text = node.actorKind.name,
+                        text = if (unmetDependencies > 0) "🔒 Blocked by $unmetDependencies" else "🔒 Blocked",
                         style = AidosTypography.baseTypography.labelSmall,
-                        color = actorColor,
+                        color = Color(0xFFF59E0B),
                     )
                 }
             }
 
-            Text(
-                text = node.title,
-                style = AidosTypography.baseTypography.titleSmall,
-                color = Color.White,
-            )
-
-            if (node.estimatedSteps != null) {
-                StepCounterAtom(currentStep = 1, totalSteps = node.estimatedSteps!!)
+            if (steps != null) {
+                StepCounterAtom(currentStep = 0, totalSteps = steps)
             }
+            if (node.scopePaths.isNotEmpty()) {
+                Text(
+                    text = "${node.scopePaths.size} file${if (node.scopePaths.size == 1) "" else "s"} in scope",
+                    style = AidosTypography.baseTypography.labelSmall,
+                    color = Color(0xFF94A3B8),
+                )
+            }
+
+            actions()
         }
     }
 }

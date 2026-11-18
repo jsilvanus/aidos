@@ -244,6 +244,21 @@ data class ParkedEffectRequest(
     val runTaint: String,
 )
 
+/**
+ * One persisted `present_ui` tool call (RFC-0124 generative layer, U13): an A2UI v1 card an agent
+ * asked to show next to an intent node. [manifestJson] is the `manifest` argument re-serialized;
+ * the TCR parser validates it fully at render time. [runTaint] is the run's `taint_level`.
+ */
+data class UiManifestRecord(
+    val callId: String,
+    val runId: String,
+    val projectId: String,
+    val targetNodeId: String,
+    val manifestJson: String,
+    val runTaint: String,
+    val createdAt: String?,
+)
+
 data class PendingCapabilityRequest(
     val requestId: String,
     val sessionId: String,
@@ -709,6 +724,13 @@ interface IntentCommands {
      */
     suspend fun startNodeRun(projectId: String, nodeId: String, sessionId: String? = null): StartNodeRunResult =
         StartNodeRunResult.Refused("intent.start_unsupported", "This runtime cannot start runs on intent nodes.")
+
+    /**
+     * Successful `present_ui` calls of [projectId], newest first, optionally for one
+     * [targetNodeId]. Additive to Agent API v1: the default is empty.
+     */
+    suspend fun listUiManifests(projectId: String, targetNodeId: String? = null, limit: Int = 50): List<UiManifestRecord> =
+        emptyList()
 
     suspend fun exportSnapshotJson(projectId: String): String
 

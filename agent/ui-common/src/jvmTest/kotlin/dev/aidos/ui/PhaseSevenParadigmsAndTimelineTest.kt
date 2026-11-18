@@ -135,9 +135,9 @@ class PhaseSevenParadigmsAndTimelineTest {
         assertEquals(1, kanban.state.value.columns.first { it.status == DerivedStatus.DONE }.tasks.size)
 
         assertEquals(2, radar.state.value.radarNodes.size)
-        assertTrue(radar.state.value.radarNodes.all { it.zone == RadarZone.STRIKE_ZONE })
-        radar.send(FocusRadarIntent.SelectZone(RadarZone.STRIKE_ZONE))
-        assertEquals(RadarZone.STRIKE_ZONE, radar.state.value.activeZone)
+        assertTrue(radar.state.value.radarNodes.all { it.zone == RadarZone.IN_FLIGHT })
+        radar.send(FocusRadarIntent.SelectZone(RadarZone.IN_FLIGHT))
+        assertEquals(RadarZone.IN_FLIGHT, radar.state.value.activeZone)
     }
 
     private fun node(

@@ -6,7 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
@@ -38,11 +42,12 @@ import dev.aidos.ui.assistant.VoiceCaptureState
 import dev.aidos.ui.dex.DexStatePreserver
 import dev.aidos.ui.frontdoors.gates.ApprovalGatePresenter
 import dev.aidos.ui.frontdoors.gates.ApprovalGatesScreen
-import dev.aidos.ui.frontdoors.gates.toUiModel
 import dev.aidos.ui.frontdoors.inbox.ActionInboxPresenter
 import dev.aidos.ui.frontdoors.inbox.ActionInboxScreen
 import dev.aidos.ui.frontdoors.projects.ProjectHubPresenter
 import dev.aidos.ui.frontdoors.projects.ProjectHubScreen
+import dev.aidos.ui.inspector.NodeInspector
+import dev.aidos.ui.inspector.NodeInspectorPresenter
 import dev.aidos.ui.layout.NavigationDestination
 import dev.aidos.ui.layout.ViewModeCatalog
 import dev.aidos.ui.layout.ResponsiveScaffold
@@ -60,9 +65,8 @@ import dev.aidos.ui.paradigms.pipeline.RelayPipelinePresenter
 import dev.aidos.ui.paradigms.pipeline.RelayPipelineScreen
 import dev.aidos.ui.paradigms.timeline.TimelineGanttPresenter
 import dev.aidos.ui.paradigms.timeline.TimelineGanttScreen
-import dev.aidos.ui.pills.AgentPillState
 import dev.aidos.ui.pills.MultiAgentPillOverlay
-import dev.aidos.ui.pills.PillRole
+import dev.aidos.ui.pills.pillsFor
 import dev.aidos.ui.spatial.canvas.InfiniteZuiCanvas
 import dev.aidos.ui.spatial.canvas.SpatialCanvasPresenter
 import dev.aidos.ui.spatial.radar.FocusRadarPresenter
@@ -84,7 +88,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -168,6 +171,18 @@ private fun AidosUniversalAppContent(
     val workspaceState by controller.state.collectAsState()
     val selectedDestinationId = workspaceState.viewId
     val currentProjectId = workspaceState.projectId
+    val currentStore by controller.currentStore.collectAsState()
+    val selectedNodeId = workspaceState.selectedNodeId
+    // RFC-0124 (UI-21): one inspector for every view, reading the current project's graph.
+    val inspectorPresenter = remember(currentStore, selectedNodeId) {
+        NodeInspectorPresenter(currentStore.snapshot, selectedNodeId.orEmpty())
+    }
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(workspaceState.message) {
+        val message = workspaceState.message ?: return@LaunchedEffect
+        snackbarHost.showSnackbar(message)
+        controller.clearMessage()
+    }
 
     val inboxPresenter = remember {
         ActionInboxPresenter(
@@ -218,31 +233,15 @@ private fun AidosUniversalAppContent(
         TimelineGanttPresenter(controller.currentStore.value.snapshot, projectScope)
     }
     val livingDocPresenter = remember(currentProjectId) {
-        LivingDocPresenter(
-            initialDocumentId = "doc-$currentProjectId",
-            initialTitle = "Living Workspace Specification",
-        )
+        LivingDocPresenter(controller.currentStore.value.snapshot, controller, coroutineScope)
     }
-    // RFC-0113: the Human Egress Gate Card is fed by the runtime's parked outbound messages and its
-    // Approve / Deny go through the same effect-approval path the CLI uses, so a person's decision is
-    // the only thing that lets a private project's message leave.
-    val gatePresenter = approvalGatePresenter ?: remember {
-        ApprovalGatePresenter(
-            scope = coroutineScope,
-            onEgressApproved = { runId -> runtimeClient.capabilities.approveEffect(runId, runId) },
-            onEgressDenied = { runId, reason -> runtimeClient.capabilities.denyEffect(runId, runId, reason) },
-        )
+    // RFC-0113 / RFC-0124: Gates reads every approval the person owes and decides through the same runtime
+    // calls the CLI uses, so a person's decision is the only thing that lets a private message leave.
+    // A presenter the host supplied is the host's to feed; the one made here polls the runtime itself.
+    val gatePresenter = approvalGatePresenter ?: remember(runtimeClient, controller) {
+        ApprovalGatePresenter(runtimeClient, controller, coroutineScope)
     }
-    // A presenter the host supplied is the host's to feed; only the one made here follows the runtime.
-    LaunchedEffect(runtimeClient, gatePresenter, approvalGatePresenter == null) {
-        while (approvalGatePresenter == null) {
-            val parked = runCatching { runtimeClient.capabilities.listParkedEgress() }.getOrNull()
-            if (parked != null) {
-                gatePresenter.syncEgressRequests(parked.map { it.toUiModel() })
-            }
-            delay(2_000)
-        }
-    }
+    LaunchedEffect(gatePresenter) { gatePresenter.start() }
 
     val dexPreserver = remember { DexStatePreserver() }
     val fallbackHealthFlow = remember { MutableStateFlow(NativeProcessHealth.HEALTHY) }
@@ -262,43 +261,25 @@ private fun AidosUniversalAppContent(
         )
     }
 
-    val pills = remember(isAssistantOpen) {
-        listOf(
-            AgentPillState(
-                id = "pill-red",
-                role = PillRole.ORCHESTRATOR_RED,
-                label = "Dictator Caret",
-                xNormalized = 0.85f,
-                yNormalized = 0.15f,
-                isRadiatingWave = isAssistantOpen,
-            ),
-            AgentPillState(
-                id = "pill-blue",
-                role = PillRole.WORKER_CODE_BLUE,
-                label = "Code Worker",
-                xNormalized = 0.12f,
-                yNormalized = 0.88f,
-            ),
-            AgentPillState(
-                id = "pill-green",
-                role = PillRole.VERIFIER_GREEN,
-                label = "Verifier",
-                xNormalized = 0.30f,
-                yNormalized = 0.88f,
-            ),
-            AgentPillState(
-                id = "pill-violet",
-                role = PillRole.RESEARCH_VIOLET,
-                label = "Life & R&D",
-                xNormalized = 0.50f,
-                yNormalized = 0.88f,
-            ),
-        )
+    // RFC-0111 §3 / RFC-0124 (UI-42): pills and the Gates count come from live data, not fixed demo pills.
+    val graphSnapshot by currentStore.snapshot.collectAsState()
+    val pills = remember(graphSnapshot, isAssistantOpen) {
+        pillsFor(graphSnapshot, assistantActive = isAssistantOpen)
     }
+    val pendingGates by gatePresenter.pendingCount.collectAsState()
 
     // RFC-0124: which views are primary navigation depends on the form factor (ViewModeCatalog).
     fun destinationsFor(formFactor: dev.aidos.ui.layout.FormFactor) =
-        ViewModeCatalog.primary(formFactor).map { NavigationDestination(it.id, it.label, { Text(it.icon) }) }
+        ViewModeCatalog.primary(formFactor).map { mode ->
+            val isGates = mode.id == "gates"
+            val count = if (isGates) pendingGates else 0
+            NavigationDestination(
+                id = mode.id,
+                label = if (count > 0) "${mode.label} ($count)" else mode.label,
+                icon = { Text(mode.icon) },
+                badgeCount = count,
+            )
+        }
 
     ResponsiveScaffold(
         destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
@@ -309,10 +290,16 @@ private fun AidosUniversalAppContent(
             NativeProcessRecoveryBar(health = nativeHealth)
         },
         overlayContent = {
-            MultiAgentPillOverlay(pills = pills)
+            MultiAgentPillOverlay(
+                pills = pills,
+                onPillClick = { pill -> pill.activeTaskId?.let { controller.openInspector(it) } },
+            )
             CommandPaletteModal(presenter = commandPalettePresenter)
             val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
             val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                SnackbarHost(hostState = snackbarHost)
+            }
             AssistantSheetOverlay(
                 isOpen = isAssistantOpen,
                 isListening = voiceState.isListening,
@@ -369,7 +356,7 @@ private fun AidosUniversalAppContent(
             dexPreserver.captureSession(
                 projectId = currentProjectId,
                 nodeId = null,
-                documentText = livingDocPresenter.state.value.lines.joinToString("\n") { it.text },
+                documentText = livingDocPresenter.state.value.text,
                 viewport = canvasPresenter.state.value.viewport,
                 formFactor = formFactor,
             )
@@ -409,7 +396,8 @@ private fun AidosUniversalAppContent(
                 }
             }
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 when (selectedDestinationId) {
                     "inbox" -> ActionInboxScreen(
                         presenter = inboxPresenter,
@@ -432,13 +420,17 @@ private fun AidosUniversalAppContent(
                         presenter = kanbanPresenter,
                         controller = controller,
                         formFactor = formFactor,
-                        onTaskClick = { controller.navigate("outliner") },
                     )
                     "radar" -> RadialRadarScreen(presenter = radarPresenter, controller = controller, formFactor = formFactor)
                     "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
                     "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter, controller = controller, formFactor = formFactor)
                     "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor, controller = controller)
-                    "livingdoc" -> LivingDocView(presenter = livingDocPresenter, controller = controller, formFactor = formFactor)
+                    "livingdoc" -> LivingDocView(
+                        presenter = livingDocPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
+                        voiceCaptureController = voiceCaptureController,
+                    )
                     "gates" -> ApprovalGatesScreen(presenter = gatePresenter, controller = controller, formFactor = formFactor)
                     "projects" -> ProjectHubScreen(
                         presenter = projectHubPresenter,
@@ -451,6 +443,16 @@ private fun AidosUniversalAppContent(
                         onPinProjectClick = onPinProjectLauncher,
                     )
                 }
+            }
+            // Desktop: a 360 dp panel at the end of the row. Handhelds: a bottom sheet (it draws no space here).
+            if (workspaceState.inspectorOpen && selectedNodeId != null) {
+                NodeInspector(
+                    presenter = inspectorPresenter,
+                    controller = controller,
+                    formFactor = formFactor,
+                    onClose = { controller.closeInspector() },
+                )
+            }
             }
         }
     }

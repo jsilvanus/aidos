@@ -30,14 +30,7 @@ class TrayActions(
     /** Asks the running Engine to stop. False when none is running or it refused. */
     fun stopEngine(): Boolean {
         val e = running() ?: return false
-        val r = runCatching {
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build().send(
-                HttpRequest.newBuilder(URI(e.baseUrl + "/v1/admin/shutdown")).timeout(Duration.ofSeconds(5))
-                    .header("Authorization", "Bearer ${e.token}").POST(HttpRequest.BodyPublishers.noBody()).build(),
-                HttpResponse.BodyHandlers.discarding(),
-            ).statusCode()
-        }.getOrNull()
-        return r == 202
+        return EngineAttach.shutdown(e)
     }
 
     fun openWindow() = launch(emptyList())

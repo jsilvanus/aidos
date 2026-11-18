@@ -60,4 +60,53 @@ class StatusControlTest {
         eventually("off after the Engine went away") { !model.state.value.isEngineRunning && model.state.value.engineStateName == "OFF" }
         assertFalse(model.state.value.isEngineRunning)
     }
+
+    @Test
+    fun `turning off an attached Engine stops it and every screen reads off`(): Unit = runBlocking {
+        host.start()
+        val running = assertNotNull(EngineAttach.runningEngine(root.resolve("engine.json"), selfPid = -1))
+        var stopped = false
+        // A separate in-process host stands in for this window: it is not running, the attached Engine is.
+        val windowHost = DesktopEngineHost(
+            modelsDir = root.resolve("models2").apply { mkdirs() },
+            stateDir = root.resolve("state2").apply { mkdirs() },
+            serverPort = { 0 },
+            discoveryFile = root.resolve("engine2.json"),
+        )
+        try {
+            val model = DesktopStatusModel(
+                windowHost, scope,
+                status = { EngineAttach.statusControl(windowHost, running) },
+                apps = { EngineAttach.appsControl(windowHost, running) },
+                attached = { if (stopped) null else running },
+                shutdownAttached = { stopped = true; runBlocking { host.stop() }; true },
+                settleMillis = 10,
+            )
+            eventually("attached Engine shown as running") { model.isRunning.value && model.engineState.value == fi.italeino.aidos.engine.EngineState.READY }
+            assertFalse(windowHost.isRunning.value, "the window's own host is stopped; screens must not read it")
+            model.toggleEngine()
+            eventually("off everywhere") { !model.isRunning.value && model.engineState.value == fi.italeino.aidos.engine.EngineState.STARTING }
+            assertTrue(stopped)
+        } finally {
+            windowHost.close()
+        }
+    }
+
+    @Test
+    fun `an attached Engine that refuses to stop explains why`(): Unit = runBlocking {
+        host.start()
+        val running = assertNotNull(EngineAttach.runningEngine(root.resolve("engine.json"), selfPid = -1))
+        val model = DesktopStatusModel(
+            host, scope,
+            status = { EngineAttach.statusControl(host, running) },
+            apps = { EngineAttach.appsControl(host, running) },
+            attached = { running },
+            shutdownAttached = { false },
+            settleMillis = 10,
+        )
+        eventually("running") { model.isRunning.value }
+        model.toggleEngine()
+        eventually("notice shown") { model.notice.value != null }
+        assertTrue(model.isRunning.value, "a refused stop leaves the Engine shown as running")
+    }
 }
