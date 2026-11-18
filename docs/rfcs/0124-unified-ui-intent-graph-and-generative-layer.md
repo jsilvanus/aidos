@@ -158,6 +158,13 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GatesViewTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PresentersOnStoreTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalOutlinerScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerNodeRow.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerSections.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerCriterionRow.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerDraftField.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/CausalJumpPill.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/OutlinerViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelinePresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelineScreen.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/BatonVectorLine.kt
