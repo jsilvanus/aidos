@@ -315,6 +315,8 @@ class RuntimeSocketServer(
             Wire.encodePendingCapabilityList(client.capabilities.listPending())
         Methods.CAPABILITIES_LIST_PARKED_EGRESS ->
             Wire.encodeParkedEgressList(client.capabilities.listParkedEgress())
+        Methods.CAPABILITIES_LIST_PARKED_EFFECTS ->
+            Wire.encodeParkedEffectList(client.capabilities.listParkedEffects())
         Methods.CAPABILITIES_APPROVE ->
             Wire.encodeCapabilityResult(client.capabilities.approve(params["requestId"]!!.jsonPrimitive.content))
         Methods.CAPABILITIES_DENY -> {
