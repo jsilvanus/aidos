@@ -40,7 +40,6 @@ data class ViewMode(
 object ViewModeCatalog {
     private val P = ViewPlacement.PRIMARY
     private val M = ViewPlacement.MORE
-    private val H = ViewPlacement.HIDDEN
 
     val all: List<ViewMode> = listOf(
         ViewMode("inbox", "Inbox", "📥", P, P, P, AndroidTier.MVP),
@@ -54,10 +53,10 @@ object ViewModeCatalog {
         ViewMode("timeline", "Timeline", "📅", M, M, P, AndroidTier.MVP),
         ViewMode("pipeline", "Relay River", "🌊", M, M, M, AndroidTier.MVP),
         ViewMode("radar", "Radial Radar", "🎯", M, M, M, AndroidTier.MVP),
-        // Desktop-first designs (RFC-0111 Designs 2 and 5): not offered on a phone until they are
-        // reworked for a narrow screen; offered once there is width.
-        ViewMode("metro", "Metro Map", "🚇", H, M, M, AndroidTier.POST_MVP),
-        ViewMode("breadboard", "Breadboard", "🔌", H, M, M, AndroidTier.POST_MVP),
+        // Wide designs (RFC-0111 Designs 2 and 5). A phone gets their narrow strip form, which lives
+        // under More until one is rated primary (RFC-0124 0124.5, decision U11).
+        ViewMode("metro", "Metro Map", "🚇", M, M, M, AndroidTier.POST_MVP),
+        ViewMode("breadboard", "Breadboard", "🔌", M, M, M, AndroidTier.POST_MVP),
     )
 
     private val byId = all.associateBy { it.id }
