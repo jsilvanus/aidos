@@ -231,7 +231,7 @@ class ApprovalGatePresenter private constructor(
                 val decision = if (intent.accept) ProposalResolutionDecision.ACCEPTED else ProposalResolutionDecision.REJECTED
                 store.resolveProposal(intent.proposalId, decision)
                 commit { it.copy(message = if (intent.accept) "Proposal accepted." else "Proposal rejected.") }
-                refreshAfterDecision()
+                scope.launch(ioDispatcher) { refreshAfterDecision() }
             }
             is ApprovalGateIntent.ConfirmVerification -> {
                 val store = controller
@@ -239,7 +239,7 @@ class ApprovalGatePresenter private constructor(
                 if (store != null) {
                     store.confirmImplementation(intent.nodeId)
                     commit { it.copy(message = "Implementation confirmed.") }
-                    refreshAfterDecision()
+                    scope.launch(ioDispatcher) { refreshAfterDecision() }
                 }
             }
             is ApprovalGateIntent.RunVerification -> {
