@@ -100,7 +100,7 @@ class GatesViewTest {
     private class FakeIntents(
         private val base: IntentCommands,
         val nodes: List<IntentNodeRecord>,
-        val statuses: Map<String, IntentNodeStatusView>,
+        val statuses: MutableMap<String, IntentNodeStatusView>,
         val proposals: MutableList<IntentProposal>,
     ) : IntentCommands by base {
         val resolved = mutableListOf<String>()
@@ -138,6 +138,7 @@ class GatesViewTest {
             projectId: String, nodeId: String, confirmedByKind: String, confirmedById: String, criterionIds: List<String>?,
         ) {
             confirmed += nodeId
+            statuses[nodeId]?.let { statuses[nodeId] = it.copy(derivedStatus = DerivedStatus.DONE) }
         }
     }
 
@@ -201,7 +202,7 @@ class GatesViewTest {
     private fun fullHarness(caps: FakeCaps = defaultCaps(), review: Boolean = true): Harness {
         val verify = node("v1", "Check auth")
         val nodes = listOf(verify)
-        val statuses = mapOf("v1" to statusOf(verify, if (review) DerivedStatus.NEEDS_REVIEW else DerivedStatus.DONE))
+        val statuses = mutableMapOf("v1" to statusOf(verify, if (review) DerivedStatus.NEEDS_REVIEW else DerivedStatus.DONE))
         val intents = FakeIntents(
             base = MockRuntimeClient().intents,
             nodes = nodes,
@@ -301,7 +302,7 @@ class GatesViewTest {
 
     @Test
     fun nothingWaitingMeansACountOfZero() = runBlocking {
-        val h = Harness(FakeCaps(), FakeIntents(MockRuntimeClient().intents, emptyList(), emptyMap(), mutableListOf()))
+        val h = Harness(FakeCaps(), FakeIntents(MockRuntimeClient().intents, emptyList(), mutableMapOf(), mutableListOf()))
         h.load()
         assertEquals(0, h.presenter.pendingCount.value)
         assertEquals(null, h.presenter.state.value.inspectedDiffs)
