@@ -96,22 +96,23 @@ For AI-assisted development, see [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-**Current phase:** Phase 0 (Contracts) complete as of 2026-08-03. Phase 1 (Execution kernel) not
-yet started.
+**Current state (2026-11-18):** Phase 0 (Contracts) and Phase 1 (Execution kernel) are complete.
+Phase 2 (first vertical slice) is built on the JVM, with CLI and the agent loop, and its
+gate is G2. Phase 3 (offline proof on real hardware) and Phase 4 (Android application) are
+blocked on device work: the platform-neutral logic is built and tested, but nothing has run
+end to end on a phone yet. [PIPELINE.md](PIPELINE.md) lists what is still open.
 
-Phase 0 produced three checkable artifacts rather than prose: [`schema/`](schema/) — 53 tables
-of canonical DDL, validated in CI; [`agent/kernel/`](agent/) — the KMP contract surface,
-compiling with contract tests and no implementations; and
-[`docs/decisions.md`](docs/decisions.md) — 24 architecture decisions with none open. 45 of the
-62 RFCs are Accepted; what remains Draft is deliberate and listed in
-[docs/rfcs/README.md](docs/rfcs/README.md).
+The Aidos Engine (desktop and Android) and the Agent runtime are in active development. The
+desktop Engine and agent services are built and tested; the Android Binder leg and the first
+real-model run on hardware are not done.
 
-**No feature implementation exists yet.** That is the accurate statement, and the roadmap is
-ordered so it stays accurate rather than optimistic.
+Per-RFC implementation status is in [docs/rfcs/STATUS.md](docs/rfcs/STATUS.md) (audited
+2026-11-14). An RFC marked Accepted means the design is approved, not that the code exists.
 
 - [RFC-0099: Roadmap](docs/rfcs/0099-roadmap.md) — the phases and why they are in that order
-- [MVP roadmap](docs/mvp-roadmap.md) — the ordered work breakdown, with gates
-- [PIPELINE.md](PIPELINE.md) — the roadmap: what is open and what is next
+- [MVP roadmap](docs/mvp-roadmap.md) — the milestones, gates, and what each one proves
+- [PIPELINE.md](PIPELINE.md) — the forward roadmap: what is open and what is next
+- [docs/completed-work.md](docs/completed-work.md) — finished roadmap items, moved out of PIPELINE
 - [lessons.md](lessons.md) — what the project learned the hard way
 
 ## Questions?

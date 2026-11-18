@@ -48,39 +48,14 @@ abstraction on exactly one transport — the one whose threat model is least lik
 
 ## Acceptance state
 
-As of 2026-08-04, 54 RFCs are **Accepted** and 7 are Draft — see [the status split](rfcs/README.md#status). The legacy body audit is complete, and the three revisions that were
-blocking milestones (0016, 0031, 0015) have all landed. Accepted means implementation may begin
-against them, not that they are frozen — see
+This roadmap no longer keeps a live count of Accepted or Draft RFCs. For that, see
+[docs/rfcs/STATUS.md](rfcs/STATUS.md) (per-RFC audit, 2026-11-14) and the status split in
+[docs/rfcs/README.md](rfcs/README.md#status). The three revisions that blocked milestones (0016, 0031, 0015)
+have landed. Accepted means implementation may begin, not that the RFC is frozen; see
 [Accepted is not frozen](rfcs/README.md#accepted-is-not-frozen). The freeze list is RFC-0099's
 "What Should Stabilise First", and it is unchanged.
 
-### Still Draft, and off the MVP path
-
-0033 Shell · 0041 Export/Import ·
-0047 Project Templates · 0051 Desktop · 0060 Plugin SDK · 0100–0102 reviews.
-
-**0046 Identity** was on this list and should not have been: no milestone names it, but the
-kernel's `ActorRef` and four columns of canonical DDL cite it. Audited and accepted 2026-08-04.
-
-Nothing in the MVP depends on these. They stay Draft because approving a design nobody is about
-to build is how a corpus accumulates authority it has not earned.
-
-### Was Draft and **on** the MVP path — all three now closed
-
-These were needed and were not acceptable as written; each had to be revised and accepted
-*before* the milestone that consumed it. **All three are done, so no milestone is blocked on an
-RFC revision.** Kept here as a record of what the revisions found, which was more than bloat.
-
-RFC-0016 was the third and was closed on 2026-08-03: cut from 657 lines to ~230 per D22, and the
-revision turned up a security hole rather than just bloat — instruction files were reaching the
-system turn as trusted text, which means a cloned repository's `AGENTS.md` had the highest-
-authority position in the prompt. Worth expecting something similar in the other two: all three
-carry text the user did not author into the model's context.
-
-| RFC | Needed by | What is wrong with it |
-|---|---|---|
-| **0031 MCP** | *done* | Revised and Accepted 2026-08-04. D30 applied: authority fixed at enable time, no `TRUSTED` promotion, lazy start, and a "what a server may never do" section that settles the untrusted-subject-as-capability-requester interaction (it may not). D17 amended in the same pass: both transports ship, HTTP on every profile |
-| **0015 Knowledge Engine** | *done* | Revised and Accepted 2026-08-04, 777 lines → 362. D29 applied: the engine is a *consumed library* (`gitsema-kotlin`), not an Aidos subsystem — no provider SPI, committed content only, every query reports coverage, secret redaction withdrawn. What was "the largest genuine design risk left in the MVP" is now a dependency risk instead, and a narrower one: see the RFC's "Known dependency risks" |
+For what is done and what is open right now, [PIPELINE.md](../PIPELINE.md) is the source of truth.
 
 ---
 
@@ -101,7 +76,7 @@ last three architecture reviews found four items marked "addressed" that were no
 
 **G0 met.** The parallel workstreams in RFC-0099 may now proceed against frozen contracts.
 
-### Phase 1 — Execution kernel · no AI, no tools
+### Phase 1 — Execution kernel · no AI, no tools · COMPLETE
 
 The point of proving the kernel with no model in it: if it cannot survive eviction
 deterministically, no amount of AI quality matters, and every later bug gets misattributed to
@@ -120,7 +95,7 @@ the model.
 
 > **G1 blocks all AI work.** Do not start Phase 2 with M8 amber.
 
-### Phase 2 — First vertical slice
+### Phase 2 — First vertical slice · M9–M19 built, gate G2
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|
@@ -137,7 +112,7 @@ the model.
 | **M18** | MCP, both transports | 0031, D17, D23 | An off-the-shelf MCP server's tools appear in the broker with `EffectKind` and `RecoveryClass` assigned, run under a capability, and taint the Run as `UNTRUSTED`. An MCP server cannot raise a capability request at all (D30). **stdio** on desktop with a scrubbed child environment; **streamable HTTP** on every profile — HTTPS enforced, certificates validated, cross-host redirects refused, every call `Egress`, and a tainted Run approving each one with the taint source named. Nothing spawns or connects on project open |
 | **M19** | End-to-end | — | **G2.** Create project → task → model → tool → commit → artifact → audit, from the CLI, in one command sequence, with the audit trail reconstructing it afterwards |
 
-### Phase 3 — Offline proof · the load-bearing phase
+### Phase 3 — Offline proof · the load-bearing phase · BLOCKED on hardware
 
 Scheduled before any UI, because a beautiful UI over a runtime that cannot work offline is not
 this product. If G3 cannot be met, the correct response is to change the product — and this is
@@ -157,7 +132,7 @@ scheduled here so that answer arrives while it is still cheap to act on.
 > depends on it being true. A negative result here is a successful outcome for this milestone —
 > it is the whole reason the milestone is scheduled before the UI.
 
-### Phase 4 — Android application
+### Phase 4 — Android application · platform logic built, BLOCKED on hardware
 
 | | Deliverable | RFCs | Done-when |
 |---|---|---|---|

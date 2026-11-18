@@ -129,7 +129,7 @@ Aidos uses RFCs to drive implementation. This means:
 ├── LICENSE                # EUPL-1.2
 ├── docs/
 │   ├── README.md          # Documentation structure
-│   ├── rfcs/              # All RFCs (0000-0128)
+│   ├── rfcs/              # All RFCs (0000-0129)
 │   ├── decisions.md       # Settled architecture decisions (D1-D34+)
 │   ├── mvp-roadmap.md     # Milestones, RFCs, and done-when conditions
 │   └── ...
@@ -169,10 +169,9 @@ Aidos uses RFCs to drive implementation. This means:
 1. **Minimal** — Do what the RFC says, no more.
 2. **Clear** — Code should be readable without excessive comments.
 3. **Tested** — New code has tests; old code isn't broken.
-4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in **18 modules**:
-   `kernel` plus `api`, `broker`, `capability`, `cli`, `daemon`, `executor`, `filesystem`, `git`,
-   `http`, `identity`, `knowledge`, `lock`, `mcp-broker`, `mcp-core`, `mcp-policy`, `settings`,
-   `storage`. A compiler warning in any of these is a build failure, not advice — expect
+4. **Safe** — Kotlin (for core, Kotlin Multiplatform); `allWarningsAsErrors` in every module whose build file sets it. The set changes as modules are added, so list it with
+   `grep -rl allWarningsAsErrors --include=build.gradle.kts .` rather than trusting a count. As of 2026-11-18 that is 29 modules,
+   including `kernel`. A compiler warning in any of these is a build failure, not advice — expect
    "Unnecessary non-null assertion", "No cast needed", and override-parameter-name mismatches to
    fail CI. Check the module's own `build.gradle.kts` before assuming a warning is harmless.
 5. **Documented** — Public APIs have doc comments.
