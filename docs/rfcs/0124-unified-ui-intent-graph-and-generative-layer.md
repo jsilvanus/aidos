@@ -148,6 +148,7 @@ files:
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
   - agent/intent/src/commonMain/kotlin/dev/aidos/intent/IntentStartCheck.kt
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/StartNodeRunTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
 ```
 
 ## Post-MVP Work
