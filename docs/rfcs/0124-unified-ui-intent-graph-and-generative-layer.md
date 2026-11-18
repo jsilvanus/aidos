@@ -161,6 +161,12 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/MobileHorizonArcView.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RadarViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/InfiniteZuiCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/CanvasView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ForceDirectedLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/ConstraintShieldNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/BezierCausalEdge.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/CanvasViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubScreen.kt
