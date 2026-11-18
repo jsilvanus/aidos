@@ -151,11 +151,12 @@ fun InfiniteZuiCanvas(
                 )
             }
             .pointerInput(Unit) {
-                // Ctrl + wheel zooms around the cursor (UI-35).
+                // Wheel zooms around the cursor. Ctrl+wheel is not used: `isCtrlPressed` does not resolve in
+                // common Compose 1.7, which broke the build (CI on PR #189).
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        if (event.type == PointerEventType.Scroll && event.keyboardModifiers.isCtrlPressed) {
+                        if (event.type == PointerEventType.Scroll) {
                             val change = event.changes.firstOrNull() ?: continue
                             val dy = change.scrollDelta.y
                             if (dy != 0f) {
