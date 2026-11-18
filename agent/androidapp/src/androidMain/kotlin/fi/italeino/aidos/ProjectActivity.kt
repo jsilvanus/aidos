@@ -19,12 +19,13 @@ class ProjectActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // RFC-0124 decision U5: no magic fallback id. A null id is resolved by WorkspaceBootstrap.
         val projectId = intent.data?.lastPathSegment
             ?: intent.getStringExtra("projectId")
-            ?: "default-workspace"
 
         val projectName = intent.getStringExtra("projectName")
-            ?: projectId.replaceFirstChar { it.uppercase() }
+            ?: projectId?.replaceFirstChar { it.uppercase() }
+            ?: "Workspace"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setTaskDescription(
