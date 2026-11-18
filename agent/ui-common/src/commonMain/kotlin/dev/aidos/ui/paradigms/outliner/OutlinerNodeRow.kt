@@ -23,11 +23,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.unit.dp
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentActorKind
@@ -61,7 +58,7 @@ internal fun canCompleteByHand(actor: IntentActorKind): Boolean =
 internal fun canStartByAgent(actor: IntentActorKind): Boolean =
     actor == IntentActorKind.AGENT || actor == IntentActorKind.HYBRID
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OutlinerNodeRow(
     item: OutlinerNodeUiModel,
@@ -78,15 +75,12 @@ fun OutlinerNodeRow(
     val actorColor = colorForActor(node.actorKind)
     val statusColor = colorForStatus(item.derivedStatus)
     val isDone = item.derivedStatus == DerivedStatus.DONE
-    var hovered by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(if (isSelected) Color(0x2260A5FA) else Color.Transparent)
-            .onPointerEvent(PointerEventType.Enter) { hovered = true }
-            .onPointerEvent(PointerEventType.Exit) { hovered = false }
             .padding(start = (item.depth * 20).dp, end = SpacingTokens.base, top = 4.dp, bottom = 4.dp)
     ) {
         Box {
@@ -146,7 +140,7 @@ fun OutlinerNodeRow(
                 if (!isDone && item.activeRuns == 0 && canStartByAgent(node.actorKind)) {
                     ActionText("Start") { onStart(node.id) }
                 }
-                if (hovered || isSelected) {
+                if (isSelected) {
                     ActionText("+") { onAddChild(node.id) }
                 }
             }
