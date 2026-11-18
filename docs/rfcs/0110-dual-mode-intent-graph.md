@@ -224,7 +224,6 @@ files:
   - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/IntentPromptRendererTest.kt
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/Settings.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/SplitVerificationCard.kt
-  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/theme/ColorSemantics.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PhaseOneTest.kt
   - schema/project.sql
@@ -243,7 +242,6 @@ post_mvp:
     title: "Android/Desktop Compose UI views"
     status: done
     files:
-      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
   - id: "0110.2"
     title: "socket wire protocol for intents.*"
     status: done

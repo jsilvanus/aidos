@@ -216,7 +216,6 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocView.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
-  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/IntentGraphSubscription.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/MviPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/state/ViewState.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt

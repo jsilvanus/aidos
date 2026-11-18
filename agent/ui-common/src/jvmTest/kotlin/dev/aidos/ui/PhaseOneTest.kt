@@ -27,7 +27,8 @@ import dev.aidos.ui.layout.FormFactor
 import dev.aidos.ui.layout.ScaffoldNavigationType
 import dev.aidos.ui.layout.computeFormFactor
 import dev.aidos.ui.layout.navigationTypeForFormFactor
-import dev.aidos.ui.state.IntentGraphSubscription
+import dev.aidos.ui.paradigms.outliner.CausalOutlinerPresenter
+import dev.aidos.ui.workspace.GraphSnapshot
 import dev.aidos.ui.theme.AidosDarkColorScheme
 import dev.aidos.ui.theme.AidosLightColorScheme
 import dev.aidos.ui.theme.AidosOledColorScheme
@@ -39,6 +40,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -99,14 +102,9 @@ class PhaseOneTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testPresenterStressTenThousandUpdates() = runTest {
-        val fakeCommands = FakeIntentCommands()
-        val subscription = IntentGraphSubscription(
-            intentCommands = fakeCommands,
-            scope = this,
-            ioDispatcher = Dispatchers.Default,
-        )
-
-        subscription.bindProject("project-stress")
+        // RFC-0124 amendment (UI-20): the presenter reads a store snapshot, so the stress test pushes snapshots into it.
+        val store = MutableStateFlow(GraphSnapshot.empty("project-stress"))
+        val presenter = CausalOutlinerPresenter(store, backgroundScope)
 
         // 10,000 updates pushed across parallel background workers
         val updatesCount = 10_000
@@ -114,20 +112,24 @@ class PhaseOneTest {
             async(Dispatchers.Default) {
                 for (i in chunk) {
                     val node = createSampleNode("node-$i", "Task #$i", IntentActorKind.HUMAN)
-                    subscription.applyBatchUpdate(
+                    store.value = GraphSnapshot(
+                        projectId = "project-stress",
                         nodes = listOf(node),
+                        edges = emptyList(),
                         statuses = mapOf(node.id to createSampleStatus(node, DerivedStatus.IN_PROGRESS)),
+                        proposals = emptyList(),
+                        loadedAt = i.toLong(),
                     )
                 }
             }
         }
 
         deferredList.awaitAll()
+        runCurrent()
 
-        val finalState = subscription.state.value
-        assertEquals(1, finalState.nodes.size)
-        assertEquals(1, finalState.actionableHumanNodes.size)
-        assertTrue(finalState.nodes.first().id.startsWith("node-"))
+        val finalRows = presenter.state.value.visibleRows
+        assertEquals(1, finalRows.size)
+        assertTrue(finalRows.first().node.id.startsWith("node-"))
     }
 
     private fun createSampleNode(id: String, title: String, actorKind: IntentActorKind): IntentNodeRecord {
@@ -161,25 +163,5 @@ class PhaseOneTest {
             activeRunIds = emptyList(),
             pendingPlatformChecks = false,
         )
-    }
-
-    private class FakeIntentCommands : IntentCommands {
-        override suspend fun createNode(request: CreateIntentNodeRequest) = error("Not needed")
-        override suspend fun updateNode(request: UpdateIntentNodeRequest) = error("Not needed")
-        override suspend fun archiveNode(projectId: String, nodeId: String) = error("Not needed")
-        override suspend fun getNodeStatus(projectId: String, nodeId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = null
-        override suspend fun listNodes(projectId: String, includeArchived: Boolean, actorKind: IntentActorKind?, parentId: String?, filterByParent: Boolean) = emptyList<IntentNodeRecord>()
-        override suspend fun listActionableForHuman(projectId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = emptyList<IntentNodeStatusView>()
-        override suspend fun listReadyForAgent(projectId: String, profile: PlatformProfile, locality: IntentMinLocality, projectDefaultPolicy: EffectiveDispatchPolicy, onlyAutoDispatch: Boolean) = emptyList<IntentNodeStatusView>()
-        override suspend fun completeHumanNode(projectId: String, nodeId: String, userId: String, note: String?) = error("Not needed")
-        override suspend fun addEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = error("Not needed")
-        override suspend fun removeEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = false
-        override suspend fun listEdges(projectId: String, fromNodeId: String?, toNodeId: String?, edgeKind: IntentEdgeKind?) = emptyList<IntentEdgeRecord>()
-        override suspend fun propose(request: CreateIntentProposalRequest) = error("Not needed")
-        override suspend fun listProposals(projectId: String, state: String?) = emptyList<IntentProposal>()
-        override suspend fun resolveProposal(projectId: String, proposalId: String, decision: ProposalResolutionDecision, resolvedByUserId: String, editedOperations: List<IntentOperation>?) = error("Not needed")
-        override suspend fun confirmImplementation(projectId: String, nodeId: String, confirmedByKind: String, confirmedById: String, criterionIds: List<String>?) {}
-        override suspend fun exportSnapshotJson(projectId: String) = ""
-        override suspend fun importAndReconcileSnapshot(projectId: String, snapshotJson: String) = error("Not needed")
     }
 }
