@@ -14,6 +14,7 @@ import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
 
+/** Inline causal badge for one unmet DEPENDS_ON prerequisite; tapping it jumps to that row. */
 @Composable
 fun CausalJumpPill(
     prerequisiteId: String,
@@ -28,7 +29,7 @@ fun CausalJumpPill(
             .padding(horizontal = SpacingTokens.sm, vertical = SpacingTokens.xxs)
     ) {
         Text(
-            text = "⏳ Blocked by #$prerequisiteId ($prerequisiteTitle)",
+            text = "⏳ Blocked by: $prerequisiteTitle",
             style = AidosTypography.baseTypography.labelSmall,
             color = ColorTokens.StatusBlocked,
         )
