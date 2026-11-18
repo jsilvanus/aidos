@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class KanbanColumn(
+    val lane: DockLane,
     val status: DerivedStatus,
     val title: String,
     val tasks: List<Pair<IntentNodeRecord, DerivedStatus>>,
@@ -19,18 +20,30 @@ data class KanbanColumn(
 
 data class CartridgeDockUiState(
     val columns: List<KanbanColumn> = emptyList(),
+    /** One row per nearest goal, for the desktop and expanded board. */
+    val swimlanes: List<DockSwimlane> = emptyList(),
+    /** STALE and CONFLICTED tasks, shown in a strip above the board. */
+    val attention: List<Pair<IntentNodeRecord, DerivedStatus>> = emptyList(),
+    /** Unmet dependency count per node id; a node with a count above zero cannot move forward. */
+    val unmet: Map<String, Int> = emptyMap(),
     val isLoading: Boolean = false,
     val error: String? = null,
 )
 
 sealed interface CartridgeDockIntent {
     data object Refresh : CartridgeDockIntent
+
+    /**
+     * Legacy in-memory preview, kept so existing callers keep working. The board does not use it:
+     * drops go through [CartridgeDockPresenter.drop], which only moves what the runtime allows.
+     */
     data class MoveTask(val nodeId: String, val targetStatus: DerivedStatus) : CartridgeDockIntent
 }
 
 /**
- * RFC-0124 amendment (UI-20): columns are derived from the live [GraphSnapshot].
- * [CartridgeDockIntent.MoveTask] is only an in-memory preview; the next snapshot replaces it.
+ * RFC-0111 Design 3 / RFC-0124 UI-36: columns and swimlanes derive from the live [GraphSnapshot].
+ * A drop is decided by [dropAction]; the screen performs the resulting action through the
+ * workspace controller and the store refreshes the board afterwards.
  */
 class CartridgeDockPresenter(
     snapshot: StateFlow<GraphSnapshot>,
@@ -43,56 +56,70 @@ class CartridgeDockPresenter(
     init {
         scope.launch {
             snapshot.collect { snap ->
-                _state.update {
-                    it.copy(
-                        columns = buildColumns(snap.nodes, snap.statuses.mapValues { e -> e.value.derivedStatus }),
-                        isLoading = snap.loadedAt == 0L && snap.error == null,
-                        error = snap.error,
-                    )
-                }
+                _state.value = build(snap).copy(isLoading = snap.loadedAt == 0L && snap.error == null, error = snap.error)
             }
         }
+    }
+
+    /** The action for dropping [nodeId] on column [to], decided from the current board. */
+    fun drop(nodeId: String, to: DockLane): DockAction {
+        val current = _state.value
+        val from = current.columns.firstOrNull { col -> col.tasks.any { it.first.id == nodeId } }?.lane
+            ?: return DockAction.Refuse("This task needs attention before it can move")
+        val node = current.columns.first { it.lane == from }.tasks.first { it.first.id == nodeId }.first
+        return dropAction(node, from, to, current.unmet[nodeId] ?: 0)
     }
 
     override fun send(intent: CartridgeDockIntent) {
         when (intent) {
             is CartridgeDockIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
-            is CartridgeDockIntent.MoveTask -> {
-                // In memory optimistic update
-                _state.update { current ->
-                    val updated = current.columns.map { col ->
-                        if (col.status == intent.targetStatus) {
-                            val moved = current.columns.flatMap { it.tasks }.firstOrNull { it.first.id == intent.nodeId }
-                            if (moved != null) col.copy(tasks = col.tasks + (moved.first to intent.targetStatus)) else col
-                        } else {
-                            col.copy(tasks = col.tasks.filterNot { it.first.id == intent.nodeId })
-                        }
+            is CartridgeDockIntent.MoveTask -> _state.update { current ->
+                val moved = current.columns.flatMap { it.tasks }.firstOrNull { it.first.id == intent.nodeId }
+                val updated = current.columns.map { col ->
+                    val without = col.tasks.filterNot { it.first.id == intent.nodeId }
+                    if (col.status == intent.targetStatus && moved != null) {
+                        col.copy(tasks = without + (moved.first to intent.targetStatus))
+                    } else {
+                        col.copy(tasks = without)
                     }
-                    current.copy(columns = updated)
                 }
+                current.copy(columns = updated)
             }
         }
     }
 
     companion object {
-        fun buildColumns(
-            nodes: List<IntentNodeRecord>,
-            statuses: Map<String, DerivedStatus>,
-        ): List<KanbanColumn> {
-            val primaryStatuses = listOf(
-                DerivedStatus.NOT_STARTED to "Backlog",
-                DerivedStatus.IN_PROGRESS to "Active Work",
-                DerivedStatus.NEEDS_REVIEW to "Review Gates",
-                DerivedStatus.BLOCKED to "Blocked",
-                DerivedStatus.DONE to "Completed",
-            )
-            return primaryStatuses.map { (status, label) ->
-                val tasks = nodes.mapNotNull { node ->
-                    val nodeStatus = statuses[node.id] ?: DerivedStatus.NOT_STARTED
-                    if (nodeStatus == status) node to nodeStatus else null
-                }
-                KanbanColumn(status = status, title = label, tasks = tasks)
+        /** Pure: the whole board for one snapshot. */
+        fun build(snap: GraphSnapshot): CartridgeDockUiState {
+            val byId = snap.nodes.associateBy { it.id }
+            val statuses = snap.statuses.mapValues { it.value.derivedStatus }
+            val unmet = snap.statuses.mapValues { it.value.unmetDependencyIds.size }
+            val cartridges = snap.nodes.filter(::isCartridge).sortedWith(compareBy({ it.priority }, { it.title }))
+
+            val placed = LinkedHashMap<String, Pair<IntentNodeRecord, DockLane>>()
+            val attention = mutableListOf<Pair<IntentNodeRecord, DerivedStatus>>()
+            for (node in cartridges) {
+                val status = statuses[node.id] ?: DerivedStatus.NOT_STARTED
+                val lane = laneFor(status, unmet[node.id] ?: 0)
+                if (lane == null) attention += node to status else placed[node.id] = node to lane
             }
+
+            val columns = DockLane.entries.map { lane ->
+                KanbanColumn(
+                    lane = lane,
+                    status = lane.status,
+                    title = lane.title,
+                    tasks = placed.values.filter { it.second == lane }.map { (node, _) ->
+                        node to (statuses[node.id] ?: DerivedStatus.NOT_STARTED)
+                    },
+                )
+            }
+            return CartridgeDockUiState(
+                columns = columns,
+                swimlanes = buildSwimlanes(placed, byId),
+                attention = attention,
+                unmet = unmet,
+            )
         }
     }
 }
