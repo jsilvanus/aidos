@@ -103,14 +103,12 @@ by any of this.
 
 ### A third app is planned: "Aidos Dictator" (name provisional, no RFC yet)
 
-A separate repository the project owner already maintains is expected to join this ecosystem later,
-under a name in the shape of **Aidos Dictator** (exact branding not finalized). As of this writing
-there is no RFC for it, so nothing about its scope, its relationship to Aidos Agent and Aidos Engine,
-or whether it follows the same "separate app, `fi.italeino.aidos.*` package, own foreground service"
-shape RFC-0103 established for Aidos Engine has been decided. This note exists only so a contributor
-who later sees a third `fi.italeino.aidos.*`-style app, or a fourth Gradle root alongside `agent/`,
-`engine/`, and `sdk/`, isn't caught unaware — treat it as "coming, unspecified" until an RFC lands,
-not as an implicit design commitment this document is making now.
+Dictator is a separate repository, `jsilvanus/dictator`. It is the first app built on the Aidos
+SDK and Engine, and its integration plan is [docs/dictator-sdk-integration-plan.md](docs/dictator-sdk-integration-plan.md).
+It is not an Aidos module and does not share Aidos's Gradle roots. There is still no RFC for it,
+so its scope, its package name, and its foreground-service shape are not in the RFC set. Until an
+RFC lands, treat its behavior as defined by its integration plan and its own repository, not by
+Aidos RFCs.
 
 ## The centre: the agent loop
 
