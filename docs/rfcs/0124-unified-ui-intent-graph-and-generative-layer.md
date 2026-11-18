@@ -152,6 +152,9 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroMapView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/MetroViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
