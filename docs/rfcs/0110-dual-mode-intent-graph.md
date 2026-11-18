@@ -199,6 +199,7 @@ files:
   - agent/api/src/commonMain/kotlin/dev/aidos/api/InMemoryIntentCommands.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentIdPersistenceTest.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeCompositionRoot.kt
   - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/SystemOneTaintInputScreener.kt
   - agent/daemon/src/jvmTest/kotlin/dev/aidos/daemon/RuntimeCompositionRootTest.kt
