@@ -151,6 +151,8 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/pipeline/RelayPipelinePresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/CartridgeDockPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/TimelineViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/TransitMetroPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
