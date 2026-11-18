@@ -70,11 +70,16 @@ class ProjectHubPresenter(
 
     init {
         loadProjects()
-        scope.launch {
-            while (true) {
-                delay(refreshMillis)
-                loadProjects()
-            }
+    }
+
+    /**
+     * Reloads the list every [refreshMillis] until cancelled. The screen runs this while it is shown,
+     * so a presenter never leaves a loop running in a scope it does not own (a test scope would wait for it).
+     */
+    suspend fun refreshWhileShown() {
+        while (true) {
+            delay(refreshMillis)
+            loadProjects()
         }
     }
 

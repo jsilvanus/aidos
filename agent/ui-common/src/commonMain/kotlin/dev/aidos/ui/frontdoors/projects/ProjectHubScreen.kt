@@ -74,6 +74,7 @@ fun ProjectHubScreen(
     }
 
     LaunchedEffect(Unit) { presenter.send(ProjectHubIntent.Refresh) }
+    LaunchedEffect(presenter) { presenter.refreshWhileShown() }
     LaunchedEffect(state.createdProjectId) {
         val createdId = state.createdProjectId ?: return@LaunchedEffect
         presenter.send(ProjectHubIntent.ConsumeCreated)
