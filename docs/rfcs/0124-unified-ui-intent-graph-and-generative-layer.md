@@ -155,6 +155,12 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/radar/FocusRadarPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/InfiniteZuiCanvas.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/CanvasView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/ForceDirectedLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/nodes/ConstraintShieldNode.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/edges/BezierCausalEdge.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/CanvasViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
