@@ -18,6 +18,7 @@ import dev.aidos.intent.IntentCycleDetector
 import dev.aidos.intent.IntentEdgeKind
 import dev.aidos.intent.IntentEdgeRecord
 import dev.aidos.intent.IntentGraphRepository
+import dev.aidos.intent.IntentLifecycle
 import dev.aidos.intent.IntentMinLocality
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeStatusView
@@ -27,6 +28,7 @@ import dev.aidos.intent.IntentProposalEngine
 import dev.aidos.intent.IntentSnapshotCodec
 import dev.aidos.intent.ProposalResolutionDecision
 import dev.aidos.intent.SnapshotReconcileResult
+import dev.aidos.intent.checkStartable
 import dev.aidos.kernel.ActorKind
 import dev.aidos.kernel.ActorRef
 import dev.aidos.kernel.AvailabilityReport
@@ -1387,6 +1389,60 @@ class RealRuntimeClient : RuntimeClient {
                 )
             }
             emitIntentGraphChanged(projectId, "IMPLEMENTATION_CONFIRMED", listOf(nodeId))
+        }
+
+        override suspend fun startNodeRun(
+            projectId: String,
+            nodeId: String,
+            sessionId: String?,
+        ): StartNodeRunResult {
+            val driver = resolveProjectDriver(projectId)
+                ?: return StartNodeRunResult.Refused("intent.no_project_db", "Project '$projectId' has no open database.")
+            val repository = intentRepository(driver)
+            // Same guards as IntentRunCoordinator.startTargetedRun (shared in :intent).
+            val node = try {
+                checkStartable(
+                    repository = repository,
+                    statusComputer = DerivedStatusComputer(driver),
+                    projectId = projectId,
+                    nodeId = nodeId,
+                    platformProfile = platformProfile,
+                    availableLocality = IntentMinLocality.LOCAL_ONLY,
+                )
+            } catch (e: IllegalArgumentException) {
+                return StartNodeRunResult.Refused("intent.not_startable", e.message ?: "Node cannot be started.")
+            } catch (e: IllegalStateException) {
+                return StartNodeRunResult.Refused("intent.not_startable", e.message ?: "Node cannot be started.")
+            }
+
+            val targetSessionId = sessionId ?: when (
+                val created = sessions.create(
+                    CreateSessionRequest(projectId = projectId, name = "node: ${node.title}", role = SessionRole.WORKER),
+                )
+            ) {
+                is SessionResult.Success -> created.session.id
+                is SessionResult.Error -> return StartNodeRunResult.Refused(created.code, created.message)
+            }
+
+            // Acceptance criteria are the ACCEPTS-edge targets of the node (RFC-0110).
+            val criteria = repository.listEdges(projectId, fromNodeId = nodeId, edgeKind = IntentEdgeKind.ACCEPTS)
+                .mapNotNull { repository.getNode(projectId, it.toNodeId) }
+                .filter { it.lifecycle == IntentLifecycle.ACTIVE }
+            val content = buildString {
+                append("Work on intent node ${node.id}: ${node.title}\n\n")
+                append(node.description.orEmpty())
+                append("\n\nAcceptance criteria:")
+                criteria.forEach { append("\n- ${it.title}") }
+            }
+
+            return when (val result = sessions.send(targetSessionId, UserMessage(content = content))) {
+                is RunResult.Accepted -> {
+                    repository.recordRunTargeting(projectId, result.runId, node.id)
+                    emitIntentGraphChanged(projectId, "NODE_UPDATED", listOf(node.id))
+                    StartNodeRunResult.Started(runId = result.runId, sessionId = targetSessionId)
+                }
+                is RunResult.Error -> StartNodeRunResult.Refused(result.code, result.message)
+            }
         }
 
         override suspend fun exportSnapshotJson(projectId: String): String {

@@ -528,6 +528,13 @@ class RuntimeSocketServer(
             )
             JsonObject(emptyMap())
         }
+        Methods.INTENTS_START_NODE_RUN -> WireExtended.encodeStartNodeRunResult(
+            client.intents.startNodeRun(
+                projectId = params["projectId"]!!.jsonPrimitive.content,
+                nodeId = params["nodeId"]!!.jsonPrimitive.content,
+                sessionId = params["sessionId"]?.jsonPrimitive?.contentOrNull,
+            )
+        )
         Methods.INTENTS_EXPORT_SNAPSHOT -> JsonPrimitive(
             client.intents.exportSnapshotJson(params["projectId"]!!.jsonPrimitive.content)
         )

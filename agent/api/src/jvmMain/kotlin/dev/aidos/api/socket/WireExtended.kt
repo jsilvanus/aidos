@@ -22,6 +22,7 @@ import dev.aidos.api.ProjectDetail
 import dev.aidos.api.ReviewState
 import dev.aidos.api.RunSummary
 import dev.aidos.api.SessionDetail
+import dev.aidos.api.StartNodeRunResult
 import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentCheckKind
@@ -621,6 +622,32 @@ object WireExtended {
         ),
         expiresAtIso = json["expiresAtIso"]!!.jsonPrimitive.content,
     )
+
+    fun encodeStartNodeRunResult(r: StartNodeRunResult): JsonObject = buildJsonObject {
+        when (r) {
+            is StartNodeRunResult.Started -> {
+                put("kind", "started")
+                put("runId", r.runId)
+                put("sessionId", r.sessionId)
+            }
+            is StartNodeRunResult.Refused -> {
+                put("kind", "refused")
+                put("code", r.code)
+                put("message", r.message)
+            }
+        }
+    }
+
+    fun decodeStartNodeRunResult(json: JsonObject): StartNodeRunResult = when (json["kind"]!!.jsonPrimitive.content) {
+        "started" -> StartNodeRunResult.Started(
+            runId = json["runId"]!!.jsonPrimitive.content,
+            sessionId = json["sessionId"]!!.jsonPrimitive.content,
+        )
+        else -> StartNodeRunResult.Refused(
+            code = json["code"]!!.jsonPrimitive.content,
+            message = json["message"]!!.jsonPrimitive.content,
+        )
+    }
 
     inline fun <reified T> encodeSerializable(value: T): JsonElement =
         jsonFormat.encodeToJsonElement(value)
