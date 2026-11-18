@@ -374,7 +374,7 @@ private fun AidosUniversalAppContent(
             dexPreserver.captureSession(
                 projectId = currentProjectId,
                 nodeId = null,
-                documentText = livingDocPresenter.state.value.lines.joinToString("\n") { it.text },
+                documentText = livingDocPresenter.state.value.text,
                 viewport = canvasPresenter.state.value.viewport,
                 formFactor = formFactor,
             )
