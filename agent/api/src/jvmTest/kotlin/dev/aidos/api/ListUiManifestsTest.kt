@@ -48,21 +48,15 @@ class ListUiManifestsTest {
     }
 
     private fun SqlDriver.insertCall(callId: String, runId: String, tool: String, args: String, outcome: String, step: Int) {
-        // tool_calls.model_task_id is a foreign key: give the run one MODEL_CALL task to point at.
-        execute(
-            null,
-            "INSERT OR IGNORE INTO tasks (id, run_id, session_id, project_id, ordinal, kind, description, state, retry_policy_json) " +
-                "SELECT 'm', id, session_id, project_id, 0, 'MODEL_CALL', 'm', 'COMPLETED', '{}' FROM runs WHERE id = ?",
-            1,
-        ) { bindString(0, runId) }
+        // tool_calls.model_task_id is a foreign key: reuse the task sessions.send already created for the run.
         execute(
             null,
             "INSERT INTO tool_calls (call_id, run_id, model_task_id, tool_name, arguments_json, schema_valid, outcome, step_index) " +
-                "VALUES (?, ?, 'm', ?, ?, 1, ?, ?)",
-            6,
+                "VALUES (?, ?, (SELECT id FROM tasks WHERE run_id = ? LIMIT 1), ?, ?, 1, ?, ?)",
+            7,
         ) {
-            bindString(0, callId); bindString(1, runId); bindString(2, tool)
-            bindString(3, args); bindString(4, outcome); bindLong(5, step.toLong())
+            bindString(0, callId); bindString(1, runId); bindString(2, runId); bindString(3, tool)
+            bindString(4, args); bindString(5, outcome); bindLong(6, step.toLong())
         }
     }
 
