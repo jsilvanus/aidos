@@ -154,6 +154,8 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/GateCards.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/SpatialCanvasTest.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GenerativeCardsTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/WorkspaceCoreTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GatesViewTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PresentersOnStoreTest.kt
@@ -216,12 +218,24 @@ post_mvp:
     done_when: "the acceptance script in this RFC passes on a physical phone and an unfolded device"
   - id: "0124.2"
     title: "A2UI manifest parser and validator against the TCR manifest, failing closed on unknown types and props"
-    status: todo
+    status: done
+    note: "Parser and validator in aidos-tcr dev.aidos.tcr.a2ui (UI-05); the consumer side reads stored manifests through listUiManifests and validates them at render time (UI-51, parseAgentCard)."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GenerativeCardsTest.kt
     phase: P1
     done_when: "a manifest with an unknown component type is rejected and a valid one yields a typed tree"
   - id: "0124.3"
     title: "TCR renderer for validated manifests, placed inline next to the target node in the Living Document and Outliner"
-    status: todo
+    status: done
+    note: "GenerativeCards under the Living Document, under expanded or tapped Outliner rows, and in an Inspector section (UI-51). Action buttons stay disabled until UI-52."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocView.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerNodeRow.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspector.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GenerativeCardsTest.kt
     phase: P1
     depends_on: ["0124.2"]
     done_when: "an agent-emitted manifest renders as an inline card on desktop and Android"

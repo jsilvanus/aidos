@@ -3,6 +3,7 @@ package dev.aidos.ui.workspace
 import dev.aidos.api.EventFilter
 import dev.aidos.api.RuntimeClient
 import dev.aidos.api.RuntimeEventType
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.IntentEdgeRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeStatusView
@@ -29,6 +30,8 @@ data class GraphSnapshot(
     val proposals: List<IntentProposal>,
     val loadedAt: Long, // epoch millis
     val error: String? = null,
+    /** Agent cards (RFC-0124 generative layer, UI-51) by target node, newest first, at most [MAX_CARDS_PER_NODE] each. */
+    val manifests: Map<String, List<UiManifestRecord>> = emptyMap(),
 ) {
     companion object {
         fun empty(projectId: String) = GraphSnapshot(
@@ -47,6 +50,9 @@ data class GraphSnapshot(
  * fetches the graph. Refreshes on runtime events (debounced) and on a poll (decision U6), because
  * writes by another process raise no event here.
  */
+/** Agent cards shown under one node. More than this is noise; the rest stay in the runtime's records. */
+const val MAX_CARDS_PER_NODE = 3
+
 class ProjectGraphStore(
     val projectId: String,
     private val client: RuntimeClient,
@@ -99,7 +105,17 @@ class ProjectGraphStore(
                 }
                 val proposals = intents.listProposals(projectId, state = "PENDING")
                     .filter { it.state == "PENDING" }
-                _snapshot.value = GraphSnapshot(projectId, nodes, edges, statuses, proposals, clock())
+                // Cards are optional: if they fail to load the graph still loads, and the last good cards stay.
+                val manifests = try {
+                    intents.listUiManifests(projectId, limit = 100)
+                        .groupBy { it.targetNodeId }
+                        .mapValues { (_, records) -> records.take(MAX_CARDS_PER_NODE) }
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (_: Throwable) {
+                    _snapshot.value.manifests
+                }
+                _snapshot.value = GraphSnapshot(projectId, nodes, edges, statuses, proposals, clock(), manifests = manifests)
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {

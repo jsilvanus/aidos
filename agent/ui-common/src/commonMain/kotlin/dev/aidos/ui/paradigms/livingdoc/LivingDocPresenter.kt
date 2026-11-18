@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import dev.aidos.api.UiManifestRecord
 import kotlinx.coroutines.launch
 
 /** Title of the per-project GOAL node that holds the document when no node is selected (RFC-0124 decision U8). */
@@ -37,6 +38,8 @@ data class LivingDocUiState(
     val conflict: Boolean = false,
     /** Child tasks of the document node, shown after the text as inline tool blocks. */
     val children: List<LivingDocChild> = emptyList(),
+    /** Agent cards on the document node, newest first (UI-51). */
+    val cards: List<UiManifestRecord> = emptyList(),
 )
 
 data class LivingDocChild(val node: IntentNodeRecord, val status: DerivedStatus?)
@@ -272,6 +275,7 @@ class LivingDocPresenter(
                 title = node?.title ?: NOTES_TITLE,
                 breadcrumb = crumbs,
                 status = docId?.let { snap.statuses[it]?.derivedStatus },
+                cards = docId?.let { snap.manifests[it] }.orEmpty(),
                 children = if (docId == null) {
                     emptyList()
                 } else {
