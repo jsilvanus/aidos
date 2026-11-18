@@ -133,12 +133,16 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/AdaptiveLayoutState.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/dex/DexStatePreserver.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceBootstrap.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/MultiAgentPillOverlay.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatesScreen.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/SpatialCanvasTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/WorkspaceCoreTest.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt

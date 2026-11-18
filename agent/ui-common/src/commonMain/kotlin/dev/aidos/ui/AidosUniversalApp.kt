@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,9 @@ import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceBootstrap
+import dev.aidos.ui.workspace.WorkspaceController
+import dev.aidos.ui.workspace.WorkspaceKind
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,7 +98,7 @@ fun AidosUniversalApp(
     runtimeClient: RuntimeClient,
     initialDestinationId: String = "inbox",
     initialLifeFilterOnly: Boolean = false,
-    initialProjectId: String = "default-workspace",
+    initialProjectId: String? = null,
     initialAssistantOpen: Boolean = false,
     nativeProcessHealth: StateFlow<NativeProcessHealth>? = null,
     approvalGatePresenter: ApprovalGatePresenter? = null,
@@ -101,9 +106,63 @@ fun AidosUniversalApp(
     onPinProjectLauncher: ((projectId: String, projectName: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    // RFC-0124 decision U5: a real project, never a magic id. Show nothing but progress until resolved.
+    var resolvedProjectId by remember { mutableStateOf<String?>(null) }
+    var resolveError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(runtimeClient, initialProjectId, initialLifeFilterOnly) {
+        try {
+            resolvedProjectId = WorkspaceBootstrap.resolve(
+                runtimeClient,
+                initialProjectId,
+                if (initialLifeFilterOnly) WorkspaceKind.LIFE else WorkspaceKind.WORKSPACE,
+            )
+            resolveError = null
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            resolveError = t.message ?: "Could not open the workspace"
+        }
+    }
+    val projectId = resolvedProjectId
+    if (projectId == null) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val error = resolveError
+            if (error == null) CircularProgressIndicator() else Text(error)
+        }
+        return
+    }
+    AidosUniversalAppContent(
+        runtimeClient = runtimeClient,
+        initialDestinationId = initialDestinationId,
+        initialProjectId = projectId,
+        initialAssistantOpen = initialAssistantOpen,
+        nativeProcessHealth = nativeProcessHealth,
+        approvalGatePresenter = approvalGatePresenter,
+        voiceCaptureController = voiceCaptureController,
+        onPinProjectLauncher = onPinProjectLauncher,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AidosUniversalAppContent(
+    runtimeClient: RuntimeClient,
+    initialDestinationId: String,
+    initialProjectId: String,
+    initialAssistantOpen: Boolean,
+    nativeProcessHealth: StateFlow<NativeProcessHealth>?,
+    approvalGatePresenter: ApprovalGatePresenter?,
+    voiceCaptureController: VoiceCaptureController?,
+    onPinProjectLauncher: ((projectId: String, projectName: String) -> Unit)?,
+    modifier: Modifier,
+) {
     val coroutineScope = rememberCoroutineScope()
-    var selectedDestinationId by remember { mutableStateOf(initialDestinationId) }
-    var currentProjectId by remember { mutableStateOf(initialProjectId) }
+    val controller = remember(runtimeClient) {
+        WorkspaceController(runtimeClient, coroutineScope, initialProjectId, initialDestinationId)
+    }
+    val workspaceState by controller.state.collectAsState()
+    val selectedDestinationId = workspaceState.viewId
+    val currentProjectId = workspaceState.projectId
 
     val inboxPresenter = remember {
         ActionInboxPresenter(
@@ -181,7 +240,7 @@ fun AidosUniversalApp(
         CommandPalettePresenter(
             allCommands = ViewModeCatalog.all.map { mode ->
                 PaletteItem("nav-${mode.id}", mode.label, "Switch to ${mode.label}", CommandItemKind.COMMAND) {
-                    selectedDestinationId = mode.id
+                    controller.navigate(mode.id)
                 }
             } + PaletteItem("sys-assistant", "Trigger Voice Assistant", "Record intent via Red Pill", CommandItemKind.COMMAND) {
                 isAssistantOpen = true
@@ -231,7 +290,7 @@ fun AidosUniversalApp(
         destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
         destinationsFor = ::destinationsFor,
         selectedDestinationId = selectedDestinationId,
-        onDestinationSelected = { id -> selectedDestinationId = id },
+        onDestinationSelected = { id -> controller.navigate(id) },
         topBar = {
             NativeProcessRecoveryBar(health = nativeHealth)
         },
@@ -324,7 +383,7 @@ fun AidosUniversalApp(
                                 color = if (isSelected) ColorTokens.ActorAgent else Color(0xFF334155),
                                 shape = RoundedCornerShape(CornerTokens.pill),
                             )
-                            .clickable { selectedDestinationId = mode.id }
+                            .clickable { controller.navigate(mode.id) }
                             .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
                     ) {
                         Text(
@@ -341,19 +400,19 @@ fun AidosUniversalApp(
                     "inbox" -> ActionInboxScreen(
                         presenter = inboxPresenter,
                         onItemClick = { item ->
-                            currentProjectId = item.node.projectId
-                            selectedDestinationId = "outliner"
+                            controller.switchProject(item.node.projectId)
+                            controller.navigate("outliner", item.node.id)
                         },
                     )
                     "outliner" -> CausalOutlinerScreen(
                         presenter = outlinerPresenter,
-                        onDrillDown = { selectedDestinationId = "livingdoc" },
+                        onDrillDown = { controller.navigate("livingdoc") },
                     )
                     "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter)
                     "metro" -> TransitMetroMapView(presenter = metroPresenter)
                     "kanban" -> CartridgeDockScreen(
                         presenter = kanbanPresenter,
-                        onTaskClick = { selectedDestinationId = "outliner" },
+                        onTaskClick = { controller.navigate("outliner") },
                     )
                     "radar" -> RadialRadarScreen(presenter = radarPresenter)
                     "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter)
@@ -364,8 +423,8 @@ fun AidosUniversalApp(
                     "projects" -> ProjectHubScreen(
                         presenter = projectHubPresenter,
                         onProjectClick = { projId ->
-                            currentProjectId = projId
-                            selectedDestinationId = "inbox"
+                            controller.switchProject(projId)
+                            controller.navigate("inbox")
                         },
                         onPinProjectClick = onPinProjectLauncher,
                     )
