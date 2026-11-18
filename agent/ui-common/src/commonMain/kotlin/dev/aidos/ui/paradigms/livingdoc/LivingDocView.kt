@@ -48,6 +48,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
+import dev.aidos.api.UiManifestRecord
+import dev.aidos.tcr.a2ui.A2uiDensity
+import dev.aidos.ui.generative.GenerativeCards
 import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForStatus
 import dev.aidos.ui.workspace.WorkspaceController
@@ -196,16 +199,18 @@ fun LivingDocView(
             }
         }
 
-        GenerativeBlocksSlot(nodeId = state.nodeId)
+        GenerativeBlocksSlot(cards = state.cards, formFactor = formFactor)
     }
 }
 
-/**
- * Where generative cards go under the text (UI-51). Renders nothing until UI-51 fills it in.
- */
+/** Agent cards under the document text, inline with the node they belong to (RFC-0124 generative layer). */
 @Composable
-@Suppress("UNUSED_PARAMETER")
-fun GenerativeBlocksSlot(nodeId: String?) {
+fun GenerativeBlocksSlot(cards: List<UiManifestRecord>, formFactor: FormFactor) {
+    GenerativeCards(
+        records = cards,
+        density = if (formFactor == FormFactor.HANDHELD_COMPACT) A2uiDensity.COMPACT else A2uiDensity.REGULAR,
+        onAction = { _, _ -> },
+    )
 }
 
 private fun saveLabel(state: LivingDocSaveState): String = when (state) {

@@ -56,6 +56,8 @@ import dev.aidos.intent.IntentMinLocality
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.intent.IntentTargetProfile
 import dev.aidos.intent.NodeDispatchPolicy
+import dev.aidos.tcr.a2ui.A2uiDensity
+import dev.aidos.ui.generative.GenerativeCards
 import dev.aidos.ui.layout.FormFactor
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
@@ -303,6 +305,13 @@ private fun InspectorSections(
         excludedIds = dependencyIds.toSet(),
         onPick = { other -> controller.addEdge(nodeId, other, IntentEdgeKind.DEPENDS_ON) },
     )
+
+    // Agent cards the runtime stored for this node (RFC-0124 generative layer, UI-51).
+    val cards = snapshot.manifests[nodeId].orEmpty()
+    if (cards.isNotEmpty()) {
+        SectionTitle("Agent cards")
+        GenerativeCards(records = cards, density = A2uiDensity.REGULAR, onAction = { _, _ -> })
+    }
 
     // Acceptance criteria and constraints.
     SectionTitle("Acceptance criteria")

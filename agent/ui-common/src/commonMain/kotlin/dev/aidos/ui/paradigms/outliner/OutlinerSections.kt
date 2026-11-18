@@ -1,5 +1,6 @@
 package dev.aidos.ui.paradigms.outliner
 
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentLifecycle
 import dev.aidos.intent.IntentNodeRecord
@@ -21,6 +22,7 @@ enum class OutlinerSection(val title: String, val keyPrefix: String) {
 internal class OutlinerIndex(
     nodes: List<IntentNodeRecord>,
     private val statuses: Map<String, IntentNodeStatusView>,
+    private val manifests: Map<String, List<UiManifestRecord>> = emptyMap(),
 ) {
     private val titles: Map<String, String> = nodes.associate { it.id to it.title }
     private val byParent: Map<String?, List<IntentNodeRecord>> = nodes.groupBy { it.parentId }
@@ -48,6 +50,7 @@ internal class OutlinerIndex(
             unmetPrerequisites = view?.unmetDependencyIds?.map { id -> id to (titles[id] ?: "Task $id") }.orEmpty(),
             activeRuns = view?.activeRunIds?.size ?: 0,
             criteria = criteriaOf(node.id),
+            cards = manifests[node.id].orEmpty(),
         )
     }
 }

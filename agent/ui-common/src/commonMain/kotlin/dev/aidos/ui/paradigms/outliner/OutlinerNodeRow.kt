@@ -26,9 +26,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentNodeRecord
+import dev.aidos.tcr.a2ui.A2uiDensity
+import dev.aidos.ui.generative.GenerativeCards
 import dev.aidos.ui.tcr.code.ScopePathChipAtom
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
@@ -48,6 +51,8 @@ data class OutlinerNodeUiModel(
     val activeRuns: Int = 0,
     /** ACCEPTANCE_CRITERION children, drawn as a checklist under the row. */
     val criteria: List<IntentNodeRecord> = emptyList(),
+    /** Agent cards on this node, newest first (UI-51). */
+    val cards: List<UiManifestRecord> = emptyList(),
 )
 
 /** Whether the person can complete the node by hand (HUMAN, or HYBRID which is also human-driven). */
@@ -76,6 +81,7 @@ fun OutlinerNodeRow(
     val statusColor = colorForStatus(item.derivedStatus)
     val isDone = item.derivedStatus == DerivedStatus.DONE
     var menuOpen by remember { mutableStateOf(false) }
+    var cardsShown by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -132,6 +138,22 @@ fun OutlinerNodeRow(
                     Text("Running", style = AidosTypography.baseTypography.labelSmall, color = ColorTokens.ActorAgent)
                 }
 
+                // Collapsed rows show a count; tapping it reveals the cards under this row.
+                if (item.cards.isNotEmpty() && !item.isExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .clickable { cardsShown = !cardsShown }
+                            .background(Color(0x3394A3B8), shape = RoundedCornerShape(CornerTokens.xs))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            text = "▣ ${item.cards.size} card${if (item.cards.size == 1) "" else "s"}",
+                            style = AidosTypography.baseTypography.labelSmall,
+                            color = Color(0xFFCBD5E1),
+                        )
+                    }
+                }
+
                 ScopeChips(node.scopePaths)
 
                 if (!isDone && item.activeRuns == 0 && canCompleteByHand(node.actorKind)) {
@@ -173,6 +195,15 @@ fun OutlinerNodeRow(
 
         item.criteria.forEach { criterion ->
             OutlinerCriterionRow(criterion = criterion, modifier = Modifier.padding(start = 32.dp, top = 2.dp))
+        }
+
+        if (item.cards.isNotEmpty() && (item.isExpanded || cardsShown)) {
+            GenerativeCards(
+                records = item.cards,
+                density = A2uiDensity.REGULAR,
+                onAction = { _, _ -> },
+                modifier = Modifier.padding(start = 32.dp, top = 4.dp),
+            )
         }
     }
 }

@@ -1,5 +1,6 @@
 package dev.aidos.ui.paradigms.outliner
 
+import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeStatusView
 import dev.aidos.intent.IntentNodeType
@@ -65,6 +66,7 @@ class CausalOutlinerPresenter(
 
     private var allNodes: List<IntentNodeRecord> = emptyList()
     private var allStatuses: Map<String, IntentNodeStatusView> = emptyMap()
+    private var allManifests: Map<String, List<UiManifestRecord>> = emptyMap()
     private val parentsSeen = HashSet<String>()
 
     init {
@@ -85,7 +87,7 @@ class CausalOutlinerPresenter(
                 _state.update {
                     it.copy(
                         expandedNodeIds = nextExpanded,
-                        visibleRows = buildFlattenedTree(allNodes, allStatuses, nextExpanded)
+                        visibleRows = buildFlattenedTree(allNodes, allStatuses, nextExpanded, allManifests)
                     )
                 }
             }
@@ -130,7 +132,7 @@ class CausalOutlinerPresenter(
         _state.update {
             it.copy(
                 expandedNodeIds = expanded,
-                visibleRows = buildFlattenedTree(allNodes, allStatuses, expanded),
+                visibleRows = buildFlattenedTree(allNodes, allStatuses, expanded, allManifests),
                 collapsedSections = it.collapsedSections - OutlinerSection.entries.toSet(),
                 focusedNodeId = nodeId,
                 jumpRequest = JumpRequest(nodeId, (it.jumpRequest?.serial ?: 0L) + 1L),
@@ -159,6 +161,7 @@ class CausalOutlinerPresenter(
     private fun applySnapshot(snap: GraphSnapshot) {
         allNodes = snap.nodes
         allStatuses = snap.statuses
+        allManifests = snap.manifests
         // A parent expands by default the first time it appears; one the person collapsed stays collapsed.
         val parents = snap.nodes.mapNotNull { it.parentId }.toSet()
         val newParents = parents - parentsSeen
@@ -167,7 +170,7 @@ class CausalOutlinerPresenter(
         val index = OutlinerIndex(snap.nodes, snap.statuses)
         _state.update {
             it.copy(
-                visibleRows = buildFlattenedTree(snap.nodes, snap.statuses, expanded),
+                visibleRows = buildFlattenedTree(snap.nodes, snap.statuses, expanded, snap.manifests),
                 expandedNodeIds = expanded,
                 horizon = actionHorizon(snap).map { node -> index.row(node) },
                 ledger = verificationLedger(snap).map { node -> index.row(node) },
@@ -186,8 +189,9 @@ class CausalOutlinerPresenter(
             nodes: List<IntentNodeRecord>,
             statuses: Map<String, IntentNodeStatusView>,
             expandedNodeIds: Set<String>,
+            manifests: Map<String, List<UiManifestRecord>> = emptyMap(),
         ): List<OutlinerNodeUiModel> {
-            val index = OutlinerIndex(nodes, statuses)
+            val index = OutlinerIndex(nodes, statuses, manifests)
             val result = mutableListOf<OutlinerNodeUiModel>()
 
             fun walk(node: IntentNodeRecord, depth: Int) {
