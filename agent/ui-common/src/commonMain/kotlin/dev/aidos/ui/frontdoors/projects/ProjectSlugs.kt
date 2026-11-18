@@ -54,8 +54,8 @@ fun formatLastActive(lastActiveAt: Instant, now: Instant): String {
     return when {
         elapsed < 1.minutes -> "just now"
         elapsed < 60.minutes -> "${elapsed.inWholeMinutes} min ago"
-        elapsed < 24 * 60.minutes -> "${elapsed.inWholeHours} h ago"
-        elapsed < 30 * 24 * 60.minutes -> "${elapsed.inWholeDays} d ago"
+        elapsed < (24 * 60).minutes -> "${elapsed.inWholeHours} h ago"
+        elapsed < (30 * 24 * 60).minutes -> "${elapsed.inWholeDays} d ago"
         else -> lastActiveAt.toLocalDateTime(TimeZone.UTC).date.toString()
     }
 }
