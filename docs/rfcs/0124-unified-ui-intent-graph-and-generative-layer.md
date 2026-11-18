@@ -159,6 +159,10 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RadarViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/canvas/SpatialCanvasPresenter.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectSlugs.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/ProjectsViewTest.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/MainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/LifeMainActivity.kt
   - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/ProjectActivity.kt
