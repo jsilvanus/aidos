@@ -25,6 +25,7 @@ import dev.aidos.ui.theme.ColorTokens
 fun BatonVectorLine(
     isHumanToAgent: Boolean,
     modifier: Modifier = Modifier,
+    highlighted: Boolean = false, // RFC-0111: the baton is "in the air" (upstream DONE, downstream not)
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "BatonFlow")
     val phase by infiniteTransition.animateFloat(
@@ -37,7 +38,12 @@ fun BatonVectorLine(
         label = "BatonLinePhase"
     )
 
-    val lineColor = if (isHumanToAgent) ColorTokens.ActorAgent else ColorTokens.ActorHuman
+    val lineColor = when {
+        highlighted -> Color(0xFFFBBF24)
+        isHumanToAgent -> ColorTokens.ActorAgent
+        else -> ColorTokens.ActorHuman
+    }
+    val strokeWidth = if (highlighted) 4.dp else 2.dp
 
     Canvas(modifier = modifier.fillMaxWidth().height(24.dp)) {
         val y = size.height / 2f
@@ -48,7 +54,7 @@ fun BatonVectorLine(
             color = lineColor,
             start = Offset(startX, y),
             end = Offset(endX, y),
-            strokeWidth = 2.dp.toPx(),
+            strokeWidth = strokeWidth.toPx(),
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), phase),
         )
     }
