@@ -448,6 +448,16 @@ locked, a laptop that slept, and later a mobile client on a flaky network — re
 last sequence it observed and receives the gap rather than a fresh stream with a hole in it.
 Without it, every disconnect silently loses events, and the frontend cannot tell.
 
+**The runtime bridges executor activity to subscribers.** The executor records what it does in the
+project's database (`events` rows, plus `runs`, `tasks`, `tool_calls` and `attempts`), and the
+runtime's `RuntimeEventBridge` tails the `events` table by `sequence` and republishes it as
+`RuntimeEvent`s: `RunStepCompleted`, `AiResponseDelta` (once per model step with `isFinal = true`,
+because the model call returns whole text), `ToolApprovalRequired` (tool name only; arguments are
+never read), `ToolCallCompleted`, and `RunCompleted`/`RunFailed`. `ToolCallCompleted` and the
+`TOOL_CALL_COMPLETED` event type are additive (API v1 stays additive-only). Tailing the table means
+a runtime sharing the database with an executor in another process sees its events too. Polling in
+the UI stays as the fallback. Token streaming from the inference backend is not part of this.
+
 ### No local paths on the wire
 
 No method on the Runtime API takes or returns a **client-side filesystem path**. Paths in the
@@ -749,6 +759,8 @@ Multiple runtime instances: a single frontend that spans multiple runtime instan
 files:
   - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeEventBridge.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RuntimeEventBridgeTest.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/MockRuntimeClient.kt
   - agent/api/src/commonMain/kotlin/dev/aidos/api/EffectApprovalGateway.kt
   - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt

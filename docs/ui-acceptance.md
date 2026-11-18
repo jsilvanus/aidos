@@ -52,6 +52,9 @@ Expected: "Human step" is done. "Agent step" is no longer shown as blocked in th
 2. Open the **Gates** view.
 3. If the agent asks to run a tool, a tool approval card appears in Gates. Press **Approve** on one.
 4. While the task runs, look at the top bar.
+5. With the Agent daemon running (section 8), keep the Inspector open on the task: a **Live** section shows the agent's latest text and its last tool calls.
+
+Live events: with the daemon running, the tool approval card must appear in Gates within about a second of the agent asking, not after the 3 s poll, and the Live section must fill in without reopening the Inspector. Mark this SKIP when the daemon is not running (the app then polls).
 
 Expected: Gates shows the tool approval waiting, and it disappears from Gates after you approve it. A blue pill appears in the top bar while the task is running. When the run stops, the pill goes away. If the agent asks for no tool, mark step 5 item 3 as SKIP and say so in the note.
 

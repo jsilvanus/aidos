@@ -145,6 +145,8 @@ private fun InspectorSections(
     }
     val unmetIds = remember(state) { state.unmetDependencies.map { it.id }.toSet() }
 
+    LiveSection(state.activeRunIds, controller)
+
     // Header: type, actor and status.
     Row(horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs), verticalAlignment = Alignment.CenterVertically) {
         AssistChip(onClick = {}, label = { Text(node.type.label()) })
@@ -524,3 +526,22 @@ private fun IntentActorKind.label(): String = when (this) {
 }
 
 private fun DerivedStatus.label(): String = name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+/** What the node's active run is doing right now: its latest text and last tool calls (UI-70). */
+@Composable
+private fun LiveSection(activeRunIds: List<String>, controller: WorkspaceController) {
+    if (activeRunIds.isEmpty()) return
+    val store by controller.currentStore.collectAsState()
+    val live by store.liveRuns.collectAsState()
+    val runs = activeRunIds.mapNotNull { live[it] }.filter { it.text.isNotEmpty() || it.toolCalls.isNotEmpty() }
+    if (runs.isEmpty()) return
+    Text("Live", style = AidosTypography.baseTypography.titleSmall)
+    runs.forEach { run ->
+        if (run.toolCalls.isNotEmpty()) {
+            Text("Tools: " + run.toolCalls.joinToString(" → "), style = AidosTypography.baseTypography.bodySmall)
+        }
+        if (run.text.isNotEmpty()) {
+            Text(run.text, style = AidosTypography.baseTypography.bodySmall)
+        }
+    }
+}
