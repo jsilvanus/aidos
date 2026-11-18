@@ -425,6 +425,7 @@ enum class RuntimeEventType {
     TOOL_APPROVAL_REQUIRED,
     TOOL_APPROVED,
     TOOL_DENIED,
+    INTENT_GRAPH_CHANGED,
 }
 
 /** Per-event sequence number (RFC-0004) — monotonic within the project. */
@@ -514,6 +515,16 @@ sealed class RuntimeEvent {
         val taskId: String,
         val toolName: String,
         val previewDescription: String,
+    ) : RuntimeEvent()
+
+    /** RFC-0110/RFC-0124: something in a project's intent graph changed. Views re-read; the event carries no graph data. */
+    data class IntentGraphChanged(
+        override val eventId: String,
+        override val timestamp: Instant,
+        override val projectId: String,
+        override val sessionId: String? = null,
+        val nodeIds: List<String>,
+        val change: String, // NODE_CREATED|NODE_UPDATED|NODE_ARCHIVED|NODE_COMPLETED|EDGE_ADDED|EDGE_REMOVED|PROPOSAL_CREATED|PROPOSAL_RESOLVED|IMPLEMENTATION_CONFIRMED|SNAPSHOT_IMPORTED
     ) : RuntimeEvent()
 }
 

@@ -370,6 +370,10 @@ object Wire {
                 put("type", "ToolApprovalRequired"); put("runId", event.runId); put("taskId", event.taskId)
                 put("toolName", event.toolName); put("previewDescription", event.previewDescription)
             }
+            is RuntimeEvent.IntentGraphChanged -> {
+                put("type", "IntentGraphChanged"); put("change", event.change)
+                put("nodeIds", buildJsonArray { event.nodeIds.forEach { add(it) } })
+            }
         }
     }
 
@@ -378,6 +382,14 @@ object Wire {
         val timestamp = Instant.parse(json["timestamp"]!!.jsonPrimitive.content)
         val projectId = json["projectId"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
             ?: error("event $eventId has no projectId")
+        // Intent graph changes are project-scoped (RFC-0124): sessionId is optional for them only.
+        if (json["type"]!!.jsonPrimitive.content == "IntentGraphChanged") {
+            return RuntimeEvent.IntentGraphChanged(
+                eventId, timestamp, projectId, sessionId = null,
+                nodeIds = json["nodeIds"]!!.jsonArray.map { it.jsonPrimitive.content },
+                change = json["change"]!!.jsonPrimitive.content,
+            )
+        }
         val sessionId = json["sessionId"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
             ?: error("event $eventId has no sessionId")
         return when (json["type"]!!.jsonPrimitive.content) {

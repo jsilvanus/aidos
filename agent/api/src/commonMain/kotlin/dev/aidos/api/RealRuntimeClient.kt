@@ -528,6 +528,14 @@ class RealRuntimeClient : RuntimeClient {
         _eventFlow.tryEmit(sequenced)
     }
 
+    /** RFC-0124 (UI-02): announces a successful intent graph mutation, on both the persisted and in-memory paths. */
+    private fun emitIntentGraphChanged(projectId: String, change: String, nodeIds: List<String>) {
+        emit(RuntimeEvent.IntentGraphChanged(
+            eventId = nextId(), timestamp = Clock.System.now(), projectId = projectId,
+            nodeIds = nodeIds, change = change,
+        ))
+    }
+
     /** Injects a pending capability request for testing approval workflows. */
     fun injectPendingCapability(request: PendingCapabilityRequest) {
         _pendingCapabilities.add(request)
@@ -1086,13 +1094,26 @@ class RealRuntimeClient : RuntimeClient {
 
         private fun matchesFilter(event: RuntimeEvent, filter: EventFilter): Boolean =
             (filter.projectIds.isEmpty() || (event.projectId != null && event.projectId in filter.projectIds)) &&
-                (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds))
+                (filter.sessionIds.isEmpty() || (event.sessionId != null && event.sessionId in filter.sessionIds)) &&
+                (filter.types.isEmpty() || eventType(event) in filter.types)
+
+        private fun eventType(event: RuntimeEvent): RuntimeEventType = when (event) {
+            is RuntimeEvent.SessionCreated -> RuntimeEventType.SESSION_CREATED
+            is RuntimeEvent.SessionStateChanged -> RuntimeEventType.SESSION_STATE_CHANGED
+            is RuntimeEvent.RunStarted -> RuntimeEventType.RUN_STARTED
+            is RuntimeEvent.RunCompleted -> RuntimeEventType.RUN_COMPLETED
+            is RuntimeEvent.RunFailed -> RuntimeEventType.RUN_FAILED
+            is RuntimeEvent.RunStepCompleted -> RuntimeEventType.RUN_STEP_COMPLETED
+            is RuntimeEvent.AiResponseDelta -> RuntimeEventType.AI_RESPONSE_DELTA
+            is RuntimeEvent.ToolApprovalRequired -> RuntimeEventType.TOOL_APPROVAL_REQUIRED
+            is RuntimeEvent.IntentGraphChanged -> RuntimeEventType.INTENT_GRAPH_CHANGED
+        }
     }
 
     override val intents: IntentCommands = object : IntentCommands {
         override suspend fun createNode(request: CreateIntentNodeRequest): IntentNodeRecord {
             val driver = resolveProjectDriver(request.projectId)
-                ?: return _inMemoryIntents.createNode(request)
+                ?: return _inMemoryIntents.createNode(request).also { emitIntentGraphChanged(request.projectId, "NODE_CREATED", listOf(it.id)) }
             return intentRepository(driver).createNode(
                 projectId = request.projectId,
                 title = request.title,
@@ -1114,12 +1135,12 @@ class RealRuntimeClient : RuntimeClient {
                 checkSpec = request.checkSpec,
                 tags = request.tags,
                 createdBy = ActorRef(ActorKind.USER, "local-user"),
-            )
+            ).also { emitIntentGraphChanged(request.projectId, "NODE_CREATED", listOf(it.id)) }
         }
 
         override suspend fun updateNode(request: UpdateIntentNodeRequest): IntentNodeRecord {
             val driver = resolveProjectDriver(request.projectId)
-                ?: return _inMemoryIntents.updateNode(request)
+                ?: return _inMemoryIntents.updateNode(request).also { emitIntentGraphChanged(request.projectId, "NODE_UPDATED", listOf(request.nodeId)) }
             return intentRepository(driver).updateNode(
                 projectId = request.projectId,
                 nodeId = request.nodeId,
@@ -1147,13 +1168,13 @@ class RealRuntimeClient : RuntimeClient {
                 checkSpec = request.checkSpec,
                 tags = request.tags,
                 modifiedBy = ActorRef(ActorKind.USER, "local-user"),
-            )
+            ).also { emitIntentGraphChanged(request.projectId, "NODE_UPDATED", listOf(request.nodeId)) }
         }
 
         override suspend fun archiveNode(projectId: String, nodeId: String): IntentNodeRecord {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.archiveNode(projectId, nodeId)
-            return intentRepository(driver).archiveNode(projectId, nodeId)
+                ?: return _inMemoryIntents.archiveNode(projectId, nodeId).also { emitIntentGraphChanged(projectId, "NODE_ARCHIVED", listOf(nodeId)) }
+            return intentRepository(driver).archiveNode(projectId, nodeId).also { emitIntentGraphChanged(projectId, "NODE_ARCHIVED", listOf(nodeId)) }
         }
 
         override suspend fun getNodeStatus(
@@ -1219,8 +1240,8 @@ class RealRuntimeClient : RuntimeClient {
             note: String?,
         ): IntentNodeRecord {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.completeHumanNode(projectId, nodeId, userId, note)
-            return intentRepository(driver).completeHumanNode(projectId, nodeId, userId, note)
+                ?: return _inMemoryIntents.completeHumanNode(projectId, nodeId, userId, note).also { emitIntentGraphChanged(projectId, "NODE_COMPLETED", listOf(nodeId)) }
+            return intentRepository(driver).completeHumanNode(projectId, nodeId, userId, note).also { emitIntentGraphChanged(projectId, "NODE_COMPLETED", listOf(nodeId)) }
         }
 
         override suspend fun addEdge(
@@ -1230,8 +1251,8 @@ class RealRuntimeClient : RuntimeClient {
             edgeKind: IntentEdgeKind,
         ): IntentEdgeRecord {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.addEdge(projectId, fromNodeId, toNodeId, edgeKind)
-            return intentRepository(driver).addEdge(projectId, fromNodeId, toNodeId, edgeKind)
+                ?: return _inMemoryIntents.addEdge(projectId, fromNodeId, toNodeId, edgeKind).also { emitIntentGraphChanged(projectId, "EDGE_ADDED", listOf(fromNodeId, toNodeId)) }
+            return intentRepository(driver).addEdge(projectId, fromNodeId, toNodeId, edgeKind).also { emitIntentGraphChanged(projectId, "EDGE_ADDED", listOf(fromNodeId, toNodeId)) }
         }
 
         override suspend fun removeEdge(
@@ -1241,8 +1262,8 @@ class RealRuntimeClient : RuntimeClient {
             edgeKind: IntentEdgeKind,
         ): Boolean {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.removeEdge(projectId, fromNodeId, toNodeId, edgeKind)
-            return intentRepository(driver).removeEdge(projectId, fromNodeId, toNodeId, edgeKind)
+                ?: return _inMemoryIntents.removeEdge(projectId, fromNodeId, toNodeId, edgeKind).also { if (it) emitIntentGraphChanged(projectId, "EDGE_REMOVED", listOf(fromNodeId, toNodeId)) }
+            return intentRepository(driver).removeEdge(projectId, fromNodeId, toNodeId, edgeKind).also { if (it) emitIntentGraphChanged(projectId, "EDGE_REMOVED", listOf(fromNodeId, toNodeId)) }
         }
 
         override suspend fun listEdges(
@@ -1258,7 +1279,7 @@ class RealRuntimeClient : RuntimeClient {
 
         override suspend fun propose(request: CreateIntentProposalRequest): String {
             val driver = resolveProjectDriver(request.projectId)
-                ?: return _inMemoryIntents.propose(request)
+                ?: return _inMemoryIntents.propose(request).also { emitIntentGraphChanged(request.projectId, "PROPOSAL_CREATED", emptyList()) }
             return intentProposalEngine(driver).propose(
                 projectId = request.projectId,
                 runId = request.runId,
@@ -1267,7 +1288,7 @@ class RealRuntimeClient : RuntimeClient {
                 runTaint = request.runTaint,
                 actor = request.actor,
                 expiresAtIso = request.expiresAtIso,
-            )
+            ).also { emitIntentGraphChanged(request.projectId, "PROPOSAL_CREATED", emptyList()) }
         }
 
         override suspend fun listProposals(projectId: String, state: String?): List<IntentProposal> {
@@ -1284,14 +1305,14 @@ class RealRuntimeClient : RuntimeClient {
             editedOperations: List<IntentOperation>?,
         ): IntentProposal {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.resolveProposal(projectId, proposalId, decision, resolvedByUserId, editedOperations)
+                ?: return _inMemoryIntents.resolveProposal(projectId, proposalId, decision, resolvedByUserId, editedOperations).also { emitIntentGraphChanged(projectId, "PROPOSAL_RESOLVED", emptyList()) }
             return intentProposalEngine(driver).resolve(
                 projectId = projectId,
                 proposalId = proposalId,
                 decision = decision,
                 resolvedByUserId = resolvedByUserId,
                 editedOperations = editedOperations,
-            )
+            ).also { emitIntentGraphChanged(projectId, "PROPOSAL_RESOLVED", emptyList()) }
         }
 
         override suspend fun confirmImplementation(
@@ -1302,14 +1323,18 @@ class RealRuntimeClient : RuntimeClient {
             criterionIds: List<String>?,
         ) {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.confirmImplementation(projectId, nodeId, confirmedByKind, confirmedById, criterionIds)
-            intentRepository(driver).confirmPendingImplementation(
-                projectId = projectId,
-                nodeId = nodeId,
-                confirmedByKind = confirmedByKind,
-                confirmedById = confirmedById,
-                criterionIds = criterionIds,
-            )
+            if (driver == null) {
+                _inMemoryIntents.confirmImplementation(projectId, nodeId, confirmedByKind, confirmedById, criterionIds)
+            } else {
+                intentRepository(driver).confirmPendingImplementation(
+                    projectId = projectId,
+                    nodeId = nodeId,
+                    confirmedByKind = confirmedByKind,
+                    confirmedById = confirmedById,
+                    criterionIds = criterionIds,
+                )
+            }
+            emitIntentGraphChanged(projectId, "IMPLEMENTATION_CONFIRMED", listOf(nodeId))
         }
 
         override suspend fun exportSnapshotJson(projectId: String): String {
@@ -1323,8 +1348,8 @@ class RealRuntimeClient : RuntimeClient {
             snapshotJson: String,
         ): SnapshotReconcileResult {
             val driver = resolveProjectDriver(projectId)
-                ?: return _inMemoryIntents.importAndReconcileSnapshot(projectId, snapshotJson)
-            return intentSnapshotCodec(driver).importAndReconcile(projectId, snapshotJson)
+                ?: return _inMemoryIntents.importAndReconcileSnapshot(projectId, snapshotJson).also { emitIntentGraphChanged(projectId, "SNAPSHOT_IMPORTED", emptyList()) }
+            return intentSnapshotCodec(driver).importAndReconcile(projectId, snapshotJson).also { emitIntentGraphChanged(projectId, "SNAPSHOT_IMPORTED", emptyList()) }
         }
     }
 
