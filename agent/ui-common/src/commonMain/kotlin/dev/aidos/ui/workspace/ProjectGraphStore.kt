@@ -2,6 +2,7 @@ package dev.aidos.ui.workspace
 
 import dev.aidos.api.EventFilter
 import dev.aidos.api.RuntimeClient
+import dev.aidos.api.RuntimeEvent
 import dev.aidos.api.RuntimeEventType
 import dev.aidos.api.UiManifestRecord
 import dev.aidos.intent.IntentEdgeRecord
@@ -50,6 +51,35 @@ data class GraphSnapshot(
  * fetches the graph. Refreshes on runtime events (debounced) and on a poll (decision U6), because
  * writes by another process raise no event here.
  */
+/** What a running agent is doing right now (UI-70): its latest text and its last few finished tool calls. */
+data class LiveRun(
+    val runId: String,
+    /** Latest model text, at most [LIVE_TEXT_MAX_CHARS] characters (the tail). */
+    val text: String = "",
+    /** Names of the last [LIVE_TOOL_CALLS_MAX] completed tool calls, oldest first. */
+    val toolCalls: List<String> = emptyList(),
+)
+
+const val LIVE_TEXT_MAX_CHARS = 2_000
+const val LIVE_TOOL_CALLS_MAX = 5
+
+/** Pure: folds one runtime event into the live-run map. Ended runs are dropped. */
+fun applyLiveEvent(runs: Map<String, LiveRun>, event: RuntimeEvent): Map<String, LiveRun> = when (event) {
+    is RuntimeEvent.AiResponseDelta -> {
+        val old = runs[event.runId] ?: LiveRun(event.runId)
+        // A final delta is the whole step's text; a partial one extends what is shown.
+        val text = if (event.isFinal) event.delta else old.text + event.delta
+        runs + (event.runId to old.copy(text = text.takeLast(LIVE_TEXT_MAX_CHARS)))
+    }
+    is RuntimeEvent.ToolCallCompleted -> {
+        val old = runs[event.runId] ?: LiveRun(event.runId)
+        runs + (event.runId to old.copy(toolCalls = (old.toolCalls + event.toolName).takeLast(LIVE_TOOL_CALLS_MAX)))
+    }
+    is RuntimeEvent.RunCompleted -> runs - event.runId
+    is RuntimeEvent.RunFailed -> runs - event.runId
+    else -> runs
+}
+
 /** Agent cards shown under one node. More than this is noise; the rest stay in the runtime's records. */
 const val MAX_CARDS_PER_NODE = 3
 
@@ -63,6 +93,10 @@ class ProjectGraphStore(
 ) {
     private val _snapshot = MutableStateFlow(GraphSnapshot.empty(projectId))
     val snapshot: StateFlow<GraphSnapshot> = _snapshot.asStateFlow()
+
+    private val _liveRuns = MutableStateFlow<Map<String, LiveRun>>(emptyMap())
+    /** Runs in progress in this project, by run id, fed by runtime events (UI-70). */
+    val liveRuns: StateFlow<Map<String, LiveRun>> = _liveRuns.asStateFlow()
 
     private val loadMutex = Mutex()
     private val lifecycleLock = Any()
@@ -138,9 +172,16 @@ class ProjectGraphStore(
                             RuntimeEventType.RUN_COMPLETED,
                             RuntimeEventType.RUN_FAILED,
                             RuntimeEventType.RUN_STEP_COMPLETED,
+                            RuntimeEventType.TOOL_CALL_COMPLETED,
+                            RuntimeEventType.TOOL_APPROVAL_REQUIRED,
+                            RuntimeEventType.AI_RESPONSE_DELTA,
                         ),
                     )
-                ).collect { pending.trySend(Unit) }
+                ).collect { event ->
+                    _liveRuns.value = applyLiveEvent(_liveRuns.value, event)
+                    // Text deltas only feed the live panel; they change nothing a refresh would read.
+                    if (event !is RuntimeEvent.AiResponseDelta) pending.trySend(Unit)
+                }
             } catch (c: CancellationException) {
                 throw c
             } catch (_: Throwable) {

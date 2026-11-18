@@ -1,6 +1,8 @@
 package dev.aidos.ui.frontdoors.gates
 
 import dev.aidos.api.CapabilityResult
+import dev.aidos.api.EventFilter
+import dev.aidos.api.RuntimeEventType
 import dev.aidos.api.ParkedEffectRequest
 import dev.aidos.api.ParkedEgressRequest
 import dev.aidos.api.PendingCapabilityRequest
@@ -139,6 +141,19 @@ class ApprovalGatePresenter private constructor(
             while (true) {
                 refreshPolled()
                 delay(POLL_MILLIS)
+            }
+        }
+        // UI-70: a tool call parked for approval shows at once; the poll above stays as the fallback.
+        client?.let { runtime ->
+            scope.launch {
+                try {
+                    runtime.events.subscribe(EventFilter(types = listOf(RuntimeEventType.TOOL_APPROVAL_REQUIRED)))
+                        .collect { refreshAfterDecision() }
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (_: Throwable) {
+                    // the poll covers it
+                }
             }
         }
     }

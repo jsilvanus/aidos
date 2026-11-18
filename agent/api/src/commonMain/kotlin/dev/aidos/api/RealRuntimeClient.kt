@@ -37,6 +37,10 @@ import dev.aidos.kernel.FileDiff
 import dev.aidos.kernel.PlatformProfile
 import dev.aidos.kernel.ProjectId
 import dev.aidos.kernel.TaskKind
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
@@ -173,6 +177,7 @@ class RealRuntimeClient : RuntimeClient {
     /** Releases all held project locks and closes open project drivers on daemon shutdown (RFC-0055). */
     fun shutdown() {
         projectLocker?.releaseAll()
+        _bridges.keys.toList().forEach { stopEventBridge(it) }
         _openProjectDrivers.values.forEach { runCatching { it.close() } }
         _openProjectDrivers.clear()
     }
@@ -414,7 +419,35 @@ class RealRuntimeClient : RuntimeClient {
     /** Opens (or reuses an already-open) driver for a project's own state.db. */
     private fun ensureProjectDriverOpen(id: String, path: String): SqlDriver? {
         val dbFactory = projectDbFactory ?: return null
-        return _openProjectDrivers.getOrPut(id) { dbFactory(path) }
+        _openProjectDrivers[id]?.let { return it }
+        val driver = dbFactory(path)
+        _openProjectDrivers[id] = driver
+        startEventBridge(id, driver)
+        return driver
+    }
+
+    /**
+     * RFC-0052: when enabled (hosts that run or share an executor, e.g. the daemon), tails the
+     * project's `events` table and republishes executor activity to subscribers.
+     */
+    var liveEventBridgeEnabled: Boolean = false
+
+    private val _bridges = mutableMapOf<String, Pair<RuntimeEventBridge, Job>>()
+    private val _bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private fun startEventBridge(projectId: String, driver: SqlDriver) {
+        if (!liveEventBridgeEnabled || projectId in _bridges) return
+        val bridge = RuntimeEventBridge(projectId, driver, ::emit, ::nextId)
+        _bridges[projectId] = bridge to bridge.start(_bridgeScope)
+    }
+
+    private fun stopEventBridge(projectId: String) {
+        _bridges.remove(projectId)?.second?.cancel()
+    }
+
+    /** One synchronous poll of [projectId]'s event tail; for hosts and tests that drive it themselves. */
+    fun pollEventBridgeOnce(projectId: String) {
+        _bridges[projectId]?.first?.pollOnce()
     }
 
     /** Reads a project's own `projects` row and populates the in-memory cache from it. */
@@ -573,12 +606,17 @@ class RealRuntimeClient : RuntimeClient {
 
     // ── Publish events (for use by internal services) ────────────────────────
 
+    // @Synchronized: the event bridge emits from its own polling coroutine.
+    @Synchronized
     fun emit(event: RuntimeEvent) {
         val seq = _nextSequence++
         val sequenced = SequencedEvent(event, seq)
         _eventBuffer.add(sequenced)
         _eventFlow.tryEmit(sequenced)
     }
+
+    @Synchronized
+    private fun bufferSnapshot(): List<SequencedEvent> = _eventBuffer.toList()
 
     /** RFC-0124 (UI-02): announces a successful intent graph mutation, on both the persisted and in-memory paths. */
     private fun emitIntentGraphChanged(projectId: String, change: String, nodeIds: List<String>) {
@@ -707,6 +745,7 @@ class RealRuntimeClient : RuntimeClient {
                 lifecycle.archiveProject(driver, projectId).getOrThrow()
             }
             projectLocker?.release(projectId)
+            stopEventBridge(projectId)
             _openProjectDrivers.remove(projectId)?.close()
         }
 
@@ -741,6 +780,7 @@ class RealRuntimeClient : RuntimeClient {
                     lifecycle.deleteProject(driver, projectId).getOrThrow()
                 }
                 projectLocker?.release(projectId)
+                stopEventBridge(projectId)
                 _openProjectDrivers.remove(projectId)?.close()
                 projectRegistry()?.unregister(ProjectId(projectId))
                 _projects.remove(projectId)
@@ -859,6 +899,7 @@ class RealRuntimeClient : RuntimeClient {
 
             if (result is RunResult.Accepted) {
                 _runProjectIds[result.runId] = session.projectId
+                _bridges[session.projectId]?.first?.noteRunStarted(result.runId, sessionId)
                 emit(RuntimeEvent.RunStarted(
                     eventId = nextId(), timestamp = Clock.System.now(), projectId = session.projectId,
                     sessionId = sessionId, runId = result.runId,
@@ -1125,10 +1166,11 @@ class RealRuntimeClient : RuntimeClient {
                 val sinceSeq = filter.sinceSequence
 
                 // Snapshot buffered events up to the current last sequence
-                val replayUntilSeq = _eventBuffer.lastOrNull()?.projectSequence ?: 0L
-                
+                val snapshot = bufferSnapshot()
+                val replayUntilSeq = snapshot.lastOrNull()?.projectSequence ?: 0L
+
                 // Replay buffered events that match the filter and are after sinceSequence
-                for (sequenced in _eventBuffer) {
+                for (sequenced in snapshot) {
                     if (sinceSeq == null || sequenced.projectSequence > sinceSeq) {
                         if (matchesFilter(sequenced.event, filter)) {
                             send(sequenced.event)
@@ -1161,6 +1203,7 @@ class RealRuntimeClient : RuntimeClient {
             is RuntimeEvent.RunStepCompleted -> RuntimeEventType.RUN_STEP_COMPLETED
             is RuntimeEvent.AiResponseDelta -> RuntimeEventType.AI_RESPONSE_DELTA
             is RuntimeEvent.ToolApprovalRequired -> RuntimeEventType.TOOL_APPROVAL_REQUIRED
+            is RuntimeEvent.ToolCallCompleted -> RuntimeEventType.TOOL_CALL_COMPLETED
             is RuntimeEvent.IntentGraphChanged -> RuntimeEventType.INTENT_GRAPH_CHANGED
         }
     }

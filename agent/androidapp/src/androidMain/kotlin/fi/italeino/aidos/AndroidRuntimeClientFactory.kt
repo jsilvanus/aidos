@@ -24,6 +24,8 @@ object AndroidRuntimeClientFactory {
         val userDb = AndroidStorage.openUser(context, userDbPath, RUNTIME_VERSION, nowIso)
 
         return RealRuntimeClient().apply {
+            // RFC-0052: republish executor activity (steps, tool calls, approvals) to subscribers.
+            liveEventBridgeEnabled = true
             this.userDriver = userDb.driver
             this.projectDbFactory = { projectRoot ->
                 val stateDbPath = AndroidPaths.stateDb(projectRoot)

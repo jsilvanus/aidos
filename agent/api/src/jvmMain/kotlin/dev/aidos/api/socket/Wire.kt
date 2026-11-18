@@ -396,6 +396,10 @@ object Wire {
                 put("type", "ToolApprovalRequired"); put("runId", event.runId); put("taskId", event.taskId)
                 put("toolName", event.toolName); put("previewDescription", event.previewDescription)
             }
+            is RuntimeEvent.ToolCallCompleted -> {
+                put("type", "ToolCallCompleted"); put("runId", event.runId); put("callId", event.callId)
+                put("toolName", event.toolName); put("outcome", event.outcome)
+            }
             is RuntimeEvent.IntentGraphChanged -> {
                 put("type", "IntentGraphChanged"); put("change", event.change)
                 put("nodeIds", buildJsonArray { event.nodeIds.forEach { add(it) } })
@@ -460,6 +464,13 @@ object Wire {
                 taskId = json["taskId"]!!.jsonPrimitive.content,
                 toolName = json["toolName"]!!.jsonPrimitive.content,
                 previewDescription = json["previewDescription"]!!.jsonPrimitive.content,
+            )
+            "ToolCallCompleted" -> RuntimeEvent.ToolCallCompleted(
+                eventId, timestamp, projectId, sessionId,
+                runId = json["runId"]!!.jsonPrimitive.content,
+                callId = json["callId"]!!.jsonPrimitive.content,
+                toolName = json["toolName"]!!.jsonPrimitive.content,
+                outcome = json["outcome"]!!.jsonPrimitive.content,
             )
             else -> error("unknown RuntimeEvent type: ${json["type"]}")
         }

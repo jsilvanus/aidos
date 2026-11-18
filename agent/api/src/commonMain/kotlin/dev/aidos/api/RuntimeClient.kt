@@ -458,6 +458,8 @@ enum class RuntimeEventType {
     TOOL_APPROVED,
     TOOL_DENIED,
     INTENT_GRAPH_CHANGED,
+    /** Appended (API v1 is additive-only): a tool call finished. */
+    TOOL_CALL_COMPLETED,
 }
 
 /** Per-event sequence number (RFC-0004) — monotonic within the project. */
@@ -547,6 +549,18 @@ sealed class RuntimeEvent {
         val taskId: String,
         val toolName: String,
         val previewDescription: String,
+    ) : RuntimeEvent()
+
+    /** RFC-0052: a tool call finished; views refresh what the tool may have changed (e.g. `present_ui` cards). */
+    data class ToolCallCompleted(
+        override val eventId: String,
+        override val timestamp: Instant,
+        override val projectId: String,
+        override val sessionId: String,
+        val runId: String,
+        val callId: String,
+        val toolName: String,
+        val outcome: String,
     ) : RuntimeEvent()
 
     /** RFC-0110/RFC-0124: something in a project's intent graph changed. Views re-read; the event carries no graph data. */

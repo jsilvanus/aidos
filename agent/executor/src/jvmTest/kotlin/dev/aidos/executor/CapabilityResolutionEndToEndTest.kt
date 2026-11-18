@@ -371,6 +371,17 @@ class CapabilityResolutionEndToEndTest {
         assertEquals("AWAITING_APPROVAL", toolCallTaskState(driver, runId))
         val (kind, _) = continuationDetailJson(driver, runId) ?: error("no continuation written")
         assertEquals("TOOL_CALL", kind)
+
+        // RFC-0052 (UI-70): RuntimeEventBridge turns this row into ToolApprovalRequired. It reads
+        // run_id, task_id and state from the payload and the tool name from the task row.
+        val parkedStep = driver.executeQuery(
+            null,
+            "SELECT payload FROM events WHERE type = 'RunStepCompleted' AND payload LIKE '%AWAITING_APPROVAL%'",
+            { c -> app.cash.sqldelight.db.QueryResult.Value(if (c.next().value) c.getString(0) else null) }, 0,
+        ).value ?: error("parking must publish a RunStepCompleted event with state AWAITING_APPROVAL")
+        val payload = kotlinx.serialization.json.Json.parseToJsonElement(parkedStep).jsonObject
+        assertEquals(runId.value, payload["run_id"]!!.jsonPrimitive.content)
+        assertEquals("AWAITING_APPROVAL", payload["state"]!!.jsonPrimitive.content)
     }
 
     @Test

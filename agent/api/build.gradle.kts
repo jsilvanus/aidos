@@ -44,6 +44,8 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit"))
+                // RuntimeEventBridgeTest writes rows with the executor's real EventStore.
+                implementation(project(":executor"))
                 implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
                 implementation("org.xerial:sqlite-jdbc:3.45.2.0")
             }
