@@ -155,6 +155,9 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/SpatialCanvasTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActions.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActionHost.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ManifestActionsTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GenerativeCardsTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/WorkspaceCoreTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/GatesViewTest.kt
@@ -229,7 +232,7 @@ post_mvp:
   - id: "0124.3"
     title: "TCR renderer for validated manifests, placed inline next to the target node in the Living Document and Outliner"
     status: done
-    note: "GenerativeCards under the Living Document, under expanded or tapped Outliner rows, and in an Inspector section (UI-51). Action buttons stay disabled until UI-52."
+    note: "GenerativeCards under the Living Document, under expanded or tapped Outliner rows, and in an Inspector section (UI-51). Action buttons act through the registered actions of 0124.4 (UI-52)."
     files:
       - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
       - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
@@ -242,9 +245,17 @@ post_mvp:
     done_when: "an agent-emitted manifest renders as an inline card on desktop and Android"
   - id: "0124.4"
     title: "Registered action ids for manifests, with effects routed through approval and taint carried from the producing agent"
-    status: todo
+    status: done
+    note: "Four registered ids (open_node, complete_node, start_node, reply_to_agent) with optional node suffix; unknown ids disable the whole card; actions from a non-TRUSTED run ask for confirmation first (UI-52). Effects use the existing guards (completeHumanNode, startNodeRun, sessions.send)."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActions.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActionHost.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ManifestActionsTest.kt
     phase: P1
     depends_on: ["0124.3"]
+    done_when: "a button on an agent card runs only a registered action, and an action from an untrusted run asks for confirmation first"
   - id: "0124.5"
     title: "Rework the Metro Map and Breadboard for a narrow screen and offer them on a phone"
     status: done
