@@ -2,7 +2,6 @@ package dev.aidos.api
 
 import app.cash.sqldelight.db.SqlDriver
 import dev.aidos.api.socket.Wire
-import dev.aidos.executor.EventStore
 import dev.aidos.storage.AidosStorage
 import dev.aidos.storage.DesktopPaths
 import java.nio.file.Files
@@ -22,7 +21,6 @@ class RuntimeEventBridgeTest {
 
     private val home = Files.createTempDirectory("event-bridge-test").toFile()
     private val nowIso = { Clock.System.now().toString() }
-    private var ids = 0
 
     @AfterTest
     fun cleanup() {
@@ -60,11 +58,26 @@ class RuntimeEventBridgeTest {
         }
     }
 
-    private fun EventStore.fact(projectId: String, type: String, vararg fields: Pair<String, String>) {
-        publish(
-            id = "ev-${ids++}", projectId = projectId, type = type, source = "executor", nowIso = nowIso(),
-            payload = fields.joinToString(",", "{", "}") { "\"${it.first}\":\"${it.second}\"" },
-        )
+    /**
+     * Writes a FACT row the way the executor's EventStore does (`:api` cannot depend on `:executor`:
+     * the Engine build includes `:api` without it). The executor-side test in
+     * CapabilityResolutionEndToEndTest pins the payload shape this relies on.
+     */
+    private class EventStore(private val driver: SqlDriver) {
+        private var counter = 0
+        fun fact(projectId: String, type: String, vararg fields: Pair<String, String>) {
+            val payload = fields.joinToString(",", "{", "}") { "\"${it.first}\":\"${it.second}\"" }
+            driver.execute(
+                null,
+                "INSERT INTO events (id, project_id, sequence, type, schema_version, category, visibility, timestamp, " +
+                    "source, payload, causal_depth) VALUES (?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM events " +
+                    "WHERE project_id = ?), ?, 1, 'FACT', 'PUBLIC', ?, 'executor', ?, 0)", 6,
+            ) {
+                bindString(0, "ev-${type}-${counter++}-${payload.hashCode()}"); bindString(1, projectId)
+                bindString(2, projectId); bindString(3, type)
+                bindString(4, Clock.System.now().toString()); bindString(5, payload)
+            }
+        }
     }
 
     private suspend fun setup(): Triple<RealRuntimeClient, String, Pair<String, String>> {
