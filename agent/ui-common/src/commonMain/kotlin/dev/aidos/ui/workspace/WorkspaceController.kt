@@ -3,9 +3,11 @@ package dev.aidos.ui.workspace
 import dev.aidos.api.CreateIntentNodeRequest
 import dev.aidos.api.RuntimeClient
 import dev.aidos.api.StartNodeRunResult
+import dev.aidos.api.UserMessage
 import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.intent.IntentEdgeKind
 import dev.aidos.intent.ProposalResolutionDecision
+import dev.aidos.ui.generative.ManifestAction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,6 +125,44 @@ class WorkspaceController(
                     is StartNodeRunResult.Refused -> result.message
                 }
                 storeFor(projectId).refreshNow()
+                _state.update { it.copy(message = message) }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                _state.update { it.copy(message = "Failed: ${t.message ?: t::class.simpleName}") }
+            }
+        }
+    }
+
+    /** Runs a registered card action (RFC-0124 manifest actions, UI-52). Effects keep their own guards. */
+    fun performManifestAction(action: ManifestAction) {
+        when (action) {
+            is ManifestAction.OpenNode -> openInspector(action.nodeId)
+            is ManifestAction.CompleteNode -> completeHumanNode(action.nodeId)
+            is ManifestAction.StartNode -> startNodeRun(action.nodeId)
+            is ManifestAction.ReplyToAgent -> replyToRun(action.runId, action.text)
+        }
+    }
+
+    /** Sends [text] to the session that owns [runId]. The run is looked up through the sessions API. */
+    private fun replyToRun(runId: String, text: String) {
+        val projectId = projectId()
+        scope.launch {
+            try {
+                var owner: String? = null
+                for (summary in client.sessions.list(projectId)) {
+                    val detail = client.sessions.get(summary.id) ?: continue
+                    if (detail.recentRuns.any { it.id == runId }) {
+                        owner = summary.id
+                        break
+                    }
+                }
+                val message = if (owner == null) {
+                    "Could not find the session for that agent run."
+                } else {
+                    client.sessions.send(owner, UserMessage(text))
+                    "Reply sent"
+                }
                 _state.update { it.copy(message = message) }
             } catch (c: CancellationException) {
                 throw c

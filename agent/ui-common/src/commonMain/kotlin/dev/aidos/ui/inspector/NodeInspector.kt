@@ -310,7 +310,7 @@ private fun InspectorSections(
     val cards = snapshot.manifests[nodeId].orEmpty()
     if (cards.isNotEmpty()) {
         SectionTitle("Agent cards")
-        GenerativeCards(records = cards, density = A2uiDensity.REGULAR, onAction = { _, _ -> })
+        GenerativeCards(records = cards, density = A2uiDensity.REGULAR)
     }
 
     // Acceptance criteria and constraints.

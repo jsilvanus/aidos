@@ -201,7 +201,6 @@ fun OutlinerNodeRow(
             GenerativeCards(
                 records = item.cards,
                 density = A2uiDensity.REGULAR,
-                onAction = { _, _ -> },
                 modifier = Modifier.padding(start = 32.dp, top = 4.dp),
             )
         }

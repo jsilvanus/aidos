@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,18 +60,23 @@ fun cardModelsFor(nodeId: String, snapshot: GraphSnapshot): List<AgentCard> =
         .filter { it.targetNodeId == nodeId }
         .map(::parseAgentCard)
 
+/** A card action waiting for the user's confirmation (untrusted runs only, RFC-0027). */
+private class PendingManifestAction(val record: UiManifestRecord, val action: ManifestAction)
+
 /**
  * Agent cards drawn inline under their node (RFC-0124: next to the target, never a free-floating panel).
- * [onAction] is wired by UI-52; until then action buttons are drawn disabled.
+ * Buttons act through [LocalManifestActionHost] (UI-52): a card whose buttons do not all resolve is drawn
+ * with actions disabled, and an action from an untrusted run waits for a confirmation.
  */
 @Composable
 fun GenerativeCards(
     records: List<UiManifestRecord>,
     density: A2uiDensity,
-    onAction: (UiManifestRecord, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (records.isEmpty()) return
+    val host = LocalManifestActionHost.current
+    var awaiting by remember { mutableStateOf<PendingManifestAction?>(null) }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(SpacingTokens.xs)) {
         records.forEach { record ->
             // Parsing is cached per call: a record never changes once the runtime has stored it.
@@ -77,16 +84,49 @@ fun GenerativeCards(
             Column(verticalArrangement = Arrangement.spacedBy(SpacingTokens.xxs)) {
                 Provenance(record)
                 when (val outcome = card.outcome) {
-                    is CardOutcome.Shown -> A2uiRenderer(
-                        manifest = outcome.manifest,
-                        density = density,
-                        onAction = { actionId -> onAction(record, actionId) },
-                        actionsEnabled = false,
-                    )
+                    is CardOutcome.Shown -> {
+                        val buttons = remember(outcome.manifest) { manifestButtons(outcome.manifest) }
+                        val enabled = host != null && ManifestActionRegistry.allResolve(
+                            actionIds = buttons.keys,
+                            record = record,
+                            buttonLabel = { buttons[it].orEmpty() },
+                            snapshot = host.snapshot,
+                        )
+                        A2uiRenderer(
+                            manifest = outcome.manifest,
+                            density = density,
+                            onAction = { actionId ->
+                                val h = host ?: return@A2uiRenderer
+                                val action = ManifestActionRegistry.resolve(
+                                    actionId, record, buttons[actionId].orEmpty(), h.snapshot,
+                                ) ?: return@A2uiRenderer
+                                if (needsConfirmation(record)) {
+                                    awaiting = PendingManifestAction(record, action)
+                                } else {
+                                    h.controller.performManifestAction(action)
+                                }
+                            },
+                            actionsEnabled = enabled,
+                        )
+                    }
                     is CardOutcome.Hidden -> HiddenCardNote(outcome.reasons)
                 }
             }
         }
+    }
+    awaiting?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { awaiting = null },
+            title = { Text("Confirm agent action") },
+            text = { Text(confirmationText(pending.action)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    awaiting = null
+                    host?.controller?.performManifestAction(pending.action)
+                }) { Text("Confirm") }
+            },
+            dismissButton = { TextButton(onClick = { awaiting = null }) { Text("Cancel") } },
+        )
     }
 }
 
