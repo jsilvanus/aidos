@@ -15,6 +15,19 @@ plugins {
     id("com.android.application") version "8.5.2" apply false
 }
 
+// The Engine build also compiles the Agent modules it includes by path (settings.gradle.kts), but the
+// Agent root's own jvmToolchain(21) does not apply here. Without a toolchain Kotlin targets whatever JDK
+// runs Gradle, so a Gradle on JDK 25 emitted class version 69 that the JBR 21 runtime then refused to
+// load (UnsupportedClassVersionError). Default every KMP module to 17; a module's own jvmToolchain(...)
+// still wins because it is evaluated after this root block.
+subprojects {
+    pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
+        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
+            jvmToolchain(17)
+        }
+    }
+}
+
 // RFC-0022: net.ladenthin:llama extracts its native library into `net.ladenthin.llama.tmpdir` (default
 // java.io.tmpdir) and, on load, deletes libraries it takes for stale leftovers. Test JVMs of
 // different modules run in parallel, so one could delete the library another was loading
