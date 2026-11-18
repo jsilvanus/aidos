@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
@@ -27,7 +29,19 @@ data class NavigationDestination(
     val label: String,
     val icon: @Composable () -> Unit,
     val badge: (@Composable () -> Unit)? = null,
+    /** RFC-0124 0124.6: a count drawn on the icon when > 0 (the Gates destination uses it). */
+    val badgeCount: Int = 0,
 )
+
+/** Draws the icon with a count badge when [NavigationDestination.badgeCount] is above zero. */
+@Composable
+private fun DestinationIcon(item: NavigationDestination) {
+    if (item.badgeCount > 0) {
+        BadgedBox(badge = { Badge { Text(item.badgeCount.toString()) } }) { item.icon() }
+    } else {
+        item.icon()
+    }
+}
 
 enum class ScaffoldNavigationType {
     BOTTOM_NAVIGATION,
@@ -70,7 +84,7 @@ fun ResponsiveScaffold(
                                     NavigationBarItem(
                                         selected = item.id == selectedDestinationId,
                                         onClick = { onDestinationSelected(item.id) },
-                                        icon = item.icon,
+                                        icon = { DestinationIcon(item) },
                                         label = { Text(item.label) },
                                     )
                                 }
@@ -90,7 +104,7 @@ fun ResponsiveScaffold(
                                 NavigationRailItem(
                                     selected = item.id == selectedDestinationId,
                                     onClick = { onDestinationSelected(item.id) },
-                                    icon = item.icon,
+                                    icon = { DestinationIcon(item) },
                                     label = { Text(item.label) },
                                 )
                             }
@@ -116,7 +130,7 @@ fun ResponsiveScaffold(
                                         NavigationDrawerItem(
                                             selected = item.id == selectedDestinationId,
                                             onClick = { onDestinationSelected(item.id) },
-                                            icon = item.icon,
+                                            icon = { DestinationIcon(item) },
                                             label = { Text(item.label) },
                                             badge = item.badge,
                                             modifier = Modifier.padding(vertical = 4.dp),

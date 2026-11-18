@@ -141,6 +141,8 @@ files:
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/NodeInspectorTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/MultiAgentPillOverlay.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/PillDerivation.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/PresenceTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatesScreen.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/GateCards.kt
