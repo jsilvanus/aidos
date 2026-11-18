@@ -14,6 +14,7 @@ import dev.aidos.ui.workspace.WorkspaceController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -126,6 +127,7 @@ class ApprovalGatePresenter private constructor(
     private var started = false
 
     /** Starts the poll and follows the current project's graph. Idempotent; a no-op without a runtime. */
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun start() {
         if (started) return
         started = true
