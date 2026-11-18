@@ -1,14 +1,11 @@
 package dev.aidos.ui.spatial.canvas
 
-import dev.aidos.api.IntentCommands
-import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentEdgeRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeStatusView
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +20,7 @@ data class SpatialCanvasUiState(
     val viewport: ViewportTransform = ViewportTransform(),
     val lodLevel: LodLevel = LodLevel.MESO_CLUSTER,
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface SpatialCanvasIntent {
@@ -32,18 +30,33 @@ sealed interface SpatialCanvasIntent {
     data object Refresh : SpatialCanvasIntent
 }
 
+/**
+ * RFC-0124 amendment (UI-20): graph data comes from the live [GraphSnapshot]; the viewport stays UI-only.
+ */
 class SpatialCanvasPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<SpatialCanvasUiState, SpatialCanvasIntent> {
 
     private val _state = MutableStateFlow(SpatialCanvasUiState(isLoading = true))
     override val state: StateFlow<SpatialCanvasUiState> = _state.asStateFlow()
 
     init {
-        loadGraph()
+        scope.launch {
+            snapshot.collect { snap ->
+                val positions = ForceDirectedLayout.layoutDag(snap.nodes, snap.edges)
+                _state.update {
+                    it.copy(
+                        nodes = snap.nodes,
+                        edges = snap.edges,
+                        positions = positions,
+                        statuses = snap.statuses,
+                        isLoading = snap.loadedAt == 0L && snap.error == null,
+                        error = snap.error,
+                    )
+                }
+            }
+        }
     }
 
     override fun send(intent: SpatialCanvasIntent) {
@@ -75,36 +88,7 @@ class SpatialCanvasPresenter(
                     )
                 }
             }
-            is SpatialCanvasIntent.Refresh -> loadGraph()
-        }
-    }
-
-    fun loadGraph() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val edges = intentCommands.listEdges(projectId)
-                val positions = ForceDirectedLayout.layoutDag(nodes, edges)
-
-                val statusMap = mutableMapOf<String, IntentNodeStatusView>()
-                for (node in nodes) {
-                    val status = intentCommands.getNodeStatus(projectId, node.id)
-                    if (status != null) statusMap[node.id] = status
-                }
-
-                _state.update {
-                    it.copy(
-                        nodes = nodes,
-                        edges = edges,
-                        positions = positions,
-                        statuses = statusMap,
-                        isLoading = false,
-                    )
-                }
-            } catch (t: Throwable) {
-                _state.update { it.copy(isLoading = false) }
-            }
+            is SpatialCanvasIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
         }
     }
 }

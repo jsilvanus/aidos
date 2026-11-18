@@ -1,14 +1,12 @@
 package dev.aidos.ui.spatial.schematic
 
-import dev.aidos.api.IntentCommands
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentEdgeKind
 import dev.aidos.intent.IntentEdgeRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +26,7 @@ data class BreadboardUiState(
     val chips: List<CircuitChipUiModel> = emptyList(),
     val selectedChipId: String? = null,
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface BreadboardIntent {
@@ -38,42 +37,37 @@ sealed interface BreadboardIntent {
 /**
  * Presenter for Design 5: The Logic Circuit Breadboard (RFC-0111).
  * Maps Intent Graph nodes to IC chips and DEPENDS_ON edges to energized or cold traces.
+ * Reads the live [GraphSnapshot] (RFC-0124 UI-20).
  */
 class BreadboardSchematicPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<BreadboardUiState, BreadboardIntent> {
 
     private val _state = MutableStateFlow(BreadboardUiState(isLoading = true))
     override val state: StateFlow<BreadboardUiState> = _state.asStateFlow()
 
     init {
-        loadCircuit()
+        scope.launch {
+            snapshot.collect { snap ->
+                val statusMap = snap.nodes.associate { node ->
+                    node.id to (snap.statuses[node.id]?.derivedStatus ?: DerivedStatus.NOT_STARTED)
+                }
+                _state.update {
+                    it.copy(
+                        chips = buildCircuitChips(snap.nodes, snap.edges, statusMap),
+                        isLoading = snap.loadedAt == 0L && snap.error == null,
+                        error = snap.error,
+                    )
+                }
+            }
+        }
     }
 
     override fun send(intent: BreadboardIntent) {
         when (intent) {
-            is BreadboardIntent.Refresh -> loadCircuit()
+            is BreadboardIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
             is BreadboardIntent.SelectChip -> _state.update { it.copy(selectedChipId = intent.nodeId) }
-        }
-    }
-
-    fun loadCircuit() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val edges = intentCommands.listEdges(projectId)
-                val statusMap = nodes.associate { node ->
-                    node.id to (intentCommands.getNodeStatus(projectId, node.id)?.derivedStatus ?: DerivedStatus.NOT_STARTED)
-                }
-                val chips = buildCircuitChips(nodes, edges, statusMap)
-                _state.update { it.copy(chips = chips, isLoading = false) }
-            } catch (_: Throwable) {
-                _state.update { it.copy(isLoading = false) }
-            }
         }
     }
 

@@ -7,6 +7,15 @@ import dev.aidos.api.IntentCommands
 import dev.aidos.api.ProjectCommands
 import dev.aidos.api.ProjectResult
 import dev.aidos.api.ProjectSummary
+import dev.aidos.api.RuntimeClient
+import dev.aidos.api.SessionCommands
+import dev.aidos.api.CapabilityCommands
+import dev.aidos.api.KnowledgeQueries
+import dev.aidos.api.DiffQueries
+import dev.aidos.api.ArtifactQueries
+import dev.aidos.api.EventSubscriptions
+import dev.aidos.api.RuntimeInfo
+import dev.aidos.ui.workspace.WorkspaceController
 import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.EffectiveDispatchPolicy
@@ -40,6 +49,7 @@ import dev.aidos.ui.theme.SpacingTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Test
@@ -193,13 +203,19 @@ class PhaseThreeTest {
         val fakeProjectCommands = FakeProjectCommands(listOf(sampleProject))
         val fakeIntentCommands = FakeIntentCommands(listOf(statusView))
 
-        val inboxPresenter = ActionInboxPresenter(
-            intentCommands = fakeIntentCommands,
-            projectCommands = fakeProjectCommands,
-            scope = this,
-            ioDispatcher = Dispatchers.Unconfined,
+        val controller = WorkspaceController(
+            FakeRuntimeClient(fakeProjectCommands, fakeIntentCommands),
+            backgroundScope,
+            "proj-1",
+            "inbox",
         )
-        advanceUntilIdle()
+        // backgroundScope: the inbox re-lists projects every 30 s, so advanceUntilIdle would never finish.
+        val inboxPresenter = ActionInboxPresenter(
+            controller = controller,
+            projectCommands = fakeProjectCommands,
+            scope = backgroundScope,
+        )
+        runCurrent()
 
         val inboxState = inboxPresenter.state.value
         assertFalse(inboxState.isLoading)
@@ -212,7 +228,7 @@ class PhaseThreeTest {
             scope = this,
             ioDispatcher = Dispatchers.Unconfined,
         )
-        advanceUntilIdle()
+        runCurrent()
 
         val hubState = hubPresenter.state.value
         assertEquals(1, hubState.projects.size)
@@ -223,6 +239,20 @@ class PhaseThreeTest {
     fun testAccessibilityTouchTargetCompliance() {
         // Minimum touch target is 48dp
         assertTrue(SpacingTokens.minTouchTarget.value >= 48f)
+    }
+
+    /** The inbox reads the graph through a store, which reads `intents`; the other facets are not used here. */
+    private class FakeRuntimeClient(
+        override val projects: ProjectCommands,
+        override val intents: IntentCommands,
+    ) : RuntimeClient {
+        override val sessions: SessionCommands get() = error("Not needed")
+        override val capabilities: CapabilityCommands get() = error("Not needed")
+        override val knowledge: KnowledgeQueries get() = error("Not needed")
+        override val diff: DiffQueries get() = error("Not needed")
+        override val artifacts: ArtifactQueries get() = error("Not needed")
+        override val events: EventSubscriptions get() = error("Not needed")
+        override val runtime: RuntimeInfo get() = error("Not needed")
     }
 
     private class FakeProjectCommands(private val projects: List<ProjectSummary>) : ProjectCommands {
@@ -240,8 +270,8 @@ class PhaseThreeTest {
         override suspend fun createNode(request: CreateIntentNodeRequest) = error("Not needed")
         override suspend fun updateNode(request: UpdateIntentNodeRequest) = error("Not needed")
         override suspend fun archiveNode(projectId: String, nodeId: String) = error("Not needed")
-        override suspend fun getNodeStatus(projectId: String, nodeId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = null
-        override suspend fun listNodes(projectId: String, includeArchived: Boolean, actorKind: IntentActorKind?, parentId: String?, filterByParent: Boolean) = emptyList<IntentNodeRecord>()
+        override suspend fun getNodeStatus(projectId: String, nodeId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = actionable.firstOrNull { it.node.id == nodeId }
+        override suspend fun listNodes(projectId: String, includeArchived: Boolean, actorKind: IntentActorKind?, parentId: String?, filterByParent: Boolean) = actionable.map { it.node }
         override suspend fun listActionableForHuman(projectId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = actionable
         override suspend fun listReadyForAgent(projectId: String, profile: PlatformProfile, locality: IntentMinLocality, projectDefaultPolicy: EffectiveDispatchPolicy, onlyAutoDispatch: Boolean) = emptyList<IntentNodeStatusView>()
         override suspend fun completeHumanNode(projectId: String, nodeId: String, userId: String, note: String?): IntentNodeRecord {

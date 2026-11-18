@@ -1,5 +1,7 @@
 package dev.aidos.ui.frontdoors.projects
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,12 +29,16 @@ import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceController
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun ProjectHubScreen(
     presenter: ProjectHubPresenter,
     onProjectClick: (String) -> Unit,
     onPinProjectClick: ((projectId: String, projectName: String) -> Unit)? = null,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

@@ -1,5 +1,7 @@
 package dev.aidos.ui.spatial.schematic
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +36,7 @@ import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForStatus
+import dev.aidos.ui.workspace.WorkspaceController
 
 /**
  * Design 2: The Transit Metro Map (RFC-0111).
@@ -41,9 +44,12 @@ import dev.aidos.ui.theme.colorForStatus
  * driven by live Intent Graph state from [TransitMetroPresenter].
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun TransitMetroMapView(
     presenter: TransitMetroPresenter,
     onStationClick: (String) -> Unit = {},
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

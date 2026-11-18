@@ -1,5 +1,7 @@
 package dev.aidos.ui.paradigms.livingdoc
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,10 +23,14 @@ import dev.aidos.ui.pills.TravelingVoiceCaret
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceController
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun LivingDocView(
     presenter: LivingDocPresenter,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

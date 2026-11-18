@@ -166,7 +166,7 @@ private fun AidosUniversalAppContent(
 
     val inboxPresenter = remember {
         ActionInboxPresenter(
-            intentCommands = runtimeClient.intents,
+            controller = controller,
             projectCommands = runtimeClient.projects,
             scope = coroutineScope,
         )
@@ -179,29 +179,30 @@ private fun AidosUniversalAppContent(
         )
     }
 
+    // RFC-0124 amendment (UI-20): every graph view reads the current project's live store.
     val outlinerPresenter = remember(currentProjectId) {
-        CausalOutlinerPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        CausalOutlinerPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val pipelinePresenter = remember(currentProjectId) {
-        RelayPipelinePresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        RelayPipelinePresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val metroPresenter = remember(currentProjectId) {
-        TransitMetroPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        TransitMetroPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val kanbanPresenter = remember(currentProjectId) {
-        CartridgeDockPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        CartridgeDockPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val radarPresenter = remember(currentProjectId) {
-        FocusRadarPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        FocusRadarPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val breadboardPresenter = remember(currentProjectId) {
-        BreadboardSchematicPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        BreadboardSchematicPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val canvasPresenter = remember(currentProjectId) {
-        SpatialCanvasPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        SpatialCanvasPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val timelinePresenter = remember(currentProjectId) {
-        TimelineGanttPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+        TimelineGanttPresenter(controller.currentStore.value.snapshot, coroutineScope)
     }
     val livingDocPresenter = remember(currentProjectId) {
         LivingDocPresenter(
@@ -337,7 +338,7 @@ private fun AidosUniversalAppContent(
                                 type = IntentNodeType.ATOMIC_TASK,
                             )
                         )
-                        inboxPresenter.loadData()
+                        controller.currentStore.value.refreshNow()
                         voiceCaptureController?.cancel()
                         isAssistantOpen = false
                         assistantGhostText = ""
@@ -399,6 +400,8 @@ private fun AidosUniversalAppContent(
                 when (selectedDestinationId) {
                     "inbox" -> ActionInboxScreen(
                         presenter = inboxPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
                         onItemClick = { item ->
                             controller.switchProject(item.node.projectId)
                             controller.navigate("outliner", item.node.id)
@@ -406,22 +409,28 @@ private fun AidosUniversalAppContent(
                     )
                     "outliner" -> CausalOutlinerScreen(
                         presenter = outlinerPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
                         onDrillDown = { controller.navigate("livingdoc") },
                     )
-                    "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter)
-                    "metro" -> TransitMetroMapView(presenter = metroPresenter)
+                    "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter, controller = controller, formFactor = formFactor)
+                    "metro" -> TransitMetroMapView(presenter = metroPresenter, controller = controller, formFactor = formFactor)
                     "kanban" -> CartridgeDockScreen(
                         presenter = kanbanPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
                         onTaskClick = { controller.navigate("outliner") },
                     )
-                    "radar" -> RadialRadarScreen(presenter = radarPresenter)
-                    "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter)
-                    "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter)
-                    "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor)
-                    "livingdoc" -> LivingDocView(presenter = livingDocPresenter)
-                    "gates" -> ApprovalGatesScreen(presenter = gatePresenter)
+                    "radar" -> RadialRadarScreen(presenter = radarPresenter, controller = controller, formFactor = formFactor)
+                    "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
+                    "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter, controller = controller, formFactor = formFactor)
+                    "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor, controller = controller)
+                    "livingdoc" -> LivingDocView(presenter = livingDocPresenter, controller = controller, formFactor = formFactor)
+                    "gates" -> ApprovalGatesScreen(presenter = gatePresenter, controller = controller, formFactor = formFactor)
                     "projects" -> ProjectHubScreen(
                         presenter = projectHubPresenter,
+                        controller = controller,
+                        formFactor = formFactor,
                         onProjectClick = { projId ->
                             controller.switchProject(projId)
                             controller.navigate("inbox")

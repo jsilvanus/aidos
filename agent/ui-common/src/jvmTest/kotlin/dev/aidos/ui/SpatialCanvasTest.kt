@@ -27,7 +27,9 @@ import dev.aidos.ui.spatial.canvas.SpatialCanvasIntent
 import dev.aidos.ui.spatial.canvas.SpatialCanvasPresenter
 import dev.aidos.ui.spatial.canvas.ViewportTransform
 import dev.aidos.ui.spatial.edges.EdgeCollisionRouter
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlin.test.Test
@@ -106,7 +108,7 @@ class SpatialCanvasTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val nodes = (0 until 3).map { node("n$it") }
         val edges = listOf(edge("e0", "n0", "n1"), edge("e1", "n1", "n2"))
-        val presenter = SpatialCanvasPresenter("p", Fake(nodes, edges), scope, Dispatchers.Unconfined)
+        val presenter = SpatialCanvasPresenter(MutableStateFlow(testSnapshot("p", nodes, edges)), scope)
 
         val loaded = presenter.state.value
         assertFalse(loaded.isLoading)
@@ -138,7 +140,7 @@ class SpatialCanvasTest {
     @Test
     fun presenterSurvivesALoadFailure() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        val presenter = SpatialCanvasPresenter("p", Fake(emptyList(), emptyList(), failing = true), scope, Dispatchers.Unconfined)
+        val presenter = SpatialCanvasPresenter(MutableStateFlow(GraphSnapshot.empty("p").copy(error = "boom")), scope)
         assertFalse(presenter.state.value.isLoading)
         assertTrue(presenter.state.value.nodes.isEmpty())
     }
@@ -156,31 +158,4 @@ class SpatialCanvasTest {
         id = id, projectId = "p", fromNodeId = from, toNodeId = to,
         edgeKind = IntentEdgeKind.DEPENDS_ON, createdAt = "2026-11-15T00:00:00Z",
     )
-
-    private class Fake(
-        private val nodes: List<IntentNodeRecord>,
-        private val edges: List<IntentEdgeRecord>,
-        private val failing: Boolean = false,
-    ) : IntentCommands {
-        override suspend fun createNode(request: CreateIntentNodeRequest) = error("n/a")
-        override suspend fun updateNode(request: UpdateIntentNodeRequest) = error("n/a")
-        override suspend fun archiveNode(projectId: String, nodeId: String) = error("n/a")
-        override suspend fun getNodeStatus(projectId: String, nodeId: String, projectDefaultPolicy: EffectiveDispatchPolicy): IntentNodeStatusView? = null
-        override suspend fun listNodes(projectId: String, includeArchived: Boolean, actorKind: IntentActorKind?, parentId: String?, filterByParent: Boolean): List<IntentNodeRecord> {
-            if (failing) error("boom")
-            return nodes
-        }
-        override suspend fun listActionableForHuman(projectId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = emptyList<IntentNodeStatusView>()
-        override suspend fun listReadyForAgent(projectId: String, profile: PlatformProfile, locality: IntentMinLocality, projectDefaultPolicy: EffectiveDispatchPolicy, onlyAutoDispatch: Boolean) = emptyList<IntentNodeStatusView>()
-        override suspend fun completeHumanNode(projectId: String, nodeId: String, userId: String, note: String?) = error("n/a")
-        override suspend fun addEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = error("n/a")
-        override suspend fun removeEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = false
-        override suspend fun listEdges(projectId: String, fromNodeId: String?, toNodeId: String?, edgeKind: IntentEdgeKind?) = edges
-        override suspend fun propose(request: CreateIntentProposalRequest) = error("n/a")
-        override suspend fun listProposals(projectId: String, state: String?) = emptyList<IntentProposal>()
-        override suspend fun resolveProposal(projectId: String, proposalId: String, decision: ProposalResolutionDecision, resolvedByUserId: String, editedOperations: List<IntentOperation>?) = error("n/a")
-        override suspend fun confirmImplementation(projectId: String, nodeId: String, confirmedByKind: String, confirmedById: String, criterionIds: List<String>?) {}
-        override suspend fun exportSnapshotJson(projectId: String) = ""
-        override suspend fun importAndReconcileSnapshot(projectId: String, snapshotJson: String) = error("n/a")
-    }
 }

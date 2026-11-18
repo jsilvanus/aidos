@@ -1,14 +1,12 @@
 package dev.aidos.ui.paradigms.timeline
 
-import dev.aidos.api.IntentCommands
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentEdgeKind
 import dev.aidos.intent.IntentEdgeRecord
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +26,7 @@ data class TimelineGanttUiState(
     val totalSlots: Int = 1,
     val selectedNodeId: String? = null,
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface TimelineGanttIntent {
@@ -37,46 +36,40 @@ sealed interface TimelineGanttIntent {
 
 /**
  * Presenter for the Timeline / Gantt view paradigm (RFC-0112 §2.1).
- * Topologically orders Intent Graph nodes along dependency slots.
+ * Topologically orders Intent Graph nodes along dependency slots. Reads the live [GraphSnapshot] (RFC-0124 UI-20).
  */
 class TimelineGanttPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<TimelineGanttUiState, TimelineGanttIntent> {
 
     private val _state = MutableStateFlow(TimelineGanttUiState(isLoading = true))
     override val state: StateFlow<TimelineGanttUiState> = _state.asStateFlow()
 
     init {
-        loadTimeline()
+        scope.launch {
+            snapshot.collect { snap ->
+                val statusMap = snap.nodes.associate { node ->
+                    node.id to (snap.statuses[node.id]?.derivedStatus ?: DerivedStatus.NOT_STARTED)
+                }
+                val bars = buildTimelineBars(snap.nodes, snap.edges, statusMap)
+                val maxEnd = bars.maxOfOrNull { it.startSlot + it.durationSlots } ?: 1
+                _state.update {
+                    it.copy(
+                        bars = bars,
+                        totalSlots = maxEnd.coerceAtLeast(1),
+                        isLoading = snap.loadedAt == 0L && snap.error == null,
+                        error = snap.error,
+                    )
+                }
+            }
+        }
     }
 
     override fun send(intent: TimelineGanttIntent) {
         when (intent) {
-            is TimelineGanttIntent.Refresh -> loadTimeline()
+            is TimelineGanttIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
             is TimelineGanttIntent.SelectNode -> _state.update { it.copy(selectedNodeId = intent.nodeId) }
-        }
-    }
-
-    fun loadTimeline() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val edges = intentCommands.listEdges(projectId)
-                val statusMap = nodes.associate { node ->
-                    node.id to (intentCommands.getNodeStatus(projectId, node.id)?.derivedStatus ?: DerivedStatus.NOT_STARTED)
-                }
-                val bars = buildTimelineBars(nodes, edges, statusMap)
-                val maxEnd = bars.maxOfOrNull { it.startSlot + it.durationSlots } ?: 1
-                _state.update {
-                    it.copy(bars = bars, totalSlots = maxEnd.coerceAtLeast(1), isLoading = false)
-                }
-            } catch (_: Throwable) {
-                _state.update { it.copy(isLoading = false) }
-            }
         }
     }
 

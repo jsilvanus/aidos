@@ -1,13 +1,10 @@
 package dev.aidos.ui.paradigms.kanban
 
-import dev.aidos.api.IntentCommands
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentNodeRecord
-import dev.aidos.intent.IntentNodeStatusView
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +20,7 @@ data class KanbanColumn(
 data class CartridgeDockUiState(
     val columns: List<KanbanColumn> = emptyList(),
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface CartridgeDockIntent {
@@ -30,23 +28,35 @@ sealed interface CartridgeDockIntent {
     data class MoveTask(val nodeId: String, val targetStatus: DerivedStatus) : CartridgeDockIntent
 }
 
+/**
+ * RFC-0124 amendment (UI-20): columns are derived from the live [GraphSnapshot].
+ * [CartridgeDockIntent.MoveTask] is only an in-memory preview; the next snapshot replaces it.
+ */
 class CartridgeDockPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<CartridgeDockUiState, CartridgeDockIntent> {
 
     private val _state = MutableStateFlow(CartridgeDockUiState(isLoading = true))
     override val state: StateFlow<CartridgeDockUiState> = _state.asStateFlow()
 
     init {
-        loadDock()
+        scope.launch {
+            snapshot.collect { snap ->
+                _state.update {
+                    it.copy(
+                        columns = buildColumns(snap.nodes, snap.statuses.mapValues { e -> e.value.derivedStatus }),
+                        isLoading = snap.loadedAt == 0L && snap.error == null,
+                        error = snap.error,
+                    )
+                }
+            }
+        }
     }
 
     override fun send(intent: CartridgeDockIntent) {
         when (intent) {
-            is CartridgeDockIntent.Refresh -> loadDock()
+            is CartridgeDockIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
             is CartridgeDockIntent.MoveTask -> {
                 // In memory optimistic update
                 _state.update { current ->
@@ -64,44 +74,24 @@ class CartridgeDockPresenter(
         }
     }
 
-    fun loadDock() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val statusMap = mutableMapOf<String, IntentNodeStatusView>()
-                for (node in nodes) {
-                    val status = intentCommands.getNodeStatus(projectId, node.id)
-                    if (status != null) {
-                        statusMap[node.id] = status
-                    }
+    companion object {
+        fun buildColumns(
+            nodes: List<IntentNodeRecord>,
+            statuses: Map<String, DerivedStatus>,
+        ): List<KanbanColumn> {
+            val primaryStatuses = listOf(
+                DerivedStatus.NOT_STARTED to "Backlog",
+                DerivedStatus.IN_PROGRESS to "Active Work",
+                DerivedStatus.NEEDS_REVIEW to "Review Gates",
+                DerivedStatus.BLOCKED to "Blocked",
+                DerivedStatus.DONE to "Completed",
+            )
+            return primaryStatuses.map { (status, label) ->
+                val tasks = nodes.mapNotNull { node ->
+                    val nodeStatus = statuses[node.id] ?: DerivedStatus.NOT_STARTED
+                    if (nodeStatus == status) node to nodeStatus else null
                 }
-
-                val primaryStatuses = listOf(
-                    DerivedStatus.NOT_STARTED to "Backlog",
-                    DerivedStatus.IN_PROGRESS to "Active Work",
-                    DerivedStatus.NEEDS_REVIEW to "Review Gates",
-                    DerivedStatus.BLOCKED to "Blocked",
-                    DerivedStatus.DONE to "Completed",
-                )
-
-                val columns = primaryStatuses.map { (status, label) ->
-                    val tasks = nodes.mapNotNull { node ->
-                        val nodeStatus = statusMap[node.id]?.derivedStatus ?: DerivedStatus.NOT_STARTED
-                        if (nodeStatus == status) node to nodeStatus else null
-                    }
-                    KanbanColumn(
-                        status = status,
-                        title = label,
-                        tasks = tasks,
-                    )
-                }
-
-                _state.update {
-                    it.copy(columns = columns, isLoading = false)
-                }
-            } catch (t: Throwable) {
-                _state.update { it.copy(isLoading = false) }
+                KanbanColumn(status = status, title = label, tasks = tasks)
             }
         }
     }
