@@ -35,7 +35,8 @@ class LifeMainActivity : ComponentActivity() {
                     runtimeClient = runtimeClient,
                     initialDestinationId = "inbox",
                     initialLifeFilterOnly = true,
-                    initialProjectId = "life",
+                    // RFC-0124 decision U5: null id; initialLifeFilterOnly makes the bootstrap pick the Life project.
+                    initialProjectId = null,
                     nativeProcessHealth = nativeConnector.health,
                     voiceCaptureController = voiceRouter,
                     onPinProjectLauncher = { projectId, projectName ->

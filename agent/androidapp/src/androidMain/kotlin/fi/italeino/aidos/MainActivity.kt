@@ -33,9 +33,9 @@ class MainActivity : ComponentActivity() {
             androidDeviceStt = AndroidDeviceSttEngine(this),
         )
 
+        // RFC-0124 decision U5: no magic fallback id. A null id is resolved by WorkspaceBootstrap.
         val initialProjectId = intent.data?.lastPathSegment
             ?: intent.getStringExtra("projectId")
-            ?: "default-workspace"
         val openAssistant = intent.getBooleanExtra(AidosVoiceInteractionSession.EXTRA_OPEN_ASSISTANT, false)
 
         setContent {
