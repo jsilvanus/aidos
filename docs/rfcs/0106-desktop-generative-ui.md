@@ -329,6 +329,8 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/AidosUniversalApp.kt
   - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/DiffReservationBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/LivingDocView.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/DiffChunkAtom.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/ScopePathChipAtom.kt
