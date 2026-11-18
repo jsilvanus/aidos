@@ -2,6 +2,7 @@ package dev.aidos.ui.workspace
 
 import dev.aidos.api.CreateIntentNodeRequest
 import dev.aidos.api.RuntimeClient
+import dev.aidos.api.StartNodeRunResult
 import dev.aidos.api.UpdateIntentNodeRequest
 import dev.aidos.intent.IntentEdgeKind
 import dev.aidos.intent.ProposalResolutionDecision
@@ -102,11 +103,25 @@ class WorkspaceController(
     }
 
     /**
-     * Starts an agent run on a node. TODO(UI-21): `IntentCommands.startNodeRun` arrives with UI-04;
-     * the Node Inspector (UI-21) wires this method to it. Until then it only says so.
+     * Starts an agent run on a node through `IntentCommands.startNodeRun` (RFC-0124, UI-04). The
+     * outcome, started or refused with the runtime's reason, is shown in [state] as the message.
      */
     fun startNodeRun(nodeId: String) {
-        _state.update { it.copy(message = "Starting a run is not available yet ($nodeId)") }
+        val projectId = projectId()
+        scope.launch {
+            try {
+                val message = when (val result = client.intents.startNodeRun(projectId, nodeId)) {
+                    is StartNodeRunResult.Started -> "Run started"
+                    is StartNodeRunResult.Refused -> result.message
+                }
+                storeFor(projectId).refreshNow()
+                _state.update { it.copy(message = message) }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                _state.update { it.copy(message = "Failed: ${t.message ?: t::class.simpleName}") }
+            }
+        }
     }
 
     fun clearMessage() {

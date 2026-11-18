@@ -136,6 +136,9 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceBootstrap.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspectorPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspector.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/NodeInspectorTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/MultiAgentPillOverlay.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/assistant/AssistantSheetOverlay.kt

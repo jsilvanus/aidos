@@ -6,7 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +46,8 @@ import dev.aidos.ui.frontdoors.inbox.ActionInboxPresenter
 import dev.aidos.ui.frontdoors.inbox.ActionInboxScreen
 import dev.aidos.ui.frontdoors.projects.ProjectHubPresenter
 import dev.aidos.ui.frontdoors.projects.ProjectHubScreen
+import dev.aidos.ui.inspector.NodeInspector
+import dev.aidos.ui.inspector.NodeInspectorPresenter
 import dev.aidos.ui.layout.NavigationDestination
 import dev.aidos.ui.layout.ViewModeCatalog
 import dev.aidos.ui.layout.ResponsiveScaffold
@@ -163,6 +169,18 @@ private fun AidosUniversalAppContent(
     val workspaceState by controller.state.collectAsState()
     val selectedDestinationId = workspaceState.viewId
     val currentProjectId = workspaceState.projectId
+    val currentStore by controller.currentStore.collectAsState()
+    val selectedNodeId = workspaceState.selectedNodeId
+    // RFC-0124 (UI-21): one inspector for every view, reading the current project's graph.
+    val inspectorPresenter = remember(currentStore, selectedNodeId) {
+        NodeInspectorPresenter(currentStore.snapshot, selectedNodeId.orEmpty())
+    }
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(workspaceState.message) {
+        val message = workspaceState.message ?: return@LaunchedEffect
+        snackbarHost.showSnackbar(message)
+        controller.clearMessage()
+    }
 
     val inboxPresenter = remember {
         ActionInboxPresenter(
@@ -299,6 +317,9 @@ private fun AidosUniversalAppContent(
             CommandPaletteModal(presenter = commandPalettePresenter)
             val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
             val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                SnackbarHost(hostState = snackbarHost)
+            }
             AssistantSheetOverlay(
                 isOpen = isAssistantOpen,
                 isListening = voiceState.isListening,
@@ -395,7 +416,8 @@ private fun AidosUniversalAppContent(
                 }
             }
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 when (selectedDestinationId) {
                     "inbox" -> ActionInboxScreen(
                         presenter = inboxPresenter,
@@ -429,6 +451,16 @@ private fun AidosUniversalAppContent(
                         onPinProjectClick = onPinProjectLauncher,
                     )
                 }
+            }
+            // Desktop: a 360 dp panel at the end of the row. Handhelds: a bottom sheet (it draws no space here).
+            if (workspaceState.inspectorOpen && selectedNodeId != null) {
+                NodeInspector(
+                    presenter = inspectorPresenter,
+                    controller = controller,
+                    formFactor = formFactor,
+                    onClose = { controller.closeInspector() },
+                )
+            }
             }
         }
     }
