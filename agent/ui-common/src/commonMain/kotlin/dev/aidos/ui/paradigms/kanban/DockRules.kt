@@ -72,7 +72,7 @@ fun dropAction(task: IntentNodeRecord, from: DockLane, to: DockLane, unmetDepend
             from == DockLane.VERIFY -> DockAction.Confirm(task.id)
             else -> DockAction.Refuse("Only human tasks or verified work can be marked done")
         }
-        else -> DockAction.Refuse("Unsupported move")
+        DockLane.BLOCKED, DockLane.READY, DockLane.VERIFY -> DockAction.Refuse("Unsupported move")
     }
 }
 
