@@ -1,13 +1,11 @@
 package dev.aidos.ui.paradigms.outliner
 
-import dev.aidos.api.IntentCommands
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeStatusView
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +17,7 @@ data class CausalOutlinerUiState(
     val expandedNodeIds: Set<String> = emptySet(),
     val focusedNodeId: String? = null,
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface CausalOutlinerIntent {
@@ -28,11 +27,13 @@ sealed interface CausalOutlinerIntent {
     data object Refresh : CausalOutlinerIntent
 }
 
+/**
+ * RFC-0124 amendment (UI-20): reads the project's live [GraphSnapshot]; it never fetches the graph itself.
+ * [CausalOutlinerIntent.Refresh] is a no-op because the store refreshes on its own.
+ */
 class CausalOutlinerPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<CausalOutlinerUiState, CausalOutlinerIntent> {
 
     private val _state = MutableStateFlow(CausalOutlinerUiState(isLoading = true))
@@ -40,9 +41,12 @@ class CausalOutlinerPresenter(
 
     private var allNodes: List<IntentNodeRecord> = emptyList()
     private var allStatuses: Map<String, IntentNodeStatusView> = emptyMap()
+    private val parentsSeen = HashSet<String>()
 
     init {
-        loadGraph()
+        scope.launch {
+            snapshot.collect { applySnapshot(it) }
+        }
     }
 
     override fun send(intent: CausalOutlinerIntent) {
@@ -67,40 +71,25 @@ class CausalOutlinerPresenter(
             is CausalOutlinerIntent.JumpToPrerequisite -> {
                 _state.update { it.copy(focusedNodeId = intent.prerequisiteId) }
             }
-            is CausalOutlinerIntent.Refresh -> loadGraph()
+            is CausalOutlinerIntent.Refresh -> Unit
         }
     }
 
-    fun loadGraph() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val statusMap = mutableMapOf<String, IntentNodeStatusView>()
-                for (node in nodes) {
-                    val status = intentCommands.getNodeStatus(projectId, node.id)
-                    if (status != null) {
-                        statusMap[node.id] = status
-                    }
-                }
-                allNodes = nodes
-                allStatuses = statusMap
-
-                // Default expand all parent nodes
-                val parentsWithChildren = nodes.mapNotNull { it.parentId }.toSet()
-                val expanded = _state.value.expandedNodeIds + parentsWithChildren
-
-                val rows = buildFlattenedTree(nodes, statusMap, expanded)
-                _state.update {
-                    it.copy(
-                        visibleRows = rows,
-                        expandedNodeIds = expanded,
-                        isLoading = false,
-                    )
-                }
-            } catch (t: Throwable) {
-                _state.update { it.copy(isLoading = false) }
-            }
+    private fun applySnapshot(snap: GraphSnapshot) {
+        allNodes = snap.nodes
+        allStatuses = snap.statuses
+        // A parent expands by default the first time it appears; one the person collapsed stays collapsed.
+        val parents = snap.nodes.mapNotNull { it.parentId }.toSet()
+        val newParents = parents - parentsSeen
+        parentsSeen += parents
+        _state.update {
+            val expanded = it.expandedNodeIds + newParents
+            it.copy(
+                visibleRows = buildFlattenedTree(snap.nodes, snap.statuses, expanded),
+                expandedNodeIds = expanded,
+                isLoading = snap.loadedAt == 0L && snap.error == null,
+                error = snap.error,
+            )
         }
     }
 

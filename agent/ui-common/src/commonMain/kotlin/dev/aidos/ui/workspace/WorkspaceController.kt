@@ -81,9 +81,11 @@ class WorkspaceController(
         _state.update { if (it.selectedNodeId == nodeId) it.copy(selectedNodeId = null, inspectorOpen = false) else it }
     }
 
-    fun completeHumanNode(nodeId: String, note: String? = null) = mutate("Marked done") {
-        client.intents.completeHumanNode(projectId(), nodeId, note = note)
-    }
+    /** [inProject] lets the Inbox complete an item from another project without switching to it first. */
+    fun completeHumanNode(nodeId: String, note: String? = null, inProject: String = projectId()) =
+        mutate("Marked done", inProject) {
+            client.intents.completeHumanNode(inProject, nodeId, note = note)
+        }
 
     fun addEdge(from: String, to: String, kind: IntentEdgeKind) = mutate("Link added") {
         client.intents.addEdge(projectId(), from, to, kind)
@@ -115,8 +117,8 @@ class WorkspaceController(
 
     private fun projectId() = _state.value.projectId
 
-    private fun mutate(success: String, block: suspend () -> Unit) {
-        val store = storeFor(projectId())
+    private fun mutate(success: String, inProject: String = projectId(), block: suspend () -> Unit) {
+        val store = storeFor(inProject)
         scope.launch {
             try {
                 block()

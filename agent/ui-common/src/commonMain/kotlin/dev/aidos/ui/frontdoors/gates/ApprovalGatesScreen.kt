@@ -1,5 +1,7 @@
 package dev.aidos.ui.frontdoors.gates
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,14 +21,18 @@ import androidx.compose.ui.graphics.Color
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceController
 
 /**
  * Unified Approval Gates Surface (RFC-0112 §3.3, RFC-0113).
  * Renders parked Blinded Egress Gate Cards and Mobile->Desktop Split Verification Cards.
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun ApprovalGatesScreen(
     presenter: ApprovalGatePresenter,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

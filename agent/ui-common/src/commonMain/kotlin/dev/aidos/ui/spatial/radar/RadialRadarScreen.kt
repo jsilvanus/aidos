@@ -1,5 +1,7 @@
 package dev.aidos.ui.spatial.radar
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -21,13 +23,17 @@ import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForStatus
 import kotlin.math.cos
 import kotlin.math.sin
+import dev.aidos.ui.workspace.WorkspaceController
 
 /**
  * Desktop 360-degree radial radar HUD (Design 4, RFC-0111).
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun RadialRadarScreen(
     presenter: FocusRadarPresenter,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

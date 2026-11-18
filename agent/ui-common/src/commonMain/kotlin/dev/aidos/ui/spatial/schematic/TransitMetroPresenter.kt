@@ -1,13 +1,11 @@
 package dev.aidos.ui.spatial.schematic
 
-import dev.aidos.api.IntentCommands
 import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.state.MviPresenter
-import kotlinx.coroutines.CoroutineDispatcher
+import dev.aidos.ui.workspace.GraphSnapshot
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +30,7 @@ data class TransitMetroUiState(
     val lines: List<MetroLineUiModel> = emptyList(),
     val selectedStationId: String? = null,
     val isLoading: Boolean = false,
+    val error: String? = null,
 )
 
 sealed interface TransitMetroIntent {
@@ -43,41 +42,37 @@ sealed interface TransitMetroIntent {
  * Presenter for Design 2: The Transit Metro Map (RFC-0111).
  * Maps GOAL/GROUP nodes to color-coded metro lines, SUB_GOALs to transfer hubs,
  * and ATOMIC_TASKs to local stations with NEEDS_REVIEW turnstile gates.
+ * Reads the live [GraphSnapshot] (RFC-0124 UI-20).
  */
 class TransitMetroPresenter(
-    private val projectId: String,
-    private val intentCommands: IntentCommands,
-    private val scope: CoroutineScope,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    snapshot: StateFlow<GraphSnapshot>,
+    scope: CoroutineScope,
 ) : MviPresenter<TransitMetroUiState, TransitMetroIntent> {
 
     private val _state = MutableStateFlow(TransitMetroUiState(isLoading = true))
     override val state: StateFlow<TransitMetroUiState> = _state.asStateFlow()
 
     init {
-        loadMetro()
+        scope.launch {
+            snapshot.collect { snap ->
+                val statusMap = snap.nodes.associate { node ->
+                    node.id to (snap.statuses[node.id]?.derivedStatus ?: DerivedStatus.NOT_STARTED)
+                }
+                _state.update {
+                    it.copy(
+                        lines = buildMetroLines(snap.nodes, statusMap),
+                        isLoading = snap.loadedAt == 0L && snap.error == null,
+                        error = snap.error,
+                    )
+                }
+            }
+        }
     }
 
     override fun send(intent: TransitMetroIntent) {
         when (intent) {
-            is TransitMetroIntent.Refresh -> loadMetro()
+            is TransitMetroIntent.Refresh -> Unit // the ProjectGraphStore refreshes itself
             is TransitMetroIntent.SelectStation -> _state.update { it.copy(selectedStationId = intent.nodeId) }
-        }
-    }
-
-    fun loadMetro() {
-        scope.launch(ioDispatcher) {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                val nodes = intentCommands.listNodes(projectId)
-                val statusMap = nodes.associate { node ->
-                    node.id to (intentCommands.getNodeStatus(projectId, node.id)?.derivedStatus ?: DerivedStatus.NOT_STARTED)
-                }
-                val lines = buildMetroLines(nodes, statusMap)
-                _state.update { it.copy(lines = lines, isLoading = false) }
-            } catch (_: Throwable) {
-                _state.update { it.copy(isLoading = false) }
-            }
         }
     }
 

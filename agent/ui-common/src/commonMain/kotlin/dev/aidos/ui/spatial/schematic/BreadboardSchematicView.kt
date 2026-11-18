@@ -1,5 +1,7 @@
 package dev.aidos.ui.spatial.schematic
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +34,7 @@ import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceController
 
 /**
  * Design 5: The Logic Circuit Breadboard (RFC-0111).
@@ -39,9 +42,12 @@ import dev.aidos.ui.theme.SpacingTokens
  * driven by live Intent Graph state from [BreadboardSchematicPresenter].
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun BreadboardSchematicView(
     presenter: BreadboardSchematicPresenter,
     onChipClick: (String) -> Unit = {},
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

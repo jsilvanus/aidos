@@ -30,9 +30,9 @@ import dev.aidos.ui.spatial.radar.FocusRadarPresenter
 import dev.aidos.ui.spatial.radar.RadarZone
 import dev.aidos.ui.spatial.schematic.BreadboardSchematicPresenter
 import dev.aidos.ui.spatial.schematic.TransitMetroPresenter
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -108,21 +108,24 @@ class PhaseSevenParadigmsAndTimelineTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun testPipelineKanbanAndRadarPresentersLoadFromIntentCommands() = runTest {
+    fun testPipelineKanbanAndRadarPresentersReadTheGraphSnapshot() = runTest {
         val n1 = node("n1", "Human Review", IntentNodeType.ATOMIC_TASK, null, actorKind = IntentActorKind.HUMAN)
         val n2 = node("n2", "Agent Code", IntentNodeType.ATOMIC_TASK, null, actorKind = IntentActorKind.AGENT)
-        val fake = InMemoryIntentCommands(
-            nodes = listOf(n1, n2),
-            statuses = mapOf(
-                "n1" to statusView(n1, DerivedStatus.NEEDS_REVIEW),
-                "n2" to statusView(n2, DerivedStatus.IN_PROGRESS),
-            ),
+        val snapshot = MutableStateFlow(
+            testSnapshot(
+                "proj",
+                nodes = listOf(n1, n2),
+                statuses = mapOf(
+                    "n1" to statusView(n1, DerivedStatus.NEEDS_REVIEW),
+                    "n2" to statusView(n2, DerivedStatus.IN_PROGRESS),
+                ),
+            )
         )
 
-        val pipeline = RelayPipelinePresenter("proj", fake, this, Dispatchers.Unconfined)
-        val kanban = CartridgeDockPresenter("proj", fake, this, Dispatchers.Unconfined)
-        val radar = FocusRadarPresenter("proj", fake, this, Dispatchers.Unconfined)
-        advanceUntilIdle()
+        val pipeline = RelayPipelinePresenter(snapshot, backgroundScope)
+        val kanban = CartridgeDockPresenter(snapshot, backgroundScope)
+        val radar = FocusRadarPresenter(snapshot, backgroundScope)
+        runCurrent() // presenters collect the snapshot on the test dispatcher
 
         assertEquals(1, pipeline.state.value.stages.size)
         assertTrue(pipeline.state.value.stages.first().hasBatonCross)
@@ -182,27 +185,4 @@ class PhaseSevenParadigmsAndTimelineTest {
         activeRunIds = emptyList(),
         pendingPlatformChecks = false,
     )
-
-    private class InMemoryIntentCommands(
-        private val nodes: List<IntentNodeRecord>,
-        private val statuses: Map<String, IntentNodeStatusView>,
-    ) : IntentCommands {
-        override suspend fun createNode(request: CreateIntentNodeRequest) = error("unused")
-        override suspend fun updateNode(request: UpdateIntentNodeRequest) = error("unused")
-        override suspend fun archiveNode(projectId: String, nodeId: String) = error("unused")
-        override suspend fun getNodeStatus(projectId: String, nodeId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = statuses[nodeId]
-        override suspend fun listNodes(projectId: String, includeArchived: Boolean, actorKind: IntentActorKind?, parentId: String?, filterByParent: Boolean) = nodes
-        override suspend fun listActionableForHuman(projectId: String, projectDefaultPolicy: EffectiveDispatchPolicy) = emptyList<IntentNodeStatusView>()
-        override suspend fun listReadyForAgent(projectId: String, profile: PlatformProfile, locality: IntentMinLocality, projectDefaultPolicy: EffectiveDispatchPolicy, onlyAutoDispatch: Boolean) = emptyList<IntentNodeStatusView>()
-        override suspend fun completeHumanNode(projectId: String, nodeId: String, userId: String, note: String?) = error("unused")
-        override suspend fun addEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = error("unused")
-        override suspend fun removeEdge(projectId: String, fromNodeId: String, toNodeId: String, edgeKind: IntentEdgeKind) = false
-        override suspend fun listEdges(projectId: String, fromNodeId: String?, toNodeId: String?, edgeKind: IntentEdgeKind?) = emptyList<IntentEdgeRecord>()
-        override suspend fun propose(request: CreateIntentProposalRequest) = error("unused")
-        override suspend fun listProposals(projectId: String, state: String?) = emptyList<IntentProposal>()
-        override suspend fun resolveProposal(projectId: String, proposalId: String, decision: ProposalResolutionDecision, resolvedByUserId: String, editedOperations: List<IntentOperation>?) = error("unused")
-        override suspend fun confirmImplementation(projectId: String, nodeId: String, confirmedByKind: String, confirmedById: String, criterionIds: List<String>?) {}
-        override suspend fun exportSnapshotJson(projectId: String) = ""
-        override suspend fun importAndReconcileSnapshot(projectId: String, snapshotJson: String) = error("unused")
-    }
 }

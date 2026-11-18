@@ -1,5 +1,7 @@
 package dev.aidos.ui.spatial.canvas
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -21,10 +23,14 @@ import dev.aidos.ui.spatial.nodes.SatelliteCriterionNode
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.colorForActor
 import dev.aidos.ui.theme.colorForStatus
+import dev.aidos.ui.workspace.WorkspaceController
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun InfiniteZuiCanvas(
     presenter: SpatialCanvasPresenter,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

@@ -1,5 +1,7 @@
 package dev.aidos.ui.paradigms.kanban
 
+import dev.aidos.ui.layout.FormFactor
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,11 +24,15 @@ import androidx.compose.ui.unit.dp
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.SpacingTokens
+import dev.aidos.ui.workspace.WorkspaceController
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun CartridgeDockScreen(
     presenter: CartridgeDockPresenter,
     onTaskClick: (String) -> Unit,
+    controller: WorkspaceController,
+    formFactor: FormFactor,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()

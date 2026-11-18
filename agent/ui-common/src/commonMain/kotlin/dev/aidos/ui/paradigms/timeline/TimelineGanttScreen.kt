@@ -32,6 +32,7 @@ import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
 import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForStatus
+import dev.aidos.ui.workspace.WorkspaceController
 
 /**
  * Timeline / Gantt View Paradigm (RFC-0112 §2.1).
@@ -39,10 +40,12 @@ import dev.aidos.ui.theme.colorForStatus
  * on HANDHELD_EXPANDED / DESKTOP_DOCKED.
  */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun TimelineGanttScreen(
     presenter: TimelineGanttPresenter,
     formFactor: FormFactor = FormFactor.DESKTOP_DOCKED,
     onNodeClick: (IntentNodeRecord) -> Unit = {},
+    controller: WorkspaceController,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
