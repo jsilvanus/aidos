@@ -54,8 +54,9 @@ fun buildInspectorState(snapshot: GraphSnapshot, nodeId: String): NodeInspectorS
     fun ref(id: String): InspectorRef? = byId[id]?.let { InspectorRef(it.id, it.title) }
 
     val dependsOn = snapshot.edges.filter { it.fromNodeId == nodeId && it.edgeKind == IntentEdgeKind.DEPENDS_ON }
-    val unmetIds = view?.unmetDependencyIds?.toSet() ?: dependsOn.map { it.toNodeId }.toSet()
-    val unmet = dependsOn.mapNotNull { edge -> ref(edge.toNodeId) }.filter { it.id in unmetIds }
+    // Same rule as the runtime's unmetDependencies: a target that is missing or not DONE is unmet.
+    val unmet = dependsOn.mapNotNull { edge -> ref(edge.toNodeId) }
+        .filter { snapshot.statuses[it.id]?.derivedStatus != DerivedStatus.DONE }
 
     val dependents = snapshot.edges
         .filter { it.toNodeId == nodeId && it.edgeKind == IntentEdgeKind.DEPENDS_ON }
