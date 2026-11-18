@@ -19,12 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
-import dev.aidos.api.CreateIntentNodeRequest
-import dev.aidos.api.CreateProjectRequest
-import dev.aidos.api.ProjectLocation
-import dev.aidos.api.RealRuntimeClient
 import dev.aidos.api.RuntimeClient
-import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.AidosUniversalApp
 import dev.aidos.tcr.engine.BackgroundPane
 import dev.aidos.tcr.engine.EngineControlCard
@@ -57,13 +52,21 @@ enum class DesktopViewMode {
     ENGINE,
 }
 
-/** Everything the window binds to, created once per app run. */
+/**
+ * Everything the window binds to, created once per app run.
+ *
+ * [agentConnection] is the one Agent runtime this window uses (RFC-0115, D60): the running daemon when there is one,
+ * else the app's own database-backed runtime. Every view, including Shell grants, shares it, so the app opens one
+ * connection, not two writers on the same SQLite files.
+ */
 class DesktopModels(
     val host: DesktopEngineHost,
     val prefs: DesktopPreferences,
     val scope: CoroutineScope,
-    val runtimeClient: RuntimeClient = RealRuntimeClient(),
+    val agentConnection: AgentConnection = AgentRuntimeAttach.connect(),
 ) {
+    val runtimeClient: RuntimeClient get() = agentConnection.client
+
     val status = DesktopStatusModel(host, scope, status = { EngineAttach.statusControl(host) }, apps = { EngineAttach.appsControl(host) })
     val apps = DesktopAppsModel(host, scope, control = { EngineAttach.appsControl(host) })
     val models = DesktopModelsModel(host, prefs, scope, control = { EngineAttach.modelsControl(host) })
@@ -71,39 +74,9 @@ class DesktopModels(
     val mcp = DesktopMcpModel(host, scope)
     val lan = DesktopLanSharingModel(scope) { EngineAttach.lanControl(host) }
     val peers = DesktopRemotePeersModel(scope, peers = { EngineAttach.peersControl(host) }, approvals = { EngineAttach.approvalsControl(host) })
-    val shell = DesktopShellGrantsModel(scope) { AgentRuntimeAttach.connect() }
+    val shell = DesktopShellGrantsModel(scope) { agentConnection }
     val tunnels = DesktopTunnelsModel(scope) { EngineAttach.tunnelsControl(host) }
     val background = DesktopBackgroundModel(scope)
-
-    init {
-        scope.launch {
-            try {
-                runtimeClient.projects.create(
-                    CreateProjectRequest(
-                        name = "Universal Workspace",
-                        description = "Causal Intent & Multi-Agent Project Hub",
-                        location = ProjectLocation.RuntimeManaged("default-workspace"),
-                    )
-                )
-                runtimeClient.intents.createNode(
-                    CreateIntentNodeRequest(
-                        projectId = "default-workspace",
-                        title = "Explore Causal Outliner & Infinite Canvas",
-                        type = IntentNodeType.GOAL,
-                    )
-                )
-                runtimeClient.intents.createNode(
-                    CreateIntentNodeRequest(
-                        projectId = "default-workspace",
-                        title = "Verify local Llama inference model handshake",
-                        type = IntentNodeType.ATOMIC_TASK,
-                    )
-                )
-            } catch (_: Exception) {
-                // Ignore initialization collisions
-            }
-        }
-    }
 }
 
 /**
@@ -167,6 +140,12 @@ fun DesktopApp(models: DesktopModels) {
                     }
                 },
                 actions = {
+                    // Says which Agent runtime this window is using, so a person can tell the daemon from the app's own runtime.
+                    Text(
+                        text = if (models.agentConnection is AgentConnection.Attached) "Agent: daemon" else "Agent: in-app",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                     IconButton(onClick = { showGroups = true }) {
                         Icon(Icons.Default.Share, contentDescription = "Device groups")
                     }
