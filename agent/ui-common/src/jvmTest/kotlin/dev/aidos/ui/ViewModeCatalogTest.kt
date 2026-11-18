@@ -53,14 +53,15 @@ class ViewModeCatalogTest {
     }
 
     @Test
-    fun postMvpViewsAreHiddenOnlyOnAPhone() {
+    fun metroAndBreadboardAreOfferedUnderMoreOnAPhone() {
         for (id in listOf("metro", "breadboard")) {
             val m = ViewModeCatalog.byId(id)!!
             assertEquals(AndroidTier.POST_MVP, m.androidTier)
-            assertEquals(ViewPlacement.HIDDEN, m.placement(FormFactor.HANDHELD_COMPACT))
+            assertEquals(ViewPlacement.MORE, m.placement(FormFactor.HANDHELD_COMPACT))
+            assertTrue(ViewModeCatalog.offered(FormFactor.HANDHELD_COMPACT).any { it.id == id })
             assertTrue(m.placement(FormFactor.HANDHELD_EXPANDED) != ViewPlacement.HIDDEN)
         }
-        assertTrue(ViewModeCatalog.offered(FormFactor.HANDHELD_COMPACT).none { it.id == "metro" })
+        assertTrue(ViewModeCatalog.primary(FormFactor.HANDHELD_COMPACT).none { it.id == "metro" || it.id == "breadboard" })
     }
 
     @Test

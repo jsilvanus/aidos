@@ -128,6 +128,12 @@ Built: the twelve views with presenters tested on the JVM; the adaptive shell (`
 ```yaml
 files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ViewModeCatalog.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardGlyphs.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardComponentStrip.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/BreadboardViewTest.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ResponsiveScaffold.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/WindowSizeClass.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/AdaptiveLayoutState.kt
@@ -214,7 +220,18 @@ post_mvp:
     depends_on: ["0124.3"]
   - id: "0124.5"
     title: "Rework the Metro Map and Breadboard for a narrow screen and offer them on a phone"
-    status: todo
+    status: done
+    note: "Metro Next Stop strip (UI-40) and Breadboard component strip (UI-41) on HANDHELD_COMPACT; both offered under More on phones via ViewModeCatalog."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicView.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardSchematicPresenter.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardLayout.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardGlyphs.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardComponentStrip.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ViewModeCatalog.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewModeCatalogTest.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/BreadboardViewTest.kt
   - id: "0124.6"
     title: "Gates badge count in the navigation and a refusal path from the notification"
     status: todo
