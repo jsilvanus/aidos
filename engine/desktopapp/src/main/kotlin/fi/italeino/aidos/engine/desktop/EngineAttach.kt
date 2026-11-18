@@ -58,6 +58,34 @@ object EngineAttach {
      */
     fun reloadToken(): String? = runningEngine()?.token
 
+    /**
+     * Asks the Engine at [running] to stop (`POST /v1/admin/shutdown`, loopback and admin only; the same call the tray
+     * makes). True when it answered 202. False when it refused or did not answer: an Engine that lives in a window has
+     * no shutdown route, so only its own window can turn it off. A 401 is retried once with the token `engine.json`
+     * holds now, since a restarted Engine mints a new one.
+     */
+    fun shutdown(running: RunningEngine): Boolean {
+        val client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build()
+        fun post(token: String): Int? = runCatching {
+            client.send(
+                java.net.http.HttpRequest.newBuilder(java.net.URI(running.baseUrl + "/v1/admin/shutdown")).timeout(java.time.Duration.ofSeconds(5))
+                    .header("Authorization", "Bearer $token").POST(java.net.http.HttpRequest.BodyPublishers.noBody()).build(),
+                java.net.http.HttpResponse.BodyHandlers.discarding(),
+            ).statusCode()
+        }.getOrNull()
+        var code = post(running.token)
+        if (code == 401) reloadToken()?.let { code = post(it) }
+        return code == 202
+    }
+
+    /** The lifecycle shown on every screen, from what [StatusControl] reported: one source for Status, Apps and Cookbook. */
+    fun engineStateOf(running: Boolean, stateName: String): fi.italeino.aidos.engine.EngineState = when {
+        !running -> fi.italeino.aidos.engine.EngineState.STARTING // EngineState has no "stopped"; callers pair it with the running flag
+        stateName.startsWith("FAILED") -> fi.italeino.aidos.engine.EngineState.FAILED
+        stateName.startsWith("STARTING") -> fi.italeino.aidos.engine.EngineState.STARTING
+        else -> fi.italeino.aidos.engine.EngineState.READY
+    }
+
     fun lanControl(host: DesktopEngineHost, running: RunningEngine? = runningEngine()): LanControl =
         running?.let { HttpLanControl(it.baseUrl, it.token, reloadToken = ::reloadToken) } ?: LocalLanControl(host.lanSharing)
 
