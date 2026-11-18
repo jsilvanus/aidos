@@ -64,9 +64,8 @@ import dev.aidos.ui.paradigms.pipeline.RelayPipelinePresenter
 import dev.aidos.ui.paradigms.pipeline.RelayPipelineScreen
 import dev.aidos.ui.paradigms.timeline.TimelineGanttPresenter
 import dev.aidos.ui.paradigms.timeline.TimelineGanttScreen
-import dev.aidos.ui.pills.AgentPillState
 import dev.aidos.ui.pills.MultiAgentPillOverlay
-import dev.aidos.ui.pills.PillRole
+import dev.aidos.ui.pills.pillsFor
 import dev.aidos.ui.spatial.canvas.InfiniteZuiCanvas
 import dev.aidos.ui.spatial.canvas.SpatialCanvasPresenter
 import dev.aidos.ui.spatial.radar.FocusRadarPresenter
@@ -249,43 +248,25 @@ private fun AidosUniversalAppContent(
         )
     }
 
-    val pills = remember(isAssistantOpen) {
-        listOf(
-            AgentPillState(
-                id = "pill-red",
-                role = PillRole.ORCHESTRATOR_RED,
-                label = "Dictator Caret",
-                xNormalized = 0.85f,
-                yNormalized = 0.15f,
-                isRadiatingWave = isAssistantOpen,
-            ),
-            AgentPillState(
-                id = "pill-blue",
-                role = PillRole.WORKER_CODE_BLUE,
-                label = "Code Worker",
-                xNormalized = 0.12f,
-                yNormalized = 0.88f,
-            ),
-            AgentPillState(
-                id = "pill-green",
-                role = PillRole.VERIFIER_GREEN,
-                label = "Verifier",
-                xNormalized = 0.30f,
-                yNormalized = 0.88f,
-            ),
-            AgentPillState(
-                id = "pill-violet",
-                role = PillRole.RESEARCH_VIOLET,
-                label = "Life & R&D",
-                xNormalized = 0.50f,
-                yNormalized = 0.88f,
-            ),
-        )
+    // RFC-0111 §3 / RFC-0124 (UI-42): pills and the Gates count come from live data, not fixed demo pills.
+    val graphSnapshot by currentStore.snapshot.collectAsState()
+    val pills = remember(graphSnapshot, isAssistantOpen) {
+        pillsFor(graphSnapshot, assistantActive = isAssistantOpen)
     }
+    val pendingGates by gatePresenter.pendingCount.collectAsState()
 
     // RFC-0124: which views are primary navigation depends on the form factor (ViewModeCatalog).
     fun destinationsFor(formFactor: dev.aidos.ui.layout.FormFactor) =
-        ViewModeCatalog.primary(formFactor).map { NavigationDestination(it.id, it.label, { Text(it.icon) }) }
+        ViewModeCatalog.primary(formFactor).map { mode ->
+            val isGates = mode.id == "gates"
+            val count = if (isGates) pendingGates else 0
+            NavigationDestination(
+                id = mode.id,
+                label = if (count > 0) "${mode.label} ($count)" else mode.label,
+                icon = { Text(mode.icon) },
+                badgeCount = count,
+            )
+        }
 
     ResponsiveScaffold(
         destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
@@ -296,7 +277,10 @@ private fun AidosUniversalAppContent(
             NativeProcessRecoveryBar(health = nativeHealth)
         },
         overlayContent = {
-            MultiAgentPillOverlay(pills = pills)
+            MultiAgentPillOverlay(
+                pills = pills,
+                onPillClick = { pill -> pill.activeTaskId?.let { controller.openInspector(it) } },
+            )
             CommandPaletteModal(presenter = commandPalettePresenter)
             val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
             val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
