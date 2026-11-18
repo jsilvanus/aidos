@@ -35,13 +35,13 @@ data class SplitVerificationUiModel(
 )
 
 /**
- * Split Verification Card for Mobile -> Desktop handoffs (RFC-0110, RFC-0111).
- * Presents the shell verification command or test to run with 1-click execution.
+ * Split Verification Card for Mobile -> Desktop handoffs (RFC-0110, RFC-0111). The node is NEEDS_REVIEW;
+ * Confirm records the person's review (RFC-0124 Gates). Running checks is not part of Gates yet.
  */
 @Composable
 fun SplitVerificationCard(
     model: SplitVerificationUiModel,
-    onRunVerification: (String) -> Unit,
+    onConfirm: (String) -> Unit,
     onViewDiff: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -105,8 +105,8 @@ fun SplitVerificationCard(
                 )
 
                 ActionButtonAtom(
-                    text = "▶ Run Verification",
-                    onClick = { onRunVerification(model.nodeId) },
+                    text = "Confirm",
+                    onClick = { onConfirm(model.nodeId) },
                     kind = ActionButtonKind.PRIMARY,
                 )
             }

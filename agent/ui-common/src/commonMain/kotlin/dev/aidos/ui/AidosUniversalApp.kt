@@ -41,7 +41,6 @@ import dev.aidos.ui.assistant.VoiceCaptureState
 import dev.aidos.ui.dex.DexStatePreserver
 import dev.aidos.ui.frontdoors.gates.ApprovalGatePresenter
 import dev.aidos.ui.frontdoors.gates.ApprovalGatesScreen
-import dev.aidos.ui.frontdoors.gates.toUiModel
 import dev.aidos.ui.frontdoors.inbox.ActionInboxPresenter
 import dev.aidos.ui.frontdoors.inbox.ActionInboxScreen
 import dev.aidos.ui.frontdoors.projects.ProjectHubPresenter
@@ -85,7 +84,6 @@ import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.workspace.WorkspaceBootstrap
 import dev.aidos.ui.workspace.WorkspaceController
 import dev.aidos.ui.workspace.WorkspaceKind
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -225,26 +223,13 @@ private fun AidosUniversalAppContent(
     val livingDocPresenter = remember(currentProjectId) {
         LivingDocPresenter(controller.currentStore.value.snapshot, controller, coroutineScope)
     }
-    // RFC-0113: the Human Egress Gate Card is fed by the runtime's parked outbound messages and its
-    // Approve / Deny go through the same effect-approval path the CLI uses, so a person's decision is
-    // the only thing that lets a private project's message leave.
-    val gatePresenter = approvalGatePresenter ?: remember {
-        ApprovalGatePresenter(
-            scope = coroutineScope,
-            onEgressApproved = { runId -> runtimeClient.capabilities.approveEffect(runId, runId) },
-            onEgressDenied = { runId, reason -> runtimeClient.capabilities.denyEffect(runId, runId, reason) },
-        )
+    // RFC-0113 / RFC-0124: Gates reads every approval the person owes and decides through the same runtime
+    // calls the CLI uses, so a person's decision is the only thing that lets a private message leave.
+    // A presenter the host supplied is the host's to feed; the one made here polls the runtime itself.
+    val gatePresenter = approvalGatePresenter ?: remember(runtimeClient, controller) {
+        ApprovalGatePresenter(runtimeClient, controller, coroutineScope)
     }
-    // A presenter the host supplied is the host's to feed; only the one made here follows the runtime.
-    LaunchedEffect(runtimeClient, gatePresenter, approvalGatePresenter == null) {
-        while (approvalGatePresenter == null) {
-            val parked = runCatching { runtimeClient.capabilities.listParkedEgress() }.getOrNull()
-            if (parked != null) {
-                gatePresenter.syncEgressRequests(parked.map { it.toUiModel() })
-            }
-            delay(2_000)
-        }
-    }
+    LaunchedEffect(gatePresenter) { gatePresenter.start() }
 
     val dexPreserver = remember { DexStatePreserver() }
     val fallbackHealthFlow = remember { MutableStateFlow(NativeProcessHealth.HEALTHY) }
