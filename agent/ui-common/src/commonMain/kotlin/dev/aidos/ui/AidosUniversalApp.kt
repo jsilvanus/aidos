@@ -423,7 +423,6 @@ private fun AidosUniversalAppContent(
                         presenter = kanbanPresenter,
                         controller = controller,
                         formFactor = formFactor,
-                        onTaskClick = { controller.navigate("outliner") },
                     )
                     "radar" -> RadialRadarScreen(presenter = radarPresenter, controller = controller, formFactor = formFactor)
                     "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter, controller = controller, formFactor = formFactor)
