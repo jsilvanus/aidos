@@ -117,6 +117,38 @@ class EngineToolsTest {
     }
 
     @Test
+    fun `a credential in a tool result is replaced before the model sees it`() {
+        // RFC-0035 "Secrets found in content", now in the Engine's loop (desktop and Android).
+        val key = "sk-" + "a".repeat(10) + "B".repeat(10) + "c".repeat(10)
+        val rt = runtime(Caller("notes:read"), listOf(tool("notes:read", readOnly = true) { AmpToolExecutionResult("config uses $key for calls", false) }))
+        val result = turn(rt, engine = true)
+        val reply = result.reply.orEmpty()
+        assertFalse(reply.contains(key), reply)
+        assertTrue(reply.contains("redaction"), reply)
+        assertFalse(result.executedToolCalls.single().resultText.contains(key))
+    }
+
+    @Test
+    fun `a value the host's vault knows is caught even without a pattern`() {
+        val redactor = dev.aidos.vault.Redactor().apply { register("id1", "hf_token", "plainwordsvalue".toCharArray()) }
+        val adapter = Caller("notes:read")
+        val rt = AgentRuntime(scope, adapterFor = { adapter }, toolWait = 2000.milliseconds, toolResultScreen = SecretToolResultScreen(redactor)).also {
+            it.engineTools = EngineToolSource { _ -> listOf(tool("notes:read", readOnly = true) { AmpToolExecutionResult("token is plainwordsvalue", false) }) }
+        }
+        val reply = turn(rt, engine = true).reply.orEmpty()
+        assertFalse(reply.contains("plainwordsvalue"), reply)
+    }
+
+    @Test
+    fun `a credentials file is withheld whole`() {
+        val pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"
+        val rt = runtime(Caller("notes:read"), listOf(tool("notes:read", readOnly = true) { AmpToolExecutionResult(pem, false) }))
+        val reply = turn(rt, engine = true).reply.orEmpty()
+        assertFalse(reply.contains("MIIEowIBAAKCAQEA"), reply)
+        assertTrue(reply.contains("withheld"), reply)
+    }
+
+    @Test
     fun `a client tool with the same name wins`() {
         val calls = AtomicInteger()
         val rt = runtime(Caller("lookup"), listOf(tool("lookup", readOnly = true, calls)))

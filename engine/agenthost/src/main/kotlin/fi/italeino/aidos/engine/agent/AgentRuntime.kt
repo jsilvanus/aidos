@@ -1,6 +1,7 @@
 package fi.italeino.aidos.engine.agent
 
 import dev.aidos.amp.AmpAgentRunner
+import dev.aidos.amp.AmpToolResultScreen
 import dev.aidos.amp.AmpToolDefinition
 import dev.aidos.amp.AmpToolExecutionResult
 import dev.aidos.kernel.ModelAdapter
@@ -58,6 +59,12 @@ class AgentRuntime(
     val maxRetained: Int = 64,
     private val now: () -> Long = System::currentTimeMillis,
     private val adapterWithPlacement: ((AgentTurnRequest, (Placement) -> Unit) -> ModelAdapter)? = null,
+    /**
+     * RFC-0035 "Secrets found in content": every tool result, the client's and the Engine's own, is
+     * screened before the model or the caller sees it. Pattern-only unless the host passes a screen
+     * over a redactor that knows its vault's values.
+     */
+    private val toolResultScreen: AmpToolResultScreen = SecretToolResultScreen(),
 ) : AgentRunApi {
     private class Run(
         val id: String,
@@ -222,7 +229,7 @@ class AgentRuntime(
 
         runs[run.id] = run
         emit(run, run.state.value)
-        val runner = AmpAgentRunner(adapter, request.maxSteps?.coerceIn(1, 32) ?: defaultMaxSteps)
+        val runner = AmpAgentRunner(adapter, request.maxSteps?.coerceIn(1, 32) ?: defaultMaxSteps, toolResultScreen)
         var callCounter = 0
         val tools = request.tools.map { spec ->
             AmpToolDefinition(spec.name, spec.description, spec.inputSchema) { args -> awaitClient(run, spec.name, args, "call_${++callCounter}") }

@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.agent
 
+import dev.aidos.amp.AmpToolResultScreen
 import dev.aidos.aidin.AidinNode
 import dev.aidos.aidin.LinkMessage
 import dev.aidos.kernel.ModelAdapter
@@ -24,6 +25,8 @@ fun createEngineAgentRuntime(
     router: () -> VirtualModelRouter,
     aidin: () -> AidinNode?,
     initialRoutingConfig: AgentRoutingConfigDto = AgentRoutingConfigDto(),
+    /** RFC-0035: the host's screen, over a redactor registered with its vault (pattern-only by default). */
+    toolResultScreen: AmpToolResultScreen = SecretToolResultScreen(),
 ): AgentRuntime {
     fun modelAdapterFor(req: AgentTurnRequest, onPlacement: ((Placement) -> Unit)?): ModelAdapter {
         val requestedLocality = Locality.parse(req.locality.orEmpty()) ?: Locality.LOCAL_ONLY
@@ -53,6 +56,7 @@ fun createEngineAgentRuntime(
         scope = scope,
         adapterFor = { req -> modelAdapterFor(req, null) },
         adapterWithPlacement = { req, onPlacement -> modelAdapterFor(req, onPlacement) },
+        toolResultScreen = toolResultScreen,
     ).apply {
         setRoutingConfig(initialRoutingConfig)
     }

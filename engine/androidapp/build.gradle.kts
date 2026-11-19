@@ -17,6 +17,8 @@ kotlin {
                 implementation(project(":enginehost"))
                 // The agent runtime (D52: every Engine serves agents), same module the desktop host mounts.
                 implementation(project(":agenthost"))
+                // RFC-0035: the vault (record store + Android Keystore key, see EngineVault) and its redactor.
+                implementation(project(":vault"))
                 implementation(project(":engineui"))
                 implementation(project(":aidin"))
                 implementation(project(":modelruntime"))
@@ -115,4 +117,7 @@ android {
 // natives, so the desktop module, classifiers included, must stay out of the APK.
 configurations.configureEach {
     exclude(group = "net.ladenthin", module = "llama")
+    // :vault (RFC-0035) also carries the desktop's JDBC SQLite vault. Android runs the record-store
+    // vault (EngineVault) and never loads the driver, whose natives are desktop ones.
+    exclude(group = "org.xerial", module = "sqlite-jdbc")
 }

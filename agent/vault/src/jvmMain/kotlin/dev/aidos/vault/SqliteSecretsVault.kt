@@ -22,8 +22,8 @@ import javax.crypto.spec.SecretKeySpec
  *
  * The key comes from a [VaultKeyProvider] (OS keystore, passphrase, or owner-only file) and is
  * never written to the database; the database holds ciphertext only. This implementation uses
- * JDBC directly for BLOB operations. Android's Keystore is not provided here: this module is
- * JVM-only and the Android host does not run the vault yet (see STATUS.md).
+ * JDBC directly for BLOB operations. Hosts without JDBC (the Android host) run
+ * [RecordSecretsVault], which applies the same rules over a record store.
  *
  * **Values are held in CharArray/ByteArray and zeroed after use, never in String.**
  */

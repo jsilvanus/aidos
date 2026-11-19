@@ -2,9 +2,11 @@ package fi.italeino.aidos.engine.ui
 
 import android.content.Context
 import dev.aidos.modelruntime.ModelRunSettings
+import dev.aidos.vault.SecretKind
 import fi.italeino.aidos.engine.agent.AgentRoutingConfigDto
 import fi.italeino.aidos.engine.agent.AgentRunLaunchConfigDto
 import fi.italeino.aidos.engine.inference.Locality
+import fi.italeino.aidos.engine.vault.EngineVault
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,7 +14,6 @@ private const val PREFS = "aidos_prefs"
 private const val PREFS_PROVIDERS = "aidos_engine_provider_state"
 private const val KEY_PREFERRED_CONTEXT = "preferred_context_length"
 private const val KEY_RAM_BASELINE_USED_MB = "ram_baseline_used_mb"
-private const val KEY_HF_TOKEN = "hf_token"
 private const val KEY_HF_TOKEN_VALIDATED_MS = "hf_token_validated_ms"
 private const val KEY_GROUP_SHARING = "group_sharing_enabled"
 private const val KEY_ENGINE_LOCALITY_LIMIT = "engine_locality_limit"
@@ -272,21 +273,18 @@ object SettingsStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_GROUP_SHARING, enabled).apply()
     }
 
-    /** Hugging Face API access token (RFC-0103 Phase D/E). */
-    fun getHfToken(context: Context): String? {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_HF_TOKEN, null)?.takeIf { it.isNotBlank() }
-    }
+    /** Hugging Face API access token (RFC-0103 Phase D/E), held in the vault (RFC-0035). */
+    fun getHfToken(context: Context): String? =
+        EngineVault.read(context, EngineVault.HF_TOKEN)?.takeIf { it.isNotBlank() }
 
+    /** Saves or clears the token. When the vault cannot be opened the token is not saved anywhere. */
     fun setHfToken(context: Context, token: String?) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (token.isNullOrBlank()) {
-            prefs.edit().remove(KEY_HF_TOKEN).remove(KEY_HF_TOKEN_VALIDATED_MS).apply()
+        val saved = EngineVault.write(context, EngineVault.HF_TOKEN, SecretKind.TOKEN, token)
+        if (token.isNullOrBlank() || !saved) {
+            prefs.edit().remove(KEY_HF_TOKEN_VALIDATED_MS).apply()
         } else {
-            prefs.edit()
-                .putString(KEY_HF_TOKEN, token.trim())
-                .putLong(KEY_HF_TOKEN_VALIDATED_MS, System.currentTimeMillis())
-                .apply()
+            prefs.edit().putLong(KEY_HF_TOKEN_VALIDATED_MS, System.currentTimeMillis()).apply()
         }
     }
 
@@ -410,7 +408,8 @@ object SettingsStore {
     fun getProvider(context: Context, providerId: String): ProviderDetail {
         val prefs = context.getSharedPreferences(PREFS_PROVIDERS, Context.MODE_PRIVATE)
         val default = getDefaultProvider(providerId)
-        val apiKey = prefs.getString("${providerId}:api_key", null)
+        // RFC-0035: the key is in the vault; only whether one is set lives in preferences.
+        val apiKey = EngineVault.read(context, EngineVault.providerKey(providerId))
         val isConfigured = !apiKey.isNullOrBlank()
         val enabled = prefs.getBoolean("${providerId}:enabled", false) && isConfigured
         val apiKeyValid = prefs.getBoolean("${providerId}:api_key_valid", isConfigured)
@@ -472,10 +471,10 @@ object SettingsStore {
             modelsArray.put(obj)
         }
 
+        val keySaved = EngineVault.write(context, EngineVault.providerKey(providerId), SecretKind.API_KEY, provider.apiKey)
         prefs.edit()
             .putBoolean("${providerId}:enabled", provider.isEnabled)
-            .putString("${providerId}:api_key", provider.apiKey)
-            .putBoolean("${providerId}:api_key_valid", !provider.apiKey.isNullOrBlank())
+            .putBoolean("${providerId}:api_key_valid", keySaved && !provider.apiKey.isNullOrBlank())
             .putString("${providerId}:models_json", modelsArray.toString())
             .apply()
     }

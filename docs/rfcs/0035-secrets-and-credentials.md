@@ -308,7 +308,7 @@ encrypted on it.
 Recorded 2026-11-10 with the implementation. The design above is unchanged; these are what building it settled.
 
 1. **Key storage per platform.** Linux uses the Secret Service through `secret-tool`, macOS the Keychain through `security`, Windows DPAPI through PowerShell `ProtectedData`. The vault key is a random 256-bit key held there; on Windows the DPAPI-wrapped blob sits in `~/.aidos/secrets/vault.key.dpapi` and is useless to another user or machine. Where none of these exists, a passphrase (`AIDOS_VAULT_PASSPHRASE`) derives the key with PBKDF2-HmacSHA256 (salt and a verifier in `vault.salt`), and failing that a random key is kept in a file readable only by the owner. The last two report a weaker `KeyProtection`, and every host says so plainly.
-2. **Android Keystore is not implemented.** The vault module is JVM-only and the Android host does not run the vault yet; the Android section of this RFC (the Engine's separate vault) still holds.
+2. **Android Keystore is not implemented.** The vault module is JVM-only and the Android host does not run the vault yet; the Android section of this RFC (the Engine's separate vault) still holds. *Superseded by amendment 10.*
 3. **Ciphertext is bound to its row.** The secret's id is the AES-GCM associated data, so a ciphertext copied onto another row fails to decrypt.
 4. **Audit location.** `secret_accesses` carries a non-null capability id under a foreign key, but the runtime's own resolutions have no capability. They are written to `audit_log` as `SecretResolved`. `secret_accesses` is kept for resolutions made under a `secrets:read` capability.
 5. **Content found to contain secrets.** Credential-shaped content (see "Secrets found in content") is withheld from the transcript as a whole and audited (`SecretContentWithheld`); other content has its matched values replaced and is audited (`SecretContentRedacted`). Both are recorded on the audit row rather than on a content node, because no tool produces content nodes yet.
@@ -316,6 +316,8 @@ Recorded 2026-11-10 with the implementation. The design above is unchanged; thes
 7. **`secrets:read` grants** are refused at grant time unless they name specific secret ids; an empty list, a blank id, `*` or `?` is rejected.
 8. **Consumer allow-lists.** A secret with an allow-list can only be resolved by a named consumer (`MCP_SERVER:<server>`, `PROVIDER:<name>`, `GIT_REMOTE:<host>`); the runtime's anonymous resolve refuses it.
 9. **Export.** Project files that contain credentials are left out of the archive and named in the export warnings; export signing keys (RFC-0041) can be kept in the vault (`keygen --vault`).
+10. **Android host vault (2026-11-19).** On Android the Engine and the Agent are one app (D49), so the Android host has one vault, which is the Engine's vault of the 2026-08-14 amendment. Its key is a non-exportable AES-256-GCM key in the Android Keystore (`AndroidKeystoreKeyProvider`, hardware-backed where the device has a TEE or StrongBox; no user authentication, because the foreground service resolves tokens with the screen off). Android has no JDBC SQLite, so the values are not in `vault.db`: `RecordSecretsVault` keeps the same records (sealed value, kind, allow-list, timestamps) in `files/secrets/vault.json` through a `SecretRecordStore`, with the same checks as `SqliteSecretsVault`. The sealed value carries its IV, chosen by the cipher, because a Keystore key refuses a caller's IV. The Hugging Face token and the provider API keys, which were kept in plain preferences, are moved into the vault the first time it opens. The vault never falls back to plaintext: if the Keystore cannot be opened, a token reads as absent and is not saved.
+11. **Tool results in the Engine's agent loop (2026-11-19).** The Engine's own agent loop (`AmpAgentRunner`, served by both the desktop and the Android Engine) now applies the "Secrets found in content" rule to every tool result, the calling app's and the Engine's own, before the model or the caller sees it (`SecretToolResultScreen` over `SecretContentPolicy`). On Android the redactor is the one the vault registers its values with; the desktop Engine's loop uses pattern detection only, because its vault may be locked.
 
 ## Implementation Files
 
@@ -350,8 +352,15 @@ files:
   - agent/prompt/src/jvmTest/kotlin/dev/aidos/prompt/ContextSandboxTest.kt
   - agent/settings/src/commonMain/kotlin/dev/aidos/settings/SecretRef.kt
   - agent/tunnel-manager/src/jvmMain/kotlin/dev/aidos/tunnel/TunnelManager.kt
-  - agent/vault/src/androidMain/kotlin/dev/aidos/vault/AndroidKeystoreKeyProvider.kt
-  - agent/vault/src/androidMain/kotlin/dev/aidos/vault/AndroidKeystoreVault.kt
+  - agent/amp/src/commonMain/kotlin/dev/aidos/amp/AmpAgentRunner.kt
+  - agent/amp/src/jvmTest/kotlin/dev/aidos/amp/AmpAgentRunnerTest.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/FileSecretRecordStore.kt
+  - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/RecordSecretsVault.kt
+  - agent/vault/src/jvmTest/kotlin/dev/aidos/vault/RecordSecretsVaultTest.kt
+  - engine/agenthost/src/main/kotlin/fi/italeino/aidos/engine/agent/SecretToolResultScreen.kt
+  - engine/agenthost/src/test/kotlin/fi/italeino/aidos/engine/agent/EngineToolsTest.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/vault/AndroidKeystoreKeyProvider.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/vault/EngineVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/DesktopVault.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/KeyProviders.kt
   - agent/vault/src/jvmMain/kotlin/dev/aidos/vault/Redactor.kt
