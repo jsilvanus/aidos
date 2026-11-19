@@ -36,6 +36,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gradle jvmTest --continue --no-daemon
 
+  # :mcp-binder-android resolves fi.italeino.mcp:binder-android from GitHub Packages (pinned in
+  # agent/gradle.properties). jvmTest never resolves an Android module's dependencies, so this job
+  # is the only one that proves the registry path and compiles the Android library.
+  build-mcp-binder-android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile and test the MCP Binder Android module
+        working-directory: agent
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle :mcp-binder-android:testDebugUnitTest :mcp-binder-android:assembleDebug :mcp-binder-android:assembleDebugAndroidTest --no-daemon --max-workers=1
+
   test-engine:
     runs-on: ubuntu-latest
     steps:
