@@ -11,10 +11,13 @@ import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import dev.aidos.api.CreateIntentNodeRequest
 import dev.aidos.api.RealRuntimeClient
@@ -115,9 +118,8 @@ class ViewsSmokeUiTest {
                         "livingdoc" -> awaitTrue("the Notes document title") {
                             onAllNodesWithText("Notes").exists()
                         }
-                        // The canvas paints node titles with DrawScope.drawText, which has no semantics, so
-                        // only the render and the navigation entry are checked here. Follow-up: give canvas
-                        // nodes semantics so this view joins the inspector check.
+                        // The canvas paints node titles with drawText; each drawn node carries a semantics
+                        // target (CanvasNodeTargets) with its title and an Open-in-inspector action instead.
                         // Radar titles appear only in the zone the node sits in. "Review copy" has no unmet
                         // dependencies, so it is in the Strike zone: open that zone and find it there.
                         "radar" -> {
@@ -129,11 +131,24 @@ class ViewsSmokeUiTest {
                             awaitTrue("the radar to list the ready task") {
                                 onAllNodesWithText("Review copy", substring = true).exists()
                             }
+                            awaitTrue("the radar blip for the ready task") {
+                                onAllNodesWithContentDescription("Review copy").exists()
+                            }
+                            onAllNodesWithContentDescription("Review copy").onFirst()
+                                .performSemanticsAction(SemanticsActions.OnClick)
+                            awaitTrue("the inspector to open from the radar blip") {
+                                onAllNodes(hasSetTextAction() and hasText("Review copy")).exists()
+                            }
                         }
                         "canvas" -> {
-                            repeat(5) { mainClock.advanceTimeByFrame() }
-                            awaitTrue("the Canvas navigation entry") {
-                                onAllNodesWithText("Canvas").exists()
+                            awaitTrue("the canvas node for the ready task") {
+                                onAllNodesWithContentDescription("Review copy").exists()
+                            }
+                            // The action runs through the semantics tree, as an assistive service would run it.
+                            onAllNodesWithContentDescription("Review copy").onFirst()
+                                .performSemanticsAction(SemanticsActions.OnClick)
+                            awaitTrue("the inspector to open on the canvas node") {
+                                onAllNodes(hasSetTextAction() and hasText("Review copy")).exists()
                             }
                         }
                         else -> {

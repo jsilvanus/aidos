@@ -46,6 +46,8 @@ import dev.aidos.intent.DerivedStatus
 import dev.aidos.intent.IntentNodeRecord
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.layout.FormFactor
+import dev.aidos.ui.spatial.CanvasNodeTarget
+import dev.aidos.ui.spatial.CanvasNodeTargets
 import dev.aidos.ui.spatial.edges.BezierCausalEdge
 import dev.aidos.ui.spatial.edges.EdgeCollisionRouter
 import dev.aidos.ui.spatial.nodes.AtomicTaskCapsule
@@ -116,6 +118,12 @@ fun InfiniteZuiCanvas(
     }
     val progress = remember(state.nodes, state.statuses) { CanvasDetail.progressByNode(state.nodes, state.statuses) }
     val crumbs = remember(state.nodes, focusId) { CanvasFocus.breadcrumb(focusId, state.nodes) }
+    // RFC-0124 UI-60 follow-up: drawn nodes get semantics so accessibility and the smoke tests can reach them.
+    val targets = remember(drawn, state.positions) {
+        drawn.mapNotNull { node ->
+            state.positions[node.id]?.let { (x, y) -> CanvasNodeTarget(node.id, node.title, x, y) }
+        }
+    }
 
     Box(
         modifier = modifier
@@ -265,6 +273,15 @@ fun InfiniteZuiCanvas(
                 }
             }
         }
+
+        val vp = state.viewport
+        CanvasNodeTargets(
+            targets = targets.map { t ->
+                val screen = vp.toScreenCoordinates(t.x, t.y)
+                t.copy(x = screen.x, y = screen.y)
+            },
+            onActivate = { id -> controller.openInspector(id) },
+        )
 
         if (compact && crumbs.isNotEmpty()) {
             Text(

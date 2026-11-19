@@ -25,6 +25,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import dev.aidos.ui.spatial.CanvasNodeTarget
+import dev.aidos.ui.spatial.CanvasNodeTargets
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -141,6 +143,12 @@ private fun WideRadar(
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawRadar(state, placed)
         }
+        // RFC-0124 UI-60 follow-up: the blips are drawn, so each one gets a semantics target as well.
+        val titles = remember(state.radarNodes) { state.radarNodes.associate { it.node.id to it.node.title } }
+        CanvasNodeTargets(
+            targets = placed.map { CanvasNodeTarget(it.nodeId, titles[it.nodeId].orEmpty(), it.x, it.y) },
+            onActivate = { id -> controller.openInspector(id) },
+        )
     }
 }
 
