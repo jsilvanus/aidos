@@ -38,7 +38,8 @@ jobs:
 
   # :mcp-binder-android resolves fi.italeino.mcp:binder-android from GitHub Packages (pinned in
   # agent/gradle.properties). jvmTest never resolves an Android module's dependencies, so this job
-  # is the only one that proves the registry path and compiles the Android library.
+  # is the only one that proves the registry path and compiles the Android library. It runs on the
+  # same JDK as the rest of the Agent: its tests load mcp-core, which needs JDK 21 class files.
   build-mcp-binder-android:
     runs-on: ubuntu-latest
     permissions:
@@ -49,7 +50,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile and test the MCP Binder Android module
         working-directory: agent
