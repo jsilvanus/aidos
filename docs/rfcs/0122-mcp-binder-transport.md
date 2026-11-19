@@ -1,6 +1,6 @@
 # RFC-0122: MCP Binder Transport
 
-Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: no physical-device run; library still from mavenLocal; D51 proposed).
+Status: Implemented 2026-11-15 (MVP: every item in the MVP section is built, wired and tested; post-MVP and device acceptance remain: no physical-device run; library consumed from GitHub Packages since 2026-11-19; D51 proposed).
 Non-MVP Work: **Remaining**
 
 Related: D51 (proposed), D30/D31 (MCP authority and adoption), RFC-0031 (MCP), RFC-0027 (taint), RFC-0107 (remote agent hosting and tool relay), RFC-0116 (Amp serves tools this way), RFC-0118 (Android host), RFC-0049 (platform profiles).
@@ -75,6 +75,10 @@ files:
   - agent/mcp-binder-android/src/test/kotlin/dev/aidos/mcp/binder/android/InstalledMcpDiscoveryTest.kt
   - agent/mcp-binder-android/src/androidTest/AndroidManifest.xml
   - agent/mcp-binder-android/src/main/AndroidManifest.xml
+  - agent/mcp-binder-android/build.gradle.kts
+  - agent/settings.gradle.kts
+  - agent/gradle.properties
+  - agent/knowledge/build.gradle.kts
   - agent/mcp-core/src/jvmMain/kotlin/dev/aidos/mcp/core/BinderMcpClient.kt
   - agent/mcp-core/src/jvmMain/kotlin/dev/aidos/mcp/core/McpRegistration.kt
 ```
@@ -115,7 +119,12 @@ post_mvp:
     phase: P3
   - id: "0122.8"
     title: "Publish the binder library to a registry instead of mavenLocal"
-    status: todo
+    status: done
+    files:
+      - agent/mcp-binder-android/build.gradle.kts
+      - agent/settings.gradle.kts
+      - agent/gradle.properties
+      - agent/knowledge/build.gradle.kts
   - id: "0122.9"
     title: "Signed invocation assertion and model attestation (proposals, D49)"
     status: todo
