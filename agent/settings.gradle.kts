@@ -8,26 +8,31 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositories {
-        // The MCP Binder library, until it is published (kotlin-mcp-android-binder: publishToMavenLocal).
-        mavenLocal {
-            content {
-                includeGroup("fi.italeino.mcp")
-                includeGroup("io.github.jsilvanus")
-            }
-        }
         mavenCentral()
         // AGP dependencies (e.g. lint, core-ktx) come from Google Maven.
         google()
-        // gitsema-kotlin is published to GitHub Packages (M22 dependency).
-        // Reads require a GITHUB_TOKEN with `read:packages` scope.
-        // In GitHub Actions the default GITHUB_TOKEN already has this.
+        // The MCP Binder library, published from kotlin-mcp-android-binder on every push to main.
+        // Pinned by mcpBinderVersion in gradle.properties. Reads need a token: gpr.user/gpr.key on a
+        // developer machine, GITHUB_ACTOR/GITHUB_TOKEN in CI.
+        maven {
+            name = "McpBinderGitHubPackages"
+            url = uri("https://maven.pkg.github.com/jsilvanus/kotlin-mcp-android-binder")
+            credentials {
+                username = providers.gradleProperty("gpr.user").orElse(providers.environmentVariable("GITHUB_ACTOR")).orNull ?: "token"
+                password = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull ?: ""
+            }
+            content { includeGroup("fi.italeino.mcp") }
+        }
+        // gitsema-kotlin is published to GitHub Packages on every push to its main, pinned by
+        // gitsemaVersion in gradle.properties (M22 dependency).
         maven {
             name = "GitHubPackages"
             url = uri("https://maven.pkg.github.com/jsilvanus/gitsema-kotlin")
             credentials {
-                username = System.getenv("GITHUB_ACTOR") ?: "token"
-                password = System.getenv("GITHUB_TOKEN") ?: ""
+                username = providers.gradleProperty("gpr.user").orElse(providers.environmentVariable("GITHUB_ACTOR")).orNull ?: "token"
+                password = providers.gradleProperty("gpr.key").orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull ?: ""
             }
+            content { includeGroup("io.github.jsilvanus") }
         }
     }
 }
@@ -108,3 +113,9 @@ val aidosTcrDir = aidosTcrCandidates.firstOrNull { it.exists() && it.isDirectory
 if (aidosTcrDir != null) {
     includeBuild(aidosTcrDir)
 }
+
+// Opt-in composite builds of sibling checkouts, for working on the binder or gitsema-kotlin and
+// Aidos at the same time. Gradle substitutes the published coordinates with the local projects
+// because group and artifact names match. Set in gradle.properties or with -P.
+providers.gradleProperty("mcpBinderDir").orNull?.let { includeBuild(it) }
+providers.gradleProperty("gitsemaDir").orNull?.let { includeBuild(it) }
