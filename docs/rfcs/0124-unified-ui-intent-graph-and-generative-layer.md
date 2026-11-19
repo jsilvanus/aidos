@@ -1,6 +1,6 @@
 # RFC-0124: Unified Aidos UI: Intent Graph Views, the Generative Layer and the Android Handheld
 
-Status: Accepted 2026-11-16, amended 2026-11-18. Views, shell and placement exist; data wiring, live updates, editing and the generative layer are being built (2026-11-18 plan). Not Implemented: see the Amendment and Post-MVP Work.
+Status: Accepted 2026-11-16, amended 2026-11-18. Views are wired to live project data (`ProjectGraphStore`, event-driven with a 5 s poll fallback), the Node Inspector edits, links, starts, completes and archives nodes, and the generative layer (A2UI parser, TCR renderer, registered manifest actions) is built. Not Implemented: 0124.1 (acceptance on a phone, foldable and DeX), 0124.6, and 0124.7 to 0124.10 remain open; see Post-MVP Work.
 Non-MVP Work: **Remaining** (see Post-MVP Work)
 
 Related: RFC-0106 (generative UI), RFC-0110 (dual-mode intent graph), RFC-0111 (presentation paradigms and launchers), RFC-0112 (universal adaptive UI, blinded egress), RFC-0113 (egress gate), RFC-0118 (Android host), RFC-0119 (Engine app UI), RFC-0123 (Trusted Component Registry), D46, D49.
@@ -210,6 +210,23 @@ files:
   - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
   - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/views/RelayRiverViewTest.kt
   - docs/ui-acceptance.md
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeEventBridge.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/RuntimeEventBridgeTest.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+  - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+  - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+  - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentGraphChangedEventTest.kt
+  - agent/api/src/jvmTest/kotlin/dev/aidos/api/ParkedEffectsTest.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/AgentRuntimeAttach.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+  - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopRuntimeClient.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/AgentRuntimeAttachTest.kt
+  - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelsWorkspaceTest.kt
+  - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/AndroidRuntimeClientFactory.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/LiveEventsTest.kt
+  - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/ViewsSmokeUiTest.kt
+  - docs/rfcs/0124-unified-ui-intent-graph-and-generative-layer.md
 ```
 
 ## Post-MVP Work
@@ -273,6 +290,7 @@ post_mvp:
   - id: "0124.6"
     title: "Gates badge count in the navigation and a refusal path from the notification"
     status: todo
+    note: "Badge done (Gates count in ApprovalGatePresenter); notification refusal open."
   - id: "0124.7"
     title: "Caret companion and travelling voice caret in the desktop Living Document (RFC-0106 phase 1)"
     status: todo
@@ -287,22 +305,51 @@ post_mvp:
     status: todo
   - id: "0124.11"
     title: "ProjectGraphStore and WorkspaceController: one live, polled graph per project feeding all views"
-    status: todo
+    status: done
+    note: "ProjectGraphStore (polled and IntentGraphChanged-driven) and WorkspaceController, one per open project; all views read through them (UI-10, UI-20). Tests: WorkspaceCoreTest, PresentersOnStoreTest, LiveEventsTest."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/WorkspaceCoreTest.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/PresentersOnStoreTest.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/LiveEventsTest.kt
     phase: P1
     done_when: "two views opened on the same project show the same node list, and a node added through one appears in the other within 5 seconds"
   - id: "0124.12"
     title: "Additive runtime APIs the views need: IntentGraphChanged event, listParkedEffects, startNodeRun, listUiManifests"
-    status: todo
+    status: done
+    note: "IntentGraphChanged, listParkedEffects, startNodeRun and listUiManifests: default bodies in RuntimeClient, implemented in RealRuntimeClient, served by the socket (api socket Methods, daemon RuntimeSocketServer). Tests: IntentGraphChangedEventTest, ParkedEffectsTest, StartNodeRunTest, ListUiManifestsTest."
+    files:
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RuntimeClient.kt
+      - agent/api/src/commonMain/kotlin/dev/aidos/api/RealRuntimeClient.kt
+      - agent/api/src/jvmMain/kotlin/dev/aidos/api/socket/Methods.kt
+      - agent/daemon/src/jvmMain/kotlin/dev/aidos/daemon/RuntimeSocketServer.kt
+      - agent/api/src/jvmTest/kotlin/dev/aidos/api/IntentGraphChangedEventTest.kt
+      - agent/api/src/jvmTest/kotlin/dev/aidos/api/ParkedEffectsTest.kt
+      - agent/api/src/jvmTest/kotlin/dev/aidos/api/StartNodeRunTest.kt
+      - agent/api/src/jvmTest/kotlin/dev/aidos/api/ListUiManifestsTest.kt
     phase: P1
     done_when: "each of the four APIs has a default body in the Agent API, a test, and is served over the socket"
   - id: "0124.13"
     title: "Hosts use real projects and the real runtime (no magic project ids, no in-memory desktop client)"
-    status: todo
+    status: done
+    note: "Desktop attaches through AgentRuntimeAttach (daemon when running, else DB-backed); demo seed removed; Android uses WorkspaceBootstrap. Legacy ids default-workspace and life map to a real project only. The restart check is step 10 of docs/ui-acceptance.md, still to run by hand."
+    files:
+      - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/AgentRuntimeAttach.kt
+      - engine/desktopapp/src/main/kotlin/fi/italeino/aidos/engine/desktop/DesktopApp.kt
+      - engine/desktopapp/src/test/kotlin/fi/italeino/aidos/engine/desktop/DesktopModelsWorkspaceTest.kt
+      - agent/androidapp/src/androidMain/kotlin/fi/italeino/aidos/AndroidRuntimeClientFactory.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceBootstrap.kt
     phase: P1
     done_when: "a task created in the desktop and Android hosts is still there after the app restarts, and no host opens the project ids default-workspace or life"
   - id: "0124.14"
     title: "Node Inspector shared by all views: edit, link, start, complete, archive"
-    status: todo
+    status: done
+    note: "NodeInspector edits title, description, priority, dispatch, scope paths; links DEPENDS_ON; starts, completes and archives. Opened from any view (UI-21)."
+    files:
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspector.kt
+      - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspectorPresenter.kt
+      - agent/ui-common/src/jvmTest/kotlin/dev/aidos/ui/NodeInspectorTest.kt
     phase: P1
     done_when: "a node can be edited, linked, started, completed and archived from the Inspector sheet opened by any view"
 ```

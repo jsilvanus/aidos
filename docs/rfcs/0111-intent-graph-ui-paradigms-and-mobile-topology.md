@@ -363,4 +363,34 @@ files:
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionItemCard.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/BatonHandoffBadge.kt
   - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/tcr/code/StepCounterAtom.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ViewModeCatalog.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardLayout.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardGlyphs.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/BreadboardComponentStrip.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/ResponsiveScaffold.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/WindowSizeClass.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/layout/AdaptiveLayoutState.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceBootstrap.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/ProjectGraphStore.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/workspace/WorkspaceController.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspectorPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/inspector/NodeInspector.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/livingdoc/InlineToolBlock.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/pills/PillDerivation.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/ApprovalGatesScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/gates/GateCards.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/GenerativeCard.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActions.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/generative/ManifestActionHost.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerSections.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerCriterionRow.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/outliner/OutlinerDraftField.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/kanban/DockRules.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/paradigms/timeline/TimelineGanttScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/spatial/schematic/MetroNextStopStrip.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/inbox/ActionInboxPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubPresenter.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectHubScreen.kt
+  - agent/ui-common/src/commonMain/kotlin/dev/aidos/ui/frontdoors/projects/ProjectSlugs.kt
 ```
