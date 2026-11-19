@@ -106,9 +106,9 @@ by any of this.
 Dictator is a separate repository, `jsilvanus/dictator`. It is the first app built on the Aidos
 SDK and Engine, and its integration plan is [docs/dictator-sdk-integration-plan.md](docs/dictator-sdk-integration-plan.md).
 It is not an Aidos module and does not share Aidos's Gradle roots. There is still no RFC for it,
-so its scope, its package name, and its foreground-service shape are not in the RFC set. Until an
-RFC lands, treat its behavior as defined by its integration plan and its own repository, not by
-Aidos RFCs.
+so its scope and its foreground-service shape are not in the RFC set. Its app package follows the
+`fi.italeino.*` naming the owner chose on 2026-11-09. Until an RFC lands, treat its behavior as
+defined by its integration plan and its own repository, not by Aidos RFCs.
 
 ## The centre: the agent loop
 

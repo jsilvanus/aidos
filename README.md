@@ -106,8 +106,9 @@ The Aidos Engine (desktop and Android) and the Agent runtime are in active devel
 desktop Engine and agent services are built and tested; the Android Binder leg and the first
 real-model run on hardware are not done.
 
-Per-RFC implementation status is in [docs/rfcs/STATUS.md](docs/rfcs/STATUS.md) (audited
-2026-11-14). An RFC marked Accepted means the design is approved, not that the code exists.
+The repository has 90 RFC documents. [docs/rfcs/STATUS.md](docs/rfcs/STATUS.md) (audited
+2026-11-13, reconciled 2026-11-14) records the code state of 76 of them: 72 implemented, 3 partial,
+and 1 unscheduled. An RFC marked Accepted means the design is approved, not that the code exists.
 
 - [RFC-0099: Roadmap](docs/rfcs/0099-roadmap.md) — the phases and why they are in that order
 - [MVP roadmap](docs/mvp-roadmap.md) — the milestones, gates, and what each one proves
