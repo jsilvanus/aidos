@@ -74,6 +74,25 @@ To sign APKs with your release key, configure these GitHub Secrets:
 4. Add each secret with the exact names above
 5. Save
 
+## GitHub Packages Token
+
+Some Aidos libraries are consumed from the GitHub Packages Maven registry, not Maven Central:
+
+- `fi.italeino.mcp:binder-core` and `binder-android` (repo `jsilvanus/kotlin-mcp-android-binder`)
+- `io.github.jsilvanus:gitsema-core-jvm` (repo `jsilvanus/gitsema-kotlin`)
+- the Aidos SDK, published from `main` as `0.1.0-build.<run>+<sha8>`
+
+The registry requires a token even for public packages. Locally, use a classic personal access token with only the `read:packages` scope, and put it in your user-level Gradle file, `~/.gradle/gradle.properties` (on Windows, `C:\Users\<you>\.gradle\gradle.properties`):
+
+```properties
+gpr.user=<your GitHub username>
+gpr.key=<your classic token with read:packages>
+```
+
+Never put the token in a repository's `gradle.properties` or commit it. If it leaks, revoke it at https://github.com/settings/tokens.
+
+In CI no personal token is needed: the workflows use the built-in `GITHUB_TOKEN` with `packages: read` (consumers) or `packages: write` (publish jobs). Pin the exact build version you want in `agent/gradle.properties`, for example `mcpBinderVersion=0.1.0-build.11+73cc0f3f`.
+
 ## Creating a Keystore for Signing
 
 If you don't have a keystore yet, create one:
