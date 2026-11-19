@@ -15,8 +15,8 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 // gitsema-kotlin — the retrieval core (RFC-0015, M22).
                 // JVM variant: commonMain + jvmAndroidMain + jvmMain compiled into one artifact.
-                // Published to GitHub Packages; credentials via GITHUB_TOKEN (env var, not secrets).
-                implementation("io.github.jsilvanus:gitsema-core-jvm:0.1.0-SNAPSHOT")
+                // Published to GitHub Packages on every push to gitsema-kotlin main; pinned by gitsemaVersion.
+                implementation("io.github.jsilvanus:gitsema-core-jvm:${findProperty("gitsemaVersion")}")
                 // JGit for the GitRepository adapter that gitsema uses to walk the repository.
                 implementation("org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r")
             }
