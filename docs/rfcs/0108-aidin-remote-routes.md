@@ -270,26 +270,22 @@ Cloudflare Tunnel and other TLS-terminating proxies for the peer link (they woul
   - Uses sshj library, which is pure Java and works on Android
   - All Phase 3 features (reverse/local forward, keepalive, reconnect, state flow) available on Android
   - No kernel dependency; reusable by other Android apps
-- ✅ `agent:vault` includes Keystore-backed key storage in `src/androidMain` (note: `android()` target is currently commented out in `agent/vault/build.gradle.kts` until Android SDK verification is enabled)
-  - `AndroidKeystoreVault` class: stores/retrieves SSH tunnel keys encrypted via `AndroidKeystoreKeyProvider` + private `SharedPreferences`
-  - Keys encrypted with device-bound AES-256-GCM in the Android Keystore (`AES/GCM/NoPadding`, random 12-byte IV per entry, preference-key AAD binding)
-  - Private keys never written to disk unencrypted
-  - `AndroidKeystoreKeyProvider` for hardware-backed Keystore cipher operations
+- ~~`agent:vault` Keystore code in `src/androidMain`~~ (never compiled; removed 2026-11-19). The Android host now runs a vault (RFC-0035 amendment 10: `EngineVault`, key in the Android Keystore), and an SSH tunnel key on Android is stored there as `SSH_TUNNEL_KEY`.
 - ✅ Ready for androidapp integration (see Deferred)
 
 ### Deferred to later PRs
 
-1. **androidapp integration**: Wire `AndroidKeystoreVault` into the Engine's tunnel manager, tunnel key page, and setup-key installer on Android
+1. **androidapp integration**: Wire `EngineVault` (RFC-0035 amendment 10) into the Engine's tunnel manager, tunnel key page, and setup-key installer on Android
 2. **Foreground service**: Android tunnels run in a foreground service to survive background termination
 3. **Network change listener**: `ConnectivityManager` listener to trigger `dialer.onNetworkChange()` on network transitions (WiFi → cellular, etc.)
 4. **Permissions**: Request Android `INTERNET` and `CHANGE_NETWORK_STATE` permissions in manifest
-5. **Testing**: Unit tests for `AndroidKeystoreVault` with mock Keystore (hard to test in CI without running on a real device)
+5. **Testing**: the vault logic is tested on the JVM (`RecordSecretsVaultTest`); the Keystore key itself needs a device run
 6. **Phase 5 (RFC-0107)**: Bounded continue-then-cancel (5-minute default window after origin drops, resumable by `seq`, then cancel)
 
 ### Module locations
 
 - `agent/ssh-tunnel`: Standalone library with `jvm()` and `android()` targets
-- `agent/vault`: Vault with `jvm()` target (SQLite) and `android()` target (Android Keystore)
+- `agent/vault`: Vault, `jvm()` target only (SQLite on the desktop, a record-store vault the Android host runs with its Keystore key from `engine/androidapp`)
 - `agent/tunnel-manager`: Engine adapter (JVM/Android via vault and ssh-tunnel)
 - `agent/androidapp`: Android app shell ready for tunnel manager integration
 

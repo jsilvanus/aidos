@@ -68,7 +68,9 @@ import dev.aidos.aidin.SplitHosting
 import dev.aidos.aidin.SplitPlanOutcome
 import fi.italeino.aidos.engine.agent.AgentRuntime
 import fi.italeino.aidos.engine.agent.agentRoutes
+import fi.italeino.aidos.engine.agent.SecretToolResultScreen
 import fi.italeino.aidos.engine.agent.createEngineAgentRuntime
+import fi.italeino.aidos.engine.vault.EngineVault
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -298,12 +300,17 @@ class EngineService : LifecycleService() {
                 // The agent runtime (/v1/agent) runs in this service and calls models through the same
                 // InferenceRequestManager as the HTTP API, via the virtual router so a loop here can
                 // use a peer's model. Tools stay with the calling app (D48) until the tool relay exists.
+                // Opened before the agent runtime so the redactor knows every stored value from the first run.
+                EngineVault.vault(this@EngineService)
                 val agent = createEngineAgentRuntime(
                     scope = serviceScope,
                     manager = inferenceManager,
                     router = { httpServer.virtualModelRouter },
                     aidin = { _aidin.value },
                     initialRoutingConfig = SettingsStore.buildAgentRoutingConfig(this@EngineService),
+                    // RFC-0035: tool results are screened with the redactor the vault registers its
+                    // values with, so a stored token is caught by value as well as by pattern.
+                    toolResultScreen = SecretToolResultScreen(EngineVault.redactor),
                 ).apply {
                     setRunLaunchConfig(SettingsStore.buildAgentRunLaunchConfig(this@EngineService))
                 }

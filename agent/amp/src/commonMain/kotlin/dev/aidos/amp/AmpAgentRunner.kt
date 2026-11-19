@@ -27,6 +27,11 @@ import kotlinx.serialization.json.JsonObject
 class AmpAgentRunner(
     private val adapter: ModelAdapter,
     val maxSteps: Int = 5,
+    /**
+     * RFC-0035 "Secrets found in content": every tool result passes through this before the model
+     * or the caller sees it. The host supplies the vault's policy; the runner stays kernel-only.
+     */
+    private val toolResultScreen: AmpToolResultScreen = AmpToolResultScreen.NONE,
 ) {
 
     /**
@@ -125,11 +130,14 @@ class AmpAgentRunner(
                     )
                 }
 
+                // Screened once; the transcript and the caller both get the screened text.
+                val resultText = toolResultScreen.screen(call.toolName, result.outputText)
+
                 executedToolCalls.add(
                     ExecutedToolCall(
                         toolName = call.toolName,
                         argumentsJson = call.arguments.toString(),
-                        resultText = result.outputText
+                        resultText = resultText
                     )
                 )
 
@@ -138,7 +146,7 @@ class AmpAgentRunner(
                         AidosError(
                             code = "amp.tool.error",
                             errorClass = ErrorClass.TRANSIENT,
-                            message = result.outputText,
+                            message = resultText,
                         )
                     )
                 } else {
@@ -150,7 +158,7 @@ class AmpAgentRunner(
                         ToolCallResult(
                             callId = call.callId,
                             outcome = outcome,
-                            content = listOf(ContentBlock.Text(result.outputText)),
+                            content = listOf(ContentBlock.Text(resultText)),
                             trustLevel = TrustLevel.UNTRUSTED
                         )
                     )
@@ -164,5 +172,17 @@ class AmpAgentRunner(
             executedToolCalls = executedToolCalls,
             totalSteps = steps,
         )
+    }
+}
+
+/**
+ * What the model and the caller see of one tool result (RFC-0035 "Secrets found in content"). The
+ * host builds it from the vault's redactor; [NONE] passes results unchanged.
+ */
+fun interface AmpToolResultScreen {
+    fun screen(toolName: String, text: String): String
+
+    companion object {
+        val NONE = AmpToolResultScreen { _, text -> text }
     }
 }

@@ -41,7 +41,7 @@ The Engine host service is declared with foreground-service type `specialUse` (d
 
 ### Storage and secrets
 
-App approvals and licence acceptances are stored in encrypted stores (`EncryptedAppApprovalStore`, `EncryptedLicenseAcceptanceStore`). Model files live in app-private storage. Vault keys use the Android Keystore (`AndroidKeystoreVault`, RFC-0035), whose Gradle target is disabled until it can be built.
+App approvals and licence acceptances are stored in encrypted stores (`EncryptedAppApprovalStore`, `EncryptedLicenseAcceptanceStore`). Model files live in app-private storage. Secrets (the Hugging Face token, provider API keys) are in the host's vault (`EngineVault`, RFC-0035 amendment 10): sealed records in app-private storage under a non-exportable Android Keystore key, migrated out of plain preferences on first open.
 
 ### Screens
 
@@ -107,6 +107,8 @@ files:
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsScreen.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/SettingsStore.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/StatusViewModel.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/vault/AndroidKeystoreKeyProvider.kt
+  - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/vault/EngineVault.kt
   - engine/androidapp/src/androidMain/kotlin/fi/italeino/aidos/engine/ui/TestChatScreen.kt
   - engine/androidapp/src/androidUnitTest/kotlin/fi/italeino/aidos/engine/ui/PackageValidationTest.kt
   - engine/androidapp/src/androidMain/AndroidManifest.xml

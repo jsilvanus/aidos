@@ -5,8 +5,9 @@ plugins {
 
 kotlin {
     jvm()
-    // android() target deferred to Phase 4: waiting for Google Maven access in CI environment
-    // Android Keystore implementation is ready in src/androidMain, ready to activate when plugin available
+    // JVM only. The Android host consumes this jvm() artifact and runs RecordSecretsVault with its
+    // Android Keystore key from engine/androidapp (RFC-0035 amendment 10), so this module needs no
+    // android() target and the agent build needs no Android SDK.
 
     sourceSets {
         commonMain.dependencies {
@@ -33,13 +34,6 @@ kotlin {
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
             }
         }
-
-        // RFC-0108 Phase 4: Android target created but not activated (awaiting Google Maven access)
-        // val androidMain by getting {
-        //     dependencies {
-        //         implementation("androidx.security:security-crypto:1.1.0-alpha06")
-        //     }
-        // }
 
         val jvmTest by getting {
             dependencies {

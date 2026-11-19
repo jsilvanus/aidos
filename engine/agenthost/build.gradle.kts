@@ -18,6 +18,8 @@ dependencies {
     api(project(":kernel"))
     api(project(":amp"))
     implementation(project(":enginehost"))
+    // RFC-0035: tool results are screened with the vault's redactor before the model sees them.
+    api(project(":vault"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("io.ktor:ktor-server-core:3.5.2")

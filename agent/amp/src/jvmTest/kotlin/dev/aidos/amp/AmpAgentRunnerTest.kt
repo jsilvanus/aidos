@@ -100,4 +100,40 @@ class AmpAgentRunnerTest {
         assertEquals(1, turnResult.executedToolCalls.size)
         assertEquals("check_calendar", turnResult.executedToolCalls.first().toolName)
     }
+
+    @Test
+    fun toolResultsPassThroughTheScreenBeforeTheModelAndTheCaller() = runBlocking {
+        // RFC-0035 "Secrets found in content": the model must never see what the screen removed.
+        var seenByModel: String? = null
+        var step = 0
+        val adapter = object : ModelAdapter {
+            override val providerId = "mock"
+            override val modelId = "mock-model"
+            override val modelVersion = "1.0"
+            override val contextWindow = 4096
+            override val isLocal = true
+            override fun supportsNativeToolCalls() = true
+            override suspend fun invoke(request: ModelRequest): Result<ModelResponse> {
+                step++
+                if (step == 1) {
+                    return Result.success(ModelResponse(
+                        outputs = listOf(ToolCallOutput(ToolCall("c1", "read_file", buildJsonObject { }, null))),
+                        stopReason = StopReason.TOOL_USE, usage = null, model = null,
+                    ))
+                }
+                val last = request.messages.last() as Turn.ToolResult
+                seenByModel = (last.result.content.single() as ContentBlock.Text).text
+                return Result.success(ModelResponse(listOf(TextOutput("done")), StopReason.END_TURN, null, null))
+            }
+        }
+        val tool = AmpToolDefinition("read_file", "reads", buildJsonObject { put("type", "object") }) {
+            AmpToolExecutionResult("token=SECRET-VALUE")
+        }
+        val screen = AmpToolResultScreen { name, text -> "$name:" + text.replace("SECRET-VALUE", "[redacted]") }
+
+        val result = AmpAgentRunner(adapter, 5, screen).executeTurn("sys", emptyList(), "go", listOf(tool)).getOrThrow()
+
+        assertEquals("read_file:token=[redacted]", seenByModel)
+        assertEquals("read_file:token=[redacted]", result.executedToolCalls.single().resultText)
+    }
 }
