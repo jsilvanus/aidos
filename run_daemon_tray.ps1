@@ -8,11 +8,9 @@ $Root = $PSScriptRoot
 $Exe = Join-Path $Root "engine\desktopapp\build\compose\binaries\main\app\AidosEngineDebug\AidosEngineDebug.exe"
 
 if ($Build -or -not (Test-Path $Exe)) {
-    if (-not $env:JAVA_HOME) {
-        $jdk17 = Get-ChildItem "C:\Program Files\Eclipse Adoptium\jdk-17*" -Directory -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-        if ($jdk17) { $env:JAVA_HOME = $jdk17 }
-    }
+    $jdk17 = Get-ChildItem "C:\Program Files\Eclipse Adoptium\jdk-17*" -Directory -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($jdk17) { $env:JAVA_HOME = $jdk17 }
     if (-not $env:ANDROID_HOME) {
         $sdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
         if (Test-Path $sdk) { $env:ANDROID_HOME = $sdk }

@@ -78,6 +78,8 @@ compose.desktop {
             targetFormats(TargetFormat.Msi)
             packageName = "AidosEngineDebug"
             packageVersion = "0.1.0"
+            // Bundle java.sql (SQLite/SQLDelight) and other JDK modules used by Engine/Ktor/Swing.
+            includeAllModules = true
         }
     }
 }
