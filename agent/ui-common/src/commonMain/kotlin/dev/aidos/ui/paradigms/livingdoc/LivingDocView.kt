@@ -16,6 +16,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.pills.LineReservationLock
 import dev.aidos.ui.pills.TravelingVoiceCaret
 import dev.aidos.ui.theme.AidosTypography
@@ -25,6 +28,7 @@ import dev.aidos.ui.theme.SpacingTokens
 @Composable
 fun LivingDocView(
     presenter: LivingDocPresenter,
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -41,6 +45,13 @@ fun LivingDocView(
             color = Color.White,
             modifier = Modifier.padding(bottom = SpacingTokens.md),
         )
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
+        }
 
         if (state.isRecordingVoice || state.ghostText.isNotEmpty()) {
             TravelingVoiceCaret(

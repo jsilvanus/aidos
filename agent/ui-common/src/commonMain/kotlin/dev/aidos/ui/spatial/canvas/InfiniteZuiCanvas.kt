@@ -4,14 +4,18 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.spatial.edges.BezierCausalEdge
 import dev.aidos.ui.spatial.edges.EdgeCollisionRouter
 import androidx.compose.ui.geometry.Rect
@@ -19,12 +23,14 @@ import dev.aidos.ui.spatial.nodes.AtomicTaskCapsule
 import dev.aidos.ui.spatial.nodes.GoalHexagonNode
 import dev.aidos.ui.spatial.nodes.SatelliteCriterionNode
 import dev.aidos.ui.theme.ColorTokens
+import dev.aidos.ui.theme.SpacingTokens
 import dev.aidos.ui.theme.colorForActor
 import dev.aidos.ui.theme.colorForStatus
 
 @Composable
 fun InfiniteZuiCanvas(
     presenter: SpatialCanvasPresenter,
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -45,6 +51,14 @@ fun InfiniteZuiCanvas(
                 }
             }
     ) {
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(SpacingTokens.sm),
+            )
+        }
         Canvas(modifier = Modifier.fillMaxSize()) {
             val canvasW = size.width
             val canvasH = size.height

@@ -25,7 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentNodeRecord
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.layout.FormFactor
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
@@ -43,6 +46,7 @@ fun TimelineGanttScreen(
     presenter: TimelineGanttPresenter,
     formFactor: FormFactor = FormFactor.DESKTOP_DOCKED,
     onNodeClick: (IntentNodeRecord) -> Unit = {},
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -60,6 +64,13 @@ fun TimelineGanttScreen(
             color = Color.White,
             modifier = Modifier.padding(bottom = SpacingTokens.md),
         )
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
+        }
 
         if (state.bars.isEmpty() && !state.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

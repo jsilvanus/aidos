@@ -19,6 +19,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.SpacingTokens
@@ -27,6 +30,7 @@ import dev.aidos.ui.theme.SpacingTokens
 fun CartridgeDockScreen(
     presenter: CartridgeDockPresenter,
     onTaskClick: (String) -> Unit,
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -43,6 +47,13 @@ fun CartridgeDockScreen(
             color = Color.White,
             modifier = Modifier.padding(bottom = SpacingTokens.md),
         )
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
+        }
 
         Row(
             modifier = Modifier

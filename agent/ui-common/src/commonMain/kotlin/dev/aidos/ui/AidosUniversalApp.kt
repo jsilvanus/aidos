@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,14 +22,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.aidos.api.CreateIntentNodeRequest
 import dev.aidos.api.RuntimeClient
+import dev.aidos.intent.IntentActorKind
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.assistant.AssistantSheetOverlay
+import dev.aidos.ui.assistant.ChatModelOption
+import dev.aidos.ui.assistant.IntentCreationChatPanel
+import dev.aidos.ui.assistant.IntentCreationChatState
 import dev.aidos.ui.assistant.SttBackend
 import dev.aidos.ui.assistant.VoiceCaptureController
 import dev.aidos.ui.assistant.VoiceCaptureState
@@ -49,6 +56,7 @@ import dev.aidos.ui.palette.CommandPalettePresenter
 import dev.aidos.ui.palette.PaletteItem
 import dev.aidos.ui.paradigms.kanban.CartridgeDockPresenter
 import dev.aidos.ui.paradigms.kanban.CartridgeDockScreen
+import dev.aidos.ui.paradigms.livingdoc.LivingDocIntent
 import dev.aidos.ui.paradigms.livingdoc.LivingDocPresenter
 import dev.aidos.ui.paradigms.livingdoc.LivingDocView
 import dev.aidos.ui.paradigms.outliner.CausalOutlinerPresenter
@@ -57,9 +65,9 @@ import dev.aidos.ui.paradigms.pipeline.RelayPipelinePresenter
 import dev.aidos.ui.paradigms.pipeline.RelayPipelineScreen
 import dev.aidos.ui.paradigms.timeline.TimelineGanttPresenter
 import dev.aidos.ui.paradigms.timeline.TimelineGanttScreen
-import dev.aidos.ui.pills.AgentPillState
-import dev.aidos.ui.pills.MultiAgentPillOverlay
-import dev.aidos.ui.pills.PillRole
+import dev.aidos.tcr.pill.AgentPillState
+import dev.aidos.tcr.pill.MultiAgentPillOverlay
+import dev.aidos.tcr.pill.PillRole
 import dev.aidos.ui.spatial.canvas.InfiniteZuiCanvas
 import dev.aidos.ui.spatial.canvas.SpatialCanvasPresenter
 import dev.aidos.ui.spatial.radar.FocusRadarPresenter
@@ -99,11 +107,27 @@ fun AidosUniversalApp(
     approvalGatePresenter: ApprovalGatePresenter? = null,
     voiceCaptureController: VoiceCaptureController? = null,
     onPinProjectLauncher: ((projectId: String, projectName: String) -> Unit)? = null,
+    availableModels: List<ChatModelOption> = emptyList(),
+    onSendChatPrompt: (suspend (prompt: String, modelId: String) -> String)? = null,
+    selectedDestinationId: String? = null,
+    onDestinationSelected: ((String) -> Unit)? = null,
+    currentProjectId: String? = null,
+    onProjectSelected: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
-    var selectedDestinationId by remember { mutableStateOf(initialDestinationId) }
-    var currentProjectId by remember { mutableStateOf(initialProjectId) }
+    var internalDestinationId by rememberSaveable { mutableStateOf(initialDestinationId) }
+    var internalProjectId by rememberSaveable { mutableStateOf(initialProjectId) }
+    val activeDestinationId = selectedDestinationId ?: internalDestinationId
+    val activeProjectId = currentProjectId ?: internalProjectId
+    val setDestination: (String) -> Unit = { id ->
+        internalDestinationId = id
+        onDestinationSelected?.invoke(id)
+    }
+    val setProject: (String) -> Unit = { projId ->
+        internalProjectId = projId
+        onProjectSelected?.invoke(projId)
+    }
 
     val inboxPresenter = remember {
         ActionInboxPresenter(
@@ -120,35 +144,72 @@ fun AidosUniversalApp(
         )
     }
 
-    val outlinerPresenter = remember(currentProjectId) {
-        CausalOutlinerPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val outlinerPresenter = remember(activeProjectId) {
+        CausalOutlinerPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val pipelinePresenter = remember(currentProjectId) {
-        RelayPipelinePresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val pipelinePresenter = remember(activeProjectId) {
+        RelayPipelinePresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val metroPresenter = remember(currentProjectId) {
-        TransitMetroPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val metroPresenter = remember(activeProjectId) {
+        TransitMetroPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val kanbanPresenter = remember(currentProjectId) {
-        CartridgeDockPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val kanbanPresenter = remember(activeProjectId) {
+        CartridgeDockPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val radarPresenter = remember(currentProjectId) {
-        FocusRadarPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val radarPresenter = remember(activeProjectId) {
+        FocusRadarPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val breadboardPresenter = remember(currentProjectId) {
-        BreadboardSchematicPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val breadboardPresenter = remember(activeProjectId) {
+        BreadboardSchematicPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val canvasPresenter = remember(currentProjectId) {
-        SpatialCanvasPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val canvasPresenter = remember(activeProjectId) {
+        SpatialCanvasPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val timelinePresenter = remember(currentProjectId) {
-        TimelineGanttPresenter(currentProjectId, runtimeClient.intents, coroutineScope)
+    val timelinePresenter = remember(activeProjectId) {
+        TimelineGanttPresenter(activeProjectId, runtimeClient.intents, coroutineScope)
     }
-    val livingDocPresenter = remember(currentProjectId) {
+    val livingDocPresenter = remember(activeProjectId) {
         LivingDocPresenter(
-            initialDocumentId = "doc-$currentProjectId",
+            initialDocumentId = "doc-$activeProjectId",
             initialTitle = "Living Workspace Specification",
         )
+    }
+
+    fun refreshAllPresenters() {
+        inboxPresenter.loadData()
+        outlinerPresenter.loadGraph()
+        pipelinePresenter.loadPipeline()
+        metroPresenter.loadMetro()
+        kanbanPresenter.loadDock()
+        radarPresenter.loadRadar()
+        breadboardPresenter.loadCircuit()
+        canvasPresenter.loadGraph()
+        timelinePresenter.loadTimeline()
+        projectHubPresenter.loadProjects()
+    }
+
+    suspend fun createIntentNode(
+        title: String,
+        type: IntentNodeType,
+        actorKind: IntentActorKind,
+        description: String? = null,
+    ) {
+        runtimeClient.intents.createNode(
+            CreateIntentNodeRequest(
+                projectId = activeProjectId,
+                title = title,
+                type = type,
+                actorKind = actorKind,
+                description = description,
+            )
+        )
+        refreshAllPresenters()
+    }
+
+    val launchCreateIntent: (String, IntentNodeType, IntentActorKind) -> Unit = { title, type, actorKind ->
+        coroutineScope.launch {
+            createIntentNode(title, type, actorKind)
+        }
     }
     // RFC-0113: the Human Egress Gate Card is fed by the runtime's parked outbound messages and its
     // Approve / Deny go through the same effect-approval path the CLI uses, so a person's decision is
@@ -174,30 +235,42 @@ fun AidosUniversalApp(
     val dexPreserver = remember { DexStatePreserver() }
     val fallbackHealthFlow = remember { MutableStateFlow(NativeProcessHealth.HEALTHY) }
     val nativeHealth by (nativeProcessHealth ?: fallbackHealthFlow).collectAsState()
-    var isAssistantOpen by remember { mutableStateOf(initialAssistantOpen) }
+    var isAssistantOpen by remember { mutableStateOf(false) }
     var assistantGhostText by remember { mutableStateOf("") }
+    val intentChatState = remember {
+        IntentCreationChatState(
+            initialOpen = initialAssistantOpen,
+            initialModels = availableModels,
+        )
+    }
+    LaunchedEffect(availableModels) {
+        intentChatState.setModels(availableModels)
+    }
+    val chatUiState by intentChatState.state.collectAsState()
 
     val commandPalettePresenter = remember {
         CommandPalettePresenter(
             allCommands = ViewModeCatalog.all.map { mode ->
                 PaletteItem("nav-${mode.id}", mode.label, "Switch to ${mode.label}", CommandItemKind.COMMAND) {
-                    selectedDestinationId = mode.id
+                    setDestination(mode.id)
                 }
-            } + PaletteItem("sys-assistant", "Trigger Voice Assistant", "Record intent via Red Pill", CommandItemKind.COMMAND) {
+            } + PaletteItem("sys-assistant", "Toggle Orchestrator Intent Chat", "Open Red Pill Intent Chat", CommandItemKind.COMMAND) {
+                intentChatState.toggleOpen()
+            } + PaletteItem("sys-voice", "Trigger Voice Assistant", "Record intent via Red Pill Voice", CommandItemKind.COMMAND) {
                 isAssistantOpen = true
             }
         )
     }
 
-    val pills = remember(isAssistantOpen) {
+    val pills = remember(isAssistantOpen, chatUiState.isOpen) {
         listOf(
             AgentPillState(
                 id = "pill-red",
                 role = PillRole.ORCHESTRATOR_RED,
-                label = "Dictator Caret",
+                label = "Orchestrator",
                 xNormalized = 0.85f,
-                yNormalized = 0.15f,
-                isRadiatingWave = isAssistantOpen,
+                yNormalized = 0.08f,
+                isRadiatingWave = isAssistantOpen || chatUiState.isOpen,
             ),
             AgentPillState(
                 id = "pill-blue",
@@ -230,14 +303,59 @@ fun AidosUniversalApp(
     ResponsiveScaffold(
         destinations = destinationsFor(dev.aidos.ui.layout.FormFactor.DESKTOP_DOCKED),
         destinationsFor = ::destinationsFor,
-        selectedDestinationId = selectedDestinationId,
-        onDestinationSelected = { id -> selectedDestinationId = id },
+        selectedDestinationId = activeDestinationId,
+        onDestinationSelected = setDestination,
         topBar = {
             NativeProcessRecoveryBar(health = nativeHealth)
         },
         overlayContent = {
-            MultiAgentPillOverlay(pills = pills)
+            MultiAgentPillOverlay(
+                pills = pills,
+                onPillClick = { pill ->
+                    if (pill.role == PillRole.ORCHESTRATOR_RED) {
+                        intentChatState.toggleOpen()
+                    }
+                },
+            )
             CommandPaletteModal(presenter = commandPalettePresenter)
+            IntentCreationChatPanel(
+                uiState = chatUiState,
+                onSelectModel = { intentChatState.selectModel(it) },
+                onPromptChange = { intentChatState.updatePrompt(it) },
+                onSelectType = { intentChatState.selectType(it) },
+                onSelectActor = { intentChatState.selectActor(it) },
+                onSendPrompt = {
+                    coroutineScope.launch {
+                        intentChatState.submitPrompt(
+                            onCreateNode = ::createIntentNode,
+                            onInference = onSendChatPrompt,
+                            createDirectly = false,
+                        )
+                    }
+                },
+                onDirectCreate = {
+                    coroutineScope.launch {
+                        intentChatState.submitPrompt(
+                            onCreateNode = ::createIntentNode,
+                            createDirectly = true,
+                        )
+                    }
+                },
+                onCreateProposal = { messageId, proposalId ->
+                    coroutineScope.launch {
+                        intentChatState.createProposal(
+                            messageId = messageId,
+                            proposalId = proposalId,
+                            onCreateNode = ::createIntentNode,
+                        )
+                    }
+                },
+                onDismiss = { intentChatState.setOpen(false) },
+                onOpenVoiceAssistant = {
+                    intentChatState.setOpen(false)
+                    isAssistantOpen = true
+                },
+            )
             val voiceState by (voiceCaptureController?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(VoiceCaptureState()) }).collectAsState()
             val effectiveTranscript = voiceState.partialText.ifBlank { assistantGhostText }
             AssistantSheetOverlay(
@@ -271,14 +389,11 @@ fun AidosUniversalApp(
                 },
                 onProposeTask = { text ->
                     coroutineScope.launch {
-                        runtimeClient.intents.createNode(
-                            CreateIntentNodeRequest(
-                                projectId = currentProjectId,
-                                title = text,
-                                type = IntentNodeType.ATOMIC_TASK,
-                            )
+                        createIntentNode(
+                            title = text,
+                            type = IntentNodeType.ATOMIC_TASK,
+                            actorKind = IntentActorKind.AGENT,
                         )
-                        inboxPresenter.loadData()
                         voiceCaptureController?.cancel()
                         isAssistantOpen = false
                         assistantGhostText = ""
@@ -294,7 +409,7 @@ fun AidosUniversalApp(
     ) { formFactor ->
         LaunchedEffect(formFactor) {
             dexPreserver.captureSession(
-                projectId = currentProjectId,
+                projectId = activeProjectId,
                 nodeId = null,
                 documentText = livingDocPresenter.state.value.lines.joinToString("\n") { it.text },
                 viewport = canvasPresenter.state.value.viewport,
@@ -303,69 +418,123 @@ fun AidosUniversalApp(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LazyRow(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF0B1120))
                     .padding(horizontal = SpacingTokens.sm, vertical = SpacingTokens.xs),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
-                contentPadding = PaddingValues(horizontal = SpacingTokens.xs),
             ) {
-                items(ViewModeCatalog.offered(formFactor), key = { it.id }) { mode ->
-                    val isSelected = selectedDestinationId == mode.id
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                if (isSelected) ColorTokens.ActorAgent.copy(alpha = 0.25f) else Color(0xFF1E293B),
-                                shape = RoundedCornerShape(CornerTokens.pill),
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(SpacingTokens.xs),
+                    contentPadding = PaddingValues(horizontal = SpacingTokens.xs),
+                ) {
+                    items(ViewModeCatalog.offered(formFactor), key = { it.id }) { mode ->
+                        val isSelected = activeDestinationId == mode.id
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (isSelected) ColorTokens.ActorAgent.copy(alpha = 0.25f) else Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(CornerTokens.pill),
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) ColorTokens.ActorAgent else Color(0xFF334155),
+                                    shape = RoundedCornerShape(CornerTokens.pill),
+                                )
+                                .clickable { setDestination(mode.id) }
+                                .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = mode.label,
+                                style = AidosTypography.baseTypography.labelSmall,
+                                color = if (isSelected) Color.White else ColorTokens.StatusStale,
                             )
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) ColorTokens.ActorAgent else Color(0xFF334155),
-                                shape = RoundedCornerShape(CornerTokens.pill),
-                            )
-                            .clickable { selectedDestinationId = mode.id }
-                            .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = mode.label,
-                            style = AidosTypography.baseTypography.labelSmall,
-                            color = if (isSelected) Color.White else ColorTokens.StatusStale,
-                        )
+                        }
                     }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = if (chatUiState.isOpen) ColorTokens.PillOrchestratorRed.copy(alpha = 0.25f) else Color(0xFF1E293B),
+                            shape = RoundedCornerShape(CornerTokens.pill),
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = ColorTokens.PillOrchestratorRed,
+                            shape = RoundedCornerShape(CornerTokens.pill),
+                        )
+                        .clickable { intentChatState.toggleOpen() }
+                        .padding(horizontal = SpacingTokens.sm, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = if (chatUiState.isOpen) "🔴 Chat Open" else "🔴 Intent Chat",
+                        style = AidosTypography.baseTypography.labelSmall,
+                        color = if (chatUiState.isOpen) Color.White else ColorTokens.PillOrchestratorRed,
+                    )
                 }
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when (selectedDestinationId) {
+                when (activeDestinationId) {
                     "inbox" -> ActionInboxScreen(
                         presenter = inboxPresenter,
                         onItemClick = { item ->
-                            currentProjectId = item.node.projectId
-                            selectedDestinationId = "outliner"
+                            setProject(item.node.projectId)
+                            setDestination("outliner")
                         },
+                        onCreateIntent = launchCreateIntent,
                     )
                     "outliner" -> CausalOutlinerScreen(
                         presenter = outlinerPresenter,
-                        onDrillDown = { selectedDestinationId = "livingdoc" },
+                        onDrillDown = { setDestination("livingdoc") },
+                        onCreateIntent = launchCreateIntent,
                     )
-                    "pipeline" -> RelayPipelineScreen(presenter = pipelinePresenter)
-                    "metro" -> TransitMetroMapView(presenter = metroPresenter)
+                    "pipeline" -> RelayPipelineScreen(
+                        presenter = pipelinePresenter,
+                        onCreateIntent = launchCreateIntent,
+                    )
+                    "metro" -> TransitMetroMapView(
+                        presenter = metroPresenter,
+                        onCreateIntent = launchCreateIntent,
+                    )
                     "kanban" -> CartridgeDockScreen(
                         presenter = kanbanPresenter,
-                        onTaskClick = { selectedDestinationId = "outliner" },
+                        onTaskClick = { setDestination("outliner") },
+                        onCreateIntent = launchCreateIntent,
                     )
-                    "radar" -> RadialRadarScreen(presenter = radarPresenter)
-                    "breadboard" -> BreadboardSchematicView(presenter = breadboardPresenter)
-                    "canvas" -> InfiniteZuiCanvas(presenter = canvasPresenter)
-                    "timeline" -> TimelineGanttScreen(presenter = timelinePresenter, formFactor = formFactor)
-                    "livingdoc" -> LivingDocView(presenter = livingDocPresenter)
+                    "radar" -> RadialRadarScreen(
+                        presenter = radarPresenter,
+                        onCreateIntent = launchCreateIntent,
+                    )
+                    "breadboard" -> BreadboardSchematicView(
+                        presenter = breadboardPresenter,
+                        onCreateIntent = launchCreateIntent,
+                    )
+                    "canvas" -> InfiniteZuiCanvas(
+                        presenter = canvasPresenter,
+                        onCreateIntent = launchCreateIntent,
+                    )
+                    "timeline" -> TimelineGanttScreen(
+                        presenter = timelinePresenter,
+                        formFactor = formFactor,
+                        onCreateIntent = launchCreateIntent,
+                    )
+                    "livingdoc" -> LivingDocView(
+                        presenter = livingDocPresenter,
+                        onCreateIntent = { title, type, actorKind ->
+                            livingDocPresenter.send(LivingDocIntent.CommitVoiceText(title))
+                            launchCreateIntent(title, type, actorKind)
+                        },
+                    )
                     "gates" -> ApprovalGatesScreen(presenter = gatePresenter)
                     "projects" -> ProjectHubScreen(
                         presenter = projectHubPresenter,
                         onProjectClick = { projId ->
-                            currentProjectId = projId
-                            selectedDestinationId = "inbox"
+                            setProject(projId)
                         },
                         onPinProjectClick = onPinProjectLauncher,
                     )

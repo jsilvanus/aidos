@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +27,7 @@ import dev.aidos.api.RealRuntimeClient
 import dev.aidos.api.RuntimeClient
 import dev.aidos.intent.IntentNodeType
 import dev.aidos.ui.AidosUniversalApp
+import dev.aidos.ui.assistant.ChatModelOption
 import dev.aidos.tcr.engine.BackgroundPane
 import dev.aidos.tcr.engine.EngineControlCard
 import dev.aidos.tcr.engine.LanSharingPane
@@ -121,6 +123,22 @@ fun DesktopApp(models: DesktopModels) {
     var showGroups by remember { mutableStateOf(false) }
     var rightPaneTab by remember { mutableStateOf(DesktopRightPaneTab.MODELS) }
     var selectedModelId by remember { mutableStateOf<String?>(null) }
+    var selectedDestinationId by rememberSaveable { mutableStateOf("inbox") }
+    var currentProjectId by rememberSaveable { mutableStateOf("default-workspace") }
+    val modelsPaneState by models.models.state.collectAsState()
+    val availableChatModels = remember(modelsPaneState.localModels) {
+        modelsPaneState.localModels.map { model ->
+            ChatModelOption(
+                id = model.id,
+                label = model.name.ifBlank { model.id },
+                subtitle = listOfNotNull(
+                    model.kind.takeIf { it.isNotBlank() },
+                    model.quantization.takeIf { it.isNotBlank() },
+                ).joinToString(" · "),
+                isInstalled = true,
+            )
+        }
+    }
     val errorMessage by models.models.errorMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -181,6 +199,11 @@ fun DesktopApp(models: DesktopModels) {
             DesktopViewMode.WORKSPACE -> {
                 AidosUniversalApp(
                     runtimeClient = models.runtimeClient,
+                    availableModels = availableChatModels,
+                    selectedDestinationId = selectedDestinationId,
+                    onDestinationSelected = { selectedDestinationId = it },
+                    currentProjectId = currentProjectId,
+                    onProjectSelected = { currentProjectId = it },
                     modifier = Modifier.fillMaxSize().padding(innerPadding),
                 )
             }
@@ -199,6 +222,11 @@ fun DesktopApp(models: DesktopModels) {
                     Box(modifier = Modifier.weight(0.55f).fillMaxHeight()) {
                         AidosUniversalApp(
                             runtimeClient = models.runtimeClient,
+                            availableModels = availableChatModels,
+                            selectedDestinationId = selectedDestinationId,
+                            onDestinationSelected = { selectedDestinationId = it },
+                            currentProjectId = currentProjectId,
+                            onProjectSelected = { currentProjectId = it },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

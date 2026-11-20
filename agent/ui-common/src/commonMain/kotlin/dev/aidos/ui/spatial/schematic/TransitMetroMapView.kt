@@ -29,6 +29,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.aidos.intent.DerivedStatus
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
@@ -44,6 +47,7 @@ import dev.aidos.ui.theme.colorForStatus
 fun TransitMetroMapView(
     presenter: TransitMetroPresenter,
     onStationClick: (String) -> Unit = {},
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -60,6 +64,13 @@ fun TransitMetroMapView(
             color = Color.White,
             modifier = Modifier.padding(bottom = SpacingTokens.md),
         )
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
+        }
 
         if (state.lines.isEmpty() && !state.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

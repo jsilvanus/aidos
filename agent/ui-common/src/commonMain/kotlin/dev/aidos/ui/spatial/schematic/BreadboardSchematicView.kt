@@ -28,6 +28,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.CornerTokens
@@ -42,6 +44,7 @@ import dev.aidos.ui.theme.SpacingTokens
 fun BreadboardSchematicView(
     presenter: BreadboardSchematicPresenter,
     onChipClick: (String) -> Unit = {},
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -58,6 +61,13 @@ fun BreadboardSchematicView(
             color = Color(0xFF6EE7B7),
             modifier = Modifier.padding(bottom = SpacingTokens.md),
         )
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
+        }
 
         if (state.chips.isEmpty() && !state.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

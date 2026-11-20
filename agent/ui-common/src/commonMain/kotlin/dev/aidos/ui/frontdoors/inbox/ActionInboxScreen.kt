@@ -19,6 +19,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import dev.aidos.intent.IntentActorKind
+import dev.aidos.intent.IntentNodeType
+import dev.aidos.ui.components.QuickIntentCreatorBar
 import dev.aidos.ui.theme.AidosTypography
 import dev.aidos.ui.theme.ColorTokens
 import dev.aidos.ui.theme.SpacingTokens
@@ -27,6 +30,7 @@ import dev.aidos.ui.theme.SpacingTokens
 fun ActionInboxScreen(
     presenter: ActionInboxPresenter,
     onItemClick: (ActionItemUiModel) -> Unit,
+    onCreateIntent: ((title: String, type: IntentNodeType, actorKind: IntentActorKind) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by presenter.state.collectAsState()
@@ -55,6 +59,14 @@ fun ActionInboxScreen(
                     color = ColorTokens.StatusReview,
                 )
             }
+        }
+
+        if (onCreateIntent != null) {
+            QuickIntentCreatorBar(
+                onCreateIntent = onCreateIntent,
+                defaultActor = IntentActorKind.HUMAN,
+                modifier = Modifier.padding(bottom = SpacingTokens.sm),
+            )
         }
 
         if (state.isLoading && state.items.isEmpty()) {
