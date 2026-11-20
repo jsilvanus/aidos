@@ -370,6 +370,11 @@ object Wire {
                 put("type", "ToolApprovalRequired"); put("runId", event.runId); put("taskId", event.taskId)
                 put("toolName", event.toolName); put("previewDescription", event.previewDescription)
             }
+            is RuntimeEvent.RunBudgetUpdated -> {
+                put("type", "RunBudgetUpdated"); put("runId", event.runId)
+                put("tokensUsed", event.tokensUsed); put("costUnitsUsed", event.costUnitsUsed)
+                put("isSettlement", event.isSettlement)
+            }
         }
     }
 
@@ -422,6 +427,13 @@ object Wire {
                 taskId = json["taskId"]!!.jsonPrimitive.content,
                 toolName = json["toolName"]!!.jsonPrimitive.content,
                 previewDescription = json["previewDescription"]!!.jsonPrimitive.content,
+            )
+            "RunBudgetUpdated" -> RuntimeEvent.RunBudgetUpdated(
+                eventId, timestamp, projectId, sessionId,
+                runId = json["runId"]!!.jsonPrimitive.content,
+                tokensUsed = json["tokensUsed"]!!.jsonPrimitive.long,
+                costUnitsUsed = json["costUnitsUsed"]!!.jsonPrimitive.long,
+                isSettlement = json["isSettlement"]!!.jsonPrimitive.content.toBoolean(),
             )
             else -> error("unknown RuntimeEvent type: ${json["type"]}")
         }

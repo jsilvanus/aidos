@@ -79,6 +79,7 @@ object Methods {
     const val RUNTIME_VERSION = "runtime.version"
     const val RUNTIME_PROFILE = "runtime.profile"
     const val RUNTIME_AVAILABILITY = "runtime.availability"
+    const val RUNTIME_USAGE_SUMMARY = "runtime.usageSummary"
 
     /**
      * RFC-0115 / D56: the daemon's vault lock state. A machine-wide daemon starts with a passphrase vault locked; these let

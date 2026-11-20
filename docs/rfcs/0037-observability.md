@@ -149,6 +149,8 @@ must stay well below the cost of the thing observed.
 
 Metrics are local. There is no aggregation endpoint. The user sees their own numbers.
 
+> **Engine vs. Agent scope (amendment 2026-11-20):** RFC-0037 metrics are per-project and agent-side, stored in the Agent's SQLite database. Cross-app, Engine-wide inference accounting (request counts and token/audio/image volume per category, plus admin JSON/CSV export) is owned by the Engine in [RFC-0103](0103-aidos-engine.md).
+
 ### Crash reporting
 
 On an uncaught exception the runtime writes a crash record — stack trace, runtime version,

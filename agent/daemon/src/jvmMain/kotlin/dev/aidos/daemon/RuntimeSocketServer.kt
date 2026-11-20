@@ -532,6 +532,11 @@ class RuntimeSocketServer(
             JsonPrimitive(client.runtime.profile().name)
         Methods.RUNTIME_AVAILABILITY ->
             Wire.encodeAvailabilityReport(client.runtime.availability(params["projectId"]!!.jsonPrimitive.content))
+        Methods.RUNTIME_USAGE_SUMMARY -> WireExtended.encodeSerializable(
+            client.runtime.getUsageSummary(
+                params["projectId"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.content,
+            )
+        )
         else -> throw UnsupportedOperationException("method not wired over socket transport: $method")
     }
 

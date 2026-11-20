@@ -236,6 +236,8 @@ class DesktopEngineHost(
 
     var modelRuntime: GlobalModelRuntime? = null
         private set
+    var usageStore: fi.italeino.aidos.engine.usage.UsageStore? = null
+        private set
 
     private var tokenManager: TokenManager? = null
     private var httpServer: EngineHttpServer? = null
@@ -303,12 +305,15 @@ class DesktopEngineHost(
             // through the same InferenceRequestManager as the HTTP API, so admission, model loading
             // and the locality limits (RFC-0104) stay on one path.
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val usage = FileUsageStore(stateDir, maxConcurrency = 2)
+            this.usageStore = usage
             val manager = InferenceRequestManager(
                 runtime,
                 licenseStore = licenseAcceptanceStore,
                 // RFC-0103: parallel across models while at least 30% of RAM is free; serialized otherwise.
                 maxParallelRequests = 2,
                 parallelHeadroom = { DesktopDevice.profile().let { it.availableRamBytes > it.totalRamBytes * 0.3 } },
+                usageStore = usage,
             )
             lateinit var server: EngineHttpServer
             val initialPrefs = runCatching {
@@ -388,6 +393,7 @@ class DesktopEngineHost(
                 approvalsControl = LocalApprovalsControl(this),
                 onAdminShutdown = onAdminShutdown,
                 adminSubjects = setOf(LOCALHOST_SUBJECT, TokenManager.ENGINE_SUBJECT),
+                usageStore = usage,
                 pairingCodes = lanSharing.pairing,
                 peerAgentEndpoints = remoteAgent.peerEndpoints(agent),
             )

@@ -1,5 +1,6 @@
 package fi.italeino.aidos.engine.control
 
+import fi.italeino.aidos.engine.usage.EngineUsageSnapshot
 import kotlinx.serialization.Serializable
 
 /**
@@ -21,4 +22,5 @@ data class EngineStatusInfo(
     val stateName: String,
     val residentModels: List<ResidentModelInfo> = emptyList(),
     val linkedPeerCount: Int = 0,
+    val usage: EngineUsageSnapshot? = null,
 )

@@ -122,6 +122,7 @@ class EngineService : LifecycleService() {
     private var startupJob: Job? = null
 
     var modelRuntime: GlobalModelRuntime? = null
+    var usageStore: fi.italeino.aidos.engine.usage.UsageStore? = null
         private set
 
     var agentRuntime: AgentRuntime? = null
@@ -277,9 +278,12 @@ class EngineService : LifecycleService() {
                         if (d == null) 0L else dev.aidos.cookbook.CookbookEngine().residentEstimate(d, s.contextLength ?: d.contextWindow)
                     },
                 )
+                val usage = fi.italeino.aidos.engine.usage.SharedPrefsUsageStore(this@EngineService, maxConcurrency = 1)
+                usageStore = usage
                 inferenceManager = InferenceRequestManager(
                     modelRuntime = runtime,
                     licenseStore = licenseAcceptanceStore,
+                    usageStore = usage,
                 )
                 modelRuntime = runtime
 
@@ -337,6 +341,7 @@ class EngineService : LifecycleService() {
                     },
                     onClientVersions = { pkg, sdk, api -> approvalStore?.recordClientVersions(pkg, sdk, api) },
                     aidinNode = { _aidin.value },
+                    usageStore = usage,
                 )
                 httpServer.start()
                 val boundPort = httpServer.getBoundPort()

@@ -6,6 +6,7 @@ import dev.aidos.kernel.ModelDescriptor
 import dev.aidos.kernel.ModelRuntime
 import fi.italeino.aidos.engine.license.LicenseAcceptanceStore
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
+import fi.italeino.aidos.engine.usage.UsageStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -58,8 +59,14 @@ class InferenceRequestManager(
      */
     private val maxParallelRequests: Int = maxConcurrentRequests,
     private val parallelHeadroom: () -> Boolean = { false },
+    private val usageStore: UsageStore? = null,
 ) {
-    private val capacity = Semaphore(maxOf(maxConcurrentRequests, maxParallelRequests))
+    val maxConcurrency: Int = maxOf(maxConcurrentRequests, maxParallelRequests).coerceAtLeast(1)
+    private val capacity = Semaphore(maxConcurrency)
+
+    init {
+        usageStore?.updateLoad(0, 0, maxConcurrency)
+    }
     private val stateMutex = Mutex()
     private val modelLocks = mutableMapOf<String, Mutex>()
     private val activeByModel = mutableMapOf<String, Int>()
@@ -321,6 +328,7 @@ class InferenceRequestManager(
             totalRequests++
             admittedByModel[modelId] = (admittedByModel[modelId] ?: 0) + 1
             requestJobsByModel.getOrPut(modelId) { mutableSetOf() }.add(requestJob)
+            usageStore?.updateLoad(runningRequests, queueDepth, maxConcurrency)
             Result.success(Unit)
         }
         if (admitted.isFailure) return admitted
@@ -334,6 +342,7 @@ class InferenceRequestManager(
             withBookkeepingLock {
                 queueDepth--
                 runningRequests++
+                usageStore?.updateLoad(runningRequests, queueDepth, maxConcurrency)
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -343,6 +352,7 @@ class InferenceRequestManager(
                 cancelledRequests++
                 requestJobsByModel[modelId]?.remove(requestJob)
                 if (requestJobsByModel[modelId].isNullOrEmpty()) requestJobsByModel.remove(modelId)
+                usageStore?.updateLoad(runningRequests, queueDepth, maxConcurrency)
             }
             Result.failure(e)
         }
@@ -354,6 +364,7 @@ class InferenceRequestManager(
             decrementAdmitted(modelId)
             requestJobsByModel[modelId]?.remove(requestJob)
             if (requestJobsByModel[modelId].isNullOrEmpty()) requestJobsByModel.remove(modelId)
+            usageStore?.updateLoad(runningRequests, queueDepth, maxConcurrency)
         }
         capacity.release()
     }

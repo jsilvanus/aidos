@@ -794,7 +794,31 @@ class RuntimeCompositionRoot(
                     )
                 },
             )
-        val budgetLedger = SqlBudgetLedger(projectDriver, idGen, nowIso)
+        val eventStore = EventStore(projectDriver) { redactor.redactJson(it, RedactionBoundary.EVENT) }
+        val budgetLedger = SqlBudgetLedger(
+            driver = projectDriver,
+            idGen = idGen,
+            nowIso = nowIso,
+            onBudgetUpdated = { scope, scopeId, tokensUsed, costUnitsUsed, isSettlement ->
+                if (scope == dev.aidos.kernel.BudgetScope.RUN) {
+                    runCatching {
+                        eventStore.publish(
+                            id = idGen(),
+                            projectId = projectId.value,
+                            type = "RunBudgetUpdated",
+                            source = "budget_ledger",
+                            payload = kotlinx.serialization.json.buildJsonObject {
+                                put("run_id", kotlinx.serialization.json.JsonPrimitive(scopeId))
+                                put("tokens_used", kotlinx.serialization.json.JsonPrimitive(tokensUsed))
+                                put("cost_units_used", kotlinx.serialization.json.JsonPrimitive(costUnitsUsed))
+                                put("is_settlement", kotlinx.serialization.json.JsonPrimitive(isSettlement))
+                            }.toString(),
+                            nowIso = nowIso(),
+                        )
+                    }
+                }
+            },
+        )
         val contentNodeStore = SqliteContentNodeStore(projectDriver)
         // RFC-0015: register the root and make sure this project has its background indexing job.
         knowledgeRoots[projectId.value] = rootPath
@@ -909,7 +933,7 @@ class RuntimeCompositionRoot(
         return SqliteExecutor(
             driver = projectDriver,
             audit = audit,
-            events = EventStore(projectDriver) { redactor.redactJson(it, RedactionBoundary.EVENT) },
+            events = eventStore,
             idGen = idGen,
             nowIso = nowIso,
             taskRunner = taskRunner,

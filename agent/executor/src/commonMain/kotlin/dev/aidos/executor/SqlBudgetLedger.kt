@@ -30,6 +30,7 @@ class SqlBudgetLedger(
     private val driver: SqlDriver,
     private val idGen: () -> String,
     private val nowIso: () -> String,
+    private val onBudgetUpdated: ((scope: BudgetScope, scopeId: String, tokensUsed: Long, costUnitsUsed: Long, isSettlement: Boolean) -> Unit)? = null,
 ) : BudgetLedger {
 
     private val transacter = object : TransacterImpl(driver) {}
@@ -104,6 +105,11 @@ class SqlBudgetLedger(
                 }
 
                 Result.success(reservationId)
+            }.also { result ->
+                if (result.isSuccess) {
+                    val estTokens = (estimate.inputTokens ?: 0L) + (estimate.outputTokens ?: 0L)
+                    onBudgetUpdated?.invoke(scope, scopeId, estTokens, estimate.costUnits ?: 0L, false)
+                }
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -111,6 +117,7 @@ class SqlBudgetLedger(
     }
 
     override suspend fun settle(reservation: ReservationId, actual: Budget) {
+        var settledUpdate: Pair<BudgetScope, Triple<String, Long, Long>>? = null
         inTransaction {
             var currentPayload: String? = null
             var attemptId: String? = null
@@ -239,7 +246,18 @@ class SqlBudgetLedger(
                 bindString(0, settledJson)
                 bindString(1, reservation.value)
             }
-            Unit
+            settledUpdate = scopeName?.let { name ->
+                scopeId?.let { id ->
+                    val parsedScope = runCatching { BudgetScope.valueOf(name.uppercase()) }.getOrNull()
+                    if (parsedScope != null) {
+                        val settledTokens = (actual.inputTokens ?: 0L) + (actual.outputTokens ?: 0L)
+                        parsedScope to Triple(id, settledTokens, actual.costUnits ?: 0L)
+                    } else null
+                }
+            }
+        }
+        settledUpdate?.let { (scope, info) ->
+            onBudgetUpdated?.invoke(scope, info.first, info.second, info.third, true)
         }
     }
 

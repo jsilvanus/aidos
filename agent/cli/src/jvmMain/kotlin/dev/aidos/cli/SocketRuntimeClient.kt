@@ -673,5 +673,9 @@ class SocketRuntimeClient(
             val params = buildJsonObject { put("projectId", projectId) }
             Wire.decodeAvailabilityReport(call(Methods.RUNTIME_AVAILABILITY, params).jsonObject)
         }
+        override suspend fun getUsageSummary(projectId: String?): dev.aidos.api.AgentUsageSummary = withContext(Dispatchers.IO) {
+            val params = buildJsonObject { projectId?.let { put("projectId", it) } }
+            WireExtended.decodeSerializable<dev.aidos.api.AgentUsageSummary>(call(Methods.RUNTIME_USAGE_SUMMARY, params))
+        }
     }
 }

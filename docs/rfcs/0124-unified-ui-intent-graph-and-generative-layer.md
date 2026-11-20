@@ -37,7 +37,7 @@ Android is the surface people will use most, and it must be a working app before
 | 3. Generative layer | Declarative manifests that assemble vetted components next to a node | RFC-0106 section 3 to 4 | not built; fixed `InlineToolBlock` and TCR molecules today |
 | 4. Presence | Pills, caret, voice, notifications, approval gates | RFC-0106 section 2, RFC-0112 | `pills/`, `assistant/`, `frontdoors/gates` |
 
-The rule between layers: a view never reads storage, it reads a presenter fed by `RuntimeClient`; the generative layer never draws, it names TCR components; presence never mutates the graph, it proposes (RFC-0110 proposals) or asks for approval.
+The rule between layers: a view never reads storage, it reads a presenter fed by `RuntimeClient`; the generative layer never draws, it names TCR components; presence never mutates the graph, it proposes (RFC-0110 proposals) or asks for approval. Agent meters and gauges (RFC-0028 `AgentBudgetMeter`, RFC-0037 local-vs-remote ratio, and `AgentUsageSummary` from RFC-0052 `RuntimeClient`) follow the same rule: rendered via TCR components in the shell/Inspector/Run card, with tap-to-toggle inline summary and hold-to-open details dialog.
 
 ### Views
 

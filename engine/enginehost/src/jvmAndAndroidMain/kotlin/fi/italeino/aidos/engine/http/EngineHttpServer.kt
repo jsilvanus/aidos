@@ -36,6 +36,9 @@ import fi.italeino.aidos.engine.inference.VirtualModelConfig
 import fi.italeino.aidos.engine.inference.VirtualModelRouter
 import fi.italeino.aidos.engine.inference.placementOf
 import fi.italeino.aidos.engine.license.LicenseNotAcceptedException
+import fi.italeino.aidos.engine.usage.InMemoryUsageStore
+import fi.italeino.aidos.engine.usage.UsageCategory
+import fi.italeino.aidos.engine.usage.UsageStore
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import dev.aidos.aidin.AGENT_ENDPOINT_PREFIX
@@ -194,6 +197,8 @@ class EngineHttpServer(
     /** RFC-0115 / D59: lets the tray stop a headless Engine (`POST /v1/admin/shutdown`, loopback and admin only). Null on an Engine that lives in a window. */
     private val onAdminShutdown: (() -> Unit)? = null,
     private val peerAgentEndpoints: (suspend (fromPeer: NodeId, request: LinkMessage.DelegateRequest) -> LinkMessage.DelegateResponse)? = null,
+    /** RFC-0103 amendment 2026-11-20: Engine-wide inference accounting store. */
+    val usageStore: UsageStore = InMemoryUsageStore(maxConcurrency = inferenceManager.maxConcurrency),
 ) {
     private var server: EmbeddedServer<*, *>? = null
     private var lanServer: EmbeddedServer<*, *>? = null
@@ -375,6 +380,7 @@ class EngineHttpServer(
                 if (!lan) peersControl?.let { adminPeersRoutes(it, adminSubjects) }
                 if (!lan) appsControl?.let { adminAppsRoutes(it, adminSubjects) }
                 if (!lan) statusControl?.let { adminStatusRoute(it, adminSubjects) }
+                if (!lan) adminUsageRoutes(usageStore, adminSubjects)
                 if (!lan) vaultControl?.let { adminVaultRoutes(it, adminSubjects) }
                 if (!lan) modelsControl?.let { adminModelsRoutes(it, adminSubjects) }
                 if (!lan) modelDetailControl?.let { adminModelDetailRoutes(it, adminSubjects) }
@@ -696,10 +702,11 @@ class EngineHttpServer(
             }
 
             if (request.stream) {
+                val imageCount = request.messages.sumOf { it.images?.size ?: 0 }.toLong()
                 val streamResult = executeManaged(request.model, locality) { adapter, placement ->
                     call.response.header(PLACEMENT_HEADER, placement.wire)
                     call.response.header(ROUTE_HEADER, "local")
-                    streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
+                    streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts, imageCount)
                 }
                 if (streamResult.isFailure && !call.response.isCommitted) {
                     respondClassifiedError(call, streamResult.exceptionOrNull(), sensitivePrompts)
@@ -718,6 +725,7 @@ class EngineHttpServer(
             }
 
             val chatResponse = toChatCompletionResponse(inferenceResult.getOrThrow(), request.model)
+            recordChatUsage(request, chatResponse.usage)
             call.respond(chatResponse)
         } catch (e: IllegalArgumentException) {
             call.respond(
@@ -830,6 +838,37 @@ class EngineHttpServer(
         )
     }
 
+    private fun recordChatUsage(request: ChatCompletionRequest, usage: TokenUsage?) {
+        val imageCount = request.messages.sumOf { it.images?.size ?: 0 }.toLong()
+        val category = if (imageCount > 0L) UsageCategory.VISION else UsageCategory.CHAT
+        val tokens = (usage?.total_tokens ?: ((usage?.prompt_tokens ?: 0) + (usage?.completion_tokens ?: 0))).toLong()
+        usageStore.record(category, tokens = tokens, images = imageCount)
+    }
+
+    private fun recordEmbeddingsUsage(request: EmbeddingsRequest, usage: TokenUsage) {
+        val tokens = usage.total_tokens.toLong().takeIf { it > 0L }
+            ?: request.input.sumOf { (it.length + 3) / 4 }.toLong().coerceAtLeast(if (request.input.isNotEmpty()) 1L else 0L)
+        usageStore.record(UsageCategory.EMBEDDINGS, tokens = tokens)
+    }
+
+    private fun estimateAudioSeconds(audioBytes: ByteArray): Double {
+        if (audioBytes.size >= 44 &&
+            audioBytes[0] == 'R'.code.toByte() &&
+            audioBytes[1] == 'I'.code.toByte() &&
+            audioBytes[2] == 'F'.code.toByte() &&
+            audioBytes[3] == 'F'.code.toByte()
+        ) {
+            val byteRate = (audioBytes[28].toInt() and 0xFF) or
+                ((audioBytes[29].toInt() and 0xFF) shl 8) or
+                ((audioBytes[30].toInt() and 0xFF) shl 16) or
+                ((audioBytes[31].toInt() and 0xFF) shl 24)
+            if (byteRate > 0) {
+                return (audioBytes.size - 44).coerceAtLeast(0).toDouble() / byteRate.toDouble()
+            }
+        }
+        return audioBytes.size.toDouble() / 32000.0
+    }
+
     private suspend fun handleVirtualChatCompletions(
         call: ApplicationCall,
         request: ChatCompletionRequest,
@@ -839,13 +878,14 @@ class EngineHttpServer(
     ) {
         val routes = virtualModelRouter.resolveRoutes(request.model, locality)
         if (request.stream) {
+            val imageCount = request.messages.sumOf { it.images?.size ?: 0 }.toLong()
             val primary = routes.first()
             when (primary) {
                 is ResolvedCandidateRoute.LocalModel -> {
                     val streamResult = executeManaged(primary.modelId, locality) { adapter, _ ->
                         call.response.header(PLACEMENT_HEADER, primary.placement.wire)
                         call.response.header(ROUTE_HEADER, primary.routeHeader)
-                        streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts)
+                        streamChatCompletions(call, adapter, modelRequest, request.model, sensitivePrompts, imageCount)
                     }
                     if (streamResult.isFailure && !call.response.isCommitted) {
                         respondClassifiedError(call, streamResult.exceptionOrNull(), sensitivePrompts)
@@ -870,6 +910,7 @@ class EngineHttpServer(
             val (usedRoute, chatResp) = firstAttempt.getOrThrow()
             call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
             call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+            recordChatUsage(request, chatResp.usage)
             call.respond(chatResp.copy(model = request.model))
             return
         }
@@ -883,6 +924,7 @@ class EngineHttpServer(
                 val (usedRoute, chatResp) = secondAttempt.getOrThrow()
                 call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                 call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+                recordChatUsage(request, chatResp.usage)
                 call.respond(chatResp.copy(model = request.model))
                 return
             }
@@ -1102,6 +1144,7 @@ class EngineHttpServer(
         modelRequest: ModelRequest,
         modelId: String,
         sensitivePrompts: Collection<String> = emptyList(),
+        imageCount: Long = 0L,
     ) {
         val completionId = "chatcmpl-${UUID.randomUUID()}"
 
@@ -1124,6 +1167,10 @@ class EngineHttpServer(
                             flush()
                         }
                         is ModelStreamEvent.Done -> {
+                            val usage = event.response.usage
+                            val tokens = (usage?.totalTokens ?: ((usage?.inputTokens ?: 0) + (usage?.outputTokens ?: 0))).toLong()
+                            val category = if (imageCount > 0L) UsageCategory.VISION else UsageCategory.CHAT
+                            usageStore.record(category, tokens = tokens, images = imageCount)
                             val finalChunk = ChatCompletionChunk(
                                 id = completionId,
                                 created = System.currentTimeMillis() / 1000,
@@ -1311,6 +1358,7 @@ class EngineHttpServer(
                     val (usedRoute, resp) = first.getOrThrow()
                     call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                     call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+                    recordEmbeddingsUsage(request, resp.usage)
                     call.respond(resp.copy(model = request.model))
                     return
                 }
@@ -1323,6 +1371,7 @@ class EngineHttpServer(
                         val (usedRoute, resp) = second.getOrThrow()
                         call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                         call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+                        recordEmbeddingsUsage(request, resp.usage)
                         call.respond(resp.copy(model = request.model))
                         return
                     }
@@ -1362,11 +1411,13 @@ class EngineHttpServer(
                 return
             }
 
+            val usage = TokenUsage(0, 0, 0)
+            recordEmbeddingsUsage(request, usage)
             call.respond(
                 EmbeddingsResponse(
                     data = embeddings,
                     model = request.model,
-                    usage = TokenUsage(0, 0, 0),
+                    usage = usage,
                 )
             )
         } catch (e: Exception) {
@@ -1444,10 +1495,16 @@ class EngineHttpServer(
                     ErrorResponse(ErrorDetail(sanitizeErrorMessage(error.message, "unsupported", sensitiveInputs), "invalid_request_error", param = "model", code = "unsupported_capability"))
                 )
             error != null -> respondClassifiedError(call, error, sensitiveInputs)
-            else -> call.respondText(
-                DecisionWire.renderResult(outcome.getOrThrow()).toString(),
-                ContentType.Application.Json,
-            )
+            else -> {
+                val decisionResult = outcome.getOrThrow()
+                val decisionTokens = decisionResult.usage.inputTokens.toLong().takeIf { it > 0L }
+                    ?: ((parsed.request.state.length + 3) / 4).toLong().coerceAtLeast(1L)
+                usageStore.record(UsageCategory.DECISIONS, tokens = decisionTokens)
+                call.respondText(
+                    DecisionWire.renderResult(decisionResult).toString(),
+                    ContentType.Application.Json,
+                )
+            }
         }
     }
 
@@ -1498,6 +1555,7 @@ class EngineHttpServer(
                     val (usedRoute, resp) = first.getOrThrow()
                     call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                     call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+                    usageStore.record(UsageCategory.STT, audioSeconds = estimateAudioSeconds(audioBytes))
                     call.respond(resp)
                     return
                 }
@@ -1510,6 +1568,7 @@ class EngineHttpServer(
                         val (usedRoute, resp) = second.getOrThrow()
                         call.response.header(PLACEMENT_HEADER, usedRoute.placement.wire)
                         call.response.header(ROUTE_HEADER, usedRoute.routeHeader)
+                        usageStore.record(UsageCategory.STT, audioSeconds = estimateAudioSeconds(audioBytes))
                         call.respond(resp)
                         return
                     }
@@ -1553,6 +1612,7 @@ class EngineHttpServer(
                 respondClassifiedError(call, failure, sensitivePrompts)
                 return
             }
+            usageStore.record(UsageCategory.STT, audioSeconds = estimateAudioSeconds(audioBytes))
             call.respond(TranscriptionResponse(text = result.getOrThrow()))
         } catch (e: Exception) {
             respondClassifiedError(call, e, sensitivePrompts)
@@ -1824,6 +1884,11 @@ class EngineHttpServer(
                             emitStream(LinkMessage.DelegateStreamEvent(request.requestId, wireJson.encodeToString(chunk), done = false))
                         }
                         is ModelStreamEvent.Done -> {
+                            val usage = ev.response.usage
+                            val tokens = (usage?.totalTokens ?: ((usage?.inputTokens ?: 0) + (usage?.outputTokens ?: 0))).toLong()
+                            val peerImages = chatReq.messages.sumOf { it.images?.size ?: 0 }.toLong()
+                            val category = if (peerImages > 0L) UsageCategory.VISION else UsageCategory.CHAT
+                            usageStore.record(category, tokens = tokens, images = peerImages)
                             val finalChunk = ChatCompletionChunk(
                                 id = completionId,
                                 created = System.currentTimeMillis() / 1000,

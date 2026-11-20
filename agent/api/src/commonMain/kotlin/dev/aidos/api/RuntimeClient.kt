@@ -425,6 +425,7 @@ enum class RuntimeEventType {
     TOOL_APPROVAL_REQUIRED,
     TOOL_APPROVED,
     TOOL_DENIED,
+    RUN_BUDGET_UPDATED,
 }
 
 /** Per-event sequence number (RFC-0004) — monotonic within the project. */
@@ -515,6 +516,17 @@ sealed class RuntimeEvent {
         val toolName: String,
         val previewDescription: String,
     ) : RuntimeEvent()
+
+    data class RunBudgetUpdated(
+        override val eventId: String,
+        override val timestamp: Instant,
+        override val projectId: String,
+        override val sessionId: String,
+        val runId: String,
+        val tokensUsed: Long,
+        val costUnitsUsed: Long,
+        val isSettlement: Boolean,
+    ) : RuntimeEvent()
 }
 
 // ─── Runtime Info ─────────────────────────────────────────────────────────────
@@ -524,7 +536,23 @@ interface RuntimeInfo {
     suspend fun ping(): Boolean
     suspend fun profile(): PlatformProfile
     suspend fun availability(projectId: String): AvailabilityReport
+    suspend fun getUsageSummary(projectId: String? = null): AgentUsageSummary
 }
+
+@kotlinx.serialization.Serializable
+data class AgentUsageSummary(
+    val activeRunId: String? = null,
+    val activeRunSteps: Int = 0,
+    val activeRunMaxSteps: Int? = null,
+    val activeRunTokens: Long = 0L,
+    val activeRunCostUnits: Long = 0L,
+    val projectTokens: Long = 0L,
+    val projectCostUnits: Long = 0L,
+    val localCalls: Long = 0L,
+    val remoteCalls: Long = 0L,
+    val lastUsageLabel: String? = null,
+    val lastUsageAtMs: Long? = null,
+)
 
 data class RuntimeVersion(
     val version: String,

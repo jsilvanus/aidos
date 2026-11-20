@@ -389,10 +389,16 @@ mirroring Agent's Inbox-before-Projects: *"what's happening"* beats *"what's pos
     ● nomic-embed          loaded 12m ago · Aidos Agent
 
   Memory      3.2 GB / 4.0 GB budget
+  Load & Usage  [====------] 1 active · 0 queued
+                Last: chat · 312 tok · 12s ago
   Connected   Aidos Agent
 
   ⋯ 1 download in progress
 ```
+
+The **Load & Usage** row keeps current load visible up front with a compact gauge/line and a small-font last-usage summary:
+- **Tap / press** toggles the inline summary between *Current Load*, *Session Totals* (since Engine start), and *Lifetime Totals*.
+- **Hold / long-press** (or pressing the info affordance) opens a **Usage Details** dialog showing all six categories (`chat`, `embeddings`, `decisions`, `stt`, `vision`, `tts`) with request counts and volume (`tokens`, `audioSeconds`, `images`) for both session and lifetime, plus **Export JSON** and **Export CSV** actions.
 
 *Cookbook pane* — split into two sections, because local and remote entries are not the same kind
 of thing and forcing them into one list with one status vocabulary would misrepresent both.
@@ -564,6 +570,10 @@ that it is a separate app:
 - **Provider configuration** — which remote providers are configured, enabled, and which of their
   models are individually enabled underneath that (Cookbook pane and Provider detail, above) — so
   "configured · disabled" survives an Engine restart rather than resetting to not-configured.
+- **Engine usage counters** (amendment 2026-11-20) — Engine-level request counts and volume
+  (`tokens`, `audioSeconds`, `images`) across the six categories (`chat`, `embeddings`, `decisions`,
+  `stt`, `vision`, `tts`), persisted in Engine's own local store so **lifetime** totals survive
+  restarts while **session** totals reset on Engine start.
 
 **Deliberately not persisted in v1**: per-app usage history (session-scoped counters only, reset
 on restart — Connected apps, above); cached cookbook verdicts (cheap enough to recompute against
@@ -663,8 +673,40 @@ ProviderConfig {
 ```
 
 Per-app usage counters (Connected apps, above) are in-memory only in v1 — keyed by client token,
-not persisted, reset on Engine restart. No schema for them here because there is deliberately
-nothing to persist yet.
+not persisted, reset on Engine restart.
+
+### Engine Usage Accounting & Export (Amendment 2026-11-20)
+
+Engine-wide accounting is additive to API v1 and lives behind the loopback-only `/v1/admin/` guard:
+
+```
+UsageCategory = CHAT | EMBEDDINGS | DECISIONS | STT | VISION | TTS
+
+CategoryUsage {
+  requests: Long
+  tokens: Long           # prompt + completion (CHAT/VISION), input (EMBEDDINGS), or decision tokens
+  audioSeconds: Double   # STT input duration or TTS output duration
+  images: Long           # VISION image count
+}
+
+LastUsageEvent {
+  category: UsageCategory
+  summary: String        # compact human-readable volume, e.g. "312 tok" or "4.2s audio"
+  timestampMs: Long
+}
+
+EngineUsageSnapshot {
+  activeRequests: Int
+  queuedRequests: Int
+  maxConcurrency: Int
+  lastUsage: LastUsageEvent?
+  session: Map<UsageCategory, CategoryUsage>
+  lifetime: Map<UsageCategory, CategoryUsage>
+}
+```
+
+- `GET /v1/admin/usage` returns `EngineUsageSnapshot` as JSON.
+- `GET /v1/admin/usage/export?format=json|csv` exports session and lifetime totals. JSON export reuses the RFC-0041 `metadata` header convention (`exportVersion`, `exportedAt`, `engineVersion`) alongside `session` and `lifetime`; CSV export emits `scope,category,requests,tokens,audio_seconds,images`.
 
 ## Security
 

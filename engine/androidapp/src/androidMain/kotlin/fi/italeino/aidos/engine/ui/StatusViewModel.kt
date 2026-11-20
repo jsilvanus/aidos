@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import fi.italeino.aidos.engine.EngineService
 import fi.italeino.aidos.engine.approval.AppApprovalStatus
+import fi.italeino.aidos.engine.usage.EngineUsageSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +39,9 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val _pendingAppCount = MutableStateFlow(0)
     val pendingAppCount: StateFlow<Int> = _pendingAppCount.asStateFlow()
 
+    private val _usage = MutableStateFlow<EngineUsageSnapshot?>(null)
+    val usage: StateFlow<EngineUsageSnapshot?> = _usage.asStateFlow()
+
     init {
         refresh()
     }
@@ -47,6 +51,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
 
         val service = EngineService.instance
         _isEngineRunning.value = service?.isRunning ?: false
+        _usage.value = service?.usageStore?.snapshot()
         if (service == null) {
             _residentModels.value = emptyList()
             return

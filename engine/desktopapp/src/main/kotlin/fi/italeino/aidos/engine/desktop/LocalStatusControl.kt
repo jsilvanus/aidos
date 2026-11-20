@@ -30,6 +30,7 @@ class LocalStatusControl(private val host: DesktopEngineHost) : StatusControl {
             },
             residentModels = resident,
             linkedPeerCount = host.aidin.value?.peers?.value?.count { it.connected } ?: 0,
+            usage = host.usageStore?.snapshot(),
         )
     }
 }

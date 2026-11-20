@@ -4,17 +4,28 @@ import fi.italeino.aidos.engine.control.LanControl
 import fi.italeino.aidos.engine.control.LanEnableRequest
 import fi.italeino.aidos.engine.control.LanPairingLink
 import fi.italeino.aidos.engine.control.LanPairingRequest
+import fi.italeino.aidos.engine.usage.CategoryUsage
+import fi.italeino.aidos.engine.usage.UsageCategory
+import fi.italeino.aidos.engine.usage.UsageStore
+import io.ktor.http.ContentDisposition
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
+import kotlinx.serialization.Serializable
+import java.time.Instant
+import java.util.Locale
 
 /**
  * `/v1/admin/lan` (RFC-0115, D58). Install inside the authenticated block of the loopback listener only. Every
@@ -183,4 +194,82 @@ internal fun Route.adminModelDetailRoutes(control: fi.italeino.aidos.engine.cont
     put("$base/run-settings") { admin(call) { control.setRunSettings(it, call.receive<fi.italeino.aidos.engine.control.RunSettingsInfo>()); call.respond(HttpStatusCode.NoContent) } }
     post("$base/embed") { admin(call) { call.respond(fi.italeino.aidos.engine.control.ModelVectorResponse(control.embed(it, call.receive<fi.italeino.aidos.engine.control.ModelTextRequest>().text.trim().ifEmpty { throw IllegalArgumentException("Enter text to embed.") }))) } }
     post("$base/self-test") { admin(call) { val r = call.receive<fi.italeino.aidos.engine.control.ModelTextRequest>(); call.respond(control.selfTest(it, r.text, r.file)) } }
+}
+
+@Serializable
+data class UsageExportMetadata(
+    val exportVersion: String = "1.0",
+    val exportedAt: String,
+    val engineVersion: String,
+)
+
+@Serializable
+data class UsageExportJson(
+    val metadata: UsageExportMetadata,
+    val session: Map<UsageCategory, CategoryUsage>,
+    val lifetime: Map<UsageCategory, CategoryUsage>,
+)
+
+/**
+ * `/v1/admin/usage` and `/v1/admin/usage/export?format=json|csv` (RFC-0103 amendment 2026-11-20).
+ * Loopback and admin only.
+ */
+internal fun Route.adminUsageRoutes(
+    usageStore: UsageStore,
+    adminSubjects: Set<String>,
+    engineVersion: String = "0.1.0",
+) {
+    get("/v1/admin/usage") {
+        adminGuard(call, adminSubjects) {
+            call.respond(usageStore.snapshot())
+        }
+    }
+    get("/v1/admin/usage/export") {
+        adminGuard(call, adminSubjects) {
+            val format = call.request.queryParameters["format"]?.lowercase() ?: "json"
+            val snap = usageStore.snapshot()
+            when (format) {
+                "json" -> {
+                    call.response.header(
+                        HttpHeaders.ContentDisposition,
+                        ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, "engine-usage.json").toString(),
+                    )
+                    call.respond(
+                        UsageExportJson(
+                            metadata = UsageExportMetadata(
+                                exportVersion = "1.0",
+                                exportedAt = Instant.now().toString(),
+                                engineVersion = engineVersion,
+                            ),
+                            session = snap.session,
+                            lifetime = snap.lifetime,
+                        ),
+                    )
+                }
+                "csv" -> {
+                    val sb = StringBuilder()
+                    sb.append("scope,category,requests,tokens,audio_seconds,images\n")
+                    fun appendScope(scope: String, map: Map<UsageCategory, CategoryUsage>) {
+                        for (cat in UsageCategory.entries) {
+                            val u = map[cat] ?: CategoryUsage()
+                            sb.append(scope).append(',')
+                                .append(cat.wireName).append(',')
+                                .append(u.requests).append(',')
+                                .append(u.tokens).append(',')
+                                .append(String.format(Locale.US, "%.3f", u.audioSeconds)).append(',')
+                                .append(u.images).append('\n')
+                        }
+                    }
+                    appendScope("session", snap.session)
+                    appendScope("lifetime", snap.lifetime)
+                    call.response.header(
+                        HttpHeaders.ContentDisposition,
+                        ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, "engine-usage.csv").toString(),
+                    )
+                    call.respondText(sb.toString(), ContentType.Text.CSV)
+                }
+                else -> throw IllegalArgumentException("unsupported export format: $format")
+            }
+        }
+    }
 }

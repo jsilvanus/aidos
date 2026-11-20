@@ -2,6 +2,7 @@ package dev.aidos.api
 
 import app.cash.sqldelight.db.QueryResult
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import app.cash.sqldelight.db.SqlDriver
@@ -1348,6 +1349,171 @@ class RealRuntimeClient : RuntimeClient {
                     degraded = emptyList(),
                     unsatisfied = emptyList(),
                 )
+        }
+
+        override suspend fun getUsageSummary(projectId: String?): AgentUsageSummary {
+            val targetProjectId = projectId
+                ?: _projectPaths.keys.firstOrNull()
+                ?: _projects.keys.firstOrNull()
+                ?: return AgentUsageSummary()
+            val driver = resolveProjectDriver(targetProjectId) ?: return AgentUsageSummary()
+
+            var activeRunId: String? = null
+            var activeRunSteps = 0
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT id, COALESCE(step_index, 0)
+                    FROM runs
+                    WHERE project_id = ? AND state IN ('RUNNING', 'PENDING', 'PAUSED')
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                """.trimIndent(),
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        activeRunId = cursor.getString(0)
+                        activeRunSteps = cursor.getLong(1)?.toInt() ?: 0
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) {
+                bindString(0, targetProjectId)
+            }
+
+            var activeRunMaxSteps: Int? = null
+            var activeRunTokens = 0L
+            var activeRunCostUnits = 0L
+            activeRunId?.let { runId ->
+                driver.executeQuery(
+                    identifier = null,
+                    sql = """
+                        SELECT COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0),
+                               COALESCE(cost_units, 0),
+                               limit_json
+                        FROM budget_ledger
+                        WHERE UPPER(scope) = 'RUN' AND scope_id = ?
+                        ORDER BY period_start DESC
+                        LIMIT 1
+                    """.trimIndent(),
+                    mapper = { cursor ->
+                        if (cursor.next().value) {
+                            activeRunTokens = cursor.getLong(0) ?: 0L
+                            activeRunCostUnits = cursor.getLong(1) ?: 0L
+                            val limitJson = cursor.getString(2)
+                            if (limitJson != null) {
+                                activeRunMaxSteps = runCatching {
+                                    Json.parseToJsonElement(limitJson).jsonObject["steps"]?.jsonPrimitive?.intOrNull
+                                }.getOrNull()
+                            }
+                        }
+                        QueryResult.Value(Unit)
+                    },
+                    parameters = 1,
+                ) {
+                    bindString(0, runId)
+                }
+            }
+
+            var ledgerProjectTokens = 0L
+            var ledgerProjectCostUnits = 0L
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0),
+                           COALESCE(cost_units, 0)
+                    FROM budget_ledger
+                    WHERE UPPER(scope) = 'PROJECT' AND scope_id = ?
+                    ORDER BY period_start DESC
+                    LIMIT 1
+                """.trimIndent(),
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        ledgerProjectTokens = cursor.getLong(0) ?: 0L
+                        ledgerProjectCostUnits = cursor.getLong(1) ?: 0L
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) {
+                bindString(0, targetProjectId)
+            }
+
+            var localCalls = 0L
+            var remoteCalls = 0L
+            var attemptTokens = 0L
+            var attemptCostUnits = 0L
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT
+                        SUM(CASE WHEN LOWER(attempts.model_provider) IN ('local', 'llama', 'llama.cpp', 'llamacpp', 'ollama', 'embedded', 'on_device', 'on-device') THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN LOWER(attempts.model_provider) NOT IN ('local', 'llama', 'llama.cpp', 'llamacpp', 'ollama', 'embedded', 'on_device', 'on-device') THEN 1 ELSE 0 END),
+                        SUM(COALESCE(attempts.tokens_input, 0) + COALESCE(attempts.tokens_output, 0)),
+                        SUM(COALESCE(attempts.cost_units, 0))
+                    FROM attempts
+                    INNER JOIN tasks ON attempts.task_id = tasks.id
+                    WHERE tasks.project_id = ?
+                      AND attempts.model_provider IS NOT NULL
+                """.trimIndent(),
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        localCalls = cursor.getLong(0) ?: 0L
+                        remoteCalls = cursor.getLong(1) ?: 0L
+                        attemptTokens = cursor.getLong(2) ?: 0L
+                        attemptCostUnits = cursor.getLong(3) ?: 0L
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) {
+                bindString(0, targetProjectId)
+            }
+
+            var lastUsageLabel: String? = null
+            var lastUsageAtMs: Long? = null
+            driver.executeQuery(
+                identifier = null,
+                sql = """
+                    SELECT
+                        COALESCE(attempts.tokens_input, 0) + COALESCE(attempts.tokens_output, 0),
+                        attempts.model_provider,
+                        COALESCE(attempts.ended_at, attempts.started_at)
+                    FROM attempts
+                    INNER JOIN tasks ON attempts.task_id = tasks.id
+                    WHERE tasks.project_id = ?
+                      AND attempts.model_provider IS NOT NULL
+                    ORDER BY COALESCE(attempts.ended_at, attempts.started_at) DESC
+                    LIMIT 1
+                """.trimIndent(),
+                mapper = { cursor ->
+                    if (cursor.next().value) {
+                        val tokens = cursor.getLong(0) ?: 0L
+                        val provider = cursor.getString(1)
+                        val ts = cursor.getString(2)
+                        lastUsageLabel = if (tokens > 0L) "$tokens tok" else provider
+                        lastUsageAtMs = ts?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
+                    }
+                    QueryResult.Value(Unit)
+                },
+                parameters = 1,
+            ) {
+                bindString(0, targetProjectId)
+            }
+
+            return AgentUsageSummary(
+                activeRunId = activeRunId,
+                activeRunSteps = activeRunSteps,
+                activeRunMaxSteps = activeRunMaxSteps,
+                activeRunTokens = activeRunTokens,
+                activeRunCostUnits = activeRunCostUnits,
+                projectTokens = maxOf(ledgerProjectTokens, attemptTokens),
+                projectCostUnits = maxOf(ledgerProjectCostUnits, attemptCostUnits),
+                localCalls = localCalls,
+                remoteCalls = remoteCalls,
+                lastUsageLabel = lastUsageLabel,
+                lastUsageAtMs = lastUsageAtMs,
+            )
         }
     }
 }

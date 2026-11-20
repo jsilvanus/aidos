@@ -307,5 +307,8 @@ class MockRuntimeClient : RuntimeClient {
                 degraded = emptyList(),
                 unsatisfied = emptyList(),
             )
+
+        override suspend fun getUsageSummary(projectId: String?): AgentUsageSummary =
+            AgentUsageSummary()
     }
 }

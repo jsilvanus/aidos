@@ -555,7 +555,24 @@ interface RuntimeInfo {
     // RFC-0049: frontends render tool availability rather than discovering it by failure.
     suspend fun getProfile(): PlatformProfile
     suspend fun getAvailability(projectId: UUID): AvailabilityReport
+
+    // RFC-0028 / RFC-0037 (additive, 2026-11-20): live Agent budget, usage totals, and local-vs-remote ratio.
+    suspend fun getUsageSummary(projectId: UUID? = null): AgentUsageSummary
 }
+
+data class AgentUsageSummary(
+    val activeRunId: UUID?,
+    val activeRunSteps: Int,
+    val activeRunMaxSteps: Int?,
+    val activeRunTokens: Long,
+    val activeRunCostUnits: Long,
+    val projectTokens: Long,
+    val projectCostUnits: Long,
+    val localCalls: Long,
+    val remoteCalls: Long,
+    val lastUsageLabel: String?,
+    val lastUsageAtMs: Long?,
+)
 
 data class AvailabilityReport(
     val profile: PlatformProfile,

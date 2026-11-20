@@ -161,6 +161,10 @@ Cost is shown before it is incurred, not only after. The frontend receives:
 Local model usage reports tokens and time but zero cost. Making "this was free" visible is
 what teaches users the value of the offline path.
 
+**Agent meters and gauges (amendment 2026-11-20):** In the Agent UI, active consumption and load are surfaced up front via a compact **Agent Meter** (active Run step/token/cost gauge, local-vs-remote call ratio from RFC-0037, and a small-font last-usage line):
+- **Tap / press** toggles the inline view between *Active Run*, *Project Totals*, and *Local vs. Remote*.
+- **Hold / long-press** opens a **Usage & Budget Details** dialog showing per-Run and per-Project consumption against `budget_ledger` ceilings, plus JSON/CSV export.
+
 ## Data Model
 
 ```sql
