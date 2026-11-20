@@ -84,8 +84,14 @@ class TrayActions(
     }.getOrNull()
 
     companion object {
-        /** The command that starts this application again: the running JVM, its class path, and the main class. */
+        /** The command that starts this application again: the packaged launcher when bundled, else the running JVM. */
         fun selfCommand(args: List<String>): List<String> {
+            val bundled = System.getProperty("jpackage.app-path")?.takeIf { File(it).isFile }
+                ?: ProcessHandle.current().info().command().orElse(null)?.takeIf {
+                    val name = File(it).name.lowercase()
+                    name != "java" && name != "java.exe" && name != "javaw" && name != "javaw.exe" && File(it).isFile
+                }
+            if (bundled != null) return listOf(bundled) + args
             val java = File(System.getProperty("java.home"), "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "javaw.exe" else "java").path
             return listOf(java, "-cp", System.getProperty("java.class.path"), "fi.italeino.aidos.engine.desktop.MainKt") + args
         }
